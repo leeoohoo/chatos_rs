@@ -515,17 +515,18 @@ pub async fn rearm_rebuild_backlog(
             "rebuild backlog item not found".to_string(),
         )
     })?;
-    if before.0 != "failed" {
+    if before.0 != "failed" && !(before.0 == "pending" && before.2 > 0) {
         return Err((
             StatusCode::CONFLICT,
-            "only failed rebuild backlog items can be rearmed".to_string(),
+            "only failed or retry-counted pending rebuild backlog items can be rearmed".to_string(),
         ));
     }
     sqlx::query(
         "UPDATE engine_partition_rebuild_backlog SET status='pending',attempt_count=0, \
          lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,last_error=NULL,completed_at=NULL, \
          reason=$6,updated_at=now() WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 \
-           AND project_partition_key=$4 AND rebuild_kind=$5 AND status='failed'",
+           AND project_partition_key=$4 AND rebuild_kind=$5 \
+           AND (status='failed' OR (status='pending' AND attempt_count>0))",
     )
     .bind(request.tenant_id.trim())
     .bind(request.source_id.trim())

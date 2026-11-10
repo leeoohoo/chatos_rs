@@ -375,4 +375,49 @@ async fn rebuild_rearm_preserves_attempt_history_and_resets_retry_budget() {
     .expect("load preserved rebuild attempts");
     assert_eq!(attempts.len(), 9);
     assert_eq!(attempts.last(), Some(&(9, "completed".to_string())));
+
+    sqlx::query(
+        "INSERT INTO engine_partition_rebuild_backlog( \
+         tenant_id,source_id,thread_id,project_partition_key,rebuild_kind, \
+         status,migration_run_id,reason) \
+         VALUES($1,$2,$3,'project:beta','thread_l0','pending',$4,'waiting budget test')",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .bind(&migration_run_id)
+    .execute(&pool)
+    .await
+    .expect("create waiting rebuild backlog");
+    for expected_attempt_number in 1..=12 {
+        let waiting_claim = crate::repositories::partition_rebuilds::claim_next(
+            &pool,
+            "contract-worker",
+            300,
+        )
+        .await
+        .expect("claim waiting rebuild check")
+        .expect("waiting rebuild item");
+        assert_eq!(waiting_claim.attempt_count, 1);
+        assert_eq!(waiting_claim.attempt_number, expected_attempt_number);
+        assert!(crate::repositories::partition_rebuilds::record_waiting(
+            &pool,
+            &waiting_claim,
+            json!({"phase": "still_waiting"}),
+        )
+        .await
+        .expect("record waiting rebuild check"));
+    }
+    let waiting_budget: (String, i64) = sqlx::query_as(
+        "SELECT status,attempt_count FROM engine_partition_rebuild_backlog \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 \
+           AND project_partition_key='project:beta' AND rebuild_kind='thread_l0'",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load waiting rebuild retry budget");
+    assert_eq!(waiting_budget, ("pending".to_string(), 0));
 }

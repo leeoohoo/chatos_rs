@@ -61,6 +61,7 @@ pub async fn claim_next(
                      AND attempt.rebuild_kind=b.rebuild_kind),0)+1 AS attempt_number \
              FROM engine_partition_rebuild_backlog b \
             WHERE (b.status='pending' OR (b.status='running' AND b.lease_expires_at<=now())) \
+              AND b.attempt_count<$4 \
               AND NOT EXISTS ( \
                   SELECT 1 FROM engine_partition_rebuild_backlog dependency \
                    WHERE dependency.tenant_id=b.tenant_id AND dependency.source_id=b.source_id \
@@ -76,21 +77,39 @@ pub async fn claim_next(
             LIMIT 1 FOR UPDATE SKIP LOCKED \
          ) \
          UPDATE engine_partition_rebuild_backlog b SET status='running', \
-                attempt_count=b.attempt_count+1,lease_owner=$1,lease_token=$2, \
+                attempt_count=b.attempt_count+CASE WHEN b.status='running' THEN 1 ELSE 0 END, \
+                lease_owner=$1,lease_token=$2, \
                 lease_expires_at=now()+make_interval(secs=>$3),last_error=NULL,updated_at=now() \
            FROM candidate c WHERE b.tenant_id=c.tenant_id AND b.source_id=c.source_id \
              AND b.thread_id=c.thread_id AND b.project_partition_key=c.project_partition_key \
              AND b.rebuild_kind=c.rebuild_kind \
          RETURNING b.tenant_id,b.source_id,b.thread_id,b.project_partition_key,b.rebuild_kind, \
-                   b.migration_run_id,b.reason,b.attempt_count,c.attempt_number,b.lease_token",
+                   b.migration_run_id,b.reason,b.attempt_count+1 AS attempt_count, \
+                   c.attempt_number,b.lease_token",
     )
     .bind(lease_owner)
     .bind(&lease_token)
     .bind(lease_seconds.clamp(30, 86_400) as f64)
+    .bind(MAX_ATTEMPTS)
     .fetch_optional(&mut *tx)
     .await
     .map_err(|error| error.to_string())?;
     if let Some(claim) = &claim {
+        sqlx::query(
+            "UPDATE engine_partition_rebuild_attempts SET status='failed', \
+             error_detail=$6,finished_at=now() WHERE tenant_id=$1 AND source_id=$2 \
+             AND thread_id=$3 AND project_partition_key=$4 AND rebuild_kind=$5 \
+             AND status='running'",
+        )
+        .bind(&claim.tenant_id)
+        .bind(&claim.source_id)
+        .bind(&claim.thread_id)
+        .bind(&claim.project_partition_key)
+        .bind(&claim.rebuild_kind)
+        .bind(Json(json!({"code": "rebuild_lease_expired"})))
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
         sqlx::query(
             "INSERT INTO engine_partition_rebuild_attempts( \
              id,tenant_id,source_id,thread_id,project_partition_key,rebuild_kind,migration_run_id, \
@@ -264,7 +283,8 @@ async fn finish_attempt(
     let mut tx = db.begin().await.map_err(|error| error.to_string())?;
     let updated = sqlx::query(
         "UPDATE engine_partition_rebuild_backlog SET status=$7,lease_owner=NULL,lease_token=NULL, \
-         lease_expires_at=NULL,last_error=$8,updated_at=now() \
+         lease_expires_at=NULL,last_error=$8, \
+         attempt_count=CASE WHEN $9::BIGINT IS NULL THEN attempt_count ELSE $9 END,updated_at=now() \
          WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4 \
            AND rebuild_kind=$5 AND status='running' AND lease_token=$6",
     )
@@ -276,6 +296,7 @@ async fn finish_attempt(
     .bind(token)
     .bind(backlog_status)
     .bind(error_code.map(|value| Json(json!({"code": value}))))
+    .bind(error_code.map(|_| claim.attempt_count))
     .execute(&mut *tx)
     .await
     .map_err(|error| error.to_string())?

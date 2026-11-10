@@ -198,6 +198,8 @@ deploy_all=0
 deploy_gateway_config=0
 deploy_services=()
 selected_runtime_services=()
+prepare_memory_worker_stopped=0
+memory_worker_was_running=0
 if [[ -z "$deploy_services_csv" ]]; then
   deploy_all=1
 else
@@ -352,6 +354,24 @@ restart_selected_release_with_retries() {
   return 1
 }
 
+prepare_stopped_memory_worker() {
+  local target_release="$1"
+  docker stop chatos-rs-memory-engine-worker-1 >/dev/null 2>&1 || true
+  (
+    cd "$target_release"
+    docker compose \
+      -f docker/compose.yml \
+      -f docker/compose.platform.yml \
+      --env-file docker/bootstrap.conf \
+      up --no-start --no-build --pull never --no-deps --force-recreate memory-engine-worker
+  )
+  if [[ "$(docker inspect -f '{{.State.Status}}' chatos-rs-memory-engine-worker-1)" != "created" ]]; then
+    echo "[ERROR] Memory Engine worker was not left stopped after release preparation" >&2
+    return 1
+  fi
+  echo "[OK] Memory Engine worker is prepared on the new image and remains stopped"
+}
+
 wait_for_http_probe() {
   local label="$1"
   local acceptance="$2"
@@ -405,6 +425,12 @@ rollback() {
       fi
     else
       start_release_with_retries "$previous_release" || true
+    fi
+    if (( prepare_memory_worker_stopped == 1 )); then
+      prepare_stopped_memory_worker "$previous_release" || true
+      if (( memory_worker_was_running == 1 )); then
+        docker start chatos-rs-memory-engine-worker-1 >/dev/null || true
+      fi
     fi
   fi
   if [[ -n "$nginx_backup" && -f "$nginx_backup" ]]; then
@@ -602,6 +628,20 @@ if [[ ${#deploy_services[@]} -gt 0 ]]; then
   fi
   echo "[INFO] runtime services selected for restart: ${selected_runtime_services[*]}"
 fi
+if service_is_selected memory-engine-backend; then
+  filtered_runtime_services=()
+  for service in "${selected_runtime_services[@]}"; do
+    if [[ "$service" != "memory-engine-worker" ]]; then
+      filtered_runtime_services+=("$service")
+    fi
+  done
+  selected_runtime_services=("${filtered_runtime_services[@]}")
+  prepare_memory_worker_stopped=1
+  if [[ "$(docker inspect -f '{{.State.Running}}' chatos-rs-memory-engine-worker-1 2>/dev/null || true)" == "true" ]]; then
+    memory_worker_was_running=1
+  fi
+  echo "[INFO] Memory Engine worker will be recreated on the release image and left stopped"
+fi
 if (( deploy_gateway_config == 1 )); then
   selected_runtime_services+=("apisix-gateway")
   echo "[INFO] gateway configuration selected for restart"
@@ -627,6 +667,9 @@ if (( deploy_all == 0 )); then
   fi
 else
   start_release_with_retries "$release_dir"
+fi
+if (( prepare_memory_worker_stopped == 1 )); then
+  prepare_stopped_memory_worker "$release_dir"
 fi
 if (( deploy_all == 1 || deploy_gateway_config == 1 )); then
   install -m 0644 "$release_dir/docker/nginx/jgoool-https.conf" "$nginx_target"
