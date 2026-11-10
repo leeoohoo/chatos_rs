@@ -452,12 +452,18 @@ pub(crate) async fn resume_cloud_summary_job(
         },
     };
     let result = execute_prepared_thread_summary_job(
-        config, db, tenant_id, source_id, thread_id, job_run_id, ctx,
+        config,
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        job_run_id,
+        ctx.clone(),
     )
     .await;
     match result {
         Ok(response) => Ok(Some(response)),
-        Err(error) => {
+        Err(_error) => {
             let current = cp_repo::get_job_run_by_id(db, job_run_id)
                 .await?
                 .ok_or_else(|| format!("summary job run not found after callback: {job_run_id}"))?;
@@ -489,7 +495,54 @@ pub(crate) async fn resume_cloud_summary_job(
                 .await?;
                 return Ok(None);
             }
-            Err(error)
+            // Ownership recovery is completed inside this terminal callback.
+            // Do not require another outbox delivery: this may already be the
+            // final allowed delivery attempt after a deployment restart.
+            let retry = execute_prepared_thread_summary_job(
+                config, db, tenant_id, source_id, thread_id, job_run_id, ctx,
+            )
+            .await;
+            match retry {
+                Ok(response) => Ok(Some(response)),
+                Err(retry_error) => {
+                    let current = cp_repo::get_job_run_by_id(db, job_run_id)
+                        .await?
+                        .ok_or_else(|| {
+                            format!(
+                                "summary job run not found after ownership recovery: {job_run_id}"
+                            )
+                        })?;
+                    if current.status != "running" {
+                        return Ok(None);
+                    }
+                    let still_owns_partition = thread_partitions::refresh_summary_claim(
+                        db,
+                        tenant_id,
+                        source_id,
+                        thread_id,
+                        project_partition_key.as_str(),
+                        job_run_id,
+                        i64::try_from(config.ai_request_timeout_secs)
+                            .unwrap_or(i64::MAX)
+                            .saturating_mul(2)
+                            .saturating_add(60),
+                    )
+                    .await?;
+                    if !still_owns_partition {
+                        fail_cloud_summary_job(
+                            db,
+                            tenant_id,
+                            source_id,
+                            thread_id,
+                            job_run_id,
+                            "summary partition was superseded after ownership recovery".to_string(),
+                        )
+                        .await?;
+                        return Ok(None);
+                    }
+                    Err(retry_error)
+                }
+            }
         }
     }
 }

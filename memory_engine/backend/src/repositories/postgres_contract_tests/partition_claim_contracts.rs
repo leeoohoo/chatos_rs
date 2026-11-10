@@ -599,3 +599,122 @@ async fn durable_job_can_reenter_released_partition_but_cannot_cross_owner_fence
         .expect("fence different rollup owner")
     );
 }
+
+#[tokio::test]
+async fn stale_recovery_never_releases_a_job_that_completed_while_waiting_for_its_lock() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let thread_id = format!("thread-{suffix}");
+    let subject = format!("agent:{thread_id}");
+    crate::repositories::threads::upsert_thread(
+        &pool,
+        &thread_id,
+        UpsertThreadRequest {
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            subject_id: subject.clone(),
+            thread_type: "client_agent".to_string(),
+            external_thread_id: None,
+            title: None,
+            labels: Some(vec!["memory-schema:v2".to_string(), subject]),
+            metadata: None,
+            status: None,
+            created_at: None,
+            updated_at: None,
+            archived_at: None,
+        },
+    )
+    .await
+    .expect("create stale recovery race thread");
+    crate::repositories::records::batch_sync_records(
+        &test_config("unused".to_string()),
+        &pool,
+        &thread_id,
+        &crate::models::BatchSyncRecordsRequest {
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            project_partition_key: "project:alpha".to_string(),
+            runtime_context_assertion: "repository-test".to_string(),
+            records: vec![record(format!("record-{suffix}").as_str(), "alpha")],
+        },
+    )
+    .await
+    .expect("seed stale recovery race partition");
+    let job = crate::repositories::control_plane::create_job_run(
+        &pool,
+        crate::models::CreateEngineJobRunRequest {
+            job_type: "summary".to_string(),
+            trigger_type: "stale-race-contract".to_string(),
+            tenant_id: Some(tenant.clone()),
+            source_id: Some(source.clone()),
+            thread_id: Some(thread_id.clone()),
+            subject_id: None,
+            thread_label: None,
+            metadata: None,
+        },
+    )
+    .await
+    .expect("create stale recovery race job");
+    sqlx::query(
+        "UPDATE engine_job_runs SET started_at=now()-interval '1 hour', \
+         data=jsonb_set(data,'{started_at}',to_jsonb($2::text)) WHERE id=$1",
+    )
+    .bind(&job.id)
+    .bind("2026-11-10T00:00:00Z")
+    .execute(&pool)
+    .await
+    .expect("age stale recovery race job");
+    crate::repositories::thread_partitions::try_claim_summary(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        "project:alpha",
+        &job.id,
+        300,
+    )
+    .await
+    .expect("claim stale recovery race partition")
+    .expect("stale recovery race partition available");
+
+    let mut finalizer = pool.begin().await.expect("begin finalizer transaction");
+    sqlx::query("SELECT id FROM engine_job_runs WHERE id=$1 FOR UPDATE")
+        .bind(&job.id)
+        .execute(&mut *finalizer)
+        .await
+        .expect("lock parent job for finalizer");
+    let recovery_pool = pool.clone();
+    let recovery = tokio::spawn(async move {
+        crate::repositories::control_plane::fail_stale_running_job_runs(&recovery_pool, 30).await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    sqlx::query(
+        "UPDATE engine_job_runs SET status='done',finished_at=now(), \
+         data=jsonb_set(data,'{status}',to_jsonb('done'::text)) WHERE id=$1 AND status='running'",
+    )
+    .bind(&job.id)
+    .execute(&mut *finalizer)
+    .await
+    .expect("complete parent while stale recovery waits");
+    finalizer.commit().await.expect("commit parent completion");
+    recovery
+        .await
+        .expect("join stale recovery race")
+        .expect("run stale recovery race");
+
+    let owner: Option<String> = sqlx::query_scalar(
+        "SELECT summary_job_run_id FROM engine_thread_summary_partitions \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key='project:alpha'",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load partition after stale recovery race");
+    assert_eq!(owner.as_deref(), Some(job.id.as_str()));
+}

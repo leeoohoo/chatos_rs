@@ -191,6 +191,12 @@ async fn commit_thread_summary_generation_inner(
         .then(|| timestamp(&summary.created_at))
         .transpose()?;
     let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    if l0_finalization.is_some()
+        || rollup_finalization.is_some()
+        || resummarization_finalization.is_some()
+    {
+        lock_running_generation_job(&mut tx, &current, Some(output.thread_id), None).await?;
+    }
     if let Some(finalization) = resummarization_finalization.as_ref() {
         supersede_resummarized_range(
             &mut tx,
@@ -354,6 +360,9 @@ async fn commit_subject_memory_generation_inner(
         validate_subject_finalization(&current, &output, finalization)?;
     }
     let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    if finalization.is_some() {
+        lock_running_generation_job(&mut tx, &current, None, Some(output.subject_id)).await?;
+    }
     lock_subject_memory_logical_key(
         &mut tx,
         &current.tenant_id,
@@ -635,8 +644,9 @@ async fn finalize_subject_memory_generation(
         let released = sqlx::query(
             "UPDATE engine_subject_memory_scopes SET subject_memory_status='idle',lock_owner=NULL, \
              lock_expires_at=NULL,updated_at=now() WHERE tenant_id=$1 AND source_id=$2 \
-             AND scope_key=$3 AND status='active' AND subject_memory_status='running' \
-             AND lock_owner=$4",
+             AND scope_key=$3 AND status='active' AND ( \
+               (subject_memory_status='running' AND lock_owner=$4) OR \
+               (subject_memory_status<>'running' AND (lock_owner IS NULL OR lock_owner=$4)))",
         )
         .bind(&generation.tenant_id)
         .bind(&generation.source_id)
@@ -1320,7 +1330,8 @@ async fn finalize_thread_l0_generation(
          summary_status=CASE WHEN GREATEST(pending_record_count-$6,0)>0 THEN 'pending' ELSE 'idle' END, \
          summary_job_run_id=NULL,summary_locked_at=NULL,summary_lock_expires_at=NULL,updated_at=now() \
          WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4 \
-         AND summary_status='running' AND summary_job_run_id=$5 \
+         AND ((summary_status='running' AND summary_job_run_id=$5) OR \
+           (summary_status<>'running' AND (summary_job_run_id IS NULL OR summary_job_run_id=$5))) \
          AND pending_record_count>=$6 AND pending_summary_tokens>=$7",
     )
     .bind(&generation.tenant_id)
@@ -1412,7 +1423,8 @@ async fn finalize_thread_rollup_generation(
         "UPDATE engine_thread_summary_partitions SET rollup_status='pending', \
          rollup_job_run_id=NULL,rollup_locked_at=NULL,rollup_lock_expires_at=NULL,updated_at=now() \
          WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4 \
-         AND rollup_status='running' AND rollup_job_run_id=$5",
+         AND ((rollup_status='running' AND rollup_job_run_id=$5) OR \
+           (rollup_status<>'running' AND (rollup_job_run_id IS NULL OR rollup_job_run_id=$5)))",
     )
     .bind(&generation.tenant_id)
     .bind(&generation.source_id)
@@ -1434,6 +1446,36 @@ async fn finalize_thread_rollup_generation(
         &now,
     )
     .await
+}
+
+async fn lock_running_generation_job(
+    tx: &mut Transaction<'_, Postgres>,
+    generation: &GenerationCommit,
+    expected_thread_id: Option<&str>,
+    expected_subject_id: Option<&str>,
+) -> Result<(), String> {
+    let row = sqlx::query_as::<_, (String, Json<serde_json::Value>)>(
+        "SELECT status,data FROM engine_job_runs \
+         WHERE id=$1 AND tenant_id=$2 AND source_id=$3 FOR UPDATE",
+    )
+    .bind(&generation.job_run_id)
+    .bind(&generation.tenant_id)
+    .bind(&generation.source_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| "generation job disappeared before final commit".to_string())?;
+    let (stored_status, data) = row;
+    let job: EngineJobRun = decode(data)?;
+    if stored_status != "running"
+        || job.status != "running"
+        || expected_thread_id.is_some_and(|thread_id| job.thread_id.as_deref() != Some(thread_id))
+        || expected_subject_id
+            .is_some_and(|subject_id| job.subject_id.as_deref() != Some(subject_id))
+    {
+        return Err("generation job is not the running owner of the final output".to_string());
+    }
+    Ok(())
 }
 
 async fn finish_generation_job(

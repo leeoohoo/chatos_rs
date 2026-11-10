@@ -34,6 +34,8 @@
 
 > 2026-11-10 十四次修订：terminal callback 的权威状态校验覆盖 final commit 前后两个边界，关闭“回调开始时 parent 仍 running、提交前 parent 被终结或 claim 被接管”的 TOCTOU 窗口。final commit 失败后必须重新读取 parent 与业务 claim：parent 已终态或异 owner 已接管时直接确认 callback，仍由同一 parent 持有时才允许有界重试；Subject Memory 的终态业务失败在记录 parent 失败后同次确认，不再依赖下一次 outbox 重试收敛。
 
+> 2026-11-10 十五次修订：generation final commit 必须在事务起点锁定并校验仍为 `running` 的 parent Job，再在同一事务内恢复同 owner 的 partition/scope claim、验证冻结输入、提交派生结果、释放 claim 并完成 parent Job。stale recovery 只能释放其 `UPDATE ... WHERE status='running'` CAS 实际更新成功的 Job 所属 claim，禁止按扫描候选批量释放；若 callback 发现同 owner claim 曾被释放，必须在本次 delivery 内完成恢复和 finalization，不得依赖下一次 outbox retry 或剩余重试预算。
+
 ## 1. 结论
 
 当前 Memory Engine 的总体分层可以继续使用：原始 Record 先形成 Thread L0 Summary，再派生 Thread Rollup、Project Summary 和 Agent Memory；模型请求在运行边界读取 Memory Engine，在轮内继续使用 Responses compaction 管理当前运行历史。
@@ -1898,6 +1900,7 @@ release/repair command
 
 - typed project partition、partition 单 writer、数据库派生事件 Outbox、generation registry、coverage、lineage、fact projection、supersession、tombstone 和 privileged erasure；
 - pending rebuild 与 covered-range resummarize 的独立入口，以及 claim、Job、operator audit 和最终 generation commit 的原子边界；
+- final commit 事务先锁定 parent Job，并在同一事务内恢复同 owner claim、提交 generation、释放 claim 和完成 Job；stale recovery 只释放 CAS 实际失败终结的 Job，不再释放等待行锁期间已正常完成的 Job claim；
 - Thread L0、Thread Rollup、Subject Memory L0/Rollup 的版本化 Pipeline profile、结构化 Payload、source ref 校验和 oversized 完整处理；
 - Compose Context v2、canonical frontier、中文词法召回、完整 token budget、冻结 model capability revision 和请求前硬预算预检；
 - Runtime Context Assertion 在服务端、SDK、Local Agent Host、macOS 和 Windows 调用链中的强制绑定；

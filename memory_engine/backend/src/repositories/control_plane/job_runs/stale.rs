@@ -11,9 +11,7 @@ use crate::models::{now_rfc3339, EngineJobRun};
 use crate::repositories::postgres::{decode, json, optional_timestamp};
 use crate::repositories::thread_partitions;
 
-use super::super::common::{
-    LEGACY_JOB_TYPE_THREAD_REPAIR, STALE_LEGACY_REPAIR_JOB_TIMEOUT_SECS,
-};
+use super::super::common::{LEGACY_JOB_TYPE_THREAD_REPAIR, STALE_LEGACY_REPAIR_JOB_TIMEOUT_SECS};
 
 fn stale_timeout_secs(job: &EngineJobRun, default_timeout_secs: i64) -> i64 {
     if job.job_type == LEGACY_JOB_TYPE_THREAD_REPAIR {
@@ -60,9 +58,14 @@ async fn cloud_agent_managed_job_ids(db: &Db) -> Result<HashSet<String>, String>
 
 pub async fn fail_stale_running_job_runs(db: &Db, timeout_secs: i64) -> Result<i64, String> {
     let finished_at = now_rfc3339();
+    let candidate_timeout_secs = timeout_secs
+        .max(30)
+        .min(STALE_LEGACY_REPAIR_JOB_TIMEOUT_SECS);
     let running_jobs = sqlx::query_scalar::<_, Json<serde_json::Value>>(
-        "SELECT data FROM engine_job_runs WHERE status='running'",
+        "SELECT data FROM engine_job_runs \
+         WHERE status='running' AND started_at < now()-($1 * interval '1 second')",
     )
+    .bind(candidate_timeout_secs)
     .fetch_all(db)
     .await
     .map_err(|error| error.to_string())?
@@ -92,6 +95,7 @@ pub async fn fail_stale_running_job_runs(db: &Db, timeout_secs: i64) -> Result<i
 
     let mut tx = db.begin().await.map_err(|error| error.to_string())?;
     let mut modified = 0_i64;
+    let mut failed_jobs = Vec::new();
     for job in &mut stale_jobs {
         job.status = "failed".to_string();
         job.finished_at = Some(finished_at.clone());
@@ -111,11 +115,14 @@ pub async fn fail_stale_running_job_runs(db: &Db, timeout_secs: i64) -> Result<i
         .map_err(|error| error.to_string())?;
         modified =
             modified.saturating_add(i64::try_from(result.rows_affected()).unwrap_or(i64::MAX));
+        if result.rows_affected() == 1 {
+            failed_jobs.push(job.clone());
+        }
     }
     tx.commit().await.map_err(|error| error.to_string())?;
 
     if modified > 0 {
-        for job in &stale_jobs {
+        for job in &failed_jobs {
             if job.job_type == "summary" {
                 if let (Some(tenant_id), Some(source_id), Some(thread_id)) = (
                     job.tenant_id.as_deref(),

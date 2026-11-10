@@ -570,6 +570,13 @@ async fn thread_l0_noop_final_commit_covers_records_without_false_facts_or_downs
         "stable_preferences": [],
         "uncertainties": []
     })));
+    assert!(
+        crate::repositories::thread_partitions::release_summary_claim(
+            &pool, &tenant, &source, &thread_id, PARTITION, &job.id, 0, 0,
+        )
+        .await
+        .expect("simulate summary lease cleanup before final commit")
+    );
     let summary =
         crate::repositories::generation_output_commits::commit_thread_summary_generation_final(
             &pool,
@@ -735,7 +742,13 @@ async fn covered_range_resummarization_atomically_swaps_active_coverage_without_
     .await
     .expect("create initial summary job");
     crate::repositories::thread_partitions::try_claim_summary(
-        &pool, &tenant, &source, &thread_id, PARTITION, &first_job.id, 300,
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        PARTITION,
+        &first_job.id,
+        300,
     )
     .await
     .expect("claim initial summary partition")
@@ -791,31 +804,40 @@ async fn covered_range_resummarization_atomically_swaps_active_coverage_without_
     first_output.source_record_start_id = Some(record_id.clone());
     first_output.source_record_end_id = Some(record_id.clone());
     first_output.source_record_count = 1;
-    let first = crate::repositories::generation_output_commits::commit_thread_summary_generation_final(
-        &pool,
-        &first_generation,
-        first_output,
-        crate::repositories::generation_output_commits::ThreadL0GenerationFinalization {
-            record_ids: std::slice::from_ref(&record_id),
-            consumed_summary_tokens: pending_tokens,
-            job_result: crate::models::FinishEngineJobRunRequest {
-                status: "done".to_string(), input_count: 1, output_count: 1,
-                processed_count: 1, success_count: 1, error_count: 0,
-                metadata: Some(json!({"phase":"committed"})), error_message: None,
+    let first =
+        crate::repositories::generation_output_commits::commit_thread_summary_generation_final(
+            &pool,
+            &first_generation,
+            first_output,
+            crate::repositories::generation_output_commits::ThreadL0GenerationFinalization {
+                record_ids: std::slice::from_ref(&record_id),
+                consumed_summary_tokens: pending_tokens,
+                job_result: crate::models::FinishEngineJobRunRequest {
+                    status: "done".to_string(),
+                    input_count: 1,
+                    output_count: 1,
+                    processed_count: 1,
+                    success_count: 1,
+                    error_count: 0,
+                    metadata: Some(json!({"phase":"committed"})),
+                    error_message: None,
+                },
             },
-        },
-    )
-    .await
-    .expect("commit initial covered summary");
+        )
+        .await
+        .expect("commit initial covered summary");
 
     let replacement_job = crate::repositories::control_plane::create_job_run(
         &pool,
         crate::models::CreateEngineJobRunRequest {
             job_type: "summary".to_string(),
             trigger_type: "covered_range_resummarize".to_string(),
-            tenant_id: Some(tenant.clone()), source_id: Some(source.clone()),
-            thread_id: Some(thread_id.clone()), subject_id: Some(subject.clone()),
-            thread_label: None, metadata: Some(json!({"previous_summary_id":first.id})),
+            tenant_id: Some(tenant.clone()),
+            source_id: Some(source.clone()),
+            thread_id: Some(thread_id.clone()),
+            subject_id: Some(subject.clone()),
+            thread_label: None,
+            metadata: Some(json!({"previous_summary_id":first.id})),
         },
     )
     .await
@@ -825,30 +847,48 @@ async fn covered_range_resummarization_atomically_swaps_active_coverage_without_
          job_run_id,status,lease_token,lease_expires_at,reason) \
          VALUES($1,$2,$3,$4,'running',$5,now()+interval '5 minutes','correct stale summary')",
     )
-    .bind(&tenant).bind(&source).bind(&first.id).bind(&replacement_job.id)
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&first.id)
+    .bind(&replacement_job.id)
     .bind(format!("resum-lease-{suffix}"))
-    .execute(&pool).await.expect("claim covered range for resummarization");
+    .execute(&pool)
+    .await
+    .expect("claim covered range for resummarization");
     let replacement_prepared = crate::repositories::generation_commits::prepare_generation(
         &pool,
         PrepareGeneration {
-            tenant_id: &tenant, source_id: &source, job_run_id: &replacement_job.id,
+            tenant_id: &tenant,
+            source_id: &source,
+            job_run_id: &replacement_job.id,
             generation_step_key: "thread-resummarize:project:alpha:0",
-            generation_kind: "thread_summary", input_digest: &digest,
-            input_manifest: &frozen_manifest, config_snapshot: &frozen_config,
+            generation_kind: "thread_summary",
+            input_digest: &digest,
+            input_manifest: &frozen_manifest,
+            config_snapshot: &frozen_config,
             project_partition_key: Some(PARTITION),
         },
     )
     .await
     .expect("prepare resummarization generation");
     let replacement_generation = crate::repositories::generation_commits::claim_generation(
-        &pool, &tenant, &source, &replacement_prepared.generation_id,
-        "resummarization-worker", 300,
+        &pool,
+        &tenant,
+        &source,
+        &replacement_prepared.generation_id,
+        "resummarization-worker",
+        300,
     )
     .await
     .expect("claim resummarization generation")
     .expect("resummarization generation lease");
     let mut replacement_output = output(
-        &replacement_generation, &thread_id, &subject, 0, PROFILE, "corrected summary",
+        &replacement_generation,
+        &thread_id,
+        &subject,
+        0,
+        PROFILE,
+        "corrected summary",
     );
     replacement_output.source_record_start_id = Some(record_id.clone());
     replacement_output.source_record_end_id = Some(record_id.clone());
@@ -875,21 +915,40 @@ async fn covered_range_resummarization_atomically_swaps_active_coverage_without_
         "SELECT COUNT(*),MIN(summary_id) FROM engine_summary_record_coverage \
          WHERE tenant_id=$1 AND source_id=$2 AND record_id=$3 AND status='active'",
     )
-    .bind(&tenant).bind(&source).bind(&record_id)
-    .fetch_one(&pool).await.expect("load replacement active coverage");
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&record_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load replacement active coverage");
     assert_eq!(active, (1, replacement.id.clone()));
     let prior: (String, bool, String) = sqlx::query_as(
         "SELECT status,recall_eligible,retired_reason FROM engine_summaries \
          WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
     )
-    .bind(&tenant).bind(&source).bind(&first.id)
-    .fetch_one(&pool).await.expect("load superseded summary");
-    assert_eq!(prior, ("superseded".to_string(), false, "covered_range_resummarized".to_string()));
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&first.id)
+    .fetch_one(&pool)
+    .await
+    .expect("load superseded summary");
+    assert_eq!(
+        prior,
+        (
+            "superseded".to_string(),
+            false,
+            "covered_range_resummarized".to_string()
+        )
+    );
     let record_summary: String = sqlx::query_scalar(
         "SELECT summary_id FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
     )
-    .bind(&tenant).bind(&source).bind(&record_id)
-    .fetch_one(&pool).await.expect("load resummarized source record");
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&record_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load resummarized source record");
     assert_eq!(record_summary, replacement.id);
 }
 
@@ -1016,6 +1075,13 @@ async fn thread_rollup_final_commit_atomically_marks_sources_releases_claim_and_
     rollup_output.source_record_start_id = Some(source_summary.id.clone());
     rollup_output.source_record_end_id = Some(source_summary.id.clone());
     rollup_output.source_record_count = 1;
+    assert!(
+        crate::repositories::thread_partitions::release_rollup_claim(
+            &pool, &tenant, &source, &thread_id, PARTITION, &job.id,
+        )
+        .await
+        .expect("simulate rollup lease cleanup before final commit")
+    );
     let rollup =
         crate::repositories::generation_output_commits::commit_thread_rollup_generation_final(
             &pool,
@@ -1073,20 +1139,42 @@ async fn thread_rollup_final_commit_atomically_marks_sources_releases_claim_and_
 
     let delta_id = format!("summary-delta-{suffix}");
     let delta = crate::repositories::summaries::insert_test_summary(
-        &pool, Some(delta_id.as_str()), &tenant, &source, &thread_id, &subject,
-        "thread_incremental", 0, None, "unrolled delta", None, None, 1,
-        Some(json!({"generation_profile": PROFILE})), Some(PARTITION),
+        &pool,
+        Some(delta_id.as_str()),
+        &tenant,
+        &source,
+        &thread_id,
+        &subject,
+        "thread_incremental",
+        0,
+        None,
+        "unrolled delta",
+        None,
+        None,
+        1,
+        Some(json!({"generation_profile": PROFILE})),
+        Some(PARTITION),
     )
     .await
     .expect("insert post-rollup delta");
     let frontier = crate::repositories::summaries::list_latest_thread_summary_frontier(
-        &pool, &tenant, &source, &thread_id, "thread_incremental", 100,
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        "thread_incremental",
+        100,
     )
     .await
     .expect("load canonical summary frontier");
     assert_eq!(
-        frontier.iter().map(|summary| summary.id.as_str()).collect::<Vec<_>>(),
+        frontier
+            .iter()
+            .map(|summary| summary.id.as_str())
+            .collect::<Vec<_>>(),
         vec![rollup.id.as_str(), delta.id.as_str()]
     );
-    assert!(!frontier.iter().any(|summary| summary.id == source_summary.id));
+    assert!(!frontier
+        .iter()
+        .any(|summary| summary.id == source_summary.id));
 }

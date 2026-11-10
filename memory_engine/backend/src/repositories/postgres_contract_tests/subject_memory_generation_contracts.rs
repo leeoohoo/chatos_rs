@@ -729,6 +729,15 @@ async fn subject_memory_l0_final_commit_is_atomic_and_idempotent() {
         .await
         .expect("claim subject scope")
     );
+    crate::repositories::subject_memory_scopes::release_subject_memory_scope_slot(
+        &pool,
+        &tenant,
+        &source,
+        &scope_key,
+        &generation.job_run_id,
+    )
+    .await
+    .expect("simulate subject scope cleanup before final commit");
 
     let memory =
         crate::repositories::generation_output_commits::commit_subject_memory_generation_final(
