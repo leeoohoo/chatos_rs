@@ -219,12 +219,7 @@ pub async fn require_memory_auth(
     next: Next,
 ) -> Result<Response, (StatusCode, String)> {
     let required_scope = scope_for_memory_path(request.uri().path());
-    let allowed_callers: &[&str] = match required_scope {
-        SOURCE_SCOPE => &[],
-        ADMIN_SCOPE => &[],
-        DATA_SCOPE => &[],
-        _ => &[],
-    };
+    let allowed_callers = allowed_internal_callers(required_scope);
     if let Some(claims) = require_internal_request(
         &state.config,
         request.headers(),
@@ -257,6 +252,14 @@ pub async fn require_memory_auth(
         StatusCode::UNAUTHORIZED,
         "missing authorization header".to_string(),
     ))
+}
+
+fn allowed_internal_callers(scope: &str) -> &'static [&'static str] {
+    match scope {
+        ADMIN_SCOPE => &["configuration-center"],
+        SOURCE_SCOPE | DATA_SCOPE => &[],
+        _ => &[],
+    }
 }
 
 pub async fn require_user_memory_auth(
@@ -379,7 +382,8 @@ async fn verify_user_service_principal(
 
 #[cfg(test)]
 mod tests {
-    use super::{MemoryAuthContext, MemoryPrincipal};
+    use super::{allowed_internal_callers, MemoryAuthContext, MemoryPrincipal};
+    use crate::api::internal_auth::{ADMIN_SCOPE, DATA_SCOPE};
     use axum::http::StatusCode;
 
     fn principal(
@@ -410,5 +414,14 @@ mod tests {
     fn operator_scope_can_fall_back_to_global() {
         let auth = MemoryAuthContext::Operator;
         assert_eq!(auth.resolve_tenant_scope(None).expect("scope"), None);
+    }
+
+    #[test]
+    fn only_configuration_center_can_call_internal_admin_routes() {
+        assert_eq!(
+            allowed_internal_callers(ADMIN_SCOPE),
+            &["configuration-center"]
+        );
+        assert!(allowed_internal_callers(DATA_SCOPE).is_empty());
     }
 }

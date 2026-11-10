@@ -148,7 +148,7 @@ fn required_identity_text(
         .ok_or_else(|| format!("{field} is required and must contain at most {max_len} characters"))
 }
 
-fn required_text(values: &BTreeMap<String, Value>, key: &str) -> Result<String, String> {
+pub(crate) fn required_text(values: &BTreeMap<String, Value>, key: &str) -> Result<String, String> {
     values
         .get(key)
         .and_then(Value::as_str)
