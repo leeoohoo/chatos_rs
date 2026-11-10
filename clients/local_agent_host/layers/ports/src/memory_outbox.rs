@@ -146,4 +146,13 @@ pub trait LocalMemoryOutboxStore: Send + Sync {
         tenant_id: &str,
         source_id: &str,
     ) -> Result<LocalMemorySyncStatus, ClientStorageError>;
+
+    /// Committed UI records awaiting delivery, scoped to this owner and the
+    /// configured Memory source. These are live updates, never local history.
+    async fn list_pending_conversation_memory_records(
+        &self,
+        tenant_id: &str,
+        thread_id: &str,
+        conversation_id: &str,
+    ) -> Result<Vec<LocalMemoryOutboxRecord>, ClientStorageError>;
 }
