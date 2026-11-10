@@ -573,7 +573,7 @@ pub(crate) async fn finalize_terminal(
             )
             .await;
             match result {
-                Ok(_) => {
+                Ok(Some(_)) => {
                     settle_summary_dispatch(
                         state,
                         tenant_id,
@@ -588,6 +588,7 @@ pub(crate) async fn finalize_terminal(
                     )
                     .await
                 }
+                Ok(None) => Ok(()),
                 Err(error) if error == MEMORY_CLOUD_AGENT_DEFERRED => Ok(()),
                 Err(error) => Err(error),
             }

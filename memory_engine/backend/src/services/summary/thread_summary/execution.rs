@@ -352,19 +352,20 @@ pub(crate) async fn resume_cloud_summary_job(
     source_id: &str,
     thread_id: &str,
     job_run_id: &str,
-) -> Result<RunThreadSummaryResponse, String> {
+) -> Result<Option<RunThreadSummaryResponse>, String> {
     let job_run = cp_repo::get_job_run_by_id(db, job_run_id)
         .await?
         .ok_or_else(|| format!("summary job run not found: {job_run_id}"))?;
     validate_summary_job_scope(&job_run, tenant_id, source_id, thread_id)?;
     if job_run.status == "done" {
-        return Ok(completed_job_response(thread_id, &job_run));
+        return Ok(Some(completed_job_response(thread_id, &job_run)));
     }
     if job_run.status != "running" {
-        return Err(job_run
-            .error_message
-            .clone()
-            .unwrap_or_else(|| format!("summary job is not resumable: {}", job_run.status)));
+        // A durable terminal callback can arrive after stale recovery already
+        // failed the parent and released its records/partition. The terminal
+        // parent is authoritative: acknowledge the late callback without
+        // touching a newer claim or manufacturing an outbox dead letter.
+        return Ok(None);
     }
 
     let thread = threads::get_thread_by_id(db, tenant_id, source_id, thread_id)
@@ -421,6 +422,7 @@ pub(crate) async fn resume_cloud_summary_job(
         config, db, tenant_id, source_id, thread_id, job_run_id, ctx,
     )
     .await
+    .map(Some)
 }
 
 pub(crate) async fn fail_cloud_summary_job(

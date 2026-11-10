@@ -28,6 +28,8 @@
 
 > 2026-11-10 十一次修订：发布器本地与服务端 Git fetch 都必须禁用交互式凭据等待，并使用低速超时和有限重试。网络停滞必须在有界时间内明确失败，禁止发布进程无限挂起或依赖人工判断。
 
+> 2026-11-10 十二次修订：durable terminal callback 到达时若父 Summary Job 已由恢复器终结，则父 Job 状态为权威结果；回调必须幂等确认，不再尝试提交已释放的 Record/partition claim，也不得制造新的 outbox dead-letter。只有仍为 `running` 的父 Job 才允许进入 generation finalization。
+
 ## 1. 结论
 
 当前 Memory Engine 的总体分层可以继续使用：原始 Record 先形成 Thread L0 Summary，再派生 Thread Rollup、Project Summary 和 Agent Memory；模型请求在运行边界读取 Memory Engine，在轮内继续使用 Responses compaction 管理当前运行历史。

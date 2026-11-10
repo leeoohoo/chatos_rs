@@ -252,3 +252,58 @@ async fn oversized_thread_rollup_fails_without_marking_source_done() {
     assert_eq!(stored.rollup_status, "pending");
     assert!(stored.rollup_summary_id.is_none());
 }
+
+#[tokio::test]
+async fn late_success_callback_acknowledges_an_already_failed_summary_job() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let thread_id = format!("thread-{suffix}");
+    let thread = thread(&pool, &tenant, &source, &thread_id).await;
+    let job = crate::repositories::control_plane::create_job_run(
+        &pool,
+        crate::models::CreateEngineJobRunRequest {
+            job_type: "summary".to_string(),
+            trigger_type: "database_worker".to_string(),
+            tenant_id: Some(tenant.clone()),
+            source_id: Some(source.clone()),
+            thread_id: Some(thread_id.clone()),
+            subject_id: Some(thread.subject_id),
+            thread_label: None,
+            metadata: None,
+        },
+    )
+    .await
+    .expect("create summary job for late callback");
+    crate::repositories::control_plane::finish_job_run(
+        &pool,
+        &job.id,
+        crate::models::FinishEngineJobRunRequest {
+            status: "failed".to_string(),
+            input_count: 1,
+            output_count: 0,
+            processed_count: 0,
+            success_count: 0,
+            error_count: 1,
+            metadata: None,
+            error_message: Some("stale recovery released the claim".to_string()),
+        },
+    )
+    .await
+    .expect("fail summary job before callback");
+
+    let outcome = resume_cloud_summary_job(
+        &test_config(),
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        &job.id,
+    )
+    .await
+    .expect("late terminal callback is acknowledged");
+    assert!(outcome.is_none());
+}
