@@ -142,7 +142,7 @@ async fn run_reconciler(state: Arc<AppState>) {
         match release_expired_summary_slots(&state).await {
             Ok(count) if count > 0 => info!(
                 recovered_count = count,
-                "Memory Engine released expired summary thread slots"
+                "Memory Engine recovered stale summary ownership"
             ),
             Ok(_) => {}
             Err(error) => warn!(
@@ -155,12 +155,17 @@ async fn run_reconciler(state: Arc<AppState>) {
 }
 
 async fn release_expired_summary_slots(state: &AppState) -> Result<usize, String> {
-    thread_partitions::release_expired_summary_claims(
+    let records = crate::repositories::records::release_records_from_terminal_summary_jobs(
         &state.pool,
         state.config.summary_outbox_batch_size,
     )
-    .await
-    .map(|count| usize::try_from(count).unwrap_or(usize::MAX))
+    .await?;
+    let partitions = thread_partitions::release_expired_summary_claims(
+        &state.pool,
+        state.config.summary_outbox_batch_size,
+    )
+    .await?;
+    Ok(usize::try_from(records.saturating_add(partitions)).unwrap_or(usize::MAX))
 }
 
 #[cfg(test)]

@@ -64,8 +64,8 @@ pub use queries::{
 #[allow(unused_imports)]
 pub use status::{
     claim_records_for_summary, mark_claimed_records_summarized, mark_records_summarized,
-    release_records_from_summary, restore_record_pending, restore_record_pending_in_tx,
-    RestorePendingResult,
+    release_records_from_summary, release_records_from_terminal_summary_jobs,
+    restore_record_pending, restore_record_pending_in_tx, RestorePendingResult,
 };
 #[cfg(test)]
 pub(crate) use writes::upsert_record_row;

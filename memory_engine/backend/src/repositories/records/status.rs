@@ -173,6 +173,41 @@ pub async fn release_records_from_summary(
     .await
 }
 
+pub async fn release_records_from_terminal_summary_jobs(
+    db: &Db,
+    limit: i64,
+) -> Result<u64, String> {
+    let result = sqlx::query(
+        "WITH candidates AS ( \
+           SELECT record.tenant_id,record.source_id,record.id \
+             FROM engine_records record \
+             JOIN engine_job_runs job ON job.id=record.summary_job_run_id \
+            WHERE record.summary_status='summarizing' AND job.job_type='summary' \
+              AND job.status<>'running' AND NOT EXISTS ( \
+                  SELECT 1 FROM engine_summary_record_coverage coverage \
+                   WHERE coverage.tenant_id=record.tenant_id \
+                     AND coverage.source_id=record.source_id \
+                     AND coverage.record_id=record.id AND coverage.status='active') \
+            ORDER BY record.summary_started_at,record.id \
+            LIMIT $1 FOR UPDATE OF record SKIP LOCKED \
+         ) \
+         UPDATE engine_records record SET summary_status='pending',summary_id=NULL, \
+                summary_job_run_id=NULL,summary_started_at=NULL, \
+                data=jsonb_set(jsonb_set(jsonb_set(record.data, \
+                    '{summary_status}',to_jsonb('pending'::TEXT),true), \
+                    '{summary_id}','null'::JSONB,true), \
+                    '{summarized_at}','null'::JSONB,true) \
+           FROM candidates candidate \
+          WHERE record.tenant_id=candidate.tenant_id \
+            AND record.source_id=candidate.source_id AND record.id=candidate.id",
+    )
+    .bind(limit.clamp(1, 10_000))
+    .execute(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(result.rows_affected())
+}
+
 pub async fn mark_claimed_records_summarized(
     db: &Db,
     tenant_id: &str,

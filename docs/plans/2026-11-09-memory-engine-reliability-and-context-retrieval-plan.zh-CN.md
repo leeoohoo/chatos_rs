@@ -16,6 +16,8 @@
 
 > 2026-11-10 五次修订：发布、replay、rearm 等机器运维修复不再依赖人工管理员密码、登录会话或临时用户 JWT。统一改为 Configuration Center 到目标服务的 mTLS 服务身份、短时请求签名、防重放请求标识和双端审计。补充“无 durable fact”正常完成语义：不得为无事实输入编造记忆，也不得因此 dead-letter 或阻塞全量重建。
 
+> 2026-11-10 六次修订：补齐 Worker 中止、超时或终态失败后的 Record claim 自动恢复。恢复器只把所属 Summary Job 已终态、没有 active coverage 的 `summarizing` Record 原子恢复为 `pending`；运行中 Job 或已有 active coverage 的 Record 必须保持不变。不得依靠人工 SQL 清理卡死 claim。
+
 ## 1. 结论
 
 当前 Memory Engine 的总体分层可以继续使用：原始 Record 先形成 Thread L0 Summary，再派生 Thread Rollup、Project Summary 和 Agent Memory；模型请求在运行边界读取 Memory Engine，在轮内继续使用 Responses compaction 管理当前运行历史。
@@ -625,6 +627,8 @@ canonical_input  = UTF-8 JSON，字段按固定 schema 顺序编码，数组保�
 不得继续使用逗号/冒号拼接 ID 作为 generation digest。manifest 保存 `schema_version`、`digest_algorithm` 和 canonicalizer revision；每个输入 digest 同时覆盖真实 ID、不可变内容身份、partition 和版本。相同 ID 但正文、metadata、structured payload 或可信 partition 不同必须拒绝为非幂等重放，不能复用旧 generation。
 
 同一 Job step 重放必须复用同一个 `generation_id`。数据库发现该 generation 已成功提交时，直接返回已存在输出并完成对应 step，不再次生成或写入。registry 为 `prepared` 或过期 `running` 时可由 CAS lease 接管后重新调用模型，但只有一个事务能通过当前 lease token 和 `running → committed` 条件更新提交逻辑输出；可重试失败写入 attempt/error 字段并释放或等待 lease，不提前把 registry 终结。只有 dead-letter、人工取消或输入被明确替换时才标记 `abandoned`，后续 rearm 创建新的 Job/generation 并保留旧审计。
+
+Summary Job 进入任意终态后，低频恢复器必须扫描其仍持有的 `summarizing` Record。只有不存在 active coverage 时才能清除 `summary_job_run_id/summary_started_at` 并恢复为 `pending`；仍在运行的 Job、已提交 coverage 或已被新 owner 接管的 Record 一律不得改动。该恢复与 partition lease 恢复在同一个 Worker 恢复循环执行，使进程重启、模型超时和终态 callback 丢失都不会永久冻结输入。
 
 Subject Memory 必须从当前按逻辑 `memory_key` 原地 upsert 改为不可变 generation 版本：
 
@@ -1840,6 +1844,7 @@ release/repair command
 
 - 切换前失败：数据库事务回滚，保持维护停写，修复后重新执行；
 - 切换后 smoke 失败：立即停止写入和 Worker，整体恢复切换前数据库与应用快照；恢复完成并通过一致性审计前不开放流量，绝不混跑新旧版本；
+- Worker 中止或 Job 超时：由新版本恢复器释放过期 partition lease，并把终态 Summary Job 遗留且无 active coverage 的 Record 恢复为 pending；禁止直接 SQL 修改 Record、Job 或 backlog 状态；
 - 已提交的新格式数据不得交给旧 writer 继续处理，禁止通过运行时开关、旧 endpoint 或旧 compose 局部降级；
 - coverage/lineage、typed columns、generation registry 和 tombstone 历史必须保持一致；恢复操作只能整体执行并再次通过全量审计；
 - 不允许恢复 oversized skip、跨项目 Rollup、Repair 旁路写入、无 assertion scope 或无硬预算预检的任何旧行为。
