@@ -105,8 +105,14 @@ impl CloudSummaryPipelineState {
         &self,
         structured_payload: serde_json::Value,
     ) -> Result<SummaryBuildResult, String> {
+        let text =
+            if crate::models::structured_payload::durable_fact_count(&structured_payload)? == 0 {
+                String::new()
+            } else {
+                crate::models::structured_payload::render_payload(&structured_payload)?
+            };
         Ok(SummaryBuildResult {
-            text: crate::models::structured_payload::render_payload(&structured_payload)?,
+            text,
             structured_payload,
             chunk_count: self.chunk_count,
             overflow_retry_count: self.overflow_retry_count,
@@ -152,7 +158,33 @@ impl CloudSummaryPipelineState {
             .await
         {
             Ok(output) => {
-                let payload = payload_contract.finalize_model_output(output.as_str())?;
+                let payload = match payload_contract.finalize_model_output(output.as_str()) {
+                    Ok(payload) => payload,
+                    Err(error) if model_attempt <= ai.max_transient_retries() => {
+                        return Ok((
+                            AiSingleStepOutcome::Retry {
+                                error,
+                                retry_kind: "memory_payload_validation".to_string(),
+                                next_model_attempt: model_attempt.saturating_add(1),
+                                backoff_ms: 0,
+                            },
+                            self,
+                            None,
+                        ));
+                    }
+                    Err(error) => {
+                        return Ok((
+                            AiSingleStepOutcome::Failed {
+                                error: format!(
+                                    "model memory payload validation exhausted {} retries: {error}",
+                                    ai.max_transient_retries()
+                                ),
+                            },
+                            self,
+                            None,
+                        ));
+                    }
+                };
                 self.next
                     .push(serde_json::to_string(&payload).map_err(|error| error.to_string())?);
                 self.cursor = self.cursor.saturating_add(1);
@@ -407,7 +439,7 @@ mod tests {
     }
 
     fn success(text: &str) -> TestResponse {
-        let payload = serde_json::json!({
+        payload_response(serde_json::json!({
             "schema_version":"memory_payload_v1",
             "scope":{
                 "kind":"thread",
@@ -432,8 +464,31 @@ mod tests {
             "constraints":[],
             "stable_preferences":[],
             "uncertainties":[]
-        })
-        .to_string();
+        }))
+    }
+
+    fn empty_success() -> TestResponse {
+        payload_response(serde_json::json!({
+            "schema_version":"memory_payload_v1",
+            "scope":{
+                "kind":"thread",
+                "subject_id":"agent:test",
+                "project_partition_key":"__none__"
+            },
+            "current_goal":null,
+            "completed":[],
+            "decisions":[],
+            "open_items":[],
+            "blockers":[],
+            "artifacts":[],
+            "constraints":[],
+            "stable_preferences":[],
+            "uncertainties":[]
+        }))
+    }
+
+    fn payload_response(payload: serde_json::Value) -> TestResponse {
+        let payload = payload.to_string();
         TestResponse {
             status: StatusCode::OK,
             body: format!(
@@ -479,6 +534,7 @@ mod tests {
             project_partition_key: Some("__none__".to_string()),
             source_refs: vec!["source-1".to_string()],
             supersession_candidates: Vec::new(),
+            allow_empty_facts: false,
         }
     }
 
@@ -582,6 +638,65 @@ mod tests {
                 next_model_attempt: 2,
                 ..
             }
+        ));
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn trivial_input_can_complete_with_no_durable_facts() {
+        let ai = test_ai(vec![empty_success()], 2).await;
+        let mut payload_contract = contract();
+        payload_contract.allow_empty_facts = true;
+        let state = CloudSummaryPipelineState::new(
+            spec(vec!["[role=system]\ntest".to_string()], 512),
+            payload_contract,
+        )
+        .expect("pipeline state");
+
+        let (outcome, _, result) = state.execute_one(&ai, 1).await.expect("model step");
+
+        assert!(matches!(outcome, AiSingleStepOutcome::Final(_)));
+        let result = result.expect("no-op summary result");
+        assert!(result.text.is_empty());
+        assert_eq!(
+            crate::models::structured_payload::durable_fact_count(&result.structured_payload),
+            Ok(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_or_forbidden_empty_payload_uses_bounded_model_retry() {
+        let ai = test_ai(vec![empty_success()], 2).await;
+        let state =
+            CloudSummaryPipelineState::new(spec(vec!["input".to_string()], 512), contract())
+                .expect("pipeline state");
+
+        let (outcome, _, result) = state.execute_one(&ai, 1).await.expect("model step");
+
+        assert!(matches!(
+            outcome,
+            AiSingleStepOutcome::Retry {
+                ref retry_kind,
+                next_model_attempt: 2,
+                ..
+            } if retry_kind == "memory_payload_validation"
+        ));
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn malformed_payload_fails_after_validation_retry_budget_is_exhausted() {
+        let ai = test_ai(vec![empty_success()], 2).await;
+        let state =
+            CloudSummaryPipelineState::new(spec(vec!["input".to_string()], 512), contract())
+                .expect("pipeline state");
+
+        let (outcome, _, result) = state.execute_one(&ai, 3).await.expect("model step");
+
+        assert!(matches!(
+            outcome,
+            AiSingleStepOutcome::Failed { ref error }
+                if error.contains("validation exhausted 2 retries")
         ));
         assert!(result.is_none());
     }

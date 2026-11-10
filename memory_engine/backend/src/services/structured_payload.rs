@@ -85,6 +85,8 @@ pub(crate) struct MemoryPayloadContract {
     pub project_partition_key: Option<String>,
     pub source_refs: Vec<String>,
     pub supersession_candidates: Vec<String>,
+    #[serde(default)]
+    pub allow_empty_facts: bool,
 }
 
 impl MemoryPayloadContract {
@@ -231,8 +233,13 @@ impl MemoryPayloadContract {
 
     pub(crate) fn model_instruction(&self) -> Result<String, String> {
         self.validate()?;
+        let empty_instruction = if self.allow_empty_facts {
+            " If the supplied source items contain no durable fact, return every fact collection empty and current_goal null; never invent a fact just to make the payload non-empty."
+        } else {
+            " The payload must contain at least one durable fact."
+        };
         Ok(format!(
-            "Return exactly one {schema} JSON object matching the enforced response schema. Classify each durable statement into the narrowest fact collection. Every fact must cite only source_refs visible in the supplied source items. Use supersedes only when a newer fact directly replaces one of these frozen candidate IDs: {candidates}. fact_id is a required model-local identifier and will be replaced by the server's deterministic identifier. Do not include credentials, authorization grants, or facts unsupported by the sources.",
+            "Return exactly one {schema} JSON object matching the enforced response schema. Classify each durable statement into the narrowest fact collection. Every fact must cite only source_refs visible in the supplied source items. Use supersedes only when a newer fact directly replaces one of these frozen candidate IDs: {candidates}. fact_id is a required model-local identifier and will be replaced by the server's deterministic identifier. Do not include credentials, authorization grants, or facts unsupported by the sources.{empty_instruction}",
             schema = MEMORY_PAYLOAD_SCHEMA,
             candidates = serde_json::to_string(&self.supersession_candidates)
                 .map_err(|error| error.to_string())?,
@@ -375,11 +382,24 @@ impl MemoryPayloadContract {
                 fact_count = fact_count.saturating_add(1);
             }
         }
-        if fact_count == 0 {
+        if fact_count == 0 && !self.allow_empty_facts {
             return Err("model memory payload must contain at least one fact".to_string());
         }
         Ok(payload)
     }
+}
+
+pub(crate) fn durable_fact_count(payload: &serde_json::Value) -> Result<usize, String> {
+    validate_envelope_shape(payload)?;
+    FACT_COLLECTIONS
+        .iter()
+        .try_fold(0usize, |count, collection| {
+            let facts = payload
+                .get(*collection)
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| format!("memory payload {collection} must be an array"))?;
+            Ok(count.saturating_add(facts.len()))
+        })
 }
 
 pub(crate) fn render_payload(payload: &serde_json::Value) -> Result<String, String> {
@@ -577,6 +597,7 @@ mod tests {
             project_partition_key: Some("project:alpha".to_string()),
             source_refs: vec!["record-1".to_string()],
             supersession_candidates: vec!["fact-old".to_string()],
+            allow_empty_facts: false,
         }
     }
 
@@ -706,5 +727,22 @@ mod tests {
                 .finalize_model_output(payload.to_string().as_str())
                 .is_err());
         }
+    }
+
+    #[test]
+    fn empty_facts_are_only_valid_for_an_explicit_noop_contract() {
+        let mut payload = valid_payload();
+        payload["decisions"] = json!([]);
+
+        let mut strict = contract();
+        assert!(strict
+            .finalize_model_output(payload.to_string().as_str())
+            .is_err());
+
+        strict.allow_empty_facts = true;
+        let finalized = strict
+            .finalize_model_output(payload.to_string().as_str())
+            .expect("explicit no-op payload");
+        assert_eq!(super::durable_fact_count(&finalized), Ok(0));
     }
 }

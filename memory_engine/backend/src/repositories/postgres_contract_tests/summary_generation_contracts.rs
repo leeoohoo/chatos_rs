@@ -422,7 +422,7 @@ async fn thread_rollup_generation_requires_rollup_kind_and_matching_frozen_confi
 }
 
 #[tokio::test]
-async fn thread_l0_final_commit_atomically_finishes_records_partition_projection_and_job() {
+async fn thread_l0_noop_final_commit_covers_records_without_false_facts_or_downstream_work() {
     let Some(pool) = pool().await else {
         return;
     };
@@ -551,6 +551,25 @@ async fn thread_l0_final_commit_atomically_finishes_records_partition_projection
     summary_output.source_record_start_id = Some(record_id.clone());
     summary_output.source_record_end_id = Some(record_id.clone());
     summary_output.source_record_count = 1;
+    summary_output.summary_type = "thread_noop";
+    summary_output.summary_text = "No durable memory extracted from the covered source records.";
+    summary_output.structured_payload = Box::leak(Box::new(json!({
+        "schema_version": crate::models::structured_payload::MEMORY_PAYLOAD_SCHEMA,
+        "scope": {
+            "kind": "thread",
+            "subject_id": subject,
+            "project_partition_key": PARTITION
+        },
+        "current_goal": null,
+        "completed": [],
+        "decisions": [],
+        "open_items": [],
+        "blockers": [],
+        "artifacts": [],
+        "constraints": [],
+        "stable_preferences": [],
+        "uncertainties": []
+    })));
     let summary =
         crate::repositories::generation_output_commits::commit_thread_summary_generation_final(
             &pool,
@@ -609,6 +628,43 @@ async fn thread_l0_final_commit_atomically_finishes_records_partition_projection
     .await
     .expect("load finalized L0 job");
     assert_eq!(job_state, ("done".to_string(), 1, 1));
+    assert_eq!(summary.summary_type, "thread_noop");
+    assert_eq!(summary.rollup_status, "done");
+    assert_eq!(summary.subject_memory_summarized, 1);
+    let coverage_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM engine_summary_record_coverage \
+         WHERE tenant_id=$1 AND source_id=$2 AND summary_id=$3 AND record_id=$4 AND status='active'",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&summary.id)
+    .bind(&record_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count no-op coverage");
+    assert_eq!(coverage_count, 1);
+    let fact_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM engine_memory_facts \
+         WHERE tenant_id=$1 AND source_id=$2 AND output_kind='thread_summary' AND output_id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&summary.id)
+    .fetch_one(&pool)
+    .await
+    .expect("count no-op memory facts");
+    assert_eq!(fact_count, 0);
+    let downstream_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM engine_derived_event_outbox \
+         WHERE tenant_id=$1 AND source_id=$2 AND generation_id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&generation.generation_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count no-op downstream events");
+    assert_eq!(downstream_count, 0);
 }
 
 #[tokio::test]

@@ -236,6 +236,8 @@ async fn prepare_generation_from_terminal_context(
             .map(str::to_string),
         source_refs,
         supersession_candidates,
+        allow_empty_facts: generation_kind == "thread_summary"
+            && generation_step_key.starts_with("thread-l0:"),
     };
     contract.validate()?;
     Ok(contract)

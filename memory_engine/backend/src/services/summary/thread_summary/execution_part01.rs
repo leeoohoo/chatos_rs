@@ -97,7 +97,14 @@ pub(crate) async fn execute_prepared_thread_summary_job(
         .map(|record| record.id.clone())
         .collect::<Vec<_>>();
     let structured_payload = summary_build.structured_payload;
-    let summary_text = crate::models::structured_payload::render_payload(&structured_payload)?;
+    let durable_fact_count =
+        crate::models::structured_payload::durable_fact_count(&structured_payload)?;
+    let no_durable_memory = durable_fact_count == 0;
+    let summary_text = if no_durable_memory {
+        "No durable memory extracted from the covered source records.".to_string()
+    } else {
+        crate::models::structured_payload::render_payload(&structured_payload)?
+    };
     let pending_after_count = pending_before_count.saturating_sub(record_ids.len() as i64);
     let job_result = FinishEngineJobRunRequest {
         status: "done".to_string(),
@@ -123,7 +130,11 @@ pub(crate) async fn execute_prepared_thread_summary_job(
         generation_output_commits::ThreadSummaryGenerationOutput {
             thread_id,
             subject_id: thread.subject_id.as_str(),
-            summary_type: "thread_incremental",
+            summary_type: if no_durable_memory {
+                "thread_noop"
+            } else {
+                "thread_incremental"
+            },
             level: 0,
             source_digest: None,
             summary_text: summary_text.as_str(),
@@ -133,6 +144,8 @@ pub(crate) async fn execute_prepared_thread_summary_job(
             metadata: Some(serde_json::json!({
                 "project_subject_id": selection.project_subject_id,
                 "generation_profile": THREAD_SUMMARY_GENERATION_PROFILE,
+                "no_durable_memory": no_durable_memory,
+                "durable_fact_count": durable_fact_count,
             })),
             generation_reason: "pending_records",
             generation_profile: THREAD_SUMMARY_GENERATION_PROFILE,

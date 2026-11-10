@@ -14,6 +14,8 @@
 
 > 2026-11-09 四次修订：删除 Compose 旧条数参数、请求级检索模式、检索故障回退、旧 Prompt 只读兼容和配置旧 revision 沿用。M0—M7 改为一次性改造的工程工作包；所有工作包、客户端升级、历史重建和验收必须在同一个最终提交与发布窗口前全部完成，不产生任何可运行、可提交、可推送或可发布的中间态。
 
+> 2026-11-10 五次修订：发布、replay、rearm 等机器运维修复不再依赖人工管理员密码、登录会话或临时用户 JWT。统一改为 Configuration Center 到目标服务的 mTLS 服务身份、短时请求签名、防重放请求标识和双端审计。补充“无 durable fact”正常完成语义：不得为无事实输入编造记忆，也不得因此 dead-letter 或阻塞全量重建。
+
 ## 1. 结论
 
 当前 Memory Engine 的总体分层可以继续使用：原始 Record 先形成 Thread L0 Summary，再派生 Thread Rollup、Project Summary 和 Agent Memory；模型请求在运行边界读取 Memory Engine，在轮内继续使用 Responses compaction 管理当前运行历史。
@@ -743,6 +745,8 @@ chunk 不是新 Record，仅是本次 Pipeline 的内部输入。
 现有 `build_summary_text` 和 Thread Rollup builder 虽然已经设置 `split_oversized_items=true`，但当前 L0 selector 会在进入 builder 前把单条 oversized Record 放入 `selection.oversized`。实现时必须删除 `mark_oversized_records_as_summarized` 成功路径，并把完整 Source Unit 送入统一 splitter；仅保留 builder 的开关而不修改 selector 不能解决数据丢失。
 
 ### 6.4 不可处理输入和分区级推进
+
+结构合法且所有事实集合均为空，表示源输入没有可持久化事实，不属于不可处理输入。该结果只允许用于 Thread L0：最终事务写入 `thread_noop` 覆盖凭证，将源 Record 标记为 summarized、递减 partition pending 统计、提交 generation/Job，但不写 `engine_memory_facts`，也不派生 Rollup 或 Subject Memory 事件。`thread_noop` 只用于审计和 coverage，不进入 `thread_incremental` 召回链。模型 Payload schema、scope、source refs 或事实字段损坏仍属于校验失败，按冻结请求有限重试，预算耗尽后才进入 dead-letter。
 
 若 Source Unit 在有限切分和归并后仍无法处理：
 
@@ -1812,7 +1816,27 @@ M0—M7 仅用于安排代码、迁移和测试的依赖顺序，不是灰度阶
 
 M2a 与 M3b 必须在恢复生产流量前完成；不能让新 Planner 消费未治理的旧派生数据。M3b 不得早于 project-aware rollup 和 assertion verifier。
 
-### 20.3 故障恢复
+### 20.3 发布控制与修复身份
+
+发布自动化不得要求操作员在服务器上输入管理员密码、复制浏览器登录态或临时签发用户 JWT。业务用户 JWT 只表达用户会话，不承担服务间运维授权。正式 replay、rearm 和受控修复统一使用以下单一路径：
+
+```text
+release/repair command
+  → Configuration Center 内部控制面
+  → mTLS 校验 configuration-center 服务身份
+  → 请求体摘要 + caller + audience + operation + timestamp + nonce 的短时签名
+  → 目标服务按 operation/scope 执行 CAS 修复
+  → Configuration Center 审计 + 目标服务 operator audit
+```
+
+- 服务私钥只由部署 secret 管理，发布脚本不生成、打印或传递可复用 Bearer token；
+- 签名必须绑定请求体、目标服务、操作、tenant/source/partition/version 和短 TTL，nonce/JTI 单次消费；
+- 目标服务只接受明确 allowlist 的服务调用方和操作，不能把服务签名兑换成通用管理员身份；
+- replay/rearm 必须调用正式接口并执行版本/CAS 校验，禁止直接 SQL 改 dead-letter、backlog 或 Cloud Agent 状态；
+- 任一认证、签名、重放或审计写入失败都 fail closed，并保持公网写关闭；
+- 上述通道是唯一正式修复通道，不保留人工 JWT 备用路径或无审计旁路。
+
+### 20.4 故障恢复
 
 - 切换前失败：数据库事务回滚，保持维护停写，修复后重新执行；
 - 切换后 smoke 失败：立即停止写入和 Worker，整体恢复切换前数据库与应用快照；恢复完成并通过一致性审计前不开放流量，绝不混跑新旧版本；

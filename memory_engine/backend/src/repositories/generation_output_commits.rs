@@ -163,6 +163,7 @@ async fn commit_thread_summary_generation_inner(
     }
 
     let project_partition_key = output.project_partition_key;
+    let is_noop = output.summary_type == "thread_noop";
     let mut summary = new_summary(
         &current.tenant_id,
         &current.source_id,
@@ -179,6 +180,16 @@ async fn commit_thread_summary_generation_inner(
     );
     summary.payload_schema = Some(output.payload_schema.to_string());
     summary.structured_payload = Some(output.structured_payload.clone());
+    if is_noop {
+        summary.rollup_status = "done".to_string();
+        summary.subject_memory_summarized = 1;
+        summary.subject_memory_summarized_at = Some(summary.created_at.clone());
+    }
+    let downstream_pending = !is_noop;
+    let downstream_version = i64::from(downstream_pending);
+    let downstream_requested_at = downstream_pending
+        .then(|| timestamp(&summary.created_at))
+        .transpose()?;
     let mut tx = db.begin().await.map_err(|error| error.to_string())?;
     if let Some(finalization) = resummarization_finalization.as_ref() {
         supersede_resummarized_range(
@@ -197,8 +208,8 @@ async fn commit_thread_summary_generation_inner(
          subject_memory_source_dispatch_version,subject_memory_source_dispatch_requested_at, \
          created_at,updated_at,data,generation_id,generation_reason,generation_profile, \
          project_partition_key,recall_eligible,payload_schema,structured_payload,pipeline_revision) \
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,1,$12,true,1,$12,$12,$13,$14, \
-         $15,$16,$17,$18,true,$19,$20,$21)",
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$12,$13,$14,$15,$16,$17, \
+         $18,$19,$20,$21,true,$22,$23,$24)",
     )
     .bind(&summary.id)
     .bind(&summary.tenant_id)
@@ -211,6 +222,9 @@ async fn commit_thread_summary_generation_inner(
     .bind(&summary.status)
     .bind(&summary.rollup_status)
     .bind(summary.subject_memory_summarized)
+    .bind(downstream_pending)
+    .bind(downstream_version)
+    .bind(downstream_requested_at)
     .bind(timestamp(&summary.created_at)?)
     .bind(timestamp(&summary.updated_at)?)
     .bind(json(&summary)?)
@@ -239,16 +253,18 @@ async fn commit_thread_summary_generation_inner(
         output.structured_payload,
     )
     .await?;
-    derived_events::enqueue_summary_downstream_requests(
-        &mut tx,
-        &current.tenant_id,
-        &current.source_id,
-        &summary.id,
-        &summary.thread_id,
-        project_partition_key,
-        &current.generation_id,
-    )
-    .await?;
+    if !is_noop {
+        derived_events::enqueue_summary_downstream_requests(
+            &mut tx,
+            &current.tenant_id,
+            &current.source_id,
+            &summary.id,
+            &summary.thread_id,
+            project_partition_key,
+            &current.generation_id,
+        )
+        .await?;
+    }
     if let Some(finalization) = l0_finalization {
         finalize_thread_l0_generation(
             &mut tx,
@@ -1493,6 +1509,13 @@ fn validate_summary_output(
     }
     if output.level < 0 {
         return Err("thread summary generation output level cannot be negative".to_string());
+    }
+    if output.summary_type == "thread_noop"
+        && (output.level != 0 || generation.generation_kind != "thread_summary")
+    {
+        return Err(
+            "thread no-op output is only valid for a level-0 thread generation".to_string(),
+        );
     }
     if generation.project_partition_key.as_deref() != Some(output.project_partition_key) {
         return Err("thread summary output partition does not match generation".to_string());
