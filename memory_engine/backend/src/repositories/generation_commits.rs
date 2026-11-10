@@ -107,7 +107,8 @@ pub async fn claim_generation(
          lease_owner=$4,lease_token=$5,lease_acquired_at=now(), \
          lease_expires_at=now()+make_interval(secs=>$6),last_error_code=NULL,last_error_detail=NULL \
          WHERE tenant_id=$1 AND source_id=$2 AND generation_id=$3 \
-           AND (status='prepared' OR (status='running' AND lease_expires_at<=now())) \
+           AND (status='prepared' OR (status='running' \
+                AND (lease_expires_at<=now() OR lease_owner=$4))) \
          RETURNING {COLUMNS}"
     )))
     .bind(tenant_id)

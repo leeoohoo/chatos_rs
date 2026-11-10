@@ -40,16 +40,17 @@ async fn cloud_agent_managed_job_ids(db: &Db) -> Result<HashSet<String>, String>
     sqlx::query_scalar::<_, String>(
         "SELECT DISTINCT state.data->>'owner_entity_id' \
            FROM engine_cloud_agent_run_states state \
+           JOIN engine_job_runs job ON job.id=state.data->>'owner_entity_id' \
+                AND job.status='running' \
+           LEFT JOIN cloud_agent_outbox outbox ON outbox.agent_run_id=state.agent_run_id \
+                AND outbox.data->>'topic'='owner_lifecycle_terminal' \
+                AND outbox.status IN ('pending','publishing') \
           WHERE state.data->>'owner_service'='memory-engine' \
             AND state.data->>'owner_entity_type' IN ( \
                 'summary_job_run','rollup_job_run','subject_memory_job_run') \
             AND NULLIF(state.data->>'owner_entity_id','') IS NOT NULL \
             AND (state.data->>'status' NOT IN ('succeeded','failed','blocked','cancelled') \
-                 OR EXISTS ( \
-                    SELECT 1 FROM cloud_agent_outbox outbox \
-                     WHERE outbox.agent_run_id=state.agent_run_id \
-                       AND outbox.data->>'topic'='owner_lifecycle_terminal' \
-                       AND outbox.status IN ('pending','publishing'))) ",
+                 OR outbox.event_id IS NOT NULL) ",
     )
     .fetch_all(db)
     .await

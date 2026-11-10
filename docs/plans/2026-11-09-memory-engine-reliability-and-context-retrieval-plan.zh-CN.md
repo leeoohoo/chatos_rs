@@ -20,6 +20,8 @@
 
 > 2026-11-10 七次修订：父 Job 委托给 durable Cloud Agent 后，不再按父 Job 的固定启动时间误判超时。Cloud Agent 非终态或终态 operator callback 仍为 pending/publishing 时，由 Cloud Agent durable 状态独占生命周期；只有 Cloud Agent 已终结且终态 callback 不再可投递时，父 Job stale recovery 才能接管。
 
+> 2026-11-10 八次修订：generation finalization 的 lease owner 改为可重入逻辑 owner。进程重启后，同一 Job/finalizer 可立即换取新的 fencing token 并使旧 token 失效；不同 owner 在租约到期前仍被拒绝，避免固定租约时长与有限 callback 重试预算互相制造 dead-letter。
+
 ## 1. 结论
 
 当前 Memory Engine 的总体分层可以继续使用：原始 Record 先形成 Thread L0 Summary，再派生 Thread Rollup、Project Summary 和 Agent Memory；模型请求在运行边界读取 Memory Engine，在轮内继续使用 Responses compaction 管理当前运行历史。
@@ -633,6 +635,8 @@ canonical_input  = UTF-8 JSON，字段按固定 schema 顺序编码，数组保�
 Summary Job 进入任意终态后，低频恢复器必须扫描其仍持有的 `summarizing` Record。只有不存在 active coverage 时才能清除 `summary_job_run_id/summary_started_at` 并恢复为 `pending`；仍在运行的 Job、已提交 coverage 或已被新 owner 接管的 Record 一律不得改动。该恢复与 partition lease 恢复在同一个 Worker 恢复循环执行，使进程重启、模型超时和终态 callback 丢失都不会永久冻结输入。
 
 父 Job 一旦创建 durable Cloud Agent run，stale 判定必须读取 Cloud Agent 权威状态：run 非终态，或 `owner_lifecycle_terminal` 回调仍处于 pending/publishing 时，父 Job 不得仅因 `started_at` 超过固定时长而失败。Cloud Agent run 终态且 callback 已成功发布时，父 Job 应已由 callback 终结；callback dead-letter 或缺失时才允许父 Job stale recovery 进入失败与 Record 自动恢复。父 Job timeout 与 Cloud Agent retry/lease 不得成为两个相互竞争的生命周期控制器。
+
+generation finalization 使用稳定的逻辑 `lease_owner` 和每次领取都变化的 `lease_token`。同一逻辑 owner 在进程重启或 callback 重放后可立即重新领取，数据库原子签发新 token 并使旧 token 的提交 CAS 失败；不同 owner 只有在 lease 到期后才能接管。不能要求有限次 outbox retry 等待完整固定 lease，也不能取消 fencing token 校验。
 
 Subject Memory 必须从当前按逻辑 `memory_key` 原地 upsert 改为不可变 generation 版本：
 

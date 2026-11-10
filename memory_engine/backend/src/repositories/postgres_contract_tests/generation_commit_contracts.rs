@@ -162,6 +162,19 @@ async fn generation_lease_takeover_and_failure_are_token_guarded() {
     .await
     .expect("claim generation")
     .expect("first generation claim");
+    let resumed = crate::repositories::generation_commits::claim_generation(
+        &pool,
+        &tenant,
+        &source,
+        &generation.generation_id,
+        "worker-1",
+        300,
+    )
+    .await
+    .expect("resume same logical generation owner")
+    .expect("same logical owner reclaims generation");
+    assert_eq!(resumed.attempt_count, 2);
+    assert_ne!(resumed.lease_token, first.lease_token);
     assert!(crate::repositories::generation_commits::claim_generation(
         &pool,
         &tenant,
@@ -194,8 +207,8 @@ async fn generation_lease_takeover_and_failure_are_token_guarded() {
     .await
     .expect("take over generation")
     .expect("takeover claim");
-    assert_eq!(takeover.attempt_count, 2);
-    assert_ne!(takeover.lease_token, first.lease_token);
+    assert_eq!(takeover.attempt_count, 3);
+    assert_ne!(takeover.lease_token, resumed.lease_token);
     assert!(
         !crate::repositories::generation_commits::mark_attempt_failed(
             &pool,
@@ -224,7 +237,7 @@ async fn generation_lease_takeover_and_failure_are_token_guarded() {
     .expect("load failed generation")
     .expect("generation remains");
     assert_eq!(stored.status, "prepared");
-    assert_eq!(stored.attempt_count, 2);
+    assert_eq!(stored.attempt_count, 3);
     assert!(stored.lease_token.is_none());
 }
 
