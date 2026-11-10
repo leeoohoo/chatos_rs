@@ -9,6 +9,7 @@ use chatos_cloud_agent_runtime::{
     create_cloud_agent_run, CloudAgentRunStore, CloudAgentStateStore, NewCloudAgentRun,
 };
 use serde_json::{json, Value};
+use tracing::warn;
 
 use crate::config::AppConfig;
 use crate::db::Db;
@@ -438,7 +439,7 @@ pub(crate) async fn finalize_terminal(
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Memory summary terminal context has no job_run_id".to_string())?;
             let dispatch_error = error.clone();
-            crate::services::summary::fail_cloud_summary_job(
+            let dead_lettered = crate::services::summary::fail_cloud_summary_job(
                 &state.pool,
                 tenant_id,
                 source_id,
@@ -447,20 +448,14 @@ pub(crate) async fn finalize_terminal(
                 error,
             )
             .await?;
-            crate::summary_queue::dead_letter_current_summary_dispatch(
-                state,
-                tenant_id,
-                source_id,
-                thread_id,
-                terminal_context
-                    .get("project_partition_key")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        "Memory summary terminal context has no partition".to_string()
-                    })?,
-                dispatch_error.as_str(),
-            )
-            .await?;
+            if dead_lettered {
+                warn!(
+                    thread_id,
+                    job_run_id,
+                    error = dispatch_error,
+                    "Memory Engine owned partition summary dispatch was dead-lettered"
+                );
+            }
         } else {
             finalize_failed_domain_job(state, &terminal_context, error).await?;
         }

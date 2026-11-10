@@ -430,13 +430,13 @@ pub(crate) async fn fail_cloud_summary_job(
     thread_id: &str,
     job_run_id: &str,
     error: String,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let Some(job_run) = cp_repo::get_job_run_by_id(db, job_run_id).await? else {
-        return Ok(());
+        return Ok(false);
     };
     validate_summary_job_scope(&job_run, tenant_id, source_id, thread_id)?;
     if job_run.status != "running" {
-        return Ok(());
+        return Ok(false);
     }
 
     let frozen = FrozenThreadSummarySelection::from_metadata(job_run.metadata.as_ref())?;
@@ -471,18 +471,16 @@ pub(crate) async fn fail_cloud_summary_job(
         },
     )
     .await;
-    thread_partitions::release_summary_claim(
+    thread_partitions::fail_owned_summary_claim_and_dead_letter_dispatch(
         db,
         tenant_id,
         source_id,
         thread_id,
         project_partition_key_from_subject(frozen.project_subject_id.as_deref()),
         job_run_id,
-        0,
-        0,
+        "cloud_summary_terminal_failure",
     )
-    .await?;
-    Ok(())
+    .await
 }
 
 pub(super) fn project_partition_key(selection: &PendingRecordSelection) -> &str {

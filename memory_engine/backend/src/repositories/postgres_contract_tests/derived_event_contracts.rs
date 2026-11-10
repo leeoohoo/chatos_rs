@@ -309,12 +309,27 @@ async fn published_summary_dispatch_dead_letter_can_be_replayed() {
             .expect("publish derived event")
     );
     assert!(
-        crate::repositories::thread_partitions::dead_letter_current_summary_dispatch(
+        crate::repositories::thread_partitions::try_claim_summary(
             &pool,
             &tenant,
             &source,
             &thread_id,
             "project:alpha",
+            "summary-job-1",
+            300,
+        )
+        .await
+        .expect("claim published summary dispatch")
+        .is_some()
+    );
+    assert!(
+        crate::repositories::thread_partitions::fail_owned_summary_claim_and_dead_letter_dispatch(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            "project:alpha",
+            "summary-job-1",
             "summary_worker_error",
         )
         .await

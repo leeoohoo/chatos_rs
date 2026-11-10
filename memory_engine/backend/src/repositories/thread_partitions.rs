@@ -218,31 +218,45 @@ pub async fn mark_summary_dispatch_failed(
     Ok(())
 }
 
-pub async fn dead_letter_current_summary_dispatch(
+pub async fn fail_owned_summary_claim_and_dead_letter_dispatch(
     db: &Db,
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
     project_partition_key: &str,
+    job_run_id: &str,
     error_code: &str,
 ) -> Result<bool, String> {
-    let result = sqlx::query(
+    let dead_lettered = sqlx::query_scalar::<_, bool>(
         "UPDATE engine_thread_summary_partitions SET \
-         summary_dispatch_dead_letter_version=summary_dispatch_published_version, \
-         summary_dispatch_dead_lettered_at=now(),summary_dispatch_last_error=$5, \
-         summary_dispatch_last_failed_at=now(),updated_at=now() \
+         summary_status=CASE WHEN pending_record_count>0 THEN 'pending' ELSE 'idle' END, \
+         summary_job_run_id=NULL,summary_locked_at=NULL,summary_lock_expires_at=NULL, \
+         summary_dispatch_dead_letter_version=CASE \
+           WHEN summary_dispatch_published_version>summary_dispatch_consumed_version \
+           THEN summary_dispatch_published_version ELSE summary_dispatch_dead_letter_version END, \
+         summary_dispatch_dead_lettered_at=CASE \
+           WHEN summary_dispatch_published_version>summary_dispatch_consumed_version \
+           THEN now() ELSE summary_dispatch_dead_lettered_at END, \
+         summary_dispatch_last_error=CASE \
+           WHEN summary_dispatch_published_version>summary_dispatch_consumed_version \
+           THEN $6 ELSE summary_dispatch_last_error END, \
+         summary_dispatch_last_failed_at=CASE \
+           WHEN summary_dispatch_published_version>summary_dispatch_consumed_version \
+           THEN now() ELSE summary_dispatch_last_failed_at END,updated_at=now() \
          WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4 \
-         AND summary_dispatch_published_version>summary_dispatch_consumed_version",
+         AND summary_status='running' AND summary_job_run_id=$5 \
+         RETURNING summary_dispatch_published_version>summary_dispatch_consumed_version",
     )
     .bind(tenant_id)
     .bind(source_id)
     .bind(thread_id)
     .bind(project_partition_key)
+    .bind(job_run_id)
     .bind(error_code)
-    .execute(db)
+    .fetch_optional(db)
     .await
     .map_err(|error| error.to_string())?;
-    Ok(result.rows_affected() == 1)
+    Ok(dead_lettered.unwrap_or(false))
 }
 
 pub async fn release_expired_summary_claims(db: &Db, limit: i64) -> Result<u64, String> {

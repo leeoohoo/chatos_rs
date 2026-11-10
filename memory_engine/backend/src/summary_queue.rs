@@ -11,30 +11,6 @@ use crate::state::AppState;
 
 const SUMMARY_QUEUE_TRIGGER: &str = "database_worker";
 
-pub async fn dead_letter_current_summary_dispatch(
-    state: &AppState,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    project_partition_key: &str,
-    error: &str,
-) -> Result<bool, String> {
-    let archived = crate::repositories::thread_partitions::dead_letter_current_summary_dispatch(
-        &state.pool,
-        tenant_id,
-        source_id,
-        thread_id,
-        project_partition_key,
-        error,
-    )
-    .await?;
-    warn!(
-        thread_id,
-        project_partition_key, error, "Memory Engine partition summary dispatch was dead-lettered"
-    );
-    Ok(archived)
-}
-
 pub fn start(state: Arc<AppState>) {
     for worker_index in 0..state.config.worker_summary_concurrency.max(1) {
         tokio::spawn(run_worker(state.clone(), worker_index));

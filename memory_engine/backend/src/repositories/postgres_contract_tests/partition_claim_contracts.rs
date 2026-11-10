@@ -138,6 +138,31 @@ async fn partition_claims_use_one_writer_and_isolate_projects() {
     .await
     .expect("claim alpha after release")
     .is_some());
+    assert!(
+        !crate::repositories::thread_partitions::fail_owned_summary_claim_and_dead_letter_dispatch(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            "project:alpha",
+            "job-alpha",
+            "stale_cloud_terminal_callback",
+        )
+        .await
+        .expect("ignore stale summary terminal callback")
+    );
+    let active_claim: (String, Option<i64>) = sqlx::query_as(
+        "SELECT summary_job_run_id,summary_dispatch_dead_letter_version \
+         FROM engine_thread_summary_partitions WHERE tenant_id=$1 AND source_id=$2 \
+         AND thread_id=$3 AND project_partition_key='project:alpha'",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load active summary claim after stale callback");
+    assert_eq!(active_claim, ("job-alpha-next".to_string(), None));
     assert!(crate::repositories::thread_partitions::try_claim_rollup(
         &pool,
         &tenant,
