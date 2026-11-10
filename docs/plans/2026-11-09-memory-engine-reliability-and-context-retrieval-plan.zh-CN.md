@@ -1063,6 +1063,11 @@ Agent 主会话可以跨项目，Record 的 `memory_project_id` 与 Thread 的
 把同一 Agent Thread 中不同项目的 Record 合并到一个 partition。Task 召回自身已绑定
 项目属于固定项目召回，不能被“禁止动态切换项目”的条件拒绝；召回其他项目仍拒绝。
 
+任务回调和问卷状态等可变界面消息继续在本机更新；上传 Memory 时，每个状态快照
+作为独立的不可变事件，使用规范化内容摘要生成稳定 Record ID，并保留原界面消息 ID
+供追溯。同一快照重试复用同一事件 ID，状态变化创建新事件，不覆盖已提交 Record，
+也不放宽服务端的幂等内容身份校验。
+
 Assertion claims 至少包含：
 
 ```text

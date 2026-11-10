@@ -163,3 +163,56 @@ fn task_record_partition_rejects_conflicting_or_malformed_project_identity() {
         .with_metadata(json!({"memory_project_id":42}));
     assert!(record_project_partition_key(&invalid, &identity).is_err());
 }
+
+#[tokio::test]
+async fn mutable_ui_callbacks_publish_immutable_idempotent_memory_events() {
+    let (writer, batches, server) = writer().await;
+    for status in ["running", "completed", "completed"] {
+        let mut metadata = metadata(Some("project-a"));
+        metadata["memory_projection_mutable"] = json!(true);
+        metadata["ui_message_id"] = json!("callback-1");
+        let mut input = SaveRecordInput::user_message("conversation-1", "任务状态更新")
+            .with_message_id("callback-1")
+            .with_metadata(metadata)
+            .with_created_at("2026-11-10T09:57:00Z");
+        input.role = "assistant".to_string();
+        input.structured_payload = Some(json!({"status":status}));
+        writer.save_record(input).await.unwrap();
+    }
+    let batches = batches.lock().await;
+    let records = batches
+        .iter()
+        .map(|batch| &batch["records"][0])
+        .collect::<Vec<_>>();
+    assert_ne!(records[0]["id"], records[1]["id"]);
+    assert_eq!(records[1], records[2]);
+    for (batch, record) in batches.iter().zip(records) {
+        verify_batch(batch, "project:project-a");
+        // external_record_id is unique per thread. The original UI ID belongs
+        // in metadata, since several immutable events may reference one message.
+        assert!(record["external_record_id"].is_null());
+        assert_eq!(record["metadata"]["ui_message_id"], "callback-1");
+        assert_eq!(record["metadata"]["memory_projection_event"], true);
+        assert!(record["metadata"]
+            .get("memory_projection_mutable")
+            .is_none());
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn projection_events_require_durable_identity_and_timestamp() {
+    let (writer, batches, server) = writer().await;
+    let mut metadata = metadata(Some("project-a"));
+    metadata["memory_projection_mutable"] = json!(true);
+    let input =
+        SaveRecordInput::user_message("conversation-1", "completed").with_metadata(metadata);
+    assert!(writer
+        .upsert_record_input(input.clone().with_message_id("callback-1"))
+        .is_err());
+    assert!(writer
+        .upsert_record_input(input.with_created_at("2026-11-10T09:57:00Z"))
+        .is_err());
+    assert!(batches.lock().await.is_empty());
+    server.abort();
+}

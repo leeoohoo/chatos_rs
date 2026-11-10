@@ -11,6 +11,7 @@ use memory_engine_sdk::{
     UpsertRecordInput,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -492,12 +493,35 @@ impl MemoryEngineRecordWriter {
     }
 
     fn upsert_record_input(&self, input: SaveRecordInput) -> Result<UpsertRecordInput, String> {
+        let projection_event = input
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("memory_projection_mutable"))
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+        if projection_event
+            && (input.created_at.as_deref().and_then(normalized).is_none()
+                || input.message_id.as_deref().and_then(normalized).is_none())
+        {
+            return Err(
+                "Memory projection events require a durable message_id and created_at".to_string(),
+            );
+        }
+        let projection_scope = projection_event
+            .then(|| {
+                Ok::<_, String>((
+                    self.tenant_id_for_record(&input)?,
+                    self.source_id.clone(),
+                    self.thread_id_for_record(&input)?,
+                ))
+            })
+            .transpose()?;
         let role = normalized(input.role.as_str())
             .ok_or_else(|| "memory record role is required".to_string())?;
         let record_type =
             normalized(self.scope.record_type.as_str()).unwrap_or_else(|| "message".to_string());
         let metadata = input.packed_metadata();
-        Ok(UpsertRecordInput {
+        let mut record = UpsertRecordInput {
             id: input
                 .message_id
                 .unwrap_or_else(|| Uuid::new_v4().to_string()),
@@ -515,7 +539,42 @@ impl MemoryEngineRecordWriter {
             created_at: input
                 .created_at
                 .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
-        })
+        };
+        if projection_event {
+            // UI messages update in place; each published state transition is an
+            // immutable Memory event. Replaying one snapshot must keep the same ID.
+            if let Some(metadata) = record
+                .metadata
+                .as_mut()
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                metadata.remove("memory_projection_mutable");
+                metadata.insert(
+                    "ui_message_id".to_string(),
+                    serde_json::Value::String(record.id.clone()),
+                );
+                metadata.insert(
+                    "memory_projection_event".to_string(),
+                    serde_json::Value::Bool(true),
+                );
+            }
+            let mut identity = serde_json::json!([
+                projection_scope,
+                record.id,
+                record.role,
+                record.record_type,
+                record.content,
+                record.structured_payload,
+                record.metadata,
+                record.created_at
+            ]);
+            identity.sort_all_objects();
+            let identity = serde_json::to_vec(&identity).map_err(|error| {
+                format!("encode Memory projection event identity failed: {error}")
+            })?;
+            record.id = format!("projection-event:{}", hex::encode(Sha256::digest(identity)));
+        }
+        Ok(record)
     }
 }
 
