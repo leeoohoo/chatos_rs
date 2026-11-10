@@ -512,8 +512,8 @@ fn authoritative_messages(
     conversation_id: &str,
     records: &[AuthoritativeConversationRecord],
 ) -> Result<Vec<LocalConversationMessageRecord>, LocalAgentRuntimeError> {
-    let mut seen_message_ids = HashSet::new();
-    let mut messages = Vec::new();
+    let mut snapshots =
+        HashMap::<String, ((i64, bool, String), LocalConversationMessageRecord)>::new();
     for record in records {
         let mut metadata = record.metadata.clone().unwrap_or_else(|| json!({}));
         if let Some(ui_metadata) = metadata
@@ -552,9 +552,6 @@ fn authoritative_messages(
             .filter(|value| !value.is_empty())
             .unwrap_or(record.record_id.as_str())
             .to_string();
-        if !seen_message_ids.insert(message_id.clone()) {
-            continue;
-        }
         let created_at = DateTime::parse_from_rfc3339(record.created_at.trim())
             .map_err(|_| {
                 LocalAgentRuntimeError::InvalidRunState(format!(
@@ -564,7 +561,25 @@ fn authoritative_messages(
             })?
             .with_timezone(&Utc);
         let created_at_unix_ms = created_at.timestamp_millis();
-        let ordinal = authoritative_ordinal(created_at_unix_ms, record.record_id.as_str());
+        let ordinal = authoritative_ordinal(created_at_unix_ms, message_id.as_str());
+        // Several immutable Memory snapshots can represent one mutable UI card.
+        // Callback time orders task states; survey snapshots carry their update
+        // time in created_at. Never let hash/HTTP record order pick the UI state.
+        let callback = metadata.get("task_runner_async");
+        let snapshot_at = callback
+            .and_then(|value| value.get("callback_at_unix_ms"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(created_at_unix_ms);
+        let terminal = callback
+            .and_then(|value| value.get("event"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|event| {
+                matches!(
+                    event,
+                    "task.completed" | "task.failed" | "task.blocked" | "task.cancelled"
+                )
+            });
+        let revision = (snapshot_at, terminal, record.record_id.clone());
         let content = match record.role.as_str() {
             "user" => json!({"text": record.content}),
             _ => record
@@ -578,8 +593,8 @@ fn authoritative_messages(
                 })
                 .unwrap_or_else(|| serde_json::Value::String(record.content.clone())),
         };
-        messages.push(LocalConversationMessageRecord {
-            message_id,
+        let message = LocalConversationMessageRecord {
+            message_id: message_id.clone(),
             conversation_id: conversation_id.to_string(),
             turn_id: turn_id.to_string(),
             ordinal,
@@ -591,8 +606,27 @@ fn authoritative_messages(
             content,
             metadata,
             created_at_unix_ms,
-        });
+        };
+        match snapshots.entry(message_id) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert((revision, message));
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let (previous_revision, previous) = entry.get_mut();
+                let first_created_at = previous.created_at_unix_ms.min(created_at_unix_ms);
+                if revision > *previous_revision {
+                    *previous_revision = revision;
+                    *previous = message;
+                }
+                previous.created_at_unix_ms = first_created_at;
+                previous.ordinal = authoritative_ordinal(first_created_at, &previous.message_id);
+            }
+        }
     }
+    let mut messages = snapshots
+        .into_values()
+        .map(|(_, message)| message)
+        .collect::<Vec<_>>();
     messages.sort_by(|left, right| {
         left.created_at_unix_ms
             .cmp(&right.created_at_unix_ms)
@@ -1250,6 +1284,62 @@ mod tests {
     use std::sync::Arc;
 
     struct TranscriptFixture;
+
+    #[test]
+    fn projection_history_keeps_latest_snapshot_regardless_of_record_order() {
+        let snapshot =
+            |id: &str, event: &str, at: i64, content: &str| AuthoritativeConversationRecord {
+                record_id: id.to_string(),
+                role: "assistant".to_string(),
+                content: content.to_string(),
+                structured_payload: None,
+                metadata: Some(json!({
+                    "conversation_turn_id":"turn-1",
+                    "ui_message_id":"callback-1",
+                    "memory_projection_event":true,
+                    "task_runner_async":{
+                        "event":event,
+                        "callback_at_unix_ms":at
+                    }
+                })),
+                created_at: "2026-11-10T10:00:00Z".to_string(),
+            };
+        let running = snapshot("projection-event:z", "task.run.started", 1_000, "running");
+        for completed_at in [1_000, 2_000] {
+            let completed = snapshot("projection-event:a", "task.completed", completed_at, "done");
+            for records in [
+                vec![running.clone(), completed.clone()],
+                vec![completed.clone(), running.clone()],
+            ] {
+                let messages = super::authoritative_messages("conversation-1", &records).unwrap();
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].message_id, "callback-1");
+                assert_eq!(messages[0].content, json!("done"));
+                assert_eq!(
+                    messages[0].metadata["task_runner_async"]["event"],
+                    "task.completed"
+                );
+            }
+        }
+
+        let mut open = running;
+        open.metadata = Some(json!({
+            "conversation_turn_id":"turn-1", "ui_message_id":"survey-1",
+            "ui_structured_content":true, "memory_projection_event":true
+        }));
+        open.structured_payload = Some(json!({"type":"requirement_survey_status","status":"open"}));
+        let mut resolved = open.clone();
+        resolved.record_id = "projection-event:b".to_string();
+        resolved.created_at = "2026-11-10T10:00:01Z".to_string();
+        resolved.structured_payload =
+            Some(json!({"type":"requirement_survey_status","status":"resolved"}));
+        for records in [vec![open.clone(), resolved.clone()], vec![resolved, open]] {
+            let messages = super::authoritative_messages("conversation-1", &records).unwrap();
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].content["status"], "resolved");
+            assert_eq!(messages[0].created_at_unix_ms, 1_794_304_800_000);
+        }
+    }
 
     #[async_trait]
     impl LocalConversationTranscriptSource for TranscriptFixture {
