@@ -372,6 +372,25 @@ prepare_stopped_memory_worker() {
   echo "[OK] Memory Engine worker is prepared on the new image and remains stopped"
 }
 
+restore_memory_worker_runtime_state() {
+  if (( prepare_memory_worker_stopped == 0 || memory_worker_was_running == 0 )); then
+    return 0
+  fi
+
+  echo "[INFO] restoring the pre-deployment Memory Engine worker runtime state"
+  write_deploy_status running worker "Starting and verifying the Memory Engine worker"
+  docker start chatos-rs-memory-engine-worker-1 >/dev/null
+  # A successful docker start only proves that the process was spawned. Give the
+  # entrypoint time to fail closed before declaring the deployment complete.
+  sleep 3
+  if [[ "$(docker inspect -f '{{.State.Running}}' chatos-rs-memory-engine-worker-1)" != "true" ]]; then
+    echo "[ERROR] Memory Engine worker did not remain running after release cutover" >&2
+    docker logs --tail 100 chatos-rs-memory-engine-worker-1 >&2 || true
+    return 1
+  fi
+  echo "[OK] Memory Engine worker is running on the new release image"
+}
+
 wait_for_http_probe() {
   local label="$1"
   local acceptance="$2"
@@ -733,6 +752,8 @@ for url in \
 do
   wait_for_http_probe "public-$url" success "$url"
 done
+
+restore_memory_worker_runtime_state
 
 echo "[OK] production release is healthy: $release_tag"
 if [[ ${#deploy_services[@]} -gt 0 ]]; then

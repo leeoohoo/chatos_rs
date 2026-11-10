@@ -130,6 +130,22 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertLess(helper_call, fast_start)
         self.assertIn("PostgreSQL is $health before production import verification", deploy)
 
+    def test_selected_memory_deploy_restores_worker_before_success(self) -> None:
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+        restore_call = deploy.index("restore_memory_worker_runtime_state\n\n")
+        healthy_status = deploy.index(
+            'write_deploy_status complete healthy "Production release is healthy"'
+        )
+
+        self.assertIn(
+            'write_deploy_status running worker "Starting and verifying the Memory Engine worker"',
+            deploy,
+        )
+        self.assertIn("memory_worker_was_running == 0", deploy)
+        self.assertIn("docker start chatos-rs-memory-engine-worker-1", deploy)
+        self.assertIn("Memory Engine worker did not remain running", deploy)
+        self.assertLess(restore_call, healthy_status)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,6 +22,10 @@
 
 > 2026-11-10 八次修订：generation finalization 的 lease owner 改为可重入逻辑 owner。进程重启后，同一 Job/finalizer 可立即换取新的 fencing token 并使旧 token 失效；不同 owner 在租约到期前仍被拒绝，避免固定租约时长与有限 callback 重试预算互相制造 dead-letter。
 
+> 2026-11-10 九次修订：Memory Engine 定向发布必须在同一次发布事务内恢复发布前的 Worker 运行状态，并在 Worker 稳定运行后才能写入 `complete/healthy`。禁止把 Worker 留在 `created/stopped` 中间态后宣告发布成功；启动失败必须触发整版回滚。
+
+> 2026-11-10 十次修订：可重入 fencing 规则必须由仓储领取 SQL 与 PostgreSQL transition guard 同时执行。数据库只允许稳定逻辑 owner 在活动租约内按 `attempt_count + 1` 原子换取非空新 token 和未来到期时间；异 owner、空 token 或不完整换租继续失败关闭，避免应用规则与数据库规则分裂到上线后才暴露。
+
 ## 1. 结论
 
 当前 Memory Engine 的总体分层可以继续使用：原始 Record 先形成 Thread L0 Summary，再派生 Thread Rollup、Project Summary 和 Agent Memory；模型请求在运行边界读取 Memory Engine，在轮内继续使用 Responses compaction 管理当前运行历史。
