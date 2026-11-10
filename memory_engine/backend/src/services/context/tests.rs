@@ -401,12 +401,7 @@ fn level0_summaries_are_rendered_in_chronological_order() {
 fn thread_summary_blocks_keep_all_maximal_rollups_before_uncovered_level0_summaries() {
     let (blocks, summary_count) = build_thread_summary_blocks_from_frontier(vec![
         summary("sum_top_b", 3, "2026-05-12T05:00:00Z", "parallel top"),
-        summary(
-            "sum_top_a",
-            2,
-            "2026-05-12T04:00:00Z",
-            "highest level",
-        ),
+        summary("sum_top_a", 2, "2026-05-12T04:00:00Z", "highest level"),
         summary("sum_3", 0, "2026-05-12T03:00:00Z", "third"),
         summary("sum_2", 0, "2026-05-12T02:00:00Z", "second"),
     ]);
@@ -495,6 +490,18 @@ fn compose_rejects_subjects_not_bound_to_the_thread() {
     let bound = vec!["agent:a-1".to_string(), "project:p-1".to_string()];
     assert!(validate_requested_subject(&bound, Some("agent:a-1")).is_ok());
     assert!(validate_requested_subject(&bound, Some("agent:a-2")).is_err());
+}
+
+#[test]
+fn task_recall_accepts_its_bound_project_and_rejects_another_project() {
+    let bound = vec!["agent:a-1".to_string(), "project:p-1".to_string()];
+    assert!(super::validate_requested_project(&bound, false, "project:p-1").is_ok());
+    assert!(super::validate_requested_project(&bound, false, "project:p-2").is_err());
+    let agent_only = vec!["agent:a-1".to_string()];
+    assert!(super::validate_requested_project(&agent_only, false, "project:p-1").is_err());
+    assert!(super::validate_requested_project(&agent_only, true, "project:p-1").is_ok());
+    assert!(super::validate_requested_project(&agent_only, true, "project:").is_err());
+    assert!(super::validate_requested_project(&agent_only, true, "p-1").is_err());
 }
 
 #[test]

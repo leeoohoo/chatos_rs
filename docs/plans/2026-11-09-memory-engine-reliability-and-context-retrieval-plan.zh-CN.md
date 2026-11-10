@@ -1057,6 +1057,12 @@ Host 冻结的运行身份绑定 Agent、Thread、Project 和 Operation；不把
 统计字段，并用迁移删除废弃绑定表。四种 operation 都遵循此规则，验收必须覆盖
 “本机项目没有云端绑定”的真实项目会话以及跨账户、跨项目拒绝。
 
+Agent 主会话可以跨项目，Record 的 `memory_project_id` 与 Thread 的
+`thread_project_aggregation_id` 必须分别处理：前者决定当前 Record 的签名 partition，
+后者只描述整条 Task Thread 的固定归属。工具批次按 tenant/thread/project 分组，不能
+把同一 Agent Thread 中不同项目的 Record 合并到一个 partition。Task 召回自身已绑定
+项目属于固定项目召回，不能被“禁止动态切换项目”的条件拒绝；召回其他项目仍拒绝。
+
 Assertion claims 至少包含：
 
 ```text

@@ -24,7 +24,7 @@ use super::{
 use crate::tool_runtime::ToolResultModelBudgetLimits;
 use crate::{MemoryRecordWriter, SaveRecordInput};
 
-fn test_assertion_issuer() -> RuntimeContextAssertionIssuer {
+pub(super) fn test_assertion_issuer() -> RuntimeContextAssertionIssuer {
     RuntimeContextAssertionIssuer::new(
         "runtime-context-test-secret",
         "runtime-context-test-key",
@@ -36,12 +36,12 @@ fn test_assertion_issuer() -> RuntimeContextAssertionIssuer {
 }
 
 #[derive(Clone, Default)]
-struct MemoryWriteServerState {
+pub(super) struct MemoryWriteServerState {
     thread_upserts: Arc<AtomicUsize>,
     record_syncs: Arc<AtomicUsize>,
 }
 
-async fn accept_thread_upsert(
+pub(super) async fn accept_thread_upsert(
     axum::extract::State(state): axum::extract::State<MemoryWriteServerState>,
     axum::extract::Path(thread_id): axum::extract::Path<String>,
     axum::Json(request): axum::Json<Value>,

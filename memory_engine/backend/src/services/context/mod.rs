@@ -56,12 +56,7 @@ pub async fn compose_context(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     if let Some(project) = context_project_subject_id {
-        if !allow_dynamic_project {
-            return Err("thread does not allow dynamic project recall".to_string());
-        }
-        if !project.starts_with("project:") || project.len() == "project:".len() {
-            return Err("context project subject identity is invalid".to_string());
-        }
+        validate_requested_project(&subject_memory_subject_ids, allow_dynamic_project, project)?;
         if !subject_memory_subject_ids
             .iter()
             .any(|value| value == project)
@@ -294,6 +289,20 @@ fn used_budget(
 
 pub(crate) fn estimate_tokens(text: &str) -> usize {
     text.chars().count().saturating_add(2) / 3 + 1
+}
+
+fn validate_requested_project(
+    bound: &[String],
+    allow_dynamic: bool,
+    project: &str,
+) -> Result<(), String> {
+    if !project.starts_with("project:") || project.len() == "project:".len() {
+        return Err("context project subject identity is invalid".to_string());
+    }
+    if !allow_dynamic && !bound.iter().any(|subject| subject == project) {
+        return Err("thread does not allow dynamic project recall".to_string());
+    }
+    Ok(())
 }
 
 fn validate_requested_subject(bound: &[String], requested: Option<&str>) -> Result<(), String> {

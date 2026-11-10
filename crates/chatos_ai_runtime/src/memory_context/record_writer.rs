@@ -22,6 +22,10 @@ use super::normalized;
 use super::upsert_canonical_memory_thread;
 use super::{RuntimeContextAssertionProvider, RuntimeContextAssertionRequest};
 
+#[cfg(test)]
+#[path = "record_partition_tests.rs"]
+mod partition_tests;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRecordScope {
     pub tenant_id: String,
@@ -179,11 +183,11 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
         let tenant_id = self.tenant_id_for_record(&input)?;
         let thread_id = self.thread_id_for_record(&input)?;
         let identity = self.thread_identity_for_record(&input);
+        let project_partition_key = record_project_partition_key(&input, &identity)?;
         self.ensure_thread(tenant_id.as_str(), thread_id.as_str(), &identity)
             .await?;
         let record = self.upsert_record_input(input)?;
         let records = vec![record];
-        let project_partition_key = project_partition_key(&identity)?;
         let runtime_context_assertion = self
             .issue_assertion(
                 tenant_id.as_str(),
@@ -257,7 +261,7 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
         }
 
         let mut batches: BTreeMap<
-            (String, String),
+            (String, String, String),
             (RecordThreadIdentity, Vec<UpsertRecordInput>),
         > = BTreeMap::new();
         for input in inputs {
@@ -265,11 +269,12 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
             let tenant_id = self.tenant_id_for_record(&input)?;
             let thread_id = self.thread_id_for_record(&input)?;
             let identity = self.thread_identity_for_record(&input);
+            let project_partition_key = record_project_partition_key(&input, &identity)?;
             self.ensure_thread(tenant_id.as_str(), thread_id.as_str(), &identity)
                 .await?;
             let record = self.upsert_record_input(input)?;
             let entry = batches
-                .entry((tenant_id, thread_id))
+                .entry((tenant_id, thread_id, project_partition_key))
                 .or_insert_with(|| (identity.clone(), Vec::new()));
             if entry.0 != identity {
                 return Err("memory record batch contains conflicting thread identity".to_string());
@@ -277,8 +282,7 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
             entry.1.push(record);
         }
 
-        for ((tenant_id, thread_id), (identity, records)) in batches {
-            let project_partition_key = project_partition_key(&identity)?;
+        for ((tenant_id, thread_id, project_partition_key), (identity, records)) in batches {
             let runtime_context_assertion = self
                 .issue_assertion(
                     tenant_id.as_str(),
@@ -515,16 +519,39 @@ impl MemoryEngineRecordWriter {
     }
 }
 
-fn project_partition_key(identity: &RecordThreadIdentity) -> Result<String, String> {
-    let Some(value) = identity
-        .project_aggregation_id
-        .as_deref()
-        .and_then(normalized)
-    else {
+fn record_project_partition_key(
+    input: &SaveRecordInput,
+    identity: &RecordThreadIdentity,
+) -> Result<String, String> {
+    let bound_partition = canonical_project_partition(identity.project_aggregation_id.as_deref())?;
+    // Agent threads span projects. The runtime freezes the current record's project
+    // separately from the optional project that owns an entire task thread.
+    let declared = input
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("memory_project_id"));
+    let partition = match declared {
+        Some(serde_json::Value::String(value)) => canonical_project_partition(Some(value))?,
+        Some(serde_json::Value::Null) => "__none__".to_string(),
+        None => bound_partition.clone(),
+        Some(_) => {
+            return Err("memory record memory_project_id must be a string or null".to_string())
+        }
+    };
+    if bound_partition != "__none__" && bound_partition != partition {
+        return Err("memory record project does not match its task thread project".to_string());
+    }
+    Ok(partition)
+}
+
+fn canonical_project_partition(value: Option<&str>) -> Result<String, String> {
+    let Some(value) = value else {
         return Ok("__none__".to_string());
     };
-    let project_id = value.strip_prefix("project:").unwrap_or(value.as_str());
-    if project_id.is_empty() || project_id.chars().any(char::is_control) {
+    let value = value.trim();
+    let project_id = value.strip_prefix("project:").unwrap_or(value);
+    if project_id.is_empty() || project_id.len() > 1_024 || project_id.chars().any(char::is_control)
+    {
         return Err("memory record project identity is invalid".to_string());
     }
     Ok(format!("project:{project_id}"))
