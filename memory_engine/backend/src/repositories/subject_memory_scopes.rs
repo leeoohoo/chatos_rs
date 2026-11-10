@@ -430,9 +430,11 @@ pub async fn try_acquire_subject_memory_scope_slot(
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(lock_timeout_secs.max(30));
     sqlx::query(
-        "UPDATE engine_subject_memory_scopes SET subject_memory_status='running',lock_owner=$4, \
+        "UPDATE engine_subject_memory_scopes scope SET subject_memory_status='running',lock_owner=$4, \
          lock_expires_at=$5,updated_at=$6 WHERE tenant_id=$1 AND source_id=$2 AND scope_key=$3 \
-         AND status='active' AND (subject_memory_status<>'running' OR lock_expires_at<=$6 OR lock_owner=$4)",
+         AND status='active' AND (subject_memory_status<>'running' OR lock_owner=$4 OR ( \
+           lock_expires_at<=$6 AND NOT EXISTS (SELECT 1 FROM engine_job_runs job \
+             WHERE job.id=scope.lock_owner AND job.status='running')))",
     )
     .bind(tenant_id).bind(source_id).bind(scope_key).bind(lock_owner).bind(expires_at).bind(now)
     .execute(db).await.map(|result| result.rows_affected() > 0).map_err(|error| error.to_string())
@@ -470,9 +472,10 @@ pub async fn refresh_subject_memory_scope_slot(
 ) -> Result<bool, String> {
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(lock_timeout_secs.max(30));
     sqlx::query(
-        "UPDATE engine_subject_memory_scopes SET lock_expires_at=$5,updated_at=now() \
-         WHERE tenant_id=$1 AND source_id=$2 AND scope_key=$3 \
-         AND subject_memory_status='running' AND lock_owner=$4",
+        "UPDATE engine_subject_memory_scopes SET subject_memory_status='running',lock_owner=$4, \
+         lock_expires_at=$5,updated_at=now() WHERE tenant_id=$1 AND source_id=$2 AND scope_key=$3 \
+         AND status='active' AND ((subject_memory_status='running' AND lock_owner=$4) OR \
+           (subject_memory_status<>'running' AND (lock_owner IS NULL OR lock_owner=$4)))",
     )
     .bind(tenant_id)
     .bind(source_id)

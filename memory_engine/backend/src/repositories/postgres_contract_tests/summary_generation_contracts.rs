@@ -644,7 +644,7 @@ async fn thread_l0_noop_final_commit_covers_records_without_false_facts_or_downs
     .expect("count no-op coverage");
     assert_eq!(coverage_count, 1);
     let fact_count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM engine_memory_facts \
+        "SELECT COUNT(*) FROM engine_memory_fact_projections \
          WHERE tenant_id=$1 AND source_id=$2 AND output_kind='thread_summary' AND output_id=$3",
     )
     .bind(&tenant)

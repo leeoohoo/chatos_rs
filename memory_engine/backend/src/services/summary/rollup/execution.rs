@@ -151,7 +151,7 @@ pub(crate) async fn run_prepared_thread_rollup(
         });
     }
     if job_run.status != "running" {
-        return Err(format!("rollup job is not runnable: {}", job_run.status));
+        return Ok(empty_rollup_result());
     }
 
     let owns_claim = if resumed {
@@ -200,6 +200,9 @@ pub(crate) async fn run_prepared_thread_rollup(
             },
         )
         .await;
+        if resumed {
+            return Ok(empty_rollup_result());
+        }
         return Err("thread rollup partition claim is occupied".to_string());
     }
 

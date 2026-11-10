@@ -238,21 +238,23 @@ async fn commit_thread_summary_generation_inner(
     .execute(&mut *tx)
     .await
     .map_err(|error| error.to_string())?;
-    memory_facts::project_payload(
-        &mut tx,
-        &current,
-        FactOutputScope {
-            output_kind: "thread_summary",
-            output_id: summary.id.as_str(),
-            scope_kind: "thread",
-            scope_key: summary.thread_id.as_str(),
-            subject_id: summary.subject_id.as_str(),
-            project_partition_key: Some(project_partition_key),
-        },
-        output.payload_schema,
-        output.structured_payload,
-    )
-    .await?;
+    if !is_noop {
+        memory_facts::project_payload(
+            &mut tx,
+            &current,
+            FactOutputScope {
+                output_kind: "thread_summary",
+                output_id: summary.id.as_str(),
+                scope_kind: "thread",
+                scope_key: summary.thread_id.as_str(),
+                subject_id: summary.subject_id.as_str(),
+                project_partition_key: Some(project_partition_key),
+            },
+            output.payload_schema,
+            output.structured_payload,
+        )
+        .await?;
+    }
     if !is_noop {
         derived_events::enqueue_summary_downstream_requests(
             &mut tx,
@@ -884,14 +886,17 @@ fn validate_resummarization_finalization(
         || output.level != 0
         || output.generation_reason != "resummarize"
     {
-        return Err("covered-range resummarization requires a thread L0 resummarize generation"
-            .to_string());
+        return Err(
+            "covered-range resummarization requires a thread L0 resummarize generation".to_string(),
+        );
     }
     if finalization.previous_summary_id.trim().is_empty()
         || finalization.record_ids.is_empty()
         || finalization.record_ids.len() != output.source_record_count
     {
-        return Err("covered-range resummarization identity or record count is invalid".to_string());
+        return Err(
+            "covered-range resummarization identity or record count is invalid".to_string(),
+        );
     }
     let unique = finalization
         .record_ids
@@ -901,16 +906,18 @@ fn validate_resummarization_finalization(
     if unique.len() != finalization.record_ids.len()
         || unique.iter().any(|value| value.trim().is_empty())
     {
-        return Err("covered-range resummarization record ids must be unique and non-empty"
-            .to_string());
+        return Err(
+            "covered-range resummarization record ids must be unique and non-empty".to_string(),
+        );
     }
     validate_frozen_source_ids(generation, finalization.record_ids, "resummarization")?;
     if finalization.job_result.status != "done"
         || finalization.job_result.output_count != 1
         || finalization.job_result.error_count != 0
     {
-        return Err("covered-range resummarization requires a successful terminal job result"
-            .to_string());
+        return Err(
+            "covered-range resummarization requires a successful terminal job result".to_string(),
+        );
     }
     Ok(())
 }
@@ -964,7 +971,9 @@ async fn supersede_resummarized_range(
     .await
     .map_err(|error| error.to_string())?;
     if covered_ids != finalization.record_ids {
-        return Err("covered-range active coverage changed after generation was frozen".to_string());
+        return Err(
+            "covered-range active coverage changed after generation was frozen".to_string(),
+        );
     }
 
     let owned_records: Vec<String> = sqlx::query_scalar(
@@ -1132,7 +1141,9 @@ async fn finalize_thread_l0_resummarization(
         .fetch_optional(&mut **tx)
         .await
         .map_err(|error| error.to_string())?
-        .ok_or_else(|| "covered-range source record changed before replacement commit".to_string())?;
+        .ok_or_else(|| {
+            "covered-range source record changed before replacement commit".to_string()
+        })?;
         let mut record: EngineRecord = decode(row)?;
         record.summary_id = Some(summary.id.clone());
         record.summarized_at = Some(now.clone());

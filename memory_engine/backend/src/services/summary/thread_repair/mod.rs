@@ -84,7 +84,10 @@ pub(crate) async fn prepare_covered_range_resummarize(
            reason=EXCLUDED.reason,last_error=NULL,completed_at=NULL,updated_at=now() \
          WHERE engine_covered_range_resummarization_claims.status='failed' \
             OR (engine_covered_range_resummarization_claims.status='running' \
-                AND engine_covered_range_resummarization_claims.lease_expires_at<=now())",
+                AND engine_covered_range_resummarization_claims.lease_expires_at<=now() \
+                AND NOT EXISTS (SELECT 1 FROM engine_job_runs job \
+                  WHERE job.id=engine_covered_range_resummarization_claims.job_run_id \
+                    AND job.status='running'))",
     )
     .bind(tenant_id)
     .bind(source_id)
@@ -201,12 +204,22 @@ pub(crate) async fn resume_covered_range_resummarize(
             source_record_count: job.input_count.max(0) as usize,
         });
     }
-    if job.status != "running"
-        || job.tenant_id.as_deref() != Some(tenant_id)
+    if job.tenant_id.as_deref() != Some(tenant_id)
         || job.source_id.as_deref() != Some(source_id)
         || job.thread_id.as_deref() != Some(thread_id)
     {
-        return Err("resummarization job scope or state is invalid".to_string());
+        return Err("resummarization job scope is invalid".to_string());
+    }
+    if job.status != "running" {
+        return Ok(RunPendingSummaryRebuildResponse {
+            thread_id: thread_id.to_string(),
+            accepted: true,
+            running: false,
+            job_run_id: Some(job_run_id.to_string()),
+            generated: false,
+            summary_id: None,
+            source_record_count: job.input_count.max(0) as usize,
+        });
     }
     let metadata = job
         .metadata
@@ -216,6 +229,35 @@ pub(crate) async fn resume_covered_range_resummarize(
         .get("previous_summary_id")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "resummarization previous summary is missing".to_string())?;
+    let owns_claim = refresh_covered_range_resummarize_claim(
+        db,
+        tenant_id,
+        source_id,
+        previous_summary_id,
+        job_run_id,
+        RESUMMARIZE_LEASE_SECONDS,
+    )
+    .await?;
+    if !owns_claim {
+        fail_covered_range_resummarize(
+            db,
+            tenant_id,
+            source_id,
+            thread_id,
+            job_run_id,
+            "covered-range claim was superseded before terminal callback".to_string(),
+        )
+        .await?;
+        return Ok(RunPendingSummaryRebuildResponse {
+            thread_id: thread_id.to_string(),
+            accepted: true,
+            running: false,
+            job_run_id: Some(job_run_id.to_string()),
+            generated: false,
+            summary_id: None,
+            source_record_count: job.input_count.max(0) as usize,
+        });
+    }
     let partition = metadata
         .get("project_partition_key")
         .and_then(serde_json::Value::as_str)
@@ -236,13 +278,11 @@ pub(crate) async fn resume_covered_range_resummarize(
         source_batch_token_limit: metadata
             .get("policy_max_source_batch_tokens")
             .and_then(serde_json::Value::as_i64)
-            .ok_or_else(|| {
-                "resummarization max source batch tokens are missing".to_string()
-            })?,
+            .ok_or_else(|| "resummarization max source batch tokens are missing".to_string())?,
         token_limit: metadata
-        .get("policy_max_model_input_tokens")
-        .and_then(serde_json::Value::as_i64)
-        .ok_or_else(|| "resummarization max model input tokens are missing".to_string())?,
+            .get("policy_max_model_input_tokens")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| "resummarization max model input tokens are missing".to_string())?,
         max_leaf_tokens: metadata
             .get("policy_max_leaf_tokens")
             .and_then(serde_json::Value::as_i64)
@@ -302,9 +342,8 @@ async fn execute_resummarization(
         previous_summary_id,
     )?;
     settings.cloud_owner_entity_id = Some(job_run_id.to_string());
-    settings.cloud_resume_kind = Some(
-        crate::services::memory_cloud_agent::THREAD_RESUMMARIZE_JOB_RESUME_KIND.to_string(),
-    );
+    settings.cloud_resume_kind =
+        Some(crate::services::memory_cloud_agent::THREAD_RESUMMARIZE_JOB_RESUME_KIND.to_string());
     let build = build_summary_text(
         config,
         db,
@@ -366,56 +405,55 @@ async fn execute_resummarization(
         .ok_or_else(|| "resummarization generation finalization is occupied".to_string())?
     };
     let rendered = crate::models::structured_payload::render_payload(&build.structured_payload)?;
-    let replacement =
-        generation_output_commits::commit_thread_summary_resummarization_final(
-            db,
-            &generation,
-            generation_output_commits::ThreadSummaryGenerationOutput {
-                thread_id: summary.thread_id.as_str(),
-                subject_id: summary.subject_id.as_str(),
-                summary_type: "thread_incremental",
-                level: 0,
-                source_digest: None,
-                summary_text: rendered.as_str(),
-                source_record_start_id: record_ids.first().cloned(),
-                source_record_end_id: record_ids.last().cloned(),
-                source_record_count: record_ids.len(),
+    let replacement = generation_output_commits::commit_thread_summary_resummarization_final(
+        db,
+        &generation,
+        generation_output_commits::ThreadSummaryGenerationOutput {
+            thread_id: summary.thread_id.as_str(),
+            subject_id: summary.subject_id.as_str(),
+            summary_type: "thread_incremental",
+            level: 0,
+            source_digest: None,
+            summary_text: rendered.as_str(),
+            source_record_start_id: record_ids.first().cloned(),
+            source_record_end_id: record_ids.last().cloned(),
+            source_record_count: record_ids.len(),
+            metadata: Some(serde_json::json!({
+                "project_subject_id": project_partition_key,
+                "generation_profile": THREAD_SUMMARY_GENERATION_PROFILE,
+                "supersedes_summary_id": previous_summary_id,
+            })),
+            generation_reason: "resummarize",
+            generation_profile: THREAD_SUMMARY_GENERATION_PROFILE,
+            project_partition_key,
+            payload_schema: crate::models::structured_payload::MEMORY_PAYLOAD_SCHEMA,
+            structured_payload: &build.structured_payload,
+            pipeline_revision: THREAD_SUMMARY_PIPELINE_REVISION,
+        },
+        generation_output_commits::ThreadL0ResummarizationFinalization {
+            previous_summary_id,
+            record_ids: &record_ids,
+            job_result: FinishEngineJobRunRequest {
+                status: "done".to_string(),
+                input_count: record_ids.len() as i64,
+                output_count: 1,
+                processed_count: record_ids.len() as i64,
+                success_count: record_ids.len() as i64,
+                error_count: 0,
                 metadata: Some(serde_json::json!({
-                    "project_subject_id": project_partition_key,
-                    "generation_profile": THREAD_SUMMARY_GENERATION_PROFILE,
-                    "supersedes_summary_id": previous_summary_id,
+                    "previous_summary_id": previous_summary_id,
+                    "project_partition_key": project_partition_key,
+                    "frozen_record_ids": record_ids,
+                    "policy_max_source_batch_tokens": settings.source_batch_token_limit,
+                    "policy_max_model_input_tokens": settings.token_limit,
+                    "policy_max_leaf_tokens": settings.max_leaf_tokens,
+                    "policy_max_merge_rounds": settings.max_merge_rounds,
                 })),
-                generation_reason: "resummarize",
-                generation_profile: THREAD_SUMMARY_GENERATION_PROFILE,
-                project_partition_key,
-                payload_schema: crate::models::structured_payload::MEMORY_PAYLOAD_SCHEMA,
-                structured_payload: &build.structured_payload,
-                pipeline_revision: THREAD_SUMMARY_PIPELINE_REVISION,
+                error_message: None,
             },
-            generation_output_commits::ThreadL0ResummarizationFinalization {
-                previous_summary_id,
-                record_ids: &record_ids,
-                job_result: FinishEngineJobRunRequest {
-                    status: "done".to_string(),
-                    input_count: record_ids.len() as i64,
-                    output_count: 1,
-                    processed_count: record_ids.len() as i64,
-                    success_count: record_ids.len() as i64,
-                    error_count: 0,
-                    metadata: Some(serde_json::json!({
-                        "previous_summary_id": previous_summary_id,
-                        "project_partition_key": project_partition_key,
-                        "frozen_record_ids": record_ids,
-                        "policy_max_source_batch_tokens": settings.source_batch_token_limit,
-                        "policy_max_model_input_tokens": settings.token_limit,
-                        "policy_max_leaf_tokens": settings.max_leaf_tokens,
-                        "policy_max_merge_rounds": settings.max_merge_rounds,
-                    })),
-                    error_message: None,
-                },
-            },
-        )
-        .await?;
+        },
+    )
+    .await?;
     Ok(RunPendingSummaryRebuildResponse {
         thread_id: summary.thread_id,
         accepted: true,
@@ -501,7 +539,9 @@ async fn freeze_covered_range(
     .map(crate::repositories::postgres::decode)
     .transpose()?
     .ok_or_else(|| "covered-range summary not found or not recall eligible".to_string())?;
-    if summary.level != 0 || summary.summary_type != "thread_incremental" || summary.status != "done"
+    if summary.level != 0
+        || summary.summary_type != "thread_incremental"
+        || summary.status != "done"
     {
         return Err(
             "covered-range resummarization only accepts an active canonical L0 summary".to_string(),
@@ -534,12 +574,7 @@ async fn freeze_covered_range(
         record_ids.push(record_id);
         covered_records.push(crate::repositories::postgres::decode(data)?);
     }
-    Ok((
-        summary,
-        record_ids,
-        covered_records,
-        project_partition_key,
-    ))
+    Ok((summary, record_ids, covered_records, project_partition_key))
 }
 
 fn resummarization_descriptor(

@@ -518,10 +518,7 @@ async fn subject_memory_generation_is_immutable_idempotent_and_retires_previous_
     .expect("load archived legacy memory");
     assert_eq!(legacy_state.0, "retired");
     assert!(!legacy_state.1);
-    assert_eq!(
-        legacy_state.2.as_deref(),
-        Some("superseded_by_generation")
-    );
+    assert_eq!(legacy_state.2.as_deref(), Some("superseded_by_generation"));
     let generated_text = sqlx::query_scalar::<_, String>(
         "SELECT data->>'text' FROM engine_subject_memories \
          WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND generation_id=$4",
@@ -815,6 +812,104 @@ async fn subject_memory_l0_final_commit_is_atomic_and_idempotent() {
     assert_eq!(state.3, "idle");
     assert_eq!(state.4, 1);
     assert_eq!(state.5, 1);
+}
+
+#[tokio::test]
+async fn subject_memory_scope_reenters_after_release_and_fences_an_active_owner() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let subject = format!("project:{suffix}");
+    let scope_key = format!("identity:{subject}");
+    crate::repositories::subject_memory_scopes::upsert_subject_memory_scope(
+        &pool,
+        &scope_key,
+        crate::models::UpsertSubjectMemoryScopeRequest {
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            subject_id: subject.clone(),
+            memory_type: "project_summary".to_string(),
+            source_thread_label: subject.clone(),
+            relation_subject_id: Some(subject),
+            source_summary_type: Some("thread_incremental".to_string()),
+            prompt_title: None,
+            memory_metadata: None,
+            status: Some("active".to_string()),
+        },
+    )
+    .await
+    .expect("create restart-safe subject scope");
+    let parent = crate::repositories::control_plane::create_job_run(
+        &pool,
+        crate::models::CreateEngineJobRunRequest {
+            job_type: "subject_memory".to_string(),
+            trigger_type: "restart-contract".to_string(),
+            tenant_id: Some(tenant.clone()),
+            source_id: Some(source.clone()),
+            thread_id: None,
+            subject_id: None,
+            thread_label: None,
+            metadata: None,
+        },
+    )
+    .await
+    .expect("create durable subject parent");
+    assert!(
+        crate::repositories::subject_memory_scopes::try_acquire_subject_memory_scope_slot(
+            &pool, &tenant, &source, &scope_key, &parent.id, 300,
+        )
+        .await
+        .expect("claim original subject scope")
+    );
+    sqlx::query(
+        "UPDATE engine_subject_memory_scopes SET lock_expires_at=now()-interval '1 second' \
+         WHERE tenant_id=$1 AND source_id=$2 AND scope_key=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&scope_key)
+    .execute(&pool)
+    .await
+    .expect("expire original subject scope");
+    assert!(
+        !crate::repositories::subject_memory_scopes::try_acquire_subject_memory_scope_slot(
+            &pool,
+            &tenant,
+            &source,
+            &scope_key,
+            "subject-other",
+            300,
+        )
+        .await
+        .expect("reject subject takeover from a running parent")
+    );
+    crate::repositories::subject_memory_scopes::release_subject_memory_scope_slot(
+        &pool, &tenant, &source, &scope_key, &parent.id,
+    )
+    .await
+    .expect("release original subject scope");
+    assert!(
+        crate::repositories::subject_memory_scopes::refresh_subject_memory_scope_slot(
+            &pool, &tenant, &source, &scope_key, &parent.id, 300,
+        )
+        .await
+        .expect("reenter released subject scope")
+    );
+    assert!(
+        !crate::repositories::subject_memory_scopes::refresh_subject_memory_scope_slot(
+            &pool,
+            &tenant,
+            &source,
+            &scope_key,
+            "subject-other",
+            300,
+        )
+        .await
+        .expect("fence different subject scope owner")
+    );
 }
 
 #[tokio::test]

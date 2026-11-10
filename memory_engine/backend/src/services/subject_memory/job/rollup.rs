@@ -80,8 +80,8 @@ pub(crate) async fn process_rollup_selection(
             "source_id": req.source_id,
             "request": req,
             "from_scope_runner": from_scope_runner,
-            "scope_lock_owner": serde_json::Value::Null,
-            "scope_key": serde_json::Value::Null,
+            "scope_lock_owner": scope_lock_owner,
+            "scope_key": req.scope_key,
             "payload_scope": {
                 "kind": scope_kind,
                 "subject_id": req.subject_id,

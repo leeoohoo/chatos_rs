@@ -70,10 +70,8 @@ async fn build_thread_summary_execution_context(
         .await?
     };
     let pending_before_count = pending_records.len() as i64;
-    let selection = select_pending_records_for_summary(
-        pending_records,
-        settings.source_batch_token_limit,
-    );
+    let selection =
+        select_pending_records_for_summary(pending_records, settings.source_batch_token_limit);
 
     Ok(ThreadSummaryExecutionContext {
         thread,
@@ -372,6 +370,31 @@ pub(crate) async fn resume_cloud_summary_job(
         .await?
         .ok_or_else(|| "thread not found".to_string())?;
     let frozen = FrozenThreadSummarySelection::from_metadata(job_run.metadata.as_ref())?;
+    let owns_partition = thread_partitions::refresh_summary_claim(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        project_partition_key_from_subject(frozen.project_subject_id.as_deref()),
+        job_run_id,
+        i64::try_from(config.ai_request_timeout_secs)
+            .unwrap_or(i64::MAX)
+            .saturating_mul(2)
+            .saturating_add(60),
+    )
+    .await?;
+    if !owns_partition {
+        fail_cloud_summary_job(
+            db,
+            tenant_id,
+            source_id,
+            thread_id,
+            job_run_id,
+            "summary partition was superseded before terminal callback".to_string(),
+        )
+        .await?;
+        return Ok(None);
+    }
     let selected = records::list_records_by_ids(
         db,
         tenant_id,
@@ -392,16 +415,24 @@ pub(crate) async fn resume_cloud_summary_job(
         thread,
         settings: SummaryJobSettings {
             token_limit: metadata_i64(job_run.metadata.as_ref(), "policy_max_model_input_tokens")
-                .ok_or_else(|| "summary job metadata policy_max_model_input_tokens is missing".to_string())?,
+                .ok_or_else(|| {
+                "summary job metadata policy_max_model_input_tokens is missing".to_string()
+            })?,
             source_batch_token_limit: metadata_i64(
                 job_run.metadata.as_ref(),
                 "policy_max_source_batch_tokens",
             )
-            .ok_or_else(|| "summary job metadata policy_max_source_batch_tokens is missing".to_string())?,
+            .ok_or_else(|| {
+                "summary job metadata policy_max_source_batch_tokens is missing".to_string()
+            })?,
             max_leaf_tokens: metadata_i64(job_run.metadata.as_ref(), "policy_max_leaf_tokens")
-                .ok_or_else(|| "summary job metadata policy_max_leaf_tokens is missing".to_string())?,
+                .ok_or_else(|| {
+                    "summary job metadata policy_max_leaf_tokens is missing".to_string()
+                })?,
             max_merge_rounds: metadata_i64(job_run.metadata.as_ref(), "policy_max_merge_rounds")
-                .ok_or_else(|| "summary job metadata policy_max_merge_rounds is missing".to_string())?
+                .ok_or_else(|| {
+                    "summary job metadata policy_max_merge_rounds is missing".to_string()
+                })?
                 .max(1) as usize,
             cloud_owner_entity_id: Some(job_run_id.to_string()),
             cloud_resume_kind: Some(

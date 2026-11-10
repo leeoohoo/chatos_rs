@@ -163,6 +163,20 @@ pub(crate) async fn resume_subject_memory_job(
     generation_id: &str,
     scope_lock_owner: Option<&str>,
 ) -> Result<RunSubjectMemoryJobResponse, String> {
+    let job_run = crate::repositories::control_plane::get_job_run_by_id(db, job_run_id)
+        .await?
+        .ok_or_else(|| format!("subject memory job run not found: {job_run_id}"))?;
+    if job_run.job_type != "subject_memory"
+        || job_run.tenant_id.as_deref() != Some(req.tenant_id.as_str())
+        || job_run.source_id.as_deref() != Some(req.source_id.as_str())
+        || job_run.subject_id.as_deref() != Some(req.subject_id.as_str())
+    {
+        return Err("subject memory job scope does not match its Cloud Agent callback".to_string());
+    }
+    if job_run.status != "running" {
+        return Ok(empty_subject_memory_response(req.subject_id.clone()));
+    }
+
     let generation = crate::repositories::generation_commits::get_generation(
         db,
         req.tenant_id.as_str(),
@@ -192,6 +206,41 @@ pub(crate) async fn resume_subject_memory_job(
     let mut progress = SubjectMemoryJobProgress::new();
     let input_count = source_ids.len();
     let relation_subject_id = settings.relation_subject_id.clone();
+    let effective_scope_lock_owner = req.scope_key.as_deref().map(|_| job_run_id);
+    if let Some(scope_key) = req.scope_key.as_deref() {
+        let callback_owner_matches = scope_lock_owner
+            .map(|owner| owner == job_run_id)
+            .unwrap_or(true);
+        let owns_scope = if callback_owner_matches {
+            crate::repositories::subject_memory_scopes::refresh_subject_memory_scope_slot(
+                db,
+                req.tenant_id.as_str(),
+                req.source_id.as_str(),
+                scope_key,
+                job_run_id,
+                crate::services::memory_cloud_agent::cloud_subject_scope_lock_timeout_secs(config),
+            )
+            .await?
+        } else {
+            false
+        };
+        if !owns_scope {
+            finish_subject_memory_job_run(
+                db,
+                job_run_id,
+                build_outer_failed_job_run(
+                    &req,
+                    relation_subject_id.as_str(),
+                    from_scope_runner,
+                    input_count,
+                    &progress,
+                    "subject memory scope was superseded before terminal callback".to_string(),
+                ),
+            )
+            .await;
+            return Ok(empty_subject_memory_response(req.subject_id.clone()));
+        }
+    }
     let result: Result<RunSubjectMemoryJobResponse, String> = async {
         if matches!(
             generation.generation_kind.as_str(),
@@ -227,7 +276,7 @@ pub(crate) async fn resume_subject_memory_job(
                 from_scope_runner,
                 input_count,
                 job_run_id,
-                scope_lock_owner,
+                effective_scope_lock_owner,
                 &mut progress,
             )
             .await?;
@@ -257,7 +306,7 @@ pub(crate) async fn resume_subject_memory_job(
                 from_scope_runner,
                 input_count,
                 job_run_id,
-                scope_lock_owner,
+                effective_scope_lock_owner,
                 &mut progress,
             )
             .await?;

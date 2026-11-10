@@ -266,6 +266,8 @@ pub async fn release_expired_summary_claims(db: &Db, limit: i64) -> Result<u64, 
          summary_lock_expires_at=NULL,updated_at=now() WHERE (tenant_id,source_id,thread_id,project_partition_key) \
          IN (SELECT tenant_id,source_id,thread_id,project_partition_key FROM engine_thread_summary_partitions \
          WHERE summary_status='running' AND (summary_lock_expires_at IS NULL OR summary_lock_expires_at<=now()) \
+         AND NOT EXISTS (SELECT 1 FROM engine_job_runs job WHERE job.id=summary_job_run_id \
+           AND job.status='running') \
          ORDER BY updated_at LIMIT $1 FOR UPDATE SKIP LOCKED)",
     )
     .bind(limit.clamp(1, 1000))
@@ -411,8 +413,10 @@ pub async fn try_claim_summary(
         "UPDATE engine_thread_summary_partitions SET summary_status='running',summary_job_run_id=$5, \
          summary_locked_at=now(),summary_lock_expires_at=now()+make_interval(secs=>$6),updated_at=now() \
          WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4 \
-         AND pending_record_count>0 AND (summary_status<>'running' OR summary_lock_expires_at IS NULL \
-           OR summary_lock_expires_at<=now()) \
+         AND pending_record_count>0 AND (summary_status<>'running' OR summary_job_run_id=$5 OR ( \
+           (summary_lock_expires_at IS NULL OR summary_lock_expires_at<=now()) \
+           AND NOT EXISTS (SELECT 1 FROM engine_job_runs job WHERE job.id=summary_job_run_id \
+             AND job.status='running'))) \
          RETURNING tenant_id,source_id,thread_id,project_partition_key,summary_job_run_id, \
                    pending_record_count,pending_summary_tokens",
     )
@@ -472,10 +476,20 @@ pub async fn refresh_summary_claim(
     lease_seconds: i64,
 ) -> Result<bool, String> {
     let result = sqlx::query(
-        "UPDATE engine_thread_summary_partitions SET \
+        "UPDATE engine_thread_summary_partitions target SET \
+         summary_status='running',summary_job_run_id=$5, \
+         summary_locked_at=COALESCE(summary_locked_at,now()), \
          summary_lock_expires_at=now()+make_interval(secs=>$6),updated_at=now() \
          WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4 \
-         AND summary_status='running' AND summary_job_run_id=$5",
+         AND pending_record_count>0 AND ( \
+           (summary_status='running' AND summary_job_run_id=$5) OR ( \
+             summary_status<>'running' AND (summary_job_run_id IS NULL OR summary_job_run_id=$5) \
+             AND EXISTS (SELECT 1 FROM engine_records record \
+               WHERE record.tenant_id=$1 AND record.source_id=$2 AND record.thread_id=$3 \
+               AND record.project_partition_key=$4 AND record.summary_status='summarizing' \
+               AND record.summary_job_run_id=$5) \
+           ) \
+         )",
     )
     .bind(tenant_id)
     .bind(source_id)
@@ -506,7 +520,10 @@ pub async fn try_claim_rollup(
         "UPDATE engine_thread_summary_partitions SET rollup_status='running',rollup_job_run_id=$5, \
          rollup_locked_at=now(),rollup_lock_expires_at=now()+make_interval(secs=>$6),updated_at=now() \
          WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4 \
-         AND (rollup_status<>'running' OR rollup_lock_expires_at IS NULL OR rollup_lock_expires_at<=now()) \
+         AND (rollup_status<>'running' OR rollup_job_run_id=$5 OR ( \
+           (rollup_lock_expires_at IS NULL OR rollup_lock_expires_at<=now()) \
+           AND NOT EXISTS (SELECT 1 FROM engine_job_runs job WHERE job.id=rollup_job_run_id \
+             AND job.status='running'))) \
          RETURNING tenant_id,source_id,thread_id,project_partition_key,rollup_job_run_id",
     )
     .bind(tenant_id)
@@ -559,9 +576,12 @@ pub async fn refresh_rollup_claim(
 ) -> Result<bool, String> {
     let result = sqlx::query(
         "UPDATE engine_thread_summary_partitions SET \
+         rollup_status='running',rollup_job_run_id=$5, \
+         rollup_locked_at=COALESCE(rollup_locked_at,now()), \
          rollup_lock_expires_at=now()+make_interval(secs=>$6),updated_at=now() \
          WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4 \
-         AND rollup_status='running' AND rollup_job_run_id=$5",
+         AND ((rollup_status='running' AND rollup_job_run_id=$5) OR \
+           (rollup_status<>'running' AND (rollup_job_run_id IS NULL OR rollup_job_run_id=$5)))",
     )
     .bind(tenant_id)
     .bind(source_id)

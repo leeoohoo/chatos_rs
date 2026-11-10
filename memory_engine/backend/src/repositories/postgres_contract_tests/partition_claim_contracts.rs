@@ -333,3 +333,269 @@ async fn terminal_summary_jobs_release_uncovered_record_claims() {
     assert_eq!(failed_record.summary_status, "pending");
     assert_eq!(running_record.summary_status, "summarizing");
 }
+
+#[tokio::test]
+async fn durable_job_can_reenter_released_partition_but_cannot_cross_owner_fence() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let thread_id = format!("thread-{suffix}");
+    let subject = format!("agent:{thread_id}");
+    let record_id = format!("record-{suffix}");
+    crate::repositories::threads::upsert_thread(
+        &pool,
+        &thread_id,
+        UpsertThreadRequest {
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            subject_id: subject.clone(),
+            thread_type: "client_agent".to_string(),
+            external_thread_id: None,
+            title: None,
+            labels: Some(vec!["memory-schema:v2".to_string(), subject]),
+            metadata: None,
+            status: None,
+            created_at: None,
+            updated_at: None,
+            archived_at: None,
+        },
+    )
+    .await
+    .expect("create restart recovery thread");
+    crate::repositories::records::batch_sync_records(
+        &test_config("unused".to_string()),
+        &pool,
+        &thread_id,
+        &crate::models::BatchSyncRecordsRequest {
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            project_partition_key: "project:alpha".to_string(),
+            runtime_context_assertion: "repository-test".to_string(),
+            records: vec![record(&record_id, "alpha")],
+        },
+    )
+    .await
+    .expect("seed restart recovery record");
+
+    let summary_job = crate::repositories::control_plane::create_job_run(
+        &pool,
+        crate::models::CreateEngineJobRunRequest {
+            job_type: "summary".to_string(),
+            trigger_type: "restart-contract".to_string(),
+            tenant_id: Some(tenant.clone()),
+            source_id: Some(source.clone()),
+            thread_id: Some(thread_id.clone()),
+            subject_id: None,
+            thread_label: None,
+            metadata: None,
+        },
+    )
+    .await
+    .expect("create durable summary parent");
+
+    crate::repositories::thread_partitions::try_claim_summary(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        "project:alpha",
+        &summary_job.id,
+        300,
+    )
+    .await
+    .expect("claim summary partition")
+    .expect("summary partition available");
+    assert_eq!(
+        crate::repositories::records::claim_records_for_summary(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            std::slice::from_ref(&record_id),
+            &summary_job.id,
+        )
+        .await
+        .expect("freeze original summary record"),
+        1
+    );
+    sqlx::query(
+        "UPDATE engine_thread_summary_partitions SET summary_lock_expires_at=now()-interval '1 second' \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key='project:alpha'",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .execute(&pool)
+    .await
+    .expect("expire original summary partition");
+    crate::repositories::thread_partitions::release_expired_summary_claims(&pool, 10)
+        .await
+        .expect("preserve expired partition for running parent");
+    let preserved_owner: Option<String> = sqlx::query_scalar(
+        "SELECT summary_job_run_id FROM engine_thread_summary_partitions \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key='project:alpha' \
+           AND summary_status='running'",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .fetch_optional(&pool)
+    .await
+    .expect("load partition preserved for running parent")
+    .flatten();
+    assert_eq!(preserved_owner.as_deref(), Some(summary_job.id.as_str()));
+    assert!(crate::repositories::thread_partitions::try_claim_summary(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        "project:alpha",
+        "summary-other",
+        300,
+    )
+    .await
+    .expect("reject takeover from a running parent")
+    .is_none());
+    sqlx::query(
+        "UPDATE engine_thread_summary_partitions SET summary_status='pending', \
+         summary_job_run_id=NULL,summary_locked_at=NULL,summary_lock_expires_at=NULL \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key='project:alpha'",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .execute(&pool)
+    .await
+    .expect("simulate a partition released by the pre-fix cleaner");
+    assert!(
+        crate::repositories::thread_partitions::refresh_summary_claim(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            "project:alpha",
+            &summary_job.id,
+            300,
+        )
+        .await
+        .expect("reenter released summary partition")
+    );
+    assert!(
+        !crate::repositories::thread_partitions::refresh_summary_claim(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            "project:alpha",
+            "summary-other",
+            300,
+        )
+        .await
+        .expect("fence different summary owner")
+    );
+
+    assert!(
+        crate::repositories::thread_partitions::release_summary_claim(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            "project:alpha",
+            &summary_job.id,
+            0,
+            0,
+        )
+        .await
+        .expect("release recovered summary partition")
+    );
+    let rollup_job = crate::repositories::control_plane::create_job_run(
+        &pool,
+        crate::models::CreateEngineJobRunRequest {
+            job_type: "rollup".to_string(),
+            trigger_type: "restart-contract".to_string(),
+            tenant_id: Some(tenant.clone()),
+            source_id: Some(source.clone()),
+            thread_id: Some(thread_id.clone()),
+            subject_id: None,
+            thread_label: None,
+            metadata: None,
+        },
+    )
+    .await
+    .expect("create durable rollup parent");
+    assert!(crate::repositories::thread_partitions::try_claim_rollup(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        "project:alpha",
+        &rollup_job.id,
+        300,
+    )
+    .await
+    .expect("claim original rollup partition")
+    .is_some());
+    sqlx::query(
+        "UPDATE engine_thread_summary_partitions SET rollup_lock_expires_at=now()-interval '1 second' \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key='project:alpha'",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .execute(&pool)
+    .await
+    .expect("expire original rollup partition");
+    assert!(crate::repositories::thread_partitions::try_claim_rollup(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        "project:alpha",
+        "rollup-other",
+        300,
+    )
+    .await
+    .expect("reject rollup takeover from a running parent")
+    .is_none());
+    assert!(
+        crate::repositories::thread_partitions::release_rollup_claim(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            "project:alpha",
+            &rollup_job.id,
+        )
+        .await
+        .expect("release original rollup partition")
+    );
+    assert!(
+        crate::repositories::thread_partitions::refresh_rollup_claim(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            "project:alpha",
+            &rollup_job.id,
+            300,
+        )
+        .await
+        .expect("reenter released rollup partition")
+    );
+    assert!(
+        !crate::repositories::thread_partitions::refresh_rollup_claim(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            "project:alpha",
+            "rollup-other",
+            300,
+        )
+        .await
+        .expect("fence different rollup owner")
+    );
+}
