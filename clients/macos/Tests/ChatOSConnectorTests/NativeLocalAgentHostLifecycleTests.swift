@@ -896,7 +896,20 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         let truncated = Pipe()
         try truncated.fileHandleForWriting.write(contentsOf: Data([0, 0, 0, 4, 1, 2]))
         try truncated.fileHandleForWriting.close()
-        XCTAssertThrowsError(try LocalAgentHostFrameCodec.read(from: truncated.fileHandleForReading))
+        XCTAssertThrowsError(
+            try LocalAgentHostFrameCodec.read(from: truncated.fileHandleForReading)
+        ) { error in
+            XCTAssertEqual(error as? NativeLocalAgentHostError, .notRunning)
+        }
+
+        let invalidLength = Pipe()
+        try invalidLength.fileHandleForWriting.write(contentsOf: Data([0, 0, 0, 0]))
+        try invalidLength.fileHandleForWriting.close()
+        XCTAssertThrowsError(
+            try LocalAgentHostFrameCodec.read(from: invalidLength.fileHandleForReading)
+        ) { error in
+            XCTAssertEqual(error as? NativeLocalAgentHostError, .invalidFrame)
+        }
     }
 
     private struct DelayedHostWrapper {

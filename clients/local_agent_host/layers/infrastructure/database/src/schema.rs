@@ -842,5 +842,9 @@ pub(super) const SCHEMA_V48: &[&str] = &[
     "ALTER TABLE local_model_config_snapshots ADD COLUMN output_reserve_tokens INTEGER",
     "ALTER TABLE local_model_config_snapshots ADD COLUMN protocol_overhead_estimator_id TEXT",
     "ALTER TABLE local_model_config_snapshots ADD COLUMN tokenizer_id TEXT",
+    // Runtime settings reference the immutable model snapshot with an immediate foreign key.
+    // Both caches are republished by the authenticated control plane, so discard dependants
+    // before invalidating the incomplete snapshots they reference.
+    "DELETE FROM local_conversation_runtime_settings",
     "DELETE FROM local_model_config_snapshots",
 ];

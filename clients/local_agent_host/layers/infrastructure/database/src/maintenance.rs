@@ -131,6 +131,14 @@ pub(super) async fn create_migration_backup(
     from_version: i64,
     to_version: i64,
 ) -> Result<PathBuf, ClientStorageError> {
+    // A failed schema transaction leaves its already verified recovery point in place. Reuse
+    // that exact from/to snapshot on retry: requiring another database-sized copy would make a
+    // recoverable migration failure permanently exhaust its own retention budget.
+    if let Some(existing) =
+        reusable_migration_backup(database_path, from_version, to_version).await?
+    {
+        return Ok(existing);
+    }
     super::migration_backup_policy::preflight(pool, database_path).await?;
     let backup_path = backup_path(database_path, from_version, to_version)?;
     // Only verified, synced snapshots receive the recovery-file suffix. A crash
@@ -182,10 +190,7 @@ pub(super) async fn create_migration_backup(
         return Err(error);
     }
 
-    let options = SqliteConnectOptions::new()
-        .filename(&staging_path)
-        .read_only(true)
-        .foreign_keys(true);
+    let options = recovery_snapshot_options(&staging_path);
     let mut backup = match SqliteConnection::connect_with(&options).await.db() {
         Ok(connection) => connection,
         Err(error) => {
@@ -193,42 +198,7 @@ pub(super) async fn create_migration_backup(
             return Err(error);
         }
     };
-    let verification = async {
-        // Recovery snapshots are infrequent; validate indexes as well as pages
-        // before publishing, instead of relying on startup's quicker check.
-        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check(1)")
-            .fetch_one(&mut backup)
-            .await
-            .db()?;
-        if integrity != "ok" {
-            return Err(ClientStorageError::InvalidState(format!(
-                "SQLite recovery snapshot integrity_check failed: {integrity}"
-            )));
-        }
-        let has_migrations: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master \
-             WHERE type = 'table' AND name = 'client_schema_migrations'",
-        )
-        .fetch_one(&mut backup)
-        .await
-        .db()?;
-        let snapshot_version: i64 = if has_migrations == 0 {
-            0
-        } else {
-            sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM client_schema_migrations")
-                .fetch_one(&mut backup)
-                .await
-                .db()?
-        };
-        if snapshot_version != from_version {
-            return Err(ClientStorageError::MaintenanceRequired(format!(
-                "database schema changed during backup: expected {from_version}, \
-                 found {snapshot_version}; migration deferred"
-            )));
-        }
-        Ok(())
-    }
-    .await;
+    let verification = verify_recovery_snapshot(&mut backup, from_version).await;
     if let Err(error) = verification {
         let _ = backup.close().await;
         remove_incomplete_backup(&staging_path);
@@ -256,6 +226,118 @@ pub(super) async fn create_migration_backup(
     #[cfg(all(test, unix))]
     super::migration_crash_tests::checkpoint("backup_published").await;
     Ok(backup_path)
+}
+
+async fn reusable_migration_backup(
+    database_path: &Path,
+    from_version: i64,
+    to_version: i64,
+) -> Result<Option<PathBuf>, ClientStorageError> {
+    let parent = database_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = database_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            ClientStorageError::InvalidState(
+                "client storage path must have a valid UTF-8 file name".to_string(),
+            )
+        })?;
+    let prefix = format!("{file_name}.pre-migration-v{from_version}-to-v{to_version}-");
+    let suffix = ".backup.sqlite";
+    let mut candidates = Vec::new();
+    for entry in std::fs::read_dir(parent).map_err(ClientStorageError::database)? {
+        let entry = entry.map_err(ClientStorageError::database)?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with(&prefix) || !name.ends_with(suffix) {
+            continue;
+        }
+        let metadata = entry
+            .path()
+            .symlink_metadata()
+            .map_err(ClientStorageError::database)?;
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Err(ClientStorageError::MaintenanceRequired(format!(
+                "migration deferred: matching recovery path is not a regular file: {}",
+                entry.path().display()
+            )));
+        }
+        candidates.push((
+            metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+            entry.path(),
+        ));
+    }
+    candidates.sort_by(|left, right| right.0.cmp(&left.0));
+    let Some((_, candidate)) = candidates.into_iter().next() else {
+        return Ok(None);
+    };
+    let mut backup = SqliteConnection::connect_with(&recovery_snapshot_options(&candidate))
+        .await
+        .db()
+        .map_err(|error| {
+            ClientStorageError::MaintenanceRequired(format!(
+                "migration recovery snapshot cannot be reopened: {}; {error}",
+                candidate.display()
+            ))
+        })?;
+    if let Err(error) = verify_recovery_snapshot(&mut backup, from_version).await {
+        let _ = backup.close().await;
+        return Err(ClientStorageError::MaintenanceRequired(format!(
+            "migration recovery snapshot cannot be reused: {}; {error}",
+            candidate.display()
+        )));
+    }
+    backup.close().await.db()?;
+    Ok(Some(candidate))
+}
+
+fn recovery_snapshot_options(path: &Path) -> SqliteConnectOptions {
+    SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true)
+        .foreign_keys(true)
+}
+
+async fn verify_recovery_snapshot(
+    backup: &mut SqliteConnection,
+    expected_version: i64,
+) -> Result<(), ClientStorageError> {
+    // Recovery snapshots are infrequent; validate indexes as well as pages before publishing or
+    // reusing one, instead of relying on startup's quicker check.
+    let integrity: String = sqlx::query_scalar("PRAGMA integrity_check(1)")
+        .fetch_one(&mut *backup)
+        .await
+        .db()?;
+    if integrity != "ok" {
+        return Err(ClientStorageError::InvalidState(format!(
+            "SQLite recovery snapshot integrity_check failed: {integrity}"
+        )));
+    }
+    let has_migrations: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master \
+         WHERE type = 'table' AND name = 'client_schema_migrations'",
+    )
+    .fetch_one(&mut *backup)
+    .await
+    .db()?;
+    let snapshot_version: i64 = if has_migrations == 0 {
+        0
+    } else {
+        sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM client_schema_migrations")
+            .fetch_one(&mut *backup)
+            .await
+            .db()?
+    };
+    if snapshot_version != expected_version {
+        return Err(ClientStorageError::MaintenanceRequired(format!(
+            "database schema changed during backup: expected {expected_version}, \
+             found {snapshot_version}; migration deferred"
+        )));
+    }
+    Ok(())
 }
 
 /// After a migration is fully committed and verified, keep its newly published snapshot and

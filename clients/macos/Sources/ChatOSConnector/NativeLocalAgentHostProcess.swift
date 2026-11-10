@@ -790,6 +790,8 @@ enum LocalAgentHostFrameCodec {
                     offset += written
                 } else if written == -1, errno == EINTR || errno == EAGAIN {
                     continue
+                } else if written == 0 || (written == -1 && [EPIPE, EBADF].contains(errno)) {
+                    throw NativeLocalAgentHostError.notRunning
                 } else {
                     throw NativeLocalAgentHostError.invalidFrame
                 }
@@ -825,6 +827,10 @@ enum LocalAgentHostFrameCodec {
                     offset += received
                 } else if received == -1, errno == EINTR || errno == EAGAIN {
                     continue
+                } else if received == 0 || (received == -1 && errno == EBADF) {
+                    // EOF means the child exited while producing a response. It is a transport
+                    // termination, not malformed protocol data, and must enter lifecycle recovery.
+                    throw NativeLocalAgentHostError.notRunning
                 } else {
                     throw NativeLocalAgentHostError.invalidFrame
                 }
@@ -861,6 +867,9 @@ enum LocalAgentHostFrameCodec {
             if result > 0 {
                 if shouldCancel() { throw CancellationError() }
                 if descriptor.revents & events != 0 { return }
+                if descriptor.revents & Int16(POLLHUP | POLLERR | POLLNVAL) != 0 {
+                    throw NativeLocalAgentHostError.notRunning
+                }
                 throw NativeLocalAgentHostError.invalidFrame
             }
             if result == 0 {
