@@ -1,5 +1,7 @@
 use super::*;
 
+const CONFIG_QUEUE_REPLAY_SCOPE: &str = "config.queue.replay";
+
 pub fn build_internal_router(state: AppState) -> Router {
     Router::new()
         .route(
@@ -10,6 +12,10 @@ pub fn build_internal_router(state: AppState) -> Router {
             "/internal/config/v1/instances/heartbeat",
             post(instance_heartbeat),
         )
+        .route(
+            "/internal/config/v1/environments/{environment}/queue-operations",
+            post(internal_replay_queue_operation),
+        )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_internal,
@@ -19,6 +25,54 @@ pub fn build_internal_router(state: AppState) -> Router {
         .layer(middleware::from_fn(
             chatos_service_runtime::request_id_middleware,
         ))
+}
+
+async fn internal_replay_queue_operation(
+    State(state): State<AppState>,
+    Extension(caller): Extension<InternalServiceTokenClaims>,
+    Path(environment): Path<String>,
+    Json(input): Json<crate::queue_operations::QueueReplayRequest>,
+) -> Response {
+    let resource_id = format!(
+        "{}/{}:{}/{}",
+        environment.trim(),
+        input.service.trim(),
+        input.stream.trim(),
+        input.item_id.trim()
+    );
+    let response = replay_queue_operation_as_service(&state, &caller, &environment, input).await;
+    record_config_center_internal_resource_access(
+        &caller,
+        ConfigCenterInternalResourceAudit {
+            resource_type: "queue_dead_letter",
+            resource_id: resource_id.as_str(),
+            resource_name: None,
+            action: "replay",
+            outcome: internal_response_outcome(response.status()),
+        },
+    );
+    response
+}
+
+async fn replay_queue_operation_as_service(
+    state: &AppState,
+    caller: &InternalServiceTokenClaims,
+    environment: &str,
+    input: crate::queue_operations::QueueReplayRequest,
+) -> Response {
+    if caller.caller != "memory-engine" || input.service.trim() != "memory-engine" {
+        return error(
+            StatusCode::FORBIDDEN,
+            "Memory Engine queue replay requires the matching service identity",
+        );
+    }
+    let service_user = CurrentUser {
+        user_id: format!("service:{}", caller.caller),
+        username: caller.caller.clone(),
+        display_name: "Memory Engine release operator".to_string(),
+        role: "service_operator".to_string(),
+    };
+    result_json(crate::queue_operations::replay(state, environment, &service_user, "", input).await)
 }
 
 #[derive(Debug, Deserialize)]
@@ -279,6 +333,12 @@ fn internal_request_scope(method: &Method, path: &str) -> Option<&'static str> {
     if method == Method::POST && path == "/internal/config/v1/instances/heartbeat" {
         return Some(CONFIG_INSTANCE_HEARTBEAT_SCOPE);
     }
+    if method == Method::POST
+        && path.starts_with("/internal/config/v1/environments/")
+        && path.ends_with("/queue-operations")
+    {
+        return Some(CONFIG_QUEUE_REPLAY_SCOPE);
+    }
     None
 }
 
@@ -306,7 +366,7 @@ mod tests {
     use super::{
         authenticate_internal_request, build_config_center_internal_audit_event,
         internal_request_scope, internal_response_outcome, require_matching_service_identity,
-        ConfigCenterInternalResourceAudit,
+        ConfigCenterInternalResourceAudit, CONFIG_QUEUE_REPLAY_SCOPE,
     };
     use chatos_config_sdk::{
         CONFIG_CENTER_AUDIENCE, CONFIG_CENTER_CALLER_HEADER, CONFIG_CENTER_TOKEN_HEADER,
@@ -322,6 +382,20 @@ mod tests {
         assert_eq!(
             internal_request_scope(&Method::POST, "/internal/config/v1/instances/heartbeat"),
             Some(CONFIG_INSTANCE_HEARTBEAT_SCOPE)
+        );
+        assert_eq!(
+            internal_request_scope(
+                &Method::POST,
+                "/internal/config/v1/environments/production/queue-operations"
+            ),
+            Some(CONFIG_QUEUE_REPLAY_SCOPE)
+        );
+        assert_eq!(
+            internal_request_scope(
+                &Method::GET,
+                "/internal/config/v1/environments/production/queue-operations"
+            ),
+            None
         );
         assert_eq!(
             internal_request_scope(&Method::POST, "/internal/config/v1/snapshots/memory-engine"),
