@@ -325,21 +325,23 @@ pub(crate) async fn resume_subject_memory_job(
     }
     .await;
     if let Err(error) = &result {
-        if error != crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED {
-            finish_subject_memory_job_run(
-                db,
-                job_run_id,
-                build_outer_failed_job_run(
-                    &req,
-                    relation_subject_id.as_str(),
-                    from_scope_runner,
-                    input_count,
-                    &progress,
-                    error.clone(),
-                ),
-            )
-            .await;
+        if error == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED {
+            return result;
         }
+        finish_subject_memory_job_run(
+            db,
+            job_run_id,
+            build_outer_failed_job_run(
+                &req,
+                relation_subject_id.as_str(),
+                from_scope_runner,
+                input_count,
+                &progress,
+                error.clone(),
+            ),
+        )
+        .await;
+        return Ok(empty_subject_memory_response(req.subject_id.clone()));
     }
     result
 }

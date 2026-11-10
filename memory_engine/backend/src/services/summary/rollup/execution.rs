@@ -286,7 +286,7 @@ pub(crate) async fn run_prepared_thread_rollup(
         )),
         error_message: None,
     };
-    let created = generation_output_commits::commit_thread_rollup_generation_final(
+    let created_result = generation_output_commits::commit_thread_rollup_generation_final(
         db,
         &generation,
         generation_output_commits::ThreadSummaryGenerationOutput {
@@ -317,7 +317,53 @@ pub(crate) async fn run_prepared_thread_rollup(
             job_result,
         },
     )
-    .await?;
+    .await;
+    let created = match created_result {
+        Ok(created) => created,
+        Err(error) if resumed => {
+            let current =
+                crate::repositories::control_plane::get_job_run_by_id(db, job_run.id.as_str())
+                    .await?
+                    .ok_or_else(|| {
+                        format!("rollup job run not found after callback: {}", job_run.id)
+                    })?;
+            if current.status != "running" {
+                return Ok(empty_rollup_result());
+            }
+            let still_owns_claim = thread_partitions::refresh_rollup_claim(
+                db,
+                tenant_id,
+                source_id,
+                thread_id,
+                project_partition_key.as_str(),
+                job_run.id.as_str(),
+                config.rollup_lock_timeout_secs,
+            )
+            .await?;
+            let sources_were_superseded = matches!(
+                error.as_str(),
+                "thread rollup finalization did not own every frozen source summary"
+                    | "thread rollup source changed during final commit"
+            );
+            if !still_owns_claim || sources_were_superseded {
+                fail_rollup_job(
+                    db,
+                    tenant_id,
+                    source_id,
+                    thread_id,
+                    project_partition_key.as_str(),
+                    job_run.id.as_str(),
+                    selected.len(),
+                    trigger_reason.as_str(),
+                    error,
+                )
+                .await;
+                return Ok(empty_rollup_result());
+            }
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
 
     if let Err(error) = crate::rollup_queue::publish_pending_rollup_for_summary(
         config,

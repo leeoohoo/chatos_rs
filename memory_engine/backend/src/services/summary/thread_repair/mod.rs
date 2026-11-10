@@ -305,7 +305,8 @@ pub(crate) async fn resume_covered_range_resummarize(
     .ok_or_else(|| "resummarization source summary is no longer active".to_string())?;
     let covered_records =
         records::list_records_by_ids(db, tenant_id, source_id, thread_id, &record_ids).await?;
-    execute_resummarization(
+    let source_record_count = record_ids.len();
+    let result = execute_resummarization(
         config,
         db,
         tenant_id,
@@ -318,7 +319,66 @@ pub(crate) async fn resume_covered_range_resummarize(
         job_run_id,
         settings,
     )
-    .await
+    .await;
+    match result {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            let current = control_plane::get_job_run_by_id(db, job_run_id)
+                .await?
+                .ok_or_else(|| {
+                    format!("resummarization job not found after callback: {job_run_id}")
+                })?;
+            if current.status != "running" {
+                return Ok(acknowledged_resummarization_response(
+                    thread_id,
+                    job_run_id,
+                    source_record_count,
+                ));
+            }
+            let still_owns_claim = refresh_covered_range_resummarize_claim(
+                db,
+                tenant_id,
+                source_id,
+                previous_summary_id,
+                job_run_id,
+                RESUMMARIZE_LEASE_SECONDS,
+            )
+            .await?;
+            if !still_owns_claim {
+                fail_covered_range_resummarize(
+                    db,
+                    tenant_id,
+                    source_id,
+                    thread_id,
+                    job_run_id,
+                    "covered-range claim was superseded during terminal callback".to_string(),
+                )
+                .await?;
+                return Ok(acknowledged_resummarization_response(
+                    thread_id,
+                    job_run_id,
+                    source_record_count,
+                ));
+            }
+            Err(error)
+        }
+    }
+}
+
+fn acknowledged_resummarization_response(
+    thread_id: &str,
+    job_run_id: &str,
+    source_record_count: usize,
+) -> RunPendingSummaryRebuildResponse {
+    RunPendingSummaryRebuildResponse {
+        thread_id: thread_id.to_string(),
+        accepted: true,
+        running: false,
+        job_run_id: Some(job_run_id.to_string()),
+        generated: false,
+        summary_id: None,
+        source_record_count,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

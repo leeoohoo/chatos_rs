@@ -370,12 +370,14 @@ pub(crate) async fn resume_cloud_summary_job(
         .await?
         .ok_or_else(|| "thread not found".to_string())?;
     let frozen = FrozenThreadSummarySelection::from_metadata(job_run.metadata.as_ref())?;
+    let project_partition_key =
+        project_partition_key_from_subject(frozen.project_subject_id.as_deref()).to_string();
     let owns_partition = thread_partitions::refresh_summary_claim(
         db,
         tenant_id,
         source_id,
         thread_id,
-        project_partition_key_from_subject(frozen.project_subject_id.as_deref()),
+        project_partition_key.as_str(),
         job_run_id,
         i64::try_from(config.ai_request_timeout_secs)
             .unwrap_or(i64::MAX)
@@ -449,11 +451,47 @@ pub(crate) async fn resume_cloud_summary_job(
             project_subject_id: frozen.project_subject_id,
         },
     };
-    execute_prepared_thread_summary_job(
+    let result = execute_prepared_thread_summary_job(
         config, db, tenant_id, source_id, thread_id, job_run_id, ctx,
     )
-    .await
-    .map(Some)
+    .await;
+    match result {
+        Ok(response) => Ok(Some(response)),
+        Err(error) => {
+            let current = cp_repo::get_job_run_by_id(db, job_run_id)
+                .await?
+                .ok_or_else(|| format!("summary job run not found after callback: {job_run_id}"))?;
+            if current.status != "running" {
+                return Ok(None);
+            }
+            let still_owns_partition = thread_partitions::refresh_summary_claim(
+                db,
+                tenant_id,
+                source_id,
+                thread_id,
+                project_partition_key.as_str(),
+                job_run_id,
+                i64::try_from(config.ai_request_timeout_secs)
+                    .unwrap_or(i64::MAX)
+                    .saturating_mul(2)
+                    .saturating_add(60),
+            )
+            .await?;
+            if !still_owns_partition {
+                fail_cloud_summary_job(
+                    db,
+                    tenant_id,
+                    source_id,
+                    thread_id,
+                    job_run_id,
+                    "summary partition was superseded during terminal callback".to_string(),
+                )
+                .await?;
+                return Ok(None);
+            }
+            Err(error)
+        }
+    }
 }
 
 pub(crate) async fn fail_cloud_summary_job(

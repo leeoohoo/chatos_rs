@@ -32,6 +32,8 @@
 
 > 2026-11-10 十三次修订：parent Job、durable Cloud Agent run、业务 partition/scope/covered-range claim、generation fencing 与 terminal callback 统一为一个生命周期协议。parent Job 为唯一业务所有权权威：parent 仍为 `running` 时，lease 到期不授权新 Job 接管；同一 parent 可在进程重启后恢复业务 claim 并换取 generation token；异 owner 已接管时，旧 parent 原子失败且迟到 callback 幂等确认。Thread L0、Thread Rollup、Subject Memory L0/Rollup 和 covered-range resummarization 使用同一规则，不保留按固定 lease 强抢、callback 重试补偿或人工清理旁路。
 
+> 2026-11-10 十四次修订：terminal callback 的权威状态校验覆盖 final commit 前后两个边界，关闭“回调开始时 parent 仍 running、提交前 parent 被终结或 claim 被接管”的 TOCTOU 窗口。final commit 失败后必须重新读取 parent 与业务 claim：parent 已终态或异 owner 已接管时直接确认 callback，仍由同一 parent 持有时才允许有界重试；Subject Memory 的终态业务失败在记录 parent 失败后同次确认，不再依赖下一次 outbox 重试收敛。
+
 ## 1. 结论
 
 当前 Memory Engine 的总体分层可以继续使用：原始 Record 先形成 Thread L0 Summary，再派生 Thread Rollup、Project Summary 和 Agent Memory；模型请求在运行边界读取 Memory Engine，在轮内继续使用 Responses compaction 管理当前运行历史。
