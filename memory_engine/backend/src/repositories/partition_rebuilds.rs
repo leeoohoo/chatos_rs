@@ -20,6 +20,7 @@ pub struct PartitionRebuildClaim {
     pub migration_run_id: String,
     pub reason: String,
     pub attempt_count: i64,
+    pub attempt_number: i64,
     pub lease_token: Option<String>,
 }
 
@@ -51,7 +52,13 @@ pub async fn claim_next(
     let mut tx = db.begin().await.map_err(|error| error.to_string())?;
     let claim = sqlx::query_as::<_, PartitionRebuildClaim>(
         "WITH candidate AS ( \
-           SELECT b.tenant_id,b.source_id,b.thread_id,b.project_partition_key,b.rebuild_kind \
+           SELECT b.tenant_id,b.source_id,b.thread_id,b.project_partition_key,b.rebuild_kind, \
+                  COALESCE((SELECT MAX(attempt.attempt_number) \
+                    FROM engine_partition_rebuild_attempts attempt \
+                   WHERE attempt.tenant_id=b.tenant_id AND attempt.source_id=b.source_id \
+                     AND attempt.thread_id=b.thread_id \
+                     AND attempt.project_partition_key=b.project_partition_key \
+                     AND attempt.rebuild_kind=b.rebuild_kind),0)+1 AS attempt_number \
              FROM engine_partition_rebuild_backlog b \
             WHERE (b.status='pending' OR (b.status='running' AND b.lease_expires_at<=now())) \
               AND NOT EXISTS ( \
@@ -75,7 +82,7 @@ pub async fn claim_next(
              AND b.thread_id=c.thread_id AND b.project_partition_key=c.project_partition_key \
              AND b.rebuild_kind=c.rebuild_kind \
          RETURNING b.tenant_id,b.source_id,b.thread_id,b.project_partition_key,b.rebuild_kind, \
-                   b.migration_run_id,b.reason,b.attempt_count,b.lease_token",
+                   b.migration_run_id,b.reason,b.attempt_count,c.attempt_number,b.lease_token",
     )
     .bind(lease_owner)
     .bind(&lease_token)
@@ -97,12 +104,13 @@ pub async fn claim_next(
         .bind(&claim.project_partition_key)
         .bind(&claim.rebuild_kind)
         .bind(&claim.migration_run_id)
-        .bind(claim.attempt_count)
+        .bind(claim.attempt_number)
         .bind(lease_owner)
         .bind(&lease_token)
         .bind(Json(json!({
             "rebuild_kind": claim.rebuild_kind,
-            "attempt": claim.attempt_count,
+            "attempt_number": claim.attempt_number,
+            "retry_count": claim.attempt_count,
             "reason": claim.reason,
         })))
         .execute(&mut *tx)
@@ -167,7 +175,11 @@ pub async fn record_completed(
     ))
     .bind(&claim.project_partition_key)
     .bind(Json(
-        json!({"status": "running", "attempt": claim.attempt_count}),
+        json!({
+            "status": "running",
+            "attempt_number": claim.attempt_number,
+            "retry_count": claim.attempt_count,
+        }),
     ))
     .bind(Json(json!({
         "status": "completed",
@@ -322,7 +334,7 @@ async fn update_attempt(
     .bind(&claim.thread_id)
     .bind(&claim.project_partition_key)
     .bind(&claim.rebuild_kind)
-    .bind(claim.attempt_count)
+    .bind(claim.attempt_number)
     .bind(status)
     .bind(Json(cursor))
     .bind(&evidence.generation_ids)

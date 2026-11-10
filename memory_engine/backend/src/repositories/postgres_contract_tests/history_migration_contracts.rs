@@ -255,3 +255,124 @@ async fn history_repair_quarantines_untrusted_outputs_and_restores_partition_bac
         ("completed".into(), "m3b_complete".into(), 4, 4)
     );
 }
+
+#[tokio::test]
+async fn rebuild_rearm_preserves_attempt_history_and_resets_retry_budget() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let thread_id = format!("thread-{suffix}");
+    let subject = format!("agent:{suffix}");
+    crate::repositories::threads::upsert_thread(
+        &pool,
+        &thread_id,
+        UpsertThreadRequest {
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            subject_id: subject.clone(),
+            thread_type: "client_agent".to_string(),
+            external_thread_id: None,
+            title: None,
+            labels: Some(vec![subject, "memory-schema:v2".to_string()]),
+            metadata: None,
+            status: None,
+            created_at: None,
+            updated_at: None,
+            archived_at: None,
+        },
+    )
+    .await
+    .expect("create rebuild rearm thread");
+    let migration_run_id = format!("migration-{suffix}");
+    sqlx::query(
+        "INSERT INTO engine_reliability_migration_runs( \
+         id,migration_kind,tenant_id,source_id,status) \
+         VALUES($1,'m3b_partition_rebuild',$2,$3,'running')",
+    )
+    .bind(&migration_run_id)
+    .bind(&tenant)
+    .bind(&source)
+    .execute(&pool)
+    .await
+    .expect("create rebuild migration run");
+    sqlx::query(
+        "INSERT INTO engine_partition_rebuild_backlog( \
+         tenant_id,source_id,thread_id,project_partition_key,rebuild_kind, \
+         status,migration_run_id,reason) \
+         VALUES($1,$2,$3,'project:alpha','thread_l0','pending',$4,'contract test')",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .bind(&migration_run_id)
+    .execute(&pool)
+    .await
+    .expect("create rebuild backlog");
+
+    for expected_attempt in 1..=8 {
+        let claim = crate::repositories::partition_rebuilds::claim_next(
+            &pool,
+            "contract-worker",
+            300,
+        )
+        .await
+        .expect("claim rebuild attempt")
+        .expect("pending rebuild item");
+        assert_eq!(claim.attempt_count, expected_attempt);
+        assert_eq!(claim.attempt_number, expected_attempt);
+        assert!(crate::repositories::partition_rebuilds::record_failed(
+            &pool,
+            &claim,
+            "contract_failure",
+        )
+        .await
+        .expect("record failed rebuild attempt"));
+    }
+    sqlx::query(
+        "UPDATE engine_partition_rebuild_backlog SET status='pending',attempt_count=0, \
+         lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,last_error=NULL \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 \
+           AND project_partition_key='project:alpha' AND rebuild_kind='thread_l0' \
+           AND status='failed'",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .execute(&pool)
+    .await
+    .expect("rearm failed rebuild item");
+
+    let claim = crate::repositories::partition_rebuilds::claim_next(
+        &pool,
+        "contract-worker",
+        300,
+    )
+    .await
+    .expect("claim rearmed rebuild attempt")
+    .expect("rearmed rebuild item");
+    assert_eq!(claim.attempt_count, 1);
+    assert_eq!(claim.attempt_number, 9);
+    assert!(crate::repositories::partition_rebuilds::record_completed(
+        &pool,
+        &claim,
+        json!({"phase": "complete_after_rearm"}),
+    )
+    .await
+    .expect("complete rearmed rebuild item"));
+    let attempts: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT attempt_number,status FROM engine_partition_rebuild_attempts \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 \
+         ORDER BY attempt_number",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .fetch_all(&pool)
+    .await
+    .expect("load preserved rebuild attempts");
+    assert_eq!(attempts.len(), 9);
+    assert_eq!(attempts.last(), Some(&(9, "completed".to_string())));
+}
