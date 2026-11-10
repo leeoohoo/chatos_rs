@@ -26,6 +26,8 @@
 
 > 2026-11-10 十次修订：可重入 fencing 规则必须由仓储领取 SQL 与 PostgreSQL transition guard 同时执行。数据库只允许稳定逻辑 owner 在活动租约内按 `attempt_count + 1` 原子换取非空新 token 和未来到期时间；异 owner、空 token 或不完整换租继续失败关闭，避免应用规则与数据库规则分裂到上线后才暴露。
 
+> 2026-11-10 十一次修订：发布器本地与服务端 Git fetch 都必须禁用交互式凭据等待，并使用低速超时和有限重试。网络停滞必须在有界时间内明确失败，禁止发布进程无限挂起或依赖人工判断。
+
 ## 1. 结论
 
 当前 Memory Engine 的总体分层可以继续使用：原始 Record 先形成 Thread L0 Summary，再派生 Thread Rollup、Project Summary 和 Agent Memory；模型请求在运行边界读取 Memory Engine，在轮内继续使用 Responses compaction 管理当前运行历史。

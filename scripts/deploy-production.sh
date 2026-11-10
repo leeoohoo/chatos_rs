@@ -16,6 +16,26 @@ DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED="${CHATOS_DEPLOY_WECHAT_DEVELOPMENT_LOGI
 source "$SCRIPT_DIR/deploy-production-preflight.sh"
 validate_deploy_preflight
 
+fetch_release_branch_with_retries() {
+  local repository="$1"
+  local branch="$2"
+  local attempt
+  for attempt in 1 2 3; do
+    if GIT_TERMINAL_PROMPT=0 git \
+      -c http.lowSpeedLimit=1024 \
+      -c http.lowSpeedTime=20 \
+      -C "$repository" fetch --quiet origin "$branch"; then
+      return 0
+    fi
+    echo "[WARN] Git fetch failed or stalled for origin/$branch ($attempt/3)" >&2
+    if (( attempt < 3 )); then
+      sleep 3
+    fi
+  done
+  echo "[ERROR] unable to fetch origin/$branch after 3 bounded attempts" >&2
+  return 1
+}
+
 current_branch="$(git branch --show-current)"
 if [[ "$current_branch" != "$DEPLOY_BRANCH" ]]; then
   echo "[ERROR] production deploy must run from branch $DEPLOY_BRANCH; current branch is $current_branch" >&2
@@ -48,7 +68,7 @@ if (( ignored_dirty_count > 0 )); then
 fi
 
 echo "[INFO] checking origin/$DEPLOY_BRANCH"
-git fetch --quiet origin "$DEPLOY_BRANCH"
+fetch_release_branch_with_retries "$ROOT_DIR" "$DEPLOY_BRANCH"
 release_commit="$(git rev-parse HEAD)"
 origin_commit="$(git rev-parse "origin/$DEPLOY_BRANCH")"
 if [[ "$release_commit" != "$origin_commit" ]]; then
@@ -106,6 +126,26 @@ status_file="$deploy_root/deploy-status"
 pid_file="$deploy_root/deploy.pid"
 job_pid="${CHATOS_DEPLOY_JOB_PID:-}"
 log_file="$deploy_root/deploy-logs/$release_tag.log"
+
+fetch_release_branch_with_retries() {
+  local repository="$1"
+  local branch="$2"
+  local attempt
+  for attempt in 1 2 3; do
+    if GIT_TERMINAL_PROMPT=0 git \
+      -c http.lowSpeedLimit=1024 \
+      -c http.lowSpeedTime=20 \
+      -C "$repository" fetch --quiet origin "$branch"; then
+      return 0
+    fi
+    echo "[WARN] Git fetch failed or stalled for origin/$branch ($attempt/3)" >&2
+    if (( attempt < 3 )); then
+      sleep 3
+    fi
+  done
+  echo "[ERROR] unable to fetch origin/$branch after 3 bounded attempts" >&2
+  return 1
+}
 
 clear_deploy_pid() {
   local recorded_pid=""
@@ -500,7 +540,7 @@ fi
 
 echo "[INFO] fetching origin/$deploy_branch on the server"
 write_deploy_status running fetch "Fetching the requested Git commit"
-git -C "$source_repo" fetch --quiet origin "$deploy_branch"
+fetch_release_branch_with_retries "$source_repo" "$deploy_branch"
 server_origin_commit="$(git -C "$source_repo" rev-parse "origin/$deploy_branch")"
 if [[ "$server_origin_commit" != "$release_commit" ]]; then
   echo "[ERROR] server resolved a different origin/$deploy_branch commit" >&2

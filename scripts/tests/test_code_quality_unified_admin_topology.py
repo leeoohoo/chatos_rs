@@ -146,6 +146,20 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn("Memory Engine worker did not remain running", deploy)
         self.assertLess(restore_call, healthy_status)
 
+    def test_release_fetches_are_bounded_and_retried(self) -> None:
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+
+        self.assertEqual(deploy.count("fetch_release_branch_with_retries()"), 2)
+        self.assertEqual(deploy.count("http.lowSpeedTime=20"), 2)
+        self.assertEqual(deploy.count("GIT_TERMINAL_PROMPT=0 git"), 2)
+        self.assertIn(
+            'fetch_release_branch_with_retries "$ROOT_DIR" "$DEPLOY_BRANCH"', deploy
+        )
+        self.assertIn(
+            'fetch_release_branch_with_retries "$source_repo" "$deploy_branch"', deploy
+        )
+        self.assertNotIn('git fetch --quiet origin "$DEPLOY_BRANCH"', deploy)
+
 
 if __name__ == "__main__":
     unittest.main()
