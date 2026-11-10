@@ -222,18 +222,27 @@ async fn prepare_generation_from_terminal_context(
                 .ok_or_else(|| "Memory generation input id is invalid".to_string())
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let scope_kind = scope_field("kind")?;
+    let subject_id = scope_field("subject_id")?;
+    let project_partition_key = payload_scope
+        .get("project_partition_key")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let mut supersession_candidates = Vec::new();
-    collect_fact_ids(input_manifest, &mut supersession_candidates);
+    collect_matching_scope_fact_ids(
+        input_manifest,
+        scope_kind.as_str(),
+        subject_id.as_str(),
+        project_partition_key.as_deref(),
+        &mut supersession_candidates,
+    );
     supersession_candidates.sort();
     supersession_candidates.dedup();
     let contract = crate::models::structured_payload::MemoryPayloadContract {
         generation_id: generation.generation_id,
-        scope_kind: scope_field("kind")?,
-        subject_id: scope_field("subject_id")?,
-        project_partition_key: payload_scope
-            .get("project_partition_key")
-            .and_then(Value::as_str)
-            .map(str::to_string),
+        scope_kind,
+        subject_id,
+        project_partition_key,
         source_refs,
         supersession_candidates,
         allow_empty_facts: generation_kind == "thread_summary"
@@ -243,23 +252,86 @@ async fn prepare_generation_from_terminal_context(
     Ok(contract)
 }
 
-fn collect_fact_ids(value: &Value, result: &mut Vec<String>) {
+fn collect_matching_scope_fact_ids(
+    value: &Value,
+    scope_kind: &str,
+    subject_id: &str,
+    project_partition_key: Option<&str>,
+    result: &mut Vec<String>,
+) {
     match value {
         Value::Object(object) => {
-            if let Some(fact_id) = object.get("fact_id").and_then(Value::as_str) {
-                result.push(fact_id.to_string());
+            if object.get("schema_version").and_then(Value::as_str)
+                == Some(crate::models::structured_payload::MEMORY_PAYLOAD_SCHEMA)
+                && payload_scope_matches(
+                    object.get("scope"),
+                    scope_kind,
+                    subject_id,
+                    project_partition_key,
+                )
+            {
+                for collection in [
+                    "completed",
+                    "decisions",
+                    "open_items",
+                    "blockers",
+                    "artifacts",
+                    "constraints",
+                    "stable_preferences",
+                    "uncertainties",
+                ] {
+                    if let Some(facts) = object.get(collection).and_then(Value::as_array) {
+                        result.extend(facts.iter().filter_map(|fact| {
+                            fact.get("fact_id")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        }));
+                    }
+                }
+                return;
             }
             for value in object.values() {
-                collect_fact_ids(value, result);
+                collect_matching_scope_fact_ids(
+                    value,
+                    scope_kind,
+                    subject_id,
+                    project_partition_key,
+                    result,
+                );
             }
         }
         Value::Array(values) => {
             for value in values {
-                collect_fact_ids(value, result);
+                collect_matching_scope_fact_ids(
+                    value,
+                    scope_kind,
+                    subject_id,
+                    project_partition_key,
+                    result,
+                );
             }
         }
         _ => {}
     }
+}
+
+fn payload_scope_matches(
+    scope: Option<&Value>,
+    scope_kind: &str,
+    subject_id: &str,
+    project_partition_key: Option<&str>,
+) -> bool {
+    let Some(scope) = scope.and_then(Value::as_object) else {
+        return false;
+    };
+    let payload_partition = match scope.get("project_partition_key") {
+        Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(value.as_str()),
+        _ => return false,
+    };
+    scope.get("kind").and_then(Value::as_str) == Some(scope_kind)
+        && scope.get("subject_id").and_then(Value::as_str) == Some(subject_id)
+        && payload_partition == project_partition_key
 }
 
 async fn refresh_subject_scope_slot(
@@ -645,7 +717,12 @@ fn is_thread_summary_resume_kind(resume_kind: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_thread_summary_resume_kind, THREAD_SUMMARY_JOB_RESUME_KIND};
+    use serde_json::json;
+
+    use super::{
+        collect_matching_scope_fact_ids, is_thread_summary_resume_kind,
+        THREAD_SUMMARY_JOB_RESUME_KIND,
+    };
 
     #[test]
     fn thread_summary_resume_route_is_not_a_scheduler_trigger() {
@@ -655,6 +732,51 @@ mod tests {
         assert!(!is_thread_summary_resume_kind("database_worker"));
         assert!(!is_thread_summary_resume_kind("scheduler"));
         assert!(!is_thread_summary_resume_kind("thread_direct"));
+    }
+
+    #[test]
+    fn supersession_candidates_are_restricted_to_the_output_scope() {
+        let input = json!({
+            "inputs": [{
+                "fact_id": "untrusted-recursive-id",
+                "structured_payload": {
+                    "schema_version": "memory_payload_v1",
+                    "scope": {
+                        "kind": "thread",
+                        "subject_id": "agent:test",
+                        "project_partition_key": "project:alpha"
+                    },
+                    "completed": [{"fact_id": "thread-fact"}],
+                    "decisions": [], "open_items": [], "blockers": [],
+                    "artifacts": [], "constraints": [],
+                    "stable_preferences": [], "uncertainties": []
+                }
+            }, {
+                "structured_payload": {
+                    "schema_version": "memory_payload_v1",
+                    "scope": {
+                        "kind": "project",
+                        "subject_id": "project:alpha",
+                        "project_partition_key": "project:alpha"
+                    },
+                    "completed": [],
+                    "decisions": [{"fact_id": "project-fact"}],
+                    "open_items": [], "blockers": [], "artifacts": [],
+                    "constraints": [], "stable_preferences": [], "uncertainties": []
+                }
+            }]
+        });
+        let mut candidates = Vec::new();
+
+        collect_matching_scope_fact_ids(
+            &input,
+            "project",
+            "project:alpha",
+            Some("project:alpha"),
+            &mut candidates,
+        );
+
+        assert_eq!(candidates, vec!["project-fact"]);
     }
 }
 
