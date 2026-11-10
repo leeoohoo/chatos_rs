@@ -159,27 +159,22 @@ impl MemoryPayloadContract {
                 "observed_at", "confidence"
             ],
             "properties": {
-                "fact_id": {"type":"string", "minLength":1, "maxLength":256},
-                "fact_key": {
-                    "type":"string",
-                    "pattern":"^[A-Za-z0-9._:/-]+$",
-                    "minLength":1,
-                    "maxLength":256
-                },
-                "value": {"type":"string", "minLength":1, "maxLength":16384},
+                // Responses Structured Outputs accepts a deliberately small JSON Schema subset.
+                // Length, pattern, timestamp, non-empty and uniqueness constraints are enforced
+                // again by `finalize_model_output` below, after the provider returns the object.
+                "fact_id": {"type":"string"},
+                "fact_key": {"type":"string"},
+                "value": {"type":"string"},
                 "status": {"type":"string", "enum":["active", "superseded", "uncertain"]},
                 "supersedes": {
                     "type":"array",
-                    "uniqueItems":true,
                     "items": {"type":"string", "enum":self.supersession_candidates}
                 },
                 "source_refs": {
                     "type":"array",
-                    "minItems":1,
-                    "uniqueItems":true,
                     "items": {"type":"string", "enum":self.source_refs}
                 },
-                "observed_at": {"type":["string", "null"], "format":"date-time"},
+                "observed_at": {"type":["string", "null"]},
                 "confidence": {
                     "type":"string",
                     "enum":["explicit_user", "tool_evidence", "model_inference", "uncertain"]
@@ -209,7 +204,7 @@ impl MemoryPayloadContract {
         );
         properties.insert(
             "current_goal".to_string(),
-            serde_json::json!({"type":["string", "null"], "maxLength":16384}),
+            serde_json::json!({"type":["string", "null"]}),
         );
         for collection in FACT_COLLECTIONS {
             properties.insert(
@@ -647,6 +642,25 @@ mod tests {
     }
 
     #[test]
+    fn response_schema_uses_only_provider_supported_constraints() {
+        let response_format = contract().response_format().expect("response schema");
+        let encoded = response_format.to_string();
+        for unsupported in [
+            "uniqueItems",
+            "minItems",
+            "minLength",
+            "maxLength",
+            "pattern",
+            "format",
+        ] {
+            assert!(
+                !encoded.contains(unsupported),
+                "provider schema must not contain {unsupported}"
+            );
+        }
+    }
+
+    #[test]
     fn finalization_rejects_schema_scope_provenance_and_fact_field_drift() {
         let mut invalid_payloads = Vec::new();
 
@@ -662,9 +676,18 @@ mod tests {
         wrong_ref["decisions"][0]["source_refs"] = json!(["record-2"]);
         invalid_payloads.push(wrong_ref);
 
+        let mut duplicate_ref = valid_payload();
+        duplicate_ref["decisions"][0]["source_refs"] = json!(["record-1", "record-1"]);
+        invalid_payloads.push(duplicate_ref);
+
         let mut wrong_supersession = valid_payload();
         wrong_supersession["decisions"][0]["supersedes"] = json!(["fact-unknown"]);
         invalid_payloads.push(wrong_supersession);
+
+        let mut duplicate_supersession = valid_payload();
+        duplicate_supersession["decisions"][0]["supersedes"] =
+            json!(["fact-old", "fact-old"]);
+        invalid_payloads.push(duplicate_supersession);
 
         let mut wrong_status = valid_payload();
         wrong_status["decisions"][0]["status"] = json!("done");
