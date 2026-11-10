@@ -295,3 +295,84 @@ async fn derived_event_dead_letter_rearm_preserves_history_and_advances_version(
     .expect("load rearmed partition");
     assert_eq!(partition, (2, None, true));
 }
+
+#[tokio::test]
+async fn published_summary_dispatch_dead_letter_can_be_replayed() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let (tenant, source, thread_id, _request) = setup(&pool).await;
+    let event = claim(&pool, &tenant, &source, "publisher-1", 300).await;
+    assert!(
+        crate::repositories::derived_events::mark_published(&pool, &event)
+            .await
+            .expect("publish derived event")
+    );
+    assert!(
+        crate::repositories::thread_partitions::dead_letter_current_summary_dispatch(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            "project:alpha",
+            "summary_worker_error",
+        )
+        .await
+        .expect("dead-letter published summary dispatch")
+    );
+
+    let new_event_id =
+        crate::repositories::derived_events::rearm_dead_lettered_thread_summary(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            "project:alpha",
+            1,
+        )
+        .await
+        .expect("replay summary dispatch")
+        .expect("new summary dispatch event");
+
+    let events: Vec<(String, i64, String)> = sqlx::query_as(
+        "SELECT event_id,dispatch_version,status FROM engine_derived_event_outbox \
+         WHERE tenant_id=$1 AND source_id=$2 ORDER BY dispatch_version",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .fetch_all(&pool)
+    .await
+    .expect("load replayed dispatch history");
+    assert_eq!(
+        events,
+        vec![
+            (event.event_id, 1, "published".to_string()),
+            (new_event_id, 2, "pending".to_string())
+        ]
+    );
+    let partition: (i64, Option<i64>, bool) = sqlx::query_as(
+        "SELECT summary_dispatch_version,summary_dispatch_dead_letter_version,summary_dispatch_pending \
+         FROM engine_thread_summary_partitions WHERE tenant_id=$1 AND source_id=$2 \
+         AND thread_id=$3 AND project_partition_key='project:alpha'",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load replayed partition");
+    assert_eq!(partition, (2, None, true));
+    assert!(
+        crate::repositories::derived_events::rearm_dead_lettered_thread_summary(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            "project:alpha",
+            1,
+        )
+        .await
+        .expect("repeat replay")
+        .is_none()
+    );
+}

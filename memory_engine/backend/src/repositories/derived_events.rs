@@ -399,23 +399,6 @@ pub async fn rearm_dead_lettered_thread_summary_in_tx(
     project_partition_key: &str,
     dead_letter_version: i64,
 ) -> Result<Option<String>, String> {
-    let aggregate_id = thread_partition_aggregate_id(thread_id, project_partition_key);
-    let dead_letter_exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM engine_derived_event_outbox \
-         WHERE tenant_id=$1 AND source_id=$2 AND event_kind='thread_summary_requested' \
-         AND aggregate_kind='thread_partition' AND aggregate_id=$3 AND dispatch_version=$4 \
-         AND status='dead_letter')",
-    )
-    .bind(tenant_id)
-    .bind(source_id)
-    .bind(&aggregate_id)
-    .bind(dead_letter_version)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(|error| error.to_string())?;
-    if !dead_letter_exists {
-        return Ok(None);
-    }
     let next_version = sqlx::query_scalar::<_, i64>(
         "UPDATE engine_thread_summary_partitions SET \
          summary_dispatch_version=summary_dispatch_version+1,summary_dispatch_pending=true, \
