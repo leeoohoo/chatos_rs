@@ -36,6 +36,8 @@
 
 > 2026-11-10 十五次修订：generation final commit 必须在事务起点锁定并校验仍为 `running` 的 parent Job，再在同一事务内恢复同 owner 的 partition/scope claim、验证冻结输入、提交派生结果、释放 claim 并完成 parent Job。stale recovery 只能释放其 `UPDATE ... WHERE status='running'` CAS 实际更新成功的 Job 所属 claim，禁止按扫描候选批量释放；若 callback 发现同 owner claim 曾被释放，必须在本次 delivery 内完成恢复和 finalization，不得依赖下一次 outbox retry 或剩余重试预算。
 
+> 2026-11-10 十六次修订：Thread L0 final commit 不得把模型渲染输入的 token 估算值用于 partition 调度账本 CAS 或扣账。两者输入表示不同，数值不保证相等；final commit 必须根据已锁定的冻结 Record，使用写入 partition 计数时的同一估算器计算实际扣账值。Record ownership、数量和冻结 identity 是提交硬不变量，调度 token 计数偏差不得被误报为 claim 丢失或消耗 callback retry。
+
 ## 1. 结论
 
 当前 Memory Engine 的总体分层可以继续使用：原始 Record 先形成 Thread L0 Summary，再派生 Thread Rollup、Project Summary 和 Agent Memory；模型请求在运行边界读取 Memory Engine，在轮内继续使用 Responses compaction 管理当前运行历史。
@@ -1901,6 +1903,7 @@ release/repair command
 - typed project partition、partition 单 writer、数据库派生事件 Outbox、generation registry、coverage、lineage、fact projection、supersession、tombstone 和 privileged erasure；
 - pending rebuild 与 covered-range resummarize 的独立入口，以及 claim、Job、operator audit 和最终 generation commit 的原子边界；
 - final commit 事务先锁定 parent Job，并在同一事务内恢复同 owner claim、提交 generation、释放 claim 和完成 Job；stale recovery 只释放 CAS 实际失败终结的 Job，不再释放等待行锁期间已正常完成的 Job claim；
+- Thread L0 partition token 扣账从冻结 Record 使用调度账本估算器重新计算，不再用模型渲染 token 值作为 ownership CAS 条件；
 - Thread L0、Thread Rollup、Subject Memory L0/Rollup 的版本化 Pipeline profile、结构化 Payload、source ref 校验和 oversized 完整处理；
 - Compose Context v2、canonical frontier、中文词法召回、完整 token budget、冻结 model capability revision 和请求前硬预算预检；
 - Runtime Context Assertion 在服务端、SDK、Local Agent Host、macOS 和 Windows 调用链中的强制绑定；

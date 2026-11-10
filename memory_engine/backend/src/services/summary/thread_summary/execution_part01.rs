@@ -156,7 +156,6 @@ pub(crate) async fn execute_prepared_thread_summary_job(
         },
         generation_output_commits::ThreadL0GenerationFinalization {
             record_ids: record_ids.as_slice(),
-            consumed_summary_tokens: selection.selected_token_count,
             job_result,
         },
     )

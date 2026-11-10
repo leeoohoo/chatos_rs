@@ -55,7 +55,6 @@ pub struct ThreadSummaryGenerationOutput<'a> {
 
 pub struct ThreadL0GenerationFinalization<'a> {
     pub record_ids: &'a [String],
-    pub consumed_summary_tokens: i64,
     pub job_result: FinishEngineJobRunRequest,
 }
 
@@ -1288,9 +1287,16 @@ async fn finalize_thread_l0_generation(
     if rows.len() != finalization.record_ids.len() {
         return Err("thread L0 finalization did not own every frozen source record".to_string());
     }
+    let records = rows
+        .into_iter()
+        .map(decode)
+        .collect::<Result<Vec<EngineRecord>, _>>()?;
+    let consumed_partition_tokens = records
+        .iter()
+        .map(crate::repositories::records::estimate_pending_record_tokens)
+        .fold(0_i64, i64::saturating_add);
     let now = now_rfc3339();
-    for row in rows {
-        let mut record: EngineRecord = decode(row)?;
+    for mut record in records {
         record.summary_status = "summarized".to_string();
         record.summary_id = Some(summary.id.clone());
         record.summarized_at = Some(now.clone());
@@ -1332,7 +1338,7 @@ async fn finalize_thread_l0_generation(
          WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4 \
          AND ((summary_status='running' AND summary_job_run_id=$5) OR \
            (summary_status<>'running' AND (summary_job_run_id IS NULL OR summary_job_run_id=$5))) \
-         AND pending_record_count>=$6 AND pending_summary_tokens>=$7",
+         AND pending_record_count>=$6",
     )
     .bind(&generation.tenant_id)
     .bind(&generation.source_id)
@@ -1340,7 +1346,7 @@ async fn finalize_thread_l0_generation(
     .bind(project_partition_key)
     .bind(&generation.job_run_id)
     .bind(finalization.record_ids.len() as i64)
-    .bind(finalization.consumed_summary_tokens.max(0))
+    .bind(consumed_partition_tokens.max(0))
     .execute(&mut **tx)
     .await
     .map_err(|error| error.to_string())?;

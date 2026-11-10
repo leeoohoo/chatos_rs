@@ -577,6 +577,18 @@ async fn thread_l0_noop_final_commit_covers_records_without_false_facts_or_downs
         .await
         .expect("simulate summary lease cleanup before final commit")
     );
+    sqlx::query(
+        "UPDATE engine_thread_summary_partitions SET \
+         pending_summary_tokens=GREATEST(pending_summary_tokens-1,0) \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .bind(PARTITION)
+    .execute(&pool)
+    .await
+    .expect("simulate scheduling-token estimate drift before final commit");
     let summary =
         crate::repositories::generation_output_commits::commit_thread_summary_generation_final(
             &pool,
@@ -584,7 +596,6 @@ async fn thread_l0_noop_final_commit_covers_records_without_false_facts_or_downs
             summary_output,
             crate::repositories::generation_output_commits::ThreadL0GenerationFinalization {
                 record_ids: std::slice::from_ref(&record_id),
-                consumed_summary_tokens: pending.1,
                 job_result: crate::models::FinishEngineJobRunRequest {
                     status: "done".to_string(),
                     input_count: 1,
@@ -715,17 +726,6 @@ async fn covered_range_resummarization_atomically_swaps_active_coverage_without_
     )
     .await
     .expect("ingest resummarization source");
-    let pending_tokens: i64 = sqlx::query_scalar(
-        "SELECT pending_summary_tokens FROM engine_thread_summary_partitions \
-         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4",
-    )
-    .bind(&tenant)
-    .bind(&source)
-    .bind(&thread_id)
-    .bind(PARTITION)
-    .fetch_one(&pool)
-    .await
-    .expect("load resummarization partition");
     let first_job = crate::repositories::control_plane::create_job_run(
         &pool,
         crate::models::CreateEngineJobRunRequest {
@@ -811,7 +811,6 @@ async fn covered_range_resummarization_atomically_swaps_active_coverage_without_
             first_output,
             crate::repositories::generation_output_commits::ThreadL0GenerationFinalization {
                 record_ids: std::slice::from_ref(&record_id),
-                consumed_summary_tokens: pending_tokens,
                 job_result: crate::models::FinishEngineJobRunRequest {
                     status: "done".to_string(),
                     input_count: 1,
