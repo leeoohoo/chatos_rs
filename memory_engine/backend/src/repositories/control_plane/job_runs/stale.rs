@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashSet;
+
 use sqlx::types::Json;
 use tracing::warn;
 
@@ -21,10 +23,38 @@ fn stale_timeout_secs(job: &EngineJobRun, default_timeout_secs: i64) -> i64 {
     }
 }
 
-fn is_stale_running_job(job: &EngineJobRun, default_timeout_secs: i64) -> bool {
+fn is_stale_running_job(
+    job: &EngineJobRun,
+    default_timeout_secs: i64,
+    cloud_agent_managed: bool,
+) -> bool {
+    if cloud_agent_managed {
+        return false;
+    }
     let timeout = stale_timeout_secs(job, default_timeout_secs);
     let stale_before = (chrono::Utc::now() - chrono::Duration::seconds(timeout)).to_rfc3339();
     job.started_at < stale_before
+}
+
+async fn cloud_agent_managed_job_ids(db: &Db) -> Result<HashSet<String>, String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT state.data->>'owner_entity_id' \
+           FROM engine_cloud_agent_run_states state \
+          WHERE state.data->>'owner_service'='memory-engine' \
+            AND state.data->>'owner_entity_type' IN ( \
+                'summary_job_run','rollup_job_run','subject_memory_job_run') \
+            AND NULLIF(state.data->>'owner_entity_id','') IS NOT NULL \
+            AND (state.data->>'status' NOT IN ('succeeded','failed','blocked','cancelled') \
+                 OR EXISTS ( \
+                    SELECT 1 FROM cloud_agent_outbox outbox \
+                     WHERE outbox.agent_run_id=state.agent_run_id \
+                       AND outbox.data->>'topic'='owner_lifecycle_terminal' \
+                       AND outbox.status IN ('pending','publishing'))) ",
+    )
+    .fetch_all(db)
+    .await
+    .map(|ids| ids.into_iter().collect())
+    .map_err(|error| error.to_string())
 }
 
 pub async fn fail_stale_running_job_runs(db: &Db, timeout_secs: i64) -> Result<i64, String> {
@@ -43,9 +73,17 @@ pub async fn fail_stale_running_job_runs(db: &Db, timeout_secs: i64) -> Result<i
         return Ok(0);
     }
 
+    let cloud_agent_managed_jobs = cloud_agent_managed_job_ids(db).await?;
+
     let mut stale_jobs = running_jobs
         .into_iter()
-        .filter(|job| is_stale_running_job(job, timeout_secs))
+        .filter(|job| {
+            is_stale_running_job(
+                job,
+                timeout_secs,
+                cloud_agent_managed_jobs.contains(&job.id),
+            )
+        })
         .collect::<Vec<_>>();
     if stale_jobs.is_empty() {
         return Ok(0);
@@ -124,4 +162,41 @@ pub async fn fail_stale_running_job_runs(db: &Db, timeout_secs: i64) -> Result<i
     }
 
     Ok(modified)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_stale_running_job;
+    use crate::models::EngineJobRun;
+
+    fn old_job() -> EngineJobRun {
+        EngineJobRun {
+            id: "job-1".to_string(),
+            job_type: "summary".to_string(),
+            trigger_type: "scheduler".to_string(),
+            tenant_id: Some("tenant".to_string()),
+            source_id: Some("source".to_string()),
+            thread_id: Some("thread".to_string()),
+            subject_id: Some("agent:test".to_string()),
+            thread_label: None,
+            thread_display_name: None,
+            status: "running".to_string(),
+            input_count: 0,
+            output_count: 0,
+            processed_count: 0,
+            success_count: 0,
+            error_count: 0,
+            metadata: None,
+            error_message: None,
+            started_at: "2020-01-01T00:00:00Z".to_string(),
+            finished_at: None,
+        }
+    }
+
+    #[test]
+    fn durable_cloud_agent_ownership_prevents_parent_job_timeout() {
+        let job = old_job();
+        assert!(is_stale_running_job(&job, 300, false));
+        assert!(!is_stale_running_job(&job, 300, true));
+    }
 }

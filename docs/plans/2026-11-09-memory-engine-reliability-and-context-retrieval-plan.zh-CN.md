@@ -18,6 +18,8 @@
 
 > 2026-11-10 六次修订：补齐 Worker 中止、超时或终态失败后的 Record claim 自动恢复。恢复器只把所属 Summary Job 已终态、没有 active coverage 的 `summarizing` Record 原子恢复为 `pending`；运行中 Job 或已有 active coverage 的 Record 必须保持不变。不得依靠人工 SQL 清理卡死 claim。
 
+> 2026-11-10 七次修订：父 Job 委托给 durable Cloud Agent 后，不再按父 Job 的固定启动时间误判超时。Cloud Agent 非终态或终态 operator callback 仍为 pending/publishing 时，由 Cloud Agent durable 状态独占生命周期；只有 Cloud Agent 已终结且终态 callback 不再可投递时，父 Job stale recovery 才能接管。
+
 ## 1. 结论
 
 当前 Memory Engine 的总体分层可以继续使用：原始 Record 先形成 Thread L0 Summary，再派生 Thread Rollup、Project Summary 和 Agent Memory；模型请求在运行边界读取 Memory Engine，在轮内继续使用 Responses compaction 管理当前运行历史。
@@ -629,6 +631,8 @@ canonical_input  = UTF-8 JSON，字段按固定 schema 顺序编码，数组保�
 同一 Job step 重放必须复用同一个 `generation_id`。数据库发现该 generation 已成功提交时，直接返回已存在输出并完成对应 step，不再次生成或写入。registry 为 `prepared` 或过期 `running` 时可由 CAS lease 接管后重新调用模型，但只有一个事务能通过当前 lease token 和 `running → committed` 条件更新提交逻辑输出；可重试失败写入 attempt/error 字段并释放或等待 lease，不提前把 registry 终结。只有 dead-letter、人工取消或输入被明确替换时才标记 `abandoned`，后续 rearm 创建新的 Job/generation 并保留旧审计。
 
 Summary Job 进入任意终态后，低频恢复器必须扫描其仍持有的 `summarizing` Record。只有不存在 active coverage 时才能清除 `summary_job_run_id/summary_started_at` 并恢复为 `pending`；仍在运行的 Job、已提交 coverage 或已被新 owner 接管的 Record 一律不得改动。该恢复与 partition lease 恢复在同一个 Worker 恢复循环执行，使进程重启、模型超时和终态 callback 丢失都不会永久冻结输入。
+
+父 Job 一旦创建 durable Cloud Agent run，stale 判定必须读取 Cloud Agent 权威状态：run 非终态，或 `owner_lifecycle_terminal` 回调仍处于 pending/publishing 时，父 Job 不得仅因 `started_at` 超过固定时长而失败。Cloud Agent run 终态且 callback 已成功发布时，父 Job 应已由 callback 终结；callback dead-letter 或缺失时才允许父 Job stale recovery 进入失败与 Record 自动恢复。父 Job timeout 与 Cloud Agent retry/lease 不得成为两个相互竞争的生命周期控制器。
 
 Subject Memory 必须从当前按逻辑 `memory_key` 原地 upsert 改为不可变 generation 版本：
 
