@@ -14,12 +14,12 @@ struct NativeConnectorDeviceAuthenticationTests {
             deviceID: "device-123",
             timestamp: "1787616000",
             nonce: "nonce-456",
-            path: "/api/local/devices/device-123/connect"
+            path: "/api/local-connectors/devices/device-123/connect"
         )
 
         #expect(
             String(decoding: payload, as: UTF8.self)
-                == "v1\ndevice-123\n1787616000\nnonce-456\n/api/local/devices/device-123/connect"
+                == "v1\ndevice-123\n1787616000\nnonce-456\n/api/local-connectors/devices/device-123/connect"
         )
 
         let encodedSignature = try identity.signature(for: payload)

@@ -137,10 +137,10 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
             deploy,
         )
 
-    def test_external_clients_never_call_backend_local_connector_namespace(self) -> None:
+    def test_shared_gateway_clients_never_call_backend_local_connector_namespace(self) -> None:
         client_source_roots = [
             ROOT / "clients/local_agent_host/src",
-            ROOT / "clients/macos/Sources",
+            ROOT / "clients/macos/Sources/ChatOSAPI",
         ]
         source_extensions = {".rs", ".swift", ".ts", ".tsx", ".js", ".jsx"}
         offenders = []
@@ -157,6 +157,24 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
             [],
             "external clients must use the public /api/local namespace",
         )
+
+    def test_dedicated_connector_host_keeps_its_public_protocol_paths(self) -> None:
+        runtime_configuration = (
+            ROOT / "clients/macos/Sources/ChatOSApp/Infrastructure/RuntimeConfiguration.swift"
+        ).read_text()
+        gateway = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorGateway.swift"
+        ).read_text()
+        connection = (
+            ROOT
+            / "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+GatewayConnection.swift"
+        ).read_text()
+
+        self.assertIn('connectorBaseURL: URL(string: "https://connector.jgoool.com")!', runtime_configuration)
+        self.assertIn('"/api/local-connectors/devices"', gateway)
+        self.assertIn('"/api/local-connectors/workspaces"', gateway)
+        self.assertIn('"/api/local-connectors/config/runtime"', gateway)
+        self.assertIn('let path = "/api/local-connectors/devices/\\(deviceID)/connect"', connection)
 
     def test_every_release_restores_canonical_public_ingress(self) -> None:
         deploy = (ROOT / "scripts/deploy-production.sh").read_text()
