@@ -31,13 +31,41 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             runID: invocation.runID
         )
         if invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallNPMToolName
-            || invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallSourceToolName {
+            || invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallSourceToolName
+            || invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallMarketplaceToolName {
             guard Self.hasExplicitInstallIntent(authorizedUserMessage) else {
                 throw NativeLocalAgentPluginInstallerToolError.explicitInstallIntentRequired
             }
         }
         let arguments = try Self.object(invocation.arguments)
+        let replacingID = Self.optionalString(arguments, "replacing_plugin_id")
+        let isCustomInstall = invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallNPMToolName
+            || invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallSourceToolName
+        let isUpdateRequest = Self.matches(#"更新|升级|\b(?:update|upgrade)\b"#, in: authorizedUserMessage.lowercased())
+        if isCustomInstall, isUpdateRequest, replacingID == nil {
+            throw NativeLocalAgentPlatformToolError.pluginInstallerRejected(
+                "更新前必须先查询已安装插件，并传入原插件的 replacing_plugin_id；不能新增一份代替更新"
+            )
+        }
         switch invocation.toolName {
+        case NativeLocalAgentPlatformToolCatalog.pluginInstallerListInstalledToolName:
+            return .object(["plugins": .array(await connector.installerInstalledPlugins(
+                query: Self.optionalString(arguments, "query")
+            ))])
+        case NativeLocalAgentPlatformToolCatalog.pluginInstallerSearchMarketplaceToolName:
+            return try await searchMarketplace(query: Self.optionalString(arguments, "query"))
+        case NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallMarketplaceToolName:
+            let id = try Self.string(arguments, "plugin_id")
+            let previous = await connector.installerPluginRecord(id: id)
+            guard !isUpdateRequest || previous != nil else {
+                throw NativeLocalAgentPlatformToolError.pluginInstallerRejected("待更新的平台插件尚未安装，请先查询并确定原插件；不能把新增安装称为更新")
+            }
+            try await Self.withSafeInstallerErrors {
+                try await connector.installPlugin(
+                    id: id, expectedReleaseID: Self.string(arguments, "expected_release_id")
+                )
+            }
+            return try await installationResult(id: id, previous: previous)
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerSearchNPMToolName:
             return try await searchNPM(query: Self.string(arguments, "query"))
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerResolveNPMToolName:
@@ -48,48 +76,90 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerInspectNPMToolName:
             let draft = try Self.npmDraft(arguments)
             let inspection = try await Self.withSafeInstallerErrors {
-                try await connector.inspectCustomMCP(draft)
+                try await connector.inspectCustomMCP(draft, replacingPluginID: replacingID)
             }
-            return Self.inspectionResult(inspection, draft: draft)
+            return Self.inspectionResult(inspection, draft: draft, replacingID: replacingID)
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallNPMToolName:
             let draft = try Self.npmDraft(arguments)
-            try await Self.withSafeInstallerErrors {
+            let previousRecords = await connector.installerPluginRecords()
+            let installed = try await Self.withSafeInstallerErrors {
                 try await connector.installCustomMCP(
                     draft,
-                    expectedFingerprint: Self.string(arguments, "expected_fingerprint")
+                    expectedFingerprint: Self.string(arguments, "expected_fingerprint"),
+                    replacingPluginID: replacingID
                 )
             }
-            return .object([
-                "status": .string("installed"),
-                "display_name": .string(draft.displayName),
-                "package_name": .string(draft.packageName),
-                "package_version": .string(draft.packageVersion),
-                "access_profile": .string(draft.accessProfile.rawValue),
-            ])
+            return try await installationResult(id: installed.pluginID, previous: previousRecords[installed.pluginID])
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerInspectSourceToolName:
             let source = try Self.pluginSource(arguments)
             return Self.inspectionResult(
                 try await Self.withSafeInstallerErrors {
-                    try await connector.inspectPluginSource(source)
+                    try await connector.inspectPluginSource(source, replacingPluginID: replacingID)
                 },
-                source: source
+                source: source, replacingID: replacingID
             )
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallSourceToolName:
             let source = try Self.pluginSource(arguments)
-            try await Self.withSafeInstallerErrors {
+            let previousRecords = await connector.installerPluginRecords()
+            let installed = try await Self.withSafeInstallerErrors {
                 try await connector.installPluginSource(
                     source,
-                    expectedFingerprint: Self.string(arguments, "expected_fingerprint")
+                    expectedFingerprint: Self.string(arguments, "expected_fingerprint"),
+                    replacingPluginID: replacingID
                 )
             }
-            return .object([
-                "status": .string("installed"),
-                "source_kind": .string(source.kind.rawValue),
-                "location": .string(source.location),
-            ])
+            return try await installationResult(id: installed.pluginID, previous: previousRecords[installed.pluginID])
         default:
             throw NativeLocalAgentPluginInstallerToolError.unsupportedTool
         }
+    }
+
+    private func installationResult(id: String, previous: NativeInstalledPluginRecord?) async throws -> LocalAgentJSONValue {
+        guard let record = await connector.installerPluginRecord(id: id) else {
+            throw NativeLocalAgentPlatformToolError.pluginInstallerRejected("未找到安装后的插件记录，不能报告安装或更新完成")
+        }
+        try NativePluginInstallationIntegrity.verify(
+            record: record, installationURL: URL(fileURLWithPath: record.installationPath)
+        )
+        var result = await connector.installerPluginInfo(record)
+        let changedRelease = previous.map { $0.version != record.version || $0.releaseID != record.releaseID } ?? false
+        result["status"] = .string(previous == nil ? "installed" : (changedRelease ? "updated" : "reinstalled"))
+        if let previous {
+            result["previous_version"] = .string(previous.version)
+            result["previous_release_id"] = .string(previous.releaseID)
+            if let version = previous.customMCPDraft?.packageVersion
+                ?? NativeLocalConnectorService.installerSourceDraft(previous)?.exactVersion {
+                result["previous_package_version"] = .string(version)
+            }
+        }
+        result["verified"] = .bool(true)
+        return .object(result)
+    }
+
+    private func searchMarketplace(query: String?) async throws -> LocalAgentJSONValue {
+        let sources = try await connector.pluginSources(forceRefresh: true)
+        var plugins: [LocalAgentJSONValue] = []
+        for source in sources.items {
+            guard query == nil || NativeLocalConnectorService.installerMatches(query!, fields: [
+                source.catalog.id, source.catalog.name ?? "", source.catalog.displayName ?? "",
+                source.catalog.description ?? "", source.catalog.publisher?.name ?? "",
+            ]) else { continue }
+            let installed = await connector.installerPluginRecord(id: source.catalog.id)
+            var value: [String: LocalAgentJSONValue] = [
+                "plugin_id": .string(source.catalog.id), "release_id": .string(source.release.id),
+                "display_name": .string(source.catalog.displayName ?? source.catalog.name ?? source.catalog.id),
+                "description": .string(source.catalog.description ?? ""),
+                "version": .string(source.release.version ?? source.release.id),
+                "publisher": .string(source.catalog.publisher?.name ?? "ChatOS"),
+                "package_name": .string(source.catalog.name ?? ""),
+                "category": .string(source.catalog.interface?.category ?? "Plugin"),
+                "installed": .bool(installed != nil),
+                "update_available": .bool(NativeLocalConnectorService.pluginUpdateAvailable(installed: installed, release: source.release)),
+            ]
+            if let installed { value["installed_version"] = .string(installed.version) }
+            plugins.append(.object(value))
+        }
+        return .object(["plugins": .array(plugins), "source": .string("chatos_marketplace")])
     }
 
     private func authorizeInstallerConversation(
@@ -143,7 +213,37 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         guard let userMessage = latestUserMessage ?? originalMessage else {
             throw NativeLocalAgentPluginInstallerToolError.unauthorizedConversation
         }
-        return userMessage
+        let currentOrdinal = detail.messages
+            .filter { $0.turnID == run.ownerEntityID && $0.role == "user" }
+            .map(\.ordinal).max()
+        let previousUserMessages = detail.messages
+            .filter { message in
+                message.role == "user" && currentOrdinal.map { message.ordinal < $0 } == true
+            }
+            .sorted { $0.ordinal < $1.ordinal }
+            .compactMap { message -> String? in
+                guard case let .string(value) = message.content else { return nil }
+                return value
+            }
+        return Self.authorizedInstallerRequest(current: userMessage, previous: previousUserMessages)
+    }
+
+    /// Image-only replies and short continuations keep the user's pending request.
+    /// A new question, cancellation, or unrelated message ends that continuation chain.
+    static func authorizedInstallerRequest(current: String, previous: [String]) -> String {
+        func isContinuation(_ message: String) -> Bool {
+            let value = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return value.isEmpty || matches(
+                #"^(?:继续|好的?|可以|确认|就这个|就是这个|看不到[吗么]?|能看到[吗么]?|这[张个]图|截图|yes|ok|continue)[\s。.!！?？]*$"#,
+                in: value
+            )
+        }
+        guard !hasExplicitInstallIntent(current), isContinuation(current) else { return current }
+        for message in previous.reversed() {
+            if hasExplicitInstallIntent(message) { return message }
+            if !isContinuation(message) { return current }
+        }
+        return current
     }
 
     static func isAuthorizedInstallerCapability(
@@ -187,6 +287,8 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         }
 
         let affirmativePatterns = [
+            #"(?:重新|再|继续)(?:更新|升级|安装)"#,
+            #"^(?:更新|升级)(?:一下|这个|已有|已安装|\s|$)"#,
             #"(?:请|麻烦|帮我|给我|我要|我想|现在|直接|可以|可否|能不能)?\s*(?:安装|装上|添加|接入|配置(?:并)?使用|启用)(?:一下|上)?"#,
             #"\b(?:please\s+)?(?:install|add|set\s*up|configure|enable)\b"#,
             #"(?:请|麻烦|帮我|给我|我要|我想|现在|直接|可以|可否|能不能).{0,8}(?:更新|升级)(?:一下)?"#,
@@ -334,7 +436,8 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
     private static func inspectionResult(
         _ inspection: LocalConnectorPluginInspection,
         draft: LocalConnectorCustomMCPDraft? = nil,
-        source: LocalConnectorPluginSourceDraft? = nil
+        source: LocalConnectorPluginSourceDraft? = nil,
+        replacingID: String? = nil
     ) -> LocalAgentJSONValue {
         var value: [String: LocalAgentJSONValue] = [
             "status": .string("inspection_passed"),
@@ -342,6 +445,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             "display_name": .string(inspection.displayName),
             "version": .string(inspection.version),
             "source_summary": .string(inspection.sourceSummary),
+            "requested_permissions": .array(inspection.requestedPermissions.map(LocalAgentJSONValue.string)),
             "components": .array(inspection.components.map { component in
                 .object([
                     "component_key": .string(component.componentKey),
@@ -351,27 +455,12 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
                 ])
             }),
         ]
+        if let replacingID { value["replacing_plugin_id"] = .string(replacingID) }
         if let draft {
-            value["resolved_install_request"] = .object([
-                "display_name": .string(draft.displayName),
-                "description": .string(draft.description),
-                "component_key": .string(draft.componentKey),
-                "package_name": .string(draft.packageName),
-                "package_version": .string(draft.packageVersion),
-                "binary_name": .string(draft.binaryName),
-                "arguments": .array(draft.arguments.map(LocalAgentJSONValue.string)),
-                "access_profile": .string(draft.accessProfile.rawValue),
-            ])
+            value["resolved_install_request"] = NativePluginInstallerMetadata.npm(draft)
         }
         if let source {
-            var resolved: [String: LocalAgentJSONValue] = [
-                "source_kind": .string(source.kind.rawValue),
-                "location": .string(source.location),
-            ]
-            if let value = source.exactVersion { resolved["exact_version"] = .string(value) }
-            if let value = source.gitReference { resolved["git_reference"] = .string(value) }
-            if let value = source.subdirectory { resolved["subdirectory"] = .string(value) }
-            value["resolved_source"] = .object(resolved)
+            value["resolved_source"] = NativePluginInstallerMetadata.source(source)
         }
         return .object(value)
     }

@@ -37,7 +37,7 @@ extension NativeLocalAgentPlatformToolCatalog {
 
   // Attachment access is a read-only conversation capability, not a ninth Task
   // orchestration tool. Main Chat must not create a workspace merely to see an image.
-  private static var mainChatAttachmentReadTool: LocalAgentJSONValue {
+  static var mainChatAttachmentReadTool: LocalAgentJSONValue {
     guard case var .object(tool) = attachmentReadTool,
           case var .object(parameters)? = tool["parameters"],
           case var .object(properties)? = parameters["properties"],

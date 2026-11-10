@@ -525,6 +525,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "capability_describe", "capability_search",
                 "plugin_installer_search_npm", "plugin_installer_resolve_npm",
                 "plugin_installer_inspect_npm", "plugin_installer_inspect_source",
+                "plugin_installer_list_installed", "plugin_installer_search_marketplace",
             ]
         )
         XCTAssertEqual(
@@ -556,6 +557,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "todo_progress_append", "todo_acceptance_update", "todo_complete", "todo_block",
                 "capability_invoke",
                 "plugin_installer_install_npm", "plugin_installer_install_source",
+                "plugin_installer_install_marketplace",
             ]
         )
     }

@@ -372,9 +372,16 @@ extension NativeLocalConnectorService {
     }
 
     public func installPlugin(id: String) async throws {
+        try await installPlugin(id: id, expectedReleaseID: nil)
+    }
+
+    func installPlugin(id: String, expectedReleaseID: String?) async throws {
         let sources = try await pluginSources(forceRefresh: true)
         guard let source = sources.items.first(where: { $0.catalog.id == id }) else {
             throw NativeConnectorError.pluginInstallation("Marketplace 中没有找到这个 Plugin")
+        }
+        guard expectedReleaseID == nil || source.release.id == expectedReleaseID else {
+            throw NativeConnectorError.pluginInstallation("平台插件版本已变化，请重新查询后安装")
         }
         let token = try requireAccessToken()
         let record = try await pluginInstaller.install(source: source, token: token, gateway: gateway)
