@@ -706,11 +706,12 @@ if (( deploy_gateway_config == 1 )); then
   echo "[INFO] gateway configuration selected for restart"
 fi
 
-if (( deploy_all == 1 || deploy_gateway_config == 1 )); then
-  nginx_backup="$deploy_root/backups/chatos-nginx-$release_tag.conf"
-  mkdir -p "$deploy_root/backups"
-  cp -p "$nginx_target" "$nginx_backup"
-fi
+# Every completed release owns the canonical public ingress configuration.
+# This also guarantees that a maintenance-window write block cannot survive a
+# later targeted service deployment and leave GET-only health probes green.
+nginx_backup="$deploy_root/backups/chatos-nginx-$release_tag.conf"
+mkdir -p "$deploy_root/backups"
+cp -p "$nginx_target" "$nginx_backup"
 
 ln -sfn "$release_dir" "$deploy_root/current.next"
 mv -Tf "$deploy_root/current.next" "$current_link"
@@ -730,11 +731,9 @@ fi
 if (( prepare_memory_worker_stopped == 1 )); then
   prepare_stopped_memory_worker "$release_dir"
 fi
-if (( deploy_all == 1 || deploy_gateway_config == 1 )); then
-  install -m 0644 "$release_dir/docker/nginx/jgoool-https.conf" "$nginx_target"
-  nginx -t
-  systemctl reload nginx
-fi
+install -m 0644 "$release_dir/docker/nginx/jgoool-https.conf" "$nginx_target"
+nginx -t
+systemctl reload nginx
 
 deadline=$((SECONDS + 300))
 write_deploy_status running health "Waiting for service health checks"
@@ -792,6 +791,16 @@ for url in \
 do
   wait_for_http_probe "public-$url" success "$url"
 done
+
+# Session restore is a POST even when it only reads browser session state. A
+# maintenance write guard or other ingress drift must therefore fail the
+# release instead of being hidden by GET-only frontend and health probes.
+wait_for_http_probe public-admin-session-write-route route \
+  --request POST \
+  --header 'Origin: https://admin.jgoool.com' \
+  --header 'Sec-Fetch-Site: same-origin' \
+  --header 'X-Chatos-Admin-Session: 1' \
+  https://admin.jgoool.com/api/admin/user-service/auth/admin/session
 
 restore_memory_worker_runtime_state
 

@@ -121,6 +121,34 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn("wait_for_http_probe local-user-service-health success", deploy)
         self.assertIn("wait_for_http_probe local-connector-route route", deploy)
         self.assertIn('wait_for_http_probe "public-$url" success', deploy)
+        self.assertIn(
+            "wait_for_http_probe public-admin-session-write-route route", deploy
+        )
+        self.assertIn(
+            "https://admin.jgoool.com/api/admin/user-service/auth/admin/session",
+            deploy,
+        )
+
+    def test_every_release_restores_canonical_public_ingress(self) -> None:
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+        backup = 'nginx_backup="$deploy_root/backups/chatos-nginx-$release_tag.conf"'
+        install = (
+            'install -m 0644 "$release_dir/docker/nginx/jgoool-https.conf" '
+            '"$nginx_target"'
+        )
+
+        self.assertIn(backup, deploy)
+        self.assertIn(install, deploy)
+        self.assertNotIn(
+            "if (( deploy_all == 1 || deploy_gateway_config == 1 )); then\n"
+            f"  {backup}",
+            deploy,
+        )
+        self.assertNotIn(
+            "if (( deploy_all == 1 || deploy_gateway_config == 1 )); then\n"
+            f"  {install}",
+            deploy,
+        )
 
     def test_full_cloud_deploy_starts_postgres_before_import_verification(self) -> None:
         deploy = (ROOT / "scripts/deploy-production.sh").read_text()
