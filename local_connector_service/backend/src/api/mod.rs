@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::models::{
-    now_rfc3339, CurrentUser, LocalConnectorSystemStatsResponse, WORKSPACE_STATUS_DISABLED,
-};
+use crate::models::{now_rfc3339, CurrentUser, LocalConnectorSystemStatsResponse};
 use crate::relay::{RelayError, RelayRequest, RelayResponse};
 use crate::state::AppState;
 use axum::body::{Body, Bytes};
@@ -31,7 +29,6 @@ mod plugin_management_installations;
 mod plugin_management_oauth;
 mod plugin_management_plugins;
 mod plugin_management_prompts;
-mod project_bindings;
 mod router;
 mod runtime_context_assertions;
 mod workspaces;
@@ -55,13 +52,10 @@ use self::plugin_management_plugins::{
     list_plugin_install_sources, proxy_plugin_release_artifact, update_plugin_preference,
 };
 use self::plugin_management_prompts::{get_agent_prompt_bundle, get_agent_prompt_bundle_manifest};
-use self::project_bindings::{
-    create_project_binding, delete_project_binding, list_project_bindings, update_project_binding,
-};
 pub use self::router::build_public_router;
 use self::runtime_context_assertions::issue_runtime_context_assertion;
 use self::workspaces::{
-    create_workspace, delete_workspace, list_workspaces, load_owned_workspace, update_workspace,
+    create_workspace, delete_workspace, list_workspaces, update_workspace,
 };
 
 const MAX_USER_SERVICE_PROXY_BODY_BYTES: usize = 2 * 1024 * 1024;

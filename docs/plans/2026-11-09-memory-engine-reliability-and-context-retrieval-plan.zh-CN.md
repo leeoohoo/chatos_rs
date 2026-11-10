@@ -1052,9 +1052,10 @@ internal Agent runtime
 本机 Local Agent 的项目只在 owner-scoped 本地注册表管理，不创建云端 Project Binding。
 Local Connector assertion 签发接口使用认证结果确定 `principal_id / tenant_id`，使用
 Host 冻结的运行身份绑定 Agent、Thread、Project 和 Operation；不把云端绑定作为本机
-项目的前置条件。同名 Project ID 始终隔离在各自账户的 tenant 内。Story Studio 等依赖
-云端项目绑定的运行类型仍须验证当前 owner 下存在启用的绑定。四种 operation 都遵循
-此规则，验收必须覆盖“本机项目没有云端绑定”的真实项目会话以及跨账户、跨项目拒绝。
+项目的前置条件。同名 Project ID 始终隔离在各自账户的 tenant 内。Story Studio 同样
+使用账户内的本机项目运行身份。删除服务端旧 Project Binding CRUD、模型、存储查询和
+统计字段，并用迁移删除废弃绑定表。四种 operation 都遵循此规则，验收必须覆盖
+“本机项目没有云端绑定”的真实项目会话以及跨账户、跨项目拒绝。
 
 Assertion claims 至少包含：
 

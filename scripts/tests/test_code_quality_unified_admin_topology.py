@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 import unittest
 
 
@@ -22,6 +23,30 @@ OLD_FRONTEND_SERVICES = (
 
 
 class UnifiedAdminTopologyTests(unittest.TestCase):
+    def test_connector_service_deploy_runs_its_migration_before_cutover(self) -> None:
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+        start = deploy.index("  selected_migration_services=()")
+        end = deploy.index('  if [[ ${#selected_migration_services[@]}', start)
+        selection = deploy[start:end]
+        script = (
+            'selected_service="$1"\n'
+            'service_is_selected() { [[ "$1" == "$selected_service" ]]; }\n'
+            + selection
+            + '\nprintf "%s\\n" "${selected_migration_services[@]}"\n'
+        )
+        for service, expected in (
+            ("local-connector-service-backend", "local-connector-migrate"),
+            ("memory-engine-backend", "memory-engine-migrate"),
+            ("configuration-center-backend", "configuration-center-migrate"),
+            ("gateway-config", ""),
+        ):
+            with self.subTest(service=service):
+                result = subprocess.run(
+                    ["bash", "-c", script, "migration-selection", service],
+                    check=True, capture_output=True, text=True,
+                )
+                self.assertEqual(result.stdout.strip(), expected)
+
     def test_old_frontend_projects_are_removed(self) -> None:
         for relative_path in OLD_FRONTEND_DIRS:
             self.assertFalse((ROOT / relative_path).exists(), relative_path)

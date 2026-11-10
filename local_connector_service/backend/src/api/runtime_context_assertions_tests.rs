@@ -60,18 +60,12 @@ fn verify(
     )
 }
 
-#[tokio::test]
-async fn local_projects_issue_all_operations_without_cloud_binding_or_database_access() {
+#[test]
+fn local_projects_issue_all_operations_in_authenticated_owner_scope() {
     for project in [Some("local-project-a"), None] {
         for operation in ["compose", "record_ingest", "summarize", "repair"] {
-            let Json(response) = issue_for_runtime(
-                &issuer(),
-                &user(),
-                request(project, operation),
-                |_, _| async { panic!("local projects must not require a cloud binding lookup") },
-            )
-            .await
-            .expect("issue local project assertion");
+            let Json(response) = issue_for_runtime(&issuer(), &user(), request(project, operation))
+                .expect("issue local project assertion");
             let partition = project
                 .map(|id| format!("project:{id}"))
                 .unwrap_or_else(|| "__none__".to_string());
@@ -90,8 +84,8 @@ async fn local_projects_issue_all_operations_without_cloud_binding_or_database_a
     }
 }
 
-#[tokio::test]
-async fn delegated_local_runtime_uses_authenticated_owner_namespace() {
+#[test]
+fn delegated_local_runtime_uses_authenticated_owner_namespace() {
     let mut caller = user();
     caller.user_id = "device-principal".to_string();
     caller.owner_user_id = Some("owner-a".to_string());
@@ -99,9 +93,7 @@ async fn delegated_local_runtime_uses_authenticated_owner_namespace() {
         &issuer(),
         &caller,
         request(Some("local-project-a"), "compose"),
-        |_, _| async { Ok(false) },
     )
-    .await
     .unwrap();
     let claims = verify(&response, "owner-a", "project:local-project-a", "compose").unwrap();
     assert_eq!(claims.principal_id, "owner-a");
@@ -114,38 +106,24 @@ async fn delegated_local_runtime_uses_authenticated_owner_namespace() {
     .is_err());
 }
 
-#[tokio::test]
-async fn story_studio_requires_enabled_binding_in_authenticated_owner_namespace() {
-    for enabled in [false, true] {
-        let mut req = request(Some("story-project"), "compose");
+#[test]
+fn story_studio_project_identity_is_owner_scoped_without_cloud_project_records() {
+    for operation in ["compose", "record_ingest", "summarize", "repair"] {
+        let mut req = request(Some("story-project"), operation);
         req.runtime_kind = "story_studio".to_string();
-        let result = issue_for_runtime(&issuer(), &user(), req, |owner, project| async move {
-            assert_eq!(owner, "owner-a");
-            assert_eq!(project, "story-project");
-            Ok(enabled)
-        })
-        .await;
-        if enabled {
-            let Json(response) = result.unwrap();
-            let claims = verify(&response, "owner-a", "project:story-project", "compose").unwrap();
-            assert_eq!(
-                claims.canonical_agent_subject_id,
-                "agent:story-studio:story-project"
-            );
-            assert!(verify(&response, "owner-b", "project:story-project", "compose").is_err());
-        } else {
-            let error = result.unwrap_err();
-            assert!(error.message().contains("no enabled owner-scoped binding"));
-            assert_eq!(
-                axum::response::IntoResponse::into_response(error).status(),
-                axum::http::StatusCode::FORBIDDEN
-            );
-        }
+        let Json(response) = issue_for_runtime(&issuer(), &user(), req).unwrap();
+        let claims = verify(&response, "owner-a", "project:story-project", operation).unwrap();
+        assert_eq!(
+            claims.canonical_agent_subject_id,
+            "agent:story-studio:story-project"
+        );
+        assert!(verify(&response, "owner-b", "project:story-project", operation).is_err());
+        assert!(verify(&response, "owner-a", "project:other", operation).is_err());
     }
 }
 
-#[tokio::test]
-async fn invalid_runtime_identity_is_rejected_before_project_lookup() {
+#[test]
+fn invalid_runtime_identity_is_rejected() {
     let mut cases = vec![];
     let mut req = request(Some("local-project-a"), "compose");
     req.runtime_kind = "unknown".to_string();
@@ -163,11 +141,7 @@ async fn invalid_runtime_identity_is_rejected_before_project_lookup() {
     cases.push(req);
 
     for req in cases {
-        let error = issue_for_runtime(&issuer(), &user(), req, |_, _| async {
-            panic!("invalid identity must not reach project lookup")
-        })
-        .await
-        .unwrap_err();
+        let error = issue_for_runtime(&issuer(), &user(), req).unwrap_err();
         assert_eq!(
             axum::response::IntoResponse::into_response(error).status(),
             axum::http::StatusCode::BAD_REQUEST

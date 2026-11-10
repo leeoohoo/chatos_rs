@@ -664,6 +664,9 @@ if (( deploy_all == 0 )); then
   if service_is_selected memory-engine-backend; then
     selected_migration_services+=(memory-engine-migrate)
   fi
+  if service_is_selected local-connector-service-backend; then
+    selected_migration_services+=(local-connector-migrate)
+  fi
   if [[ ${#selected_migration_services[@]} -gt 0 ]]; then
     echo "[INFO] applying selected PostgreSQL migrations before release cutover: ${selected_migration_services[*]}"
     write_deploy_status running migrate "Applying selected PostgreSQL migrations"
