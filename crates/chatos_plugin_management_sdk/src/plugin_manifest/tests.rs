@@ -4,7 +4,7 @@
 use serde_json::json;
 
 use super::*;
-use crate::{PluginComponentKind, normalized_plugin_manifest_sha256, plugin_component_descriptors};
+use crate::{normalized_plugin_manifest_sha256, plugin_component_descriptors, PluginComponentKind};
 
 fn manifest_with_mcp(server: serde_json::Value) -> String {
     json!({
