@@ -39,6 +39,32 @@ pub(super) async fn issue_runtime_context_assertion(
     Extension(user): Extension<CurrentUser>,
     Json(req): Json<IssueRuntimeContextAssertionRequest>,
 ) -> Result<Json<IssueRuntimeContextAssertionResponse>, ApiError> {
+    issue_for_runtime(
+        &state.config.runtime_context_assertion_issuer,
+        &user,
+        req,
+        |owner_user_id, project_id| async move {
+            state
+                .store
+                .list_project_bindings(&owner_user_id, Some(project_id), None)
+                .await
+                .map(|bindings| bindings.into_iter().any(|binding| binding.enabled))
+                .map_err(ApiError::internal)
+        },
+    )
+    .await
+}
+
+async fn issue_for_runtime<F, Fut>(
+    issuer: &memory_engine_sdk::RuntimeContextAssertionIssuer,
+    user: &CurrentUser,
+    req: IssueRuntimeContextAssertionRequest,
+    has_enabled_project_binding: F,
+) -> Result<Json<IssueRuntimeContextAssertionResponse>, ApiError>
+where
+    F: FnOnce(String, String) -> Fut,
+    Fut: std::future::Future<Output = Result<bool, ApiError>>,
+{
     let runtime_kind = required_identity(&req.runtime_kind, "runtime_kind")?;
     let runtime_id = required_identity(&req.runtime_id, "runtime_id")?;
     let operation = required_identity(&req.operation, "operation")?;
@@ -56,62 +82,54 @@ pub(super) async fn issue_runtime_context_assertion(
         .as_deref()
         .map(|value| required_identity(value, "project_id"))
         .transpose()?;
-    if let Some(project_id) = project_id {
-        let has_enabled_binding = state
-            .store
-            .list_project_bindings(owner_user_id, Some(project_id.to_string()), None)
-            .await
-            .map_err(ApiError::internal)?
-            .into_iter()
-            .any(|binding| binding.enabled);
-        if !has_enabled_binding {
+    let (source_id, canonical_agent_subject_id, thread_id) = if runtime_kind
+        == STORY_STUDIO_RUNTIME_KIND
+    {
+        let project_id = project_id.ok_or_else(|| {
+            ApiError::bad_request("Story Studio Memory runtime requires project_id")
+        })?;
+        if !has_enabled_project_binding(owner_user_id.to_string(), project_id.to_string()).await? {
             return Err(ApiError::forbidden(
                 "Memory runtime project has no enabled owner-scoped binding",
             ));
         }
-    }
-
-    let (source_id, canonical_agent_subject_id, thread_id) =
-        if runtime_kind == STORY_STUDIO_RUNTIME_KIND {
-            let project_id = project_id.ok_or_else(|| {
-                ApiError::bad_request("Story Studio Memory runtime requires project_id")
-            })?;
-            (
-                STORY_STUDIO_SOURCE_ID.to_string(),
-                format!("agent:story-studio:{project_id}"),
-                format!("client-agent:story:{project_id}:{runtime_id}"),
-            )
-        } else if runtime_kind == "local_agent" {
-            let source_id = required_optional_identity(req.source_id.as_deref(), "source_id")?;
-            let canonical_agent_subject_id = required_optional_identity(
-                req.canonical_agent_subject_id.as_deref(),
-                "canonical_agent_subject_id",
-            )?;
-            if !canonical_agent_subject_id.starts_with("agent:") {
-                return Err(ApiError::bad_request(
-                    "Local Agent Memory identity must use a canonical agent subject",
-                ));
-            }
-            let thread_id = required_optional_identity(req.thread_id.as_deref(), "thread_id")?;
-            if runtime_id != thread_id {
-                return Err(ApiError::bad_request(
-                    "Local Agent Memory runtime_id must equal thread_id",
-                ));
-            }
-            (
-                source_id.to_string(),
-                canonical_agent_subject_id.to_string(),
-                thread_id.to_string(),
-            )
-        } else {
-            return Err(ApiError::bad_request("unsupported Memory runtime_kind"));
-        };
+        (
+            STORY_STUDIO_SOURCE_ID.to_string(),
+            format!("agent:story-studio:{project_id}"),
+            format!("client-agent:story:{project_id}:{runtime_id}"),
+        )
+    } else if runtime_kind == "local_agent" {
+        // Native projects are authoritative in the local owner-scoped registry and
+        // do not create cloud bindings. Their Memory partition belongs to the
+        // authenticated owner's tenant, even if another owner uses the same project ID.
+        let source_id = required_optional_identity(req.source_id.as_deref(), "source_id")?;
+        let canonical_agent_subject_id = required_optional_identity(
+            req.canonical_agent_subject_id.as_deref(),
+            "canonical_agent_subject_id",
+        )?;
+        if !canonical_agent_subject_id.starts_with("agent:") {
+            return Err(ApiError::bad_request(
+                "Local Agent Memory identity must use a canonical agent subject",
+            ));
+        }
+        let thread_id = required_optional_identity(req.thread_id.as_deref(), "thread_id")?;
+        if runtime_id != thread_id {
+            return Err(ApiError::bad_request(
+                "Local Agent Memory runtime_id must equal thread_id",
+            ));
+        }
+        (
+            source_id.to_string(),
+            canonical_agent_subject_id.to_string(),
+            thread_id.to_string(),
+        )
+    } else {
+        return Err(ApiError::bad_request("unsupported Memory runtime_kind"));
+    };
     let project_partition_key = project_id
         .map(|project_id| format!("project:{project_id}"))
         .unwrap_or_else(|| "__none__".to_string());
-    let assertion = state
-        .config
-        .runtime_context_assertion_issuer
+    let assertion = issuer
         .issue(
             owner_user_id,
             owner_user_id,
@@ -129,13 +147,13 @@ pub(super) async fn issue_runtime_context_assertion(
         canonical_agent_subject_id,
         thread_id,
         project_partition_key,
-        runtime_identity_revision: state
-            .config
-            .runtime_context_assertion_issuer
-            .runtime_identity_revision()
-            .to_string(),
+        runtime_identity_revision: issuer.runtime_identity_revision().to_string(),
     }))
 }
+
+#[cfg(test)]
+#[path = "runtime_context_assertions_tests.rs"]
+mod tests;
 
 fn required_optional_identity<'a>(
     value: Option<&'a str>,
