@@ -939,6 +939,8 @@ export function AppShell({
                 ownerUserId={session.user.id}
                 project={selectedProject}
                 hostReady={snapshot.ready}
+                hostDetail={snapshot.detail}
+                onHostRetry={() => void retry(hostLifecycle)}
                 defaultContactReady={defaultContactReady}
                 historyPort={conversationHistory}
                 composerPort={conversationComposer}

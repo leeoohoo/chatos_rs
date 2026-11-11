@@ -15,6 +15,8 @@ interface ProjectConversationPlaceholderProps {
   ownerUserId: string;
   project: WorkspaceResourceItem;
   hostReady: boolean;
+  hostDetail?: string;
+  onHostRetry?: () => void;
   defaultContactReady: boolean;
   port: ProjectConversationPort;
   historyPort: ConversationHistoryPort;
@@ -30,6 +32,8 @@ export function ProjectConversationPlaceholder({
   ownerUserId,
   project,
   hostReady,
+  hostDetail,
+  onHostRetry,
   defaultContactReady,
   port,
   historyPort,
@@ -44,6 +48,7 @@ export function ProjectConversationPlaceholder({
   const prepare = useProjectConversationStore((state) => state.prepare);
 
   useEffect(() => {
+    if (!hostReady) return;
     void prepare(port, {
       ownerUserId,
       projectId: project.id,
@@ -52,6 +57,18 @@ export function ProjectConversationPlaceholder({
       defaultContactReady,
     });
   }, [defaultContactReady, hostReady, ownerUserId, port, prepare, project.conversationId, project.id]);
+
+  if (!hostReady) {
+    return (
+      <ProjectStateCard icon="!" title="本地服务不可用" description={hostDetail || "任务服务就绪后会自动继续。"}>
+        {onHostRetry ? (
+          <button className="primary-button" onClick={onHostRetry} type="button">
+            重新检查
+          </button>
+        ) : null}
+      </ProjectStateCard>
+    );
+  }
 
   if (phase.kind === "preparing") {
     return <ProjectStateCard icon={<span className="spinner" />} title="正在连接“叽咕狸”…" description="正在为项目准备首次会话，完成后即可进入消息页面。" />;
