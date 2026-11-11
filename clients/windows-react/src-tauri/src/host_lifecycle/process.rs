@@ -58,6 +58,31 @@ pub(super) async fn spawn(
     credential_environment: &BTreeMap<String, String>,
     workers_enabled: bool,
 ) -> Result<ManagedHost, String> {
+    spawn_with_memory(
+        executable,
+        database,
+        owner_user_id,
+        credential_environment,
+        workers_enabled,
+        None,
+    )
+    .await
+}
+
+pub(super) struct MemoryLaunchConfig<'a> {
+    pub(super) base_url: &'a str,
+    pub(super) source_id: &'a str,
+    pub(super) access_token: &'a str,
+}
+
+pub(super) async fn spawn_with_memory(
+    executable: &Path,
+    database: &Path,
+    owner_user_id: String,
+    credential_environment: &BTreeMap<String, String>,
+    workers_enabled: bool,
+    memory: Option<MemoryLaunchConfig<'_>>,
+) -> Result<ManagedHost, String> {
     let mut command = Command::new(executable);
     command
         .arg("--database")
@@ -68,6 +93,13 @@ pub(super) async fn spawn(
     if !workers_enabled {
         command.arg("--disable-workers");
     }
+    if let Some(memory) = memory.as_ref() {
+        command
+            .arg("--memory-base-url")
+            .arg(memory.base_url)
+            .arg("--memory-source-id")
+            .arg(memory.source_id);
+    }
     command
         .arg("--stdio")
         .stdin(Stdio::piped())
@@ -75,7 +107,10 @@ pub(super) async fn spawn(
         .stderr(Stdio::null())
         .kill_on_drop(true);
     command.env_clear();
-    command.envs(safe_environment(credential_environment));
+    command.envs(safe_environment(
+        credential_environment,
+        memory.as_ref().map(|value| value.access_token),
+    ));
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     let input = child
         .stdin
@@ -97,7 +132,10 @@ fn configure_tool_policy(command: &mut Command) {
     }
 }
 
-fn safe_environment(credential_environment: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+fn safe_environment(
+    credential_environment: &BTreeMap<String, String>,
+    memory_access_token: Option<&str>,
+) -> BTreeMap<String, String> {
     const ALLOWED: &[&str] = &[
         "APPDATA",
         "ComSpec",
@@ -132,6 +170,9 @@ fn safe_environment(credential_environment: &BTreeMap<String, String>) -> BTreeM
             .iter()
             .map(|(name, value)| (name.clone(), value.clone())),
     );
+    if let Some(token) = memory_access_token.filter(|value| !value.trim().is_empty()) {
+        environment.insert("CHATOS_MEMORY_ACCESS_TOKEN".into(), token.into());
+    }
     environment
 }
 
@@ -154,12 +195,17 @@ mod tests {
             .expect("CHATOS_LOCAL_AGENT_HOST_TEST_PATH");
         let directory = tempfile::tempdir().expect("temporary database directory");
         let database = directory.path().join("agent.sqlite3");
-        let mut host = spawn(
+        let mut host = spawn_with_memory(
             &executable,
             &database,
             "windows-integration-owner".to_string(),
             &BTreeMap::new(),
             true,
+            Some(MemoryLaunchConfig {
+                base_url: "http://127.0.0.1:1/api/memory",
+                source_id: "chatos",
+                access_token: "test-memory-token",
+            }),
         )
         .await
         .expect("spawn prepared Host");
@@ -200,12 +246,17 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary database directory");
         let database = directory.path().join("agent.sqlite3");
         let owner = "windows-integration-owner";
-        let mut host = spawn(
+        let mut host = spawn_with_memory(
             &executable,
             &database,
             owner.to_string(),
             &BTreeMap::new(),
             true,
+            Some(MemoryLaunchConfig {
+                base_url: "http://127.0.0.1:1/api/memory",
+                source_id: "chatos",
+                access_token: "test-memory-token",
+            }),
         )
         .await
         .expect("spawn prepared Host");
@@ -254,7 +305,7 @@ mod tests {
             "CHATOS_LOCAL_AGENT_MODEL_TEST".to_string(),
             "secret".to_string(),
         )]);
-        let environment = safe_environment(&credentials);
+        let environment = safe_environment(&credentials, None);
         assert_eq!(
             environment.get("CHATOS_LOCAL_AGENT_MODEL_TEST"),
             Some(&"secret".to_string())

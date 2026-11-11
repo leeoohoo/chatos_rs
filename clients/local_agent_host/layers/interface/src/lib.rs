@@ -65,9 +65,10 @@ pub use conversation::{
     LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
 };
 pub use hook::{
-    ListPluginHookBundlesCommand, ListPluginHookInvocationsCommand, LocalPluginHookBundleRecord,
-    LocalPluginHookBundleSpec, LocalPluginHookDefinition, LocalPluginHookInvocationDiagnostic,
-    LocalPluginHookInvocationPage, PutPluginHookBundleCommand, ResolveAgentTeamHookContextCommand,
+    ListPluginHookBundleRecordsCommand, ListPluginHookBundlesCommand,
+    ListPluginHookInvocationsCommand, LocalPluginHookBundleRecord, LocalPluginHookBundleSpec,
+    LocalPluginHookDefinition, LocalPluginHookInvocationDiagnostic, LocalPluginHookInvocationPage,
+    PutPluginHookBundleCommand, ResolveAgentTeamHookContextCommand,
     SetActivePluginHookBundlesCommand, LOCAL_PLUGIN_HOOK_HISTORY_MAX_PAGE_SIZE,
     LOCAL_PLUGIN_HOOK_MAX_BUNDLES, LOCAL_PLUGIN_HOOK_MAX_DEFINITIONS,
 };
@@ -216,6 +217,7 @@ pub enum HostCommand {
     RemovePluginInstallation(RemovePluginInstallationCommand),
     PutPluginHookBundle(PutPluginHookBundleCommand),
     ListPluginHookBundles(ListPluginHookBundlesCommand),
+    ListPluginHookBundleRecords(ListPluginHookBundleRecordsCommand),
     ListPluginHookInvocations(ListPluginHookInvocationsCommand),
     SetActivePluginHookBundles(SetActivePluginHookBundlesCommand),
     ResolveAgentTeamHookContext(ResolveAgentTeamHookContextCommand),
@@ -305,6 +307,7 @@ impl HostCommand {
             Self::RemovePluginInstallation(command) => command.validate(),
             Self::PutPluginHookBundle(command) => command.validate(),
             Self::ListPluginHookBundles(command) => command.validate(),
+            Self::ListPluginHookBundleRecords(command) => command.validate(),
             Self::ListPluginHookInvocations(command) => command.validate(),
             Self::SetActivePluginHookBundles(command) => command.validate(),
             Self::ResolveAgentTeamHookContext(command) => command.validate(),

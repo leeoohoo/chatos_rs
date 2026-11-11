@@ -126,11 +126,18 @@ pub(super) fn transition_for_outcome(
                     "reason": reason,
                     "detail": detail,
                 });
+                let terminal_outcome = if detail.get("phase").and_then(|value| value.as_str())
+                    == Some("trusted_plugin_hook")
+                {
+                    None
+                } else {
+                    Some(terminal)
+                };
                 (
                     LocalAgentRunStatus::NeedsReview,
                     None,
                     None,
-                    Some(terminal),
+                    terminal_outcome,
                     "run_needs_review",
                     json!({"reason": reason, "detail": detail}),
                 )

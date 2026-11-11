@@ -768,7 +768,11 @@ fn discover_toolchains() -> BTreeMap<String, Vec<DiscoveredToolchain>> {
 fn find_executable(name: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
     let extensions: &[&str] = if cfg!(windows) {
-        &["", ".exe", ".cmd", ".bat"]
+        // Windows installations commonly expose POSIX shell shims without an
+        // extension next to the real executable (for example Node's `npm`
+        // file beside `npm.cmd`).  CreateProcess cannot launch those files,
+        // so prefer native executable and batch entry points first.
+        &[".exe", ".cmd", ".bat", ""]
     } else {
         &[""]
     };

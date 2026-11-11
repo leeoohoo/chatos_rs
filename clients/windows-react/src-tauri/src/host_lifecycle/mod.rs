@@ -8,7 +8,7 @@ use crate::{
     },
     app_data_transaction::ensure_owned_directory,
     attachment_tool_worker::AttachmentToolWorker,
-    authentication::AuthenticationManager,
+    authentication::{runtime_api_base_url, AuthenticationManager},
     connector_state, control_plane,
     local_terminal::LocalTerminalRegistry,
     plugin_application::PluginApplicationManager,
@@ -22,7 +22,7 @@ use chatos_local_agent_protocol::{
 use diagnostics::{
     classify_authentication_error, classify_error, HostDiagnostics, HostDiagnosticsSnapshot,
 };
-use process::spawn;
+use process::{spawn, spawn_with_memory, MemoryLaunchConfig};
 use serde::Serialize;
 use std::{collections::BTreeMap, path::PathBuf};
 use tauri::{AppHandle, Manager, State};
@@ -328,13 +328,16 @@ pub async fn start_local_agent_host(
             .await;
         return Err(error);
     }
-    if let Err(error) = authentication.access_token_for_owner(&owner_user_id).await {
-        manager
-            .diagnostics
-            .record("host_authentication", classify_authentication_error(&error))
-            .await;
-        return Err(error);
-    }
+    let access_token = match authentication.access_token_for_owner(&owner_user_id).await {
+        Ok(token) => token,
+        Err(error) => {
+            manager
+                .diagnostics
+                .record("host_authentication", classify_authentication_error(&error))
+                .await;
+            return Err(error);
+        }
+    };
     manager.diagnostics.record("host_start", "requested").await;
     let mut process = manager.process.lock().await;
     if let Some(host) = process.as_mut() {
@@ -462,12 +465,27 @@ pub async fn start_local_agent_host(
 
     let model_options = prepared.model_options;
     let mut credential_environment = prepared.credential_environment;
-    let spawn_result = spawn(
+    let memory_base_url = match memory_base_url() {
+        Ok(url) => url,
+        Err(error) => {
+            manager
+                .diagnostics
+                .record("host_memory_configuration", "invalid")
+                .await;
+            return Err(error);
+        }
+    };
+    let spawn_result = spawn_with_memory(
         &executable,
         &database,
         owner_user_id,
         &credential_environment,
         true,
+        Some(MemoryLaunchConfig {
+            base_url: &memory_base_url,
+            source_id: MEMORY_SOURCE_ID,
+            access_token: &access_token,
+        }),
     )
     .await;
     for credential in credential_environment.values_mut() {
@@ -536,6 +554,39 @@ pub async fn start_local_agent_host(
         .record("host_start_handshake", "ready")
         .await;
     Ok(HostLifecycleSnapshot::ready())
+}
+
+const MEMORY_SOURCE_ID: &str = "chatos";
+
+fn memory_base_url() -> Result<String, String> {
+    let configured = std::env::var("CHATOS_MEMORY_BASE_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(runtime_api_base_url);
+    let mut url =
+        reqwest::Url::parse(&configured).map_err(|_| "剧情规划历史服务地址无效。".to_string())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("剧情规划历史服务地址无效。".to_string());
+    }
+    if std::env::var("CHATOS_MEMORY_BASE_URL")
+        .ok()
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        let prefix = url.path().trim_matches('/').to_owned();
+        let path = if prefix.is_empty() {
+            "/api/memory".to_owned()
+        } else {
+            format!("/{prefix}/api/memory")
+        };
+        url.set_path(&path);
+    }
+    Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
 async fn apply_scheduler_pressure(
@@ -640,6 +691,13 @@ mod tests {
         assert!(validate_owner("").is_err());
         assert!(validate_owner("user\nother").is_err());
         assert!(validate_owner("user-1").is_ok());
+    }
+
+    #[test]
+    fn memory_base_url_derives_from_runtime_api_without_credentials() {
+        let url = memory_base_url().expect("runtime memory URL");
+        assert!(url.ends_with("/api/memory"));
+        assert!(!url.contains('@'));
     }
 
     #[tokio::test]

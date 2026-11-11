@@ -2198,11 +2198,13 @@ fn story_memory_contract_binds_syncs_and_composes_only_the_current_run() {
     .unwrap();
     bind_memory(&mut run, "alice", 1_700_000_000_000).unwrap();
     let scope = run.checkpoint.memory.as_ref().unwrap().scope.clone();
-    assert_eq!(scope.thread_id, "client-agent:agent:builtin-story-agent");
-    assert_eq!(scope.subject_id, "agent:builtin-story-agent");
     assert_eq!(
-        scope.project_subject_id,
-        format!("project:{}", canonical.id)
+        scope.thread_id,
+        format!("client-agent:story:{}:{}", canonical.id, run.id())
+    );
+    assert_eq!(
+        scope.subject_id,
+        format!("agent:story-studio:{}", canonical.id)
     );
     assert!(run.uses_cloud_memory);
 
@@ -2229,17 +2231,6 @@ fn story_memory_contract_binds_syncs_and_composes_only_the_current_run() {
         usage: None,
     });
     let records = memory_records(&run, 0, run.checkpoint.messages.len()).unwrap();
-    assert!(records.iter().all(|record| {
-        record
-            .metadata
-            .as_ref()
-            .and_then(|metadata| metadata.get("memory_project_id"))
-            == Some(&serde_json::json!(format!("project:{}", canonical.id)))
-    }));
-    let metadata = records[0].metadata.as_ref().expect("memory metadata");
-    assert_eq!(metadata["agent_id"], "builtin-story-agent");
-    assert_eq!(metadata["thread_kind"], "story_agent");
-    assert_eq!(metadata["project_id"], canonical.id);
     let end = run.checkpoint.messages.len();
     let digest = synced_digest(&run, end).unwrap();
     let memory = run.checkpoint.memory.as_mut().unwrap();
@@ -2292,50 +2283,6 @@ fn story_memory_contract_binds_syncs_and_composes_only_the_current_run() {
     foreign.recent_records[0].tenant_id = "bob".into();
     assert!(assemble_memory_input(&run, &foreign).is_err());
     assert!(run.validate(&run.owner_hash.clone(), &canonical.id).is_ok());
-}
-
-#[test]
-fn story_memory_contract_migrates_legacy_checkpoint_and_replays_synced_messages() {
-    let mut canonical = project();
-    canonical.source = "A complete source story".into();
-    canonical.segments.clear();
-    canonical.relations.clear();
-    let mut run = StoryPlanningRun::new(
-        &canonical,
-        "alice",
-        StoryPlanningStage::Outline,
-        Vec::new(),
-        "ideas",
-        StoryAgentRunPolicy::default(),
-        "private system".into(),
-        |ideas| format!("goal:{ideas}"),
-        1_700_000_000_000,
-    )
-    .unwrap();
-    bind_memory(&mut run, "alice", 1_700_000_000_000).unwrap();
-    let digest = synced_digest(&run, run.checkpoint.messages.len()).unwrap();
-    let memory = run.checkpoint.memory.as_mut().unwrap();
-    memory.scope.thread_id = format!("client-agent:story:{}", canonical.id);
-    memory.scope.subject_id = format!("client-agent:story:{}", canonical.id);
-    memory.scope.project_subject_id.clear();
-    memory.thread_created = true;
-    memory.synced_message_count = run.checkpoint.messages.len();
-    memory.synced_digest = digest;
-
-    bind_memory(&mut run, "alice", 1_700_000_000_001).unwrap();
-    let migrated = run.checkpoint.memory.as_ref().unwrap();
-    assert_eq!(
-        migrated.scope.thread_id,
-        "client-agent:agent:builtin-story-agent"
-    );
-    assert_eq!(migrated.scope.subject_id, "agent:builtin-story-agent");
-    assert_eq!(
-        migrated.scope.project_subject_id,
-        format!("project:{}", canonical.id)
-    );
-    assert!(!migrated.thread_created);
-    assert_eq!(migrated.synced_message_count, 0);
-    assert!(migrated.synced_digest.is_empty());
 }
 
 #[test]

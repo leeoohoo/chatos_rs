@@ -2570,6 +2570,7 @@ mod tests {
             owner_user_id: "user-1".into(),
             conversation_id: "conversation-1".into(),
             expected_conversation_version: 1,
+            conversation_if_missing: None,
             turn_id: "turn-1".into(),
             message_id: "message-1".into(),
             run_id: "run-1".into(),

@@ -214,6 +214,7 @@ async fn start_new_turn(
                 owner_user_id: owner_user_id.to_owned(),
                 conversation_id: conversation_id.to_owned(),
                 expected_conversation_version: detail.conversation.version,
+                conversation_if_missing: None,
                 turn_id: turn_id.clone(),
                 message_id: message_id.clone(),
                 run_id: identifier("run"),

@@ -7,6 +7,7 @@ use crate::machine_resource_governor::{
 use crate::terminal_runtime::process::ProcessTermination;
 use std::{
     collections::HashMap,
+    ffi::OsStr,
     path::PathBuf,
     process::Stdio,
     sync::{
@@ -571,9 +572,8 @@ async fn spawn_project_run(
     redactions.sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
     redactions.dedup();
     prepare_launch_environment(&mut target)?;
-    let mut command = Command::new(&target.executable);
+    let mut command = project_command(&target.executable, &target.arguments);
     command
-        .args(&target.arguments)
         .current_dir(&target.cwd)
         .envs(&target.environment)
         .stdin(Stdio::null())
@@ -630,6 +630,69 @@ async fn spawn_project_run(
         stderr_task,
     ));
     Ok(process)
+}
+
+fn project_command(executable: &std::path::Path, arguments: &[String]) -> Command {
+    #[cfg(windows)]
+    if is_batch_script(executable) {
+        let mut command = Command::new(
+            std::env::var_os("ComSpec")
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "cmd.exe".into()),
+        );
+        let mut command_line = quote_windows_command_arg(executable.as_os_str());
+        for argument in arguments {
+            command_line.push(' ');
+            command_line.push_str(&quote_windows_command_arg(OsStr::new(argument)));
+        }
+        command.arg("/d").arg("/s").arg("/c").arg(command_line);
+        return command;
+    }
+
+    let mut command = Command::new(executable);
+    command.args(arguments);
+    command
+}
+
+#[cfg(windows)]
+fn is_batch_script(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "cmd" | "bat"))
+}
+
+#[cfg(windows)]
+fn quote_windows_command_arg(value: &OsStr) -> String {
+    let value = value.to_string_lossy();
+    if value.is_empty() {
+        return "\"\"".into();
+    }
+    let needs_quotes = value
+        .chars()
+        .any(|character| character.is_whitespace() || character == '\"');
+    if !needs_quotes {
+        return value.into_owned();
+    }
+    let mut quoted = String::from("\"");
+    let mut backslashes = 0;
+    for character in value.chars() {
+        match character {
+            '\\' => backslashes += 1,
+            '\"' => {
+                quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
+                quoted.push('\"');
+                backslashes = 0;
+            }
+            _ => {
+                quoted.push_str(&"\\".repeat(backslashes));
+                quoted.push(character);
+                backslashes = 0;
+            }
+        }
+    }
+    quoted.push_str(&"\\".repeat(backslashes * 2));
+    quoted.push('\"');
+    quoted
 }
 
 fn prepare_launch_environment(target: &mut ResolvedProjectRunTarget) -> Result<(), String> {

@@ -42,6 +42,32 @@ fn analyzer_matches_macos_target_priority_and_uses_only_relative_paths() {
     assert!(!serialized.contains(&directory.path().to_string_lossy().to_string()));
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_toolchain_discovery_prefers_launchable_extensions() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("package.json"),
+        json!({"scripts": {"dev": "vite"}}).to_string(),
+    )
+    .unwrap();
+
+    let analysis = analyze_project(directory.path()).unwrap();
+    let npm = analysis
+        .toolchains
+        .get("npm")
+        .and_then(|options| options.first());
+    let Some(npm) = npm else {
+        return;
+    };
+    assert!(matches!(
+        npm.executable
+            .extension()
+            .and_then(|extension| extension.to_str()),
+        Some("exe") | Some("cmd") | Some("bat")
+    ));
+}
+
 #[test]
 fn oversized_manifest_is_not_parsed_or_previewed() {
     let directory = tempfile::tempdir().unwrap();
@@ -456,6 +482,68 @@ async fn runtime_redacts_environment_secrets_from_project_output() {
         .log
         .contains("secret-spanning-any-output-chunk"));
     assert!(state.instances[0].log.contains("[已隐藏]"));
+    manager.reset().await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn runtime_launches_and_terminates_batch_project_targets() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(directory.path()).unwrap();
+    fs::write(
+        root.join("run.cmd"),
+        "@echo off\r\nnode -e \"setTimeout(() => {}, 60000)\"\r\n",
+    )
+    .unwrap();
+    let manager = ProjectRunManager::default();
+    let scope = test_scope(&root, "owner", "project");
+    let target = test_target(root.join("run.cmd"), Vec::new(), &root);
+
+    let started = manager.start(&scope, target).await.unwrap();
+    assert!(started.is_running);
+    let instance_id = started.instances[0].id.clone();
+    let stopped = manager.stop(&scope, &instance_id).await.unwrap();
+    assert!(!stopped.is_running);
+    manager.reset().await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn runtime_launches_analyzed_npm_script_with_windows_shim() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(directory.path()).unwrap();
+    fs::write(
+        root.join("package.json"),
+        json!({
+            "name": "project-run-test",
+            "scripts": {"dev": "node -e \"setTimeout(() => {}, 60000)\""}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let analysis = analyze_project(&root).unwrap();
+    let target = analysis
+        .targets
+        .iter()
+        .find(|target| target.presentation.command == "npm run dev")
+        .unwrap();
+    let resolved =
+        resolve_project_run_target(&root, &target.presentation.id, &Default::default()).unwrap();
+    assert!(matches!(
+        resolved
+            .executable
+            .extension()
+            .and_then(|extension| extension.to_str()),
+        Some("cmd") | Some("bat") | Some("exe")
+    ));
+
+    let manager = ProjectRunManager::default();
+    let scope = test_scope(&root, "owner", "project");
+    let started = manager.start(&scope, resolved).await.unwrap();
+    assert!(started.is_running);
+    let instance_id = started.instances[0].id.clone();
+    let stopped = manager.stop(&scope, &instance_id).await.unwrap();
+    assert!(!stopped.is_running);
     manager.reset().await;
 }
 

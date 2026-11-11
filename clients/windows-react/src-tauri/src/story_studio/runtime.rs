@@ -205,9 +205,7 @@ impl StoryPlanningRuntime<'_> {
             Some(_) => {}
             None => {
                 if run.checkpoint.model_calls > 0 {
-                    return Err(
-                        "剧情规划旧运行缺少冻结模型能力快照，不能继续发送模型请求。".into(),
-                    );
+                    return Err("剧情规划旧运行缺少冻结模型能力快照，不能继续发送模型请求。".into());
                 }
                 run.model_capability = Some(model.capability.clone());
                 self.persist(run, lease, "model_capability_frozen", "已冻结模型能力快照")

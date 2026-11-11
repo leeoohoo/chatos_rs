@@ -158,7 +158,8 @@ mod app_data_transaction {
                 destination.as_ptr(),
                 MOVEFILE_WRITE_THROUGH,
             )
-        } == 0 {
+        } == 0
+        {
             Err(io::Error::last_os_error())
         } else {
             Ok(())
