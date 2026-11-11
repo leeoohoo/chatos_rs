@@ -18,7 +18,8 @@ use super::{
     current_user_handler, delete_managed_requirements_assignment,
     delete_managed_requirements_policy, delete_workspace, disconnect_device,
     get_agent_prompt_bundle, get_agent_prompt_bundle_manifest, get_device,
-    get_managed_requirements, heartbeat_device, issue_runtime_context_assertion, list_devices,
+    get_managed_requirements, heartbeat_device, issue_controlled_network_policy,
+    issue_runtime_context_assertion, list_devices,
     list_managed_requirements_assignments, list_managed_requirements_policies,
     list_plugin_install_sources, list_workspaces, proxy_plugin_release_artifact,
     require_public_auth, resolve_local_runtime_capabilities, revoke_device, system_stats_handler,
@@ -126,6 +127,10 @@ fn protected_api(state: &AppState) -> Router<AppState> {
         .route(
             "/api/local-connectors/devices/{id}/controlled-network/readiness",
             get(controlled_network_readiness),
+        )
+        .route(
+            "/api/local-connectors/devices/{id}/controlled-network/policy",
+            get(issue_controlled_network_policy),
         )
         .route(
             "/api/local-connectors/devices/{id}/managed-requirements",
