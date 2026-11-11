@@ -373,31 +373,6 @@ fn field_items_schema() -> Value {
     })
 }
 
-#[cfg(test)]
-mod input_safety_tests {
-    use super::*;
-
-    #[test]
-    fn rejects_secret_fields_before_a_waiting_user_prompt_is_created() {
-        for field in [
-            json!({"key":"password", "label":"Password"}),
-            json!({"key":"login_value", "label":"授权登录密码"}),
-            json!({"key":"value", "label":"Value", "secret":true}),
-        ] {
-            let error = normalize_fields(Some(&json!([field])), true).unwrap_err();
-            assert!(error.contains("authenticate directly in the target UI"));
-        }
-    }
-
-    #[test]
-    fn model_schema_cannot_generate_a_secret_field() {
-        for tool in ask_user_model_tools() {
-            let encoded = serde_json::to_string(&tool["parameters"]).unwrap();
-            assert!(!encoded.contains("\"secret\""));
-        }
-    }
-}
-
 fn fields_schema(required: bool) -> Value {
     let mut properties = common_properties();
     properties.insert(
@@ -461,4 +436,29 @@ fn mixed_schema() -> Value {
     );
     properties.insert("choice".to_string(), choice_block_schema());
     json!({"type": "object", "properties": properties, "additionalProperties": false})
+}
+
+#[cfg(test)]
+mod input_safety_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_secret_fields_before_a_waiting_user_prompt_is_created() {
+        for field in [
+            json!({"key":"password", "label":"Password"}),
+            json!({"key":"login_value", "label":"授权登录密码"}),
+            json!({"key":"value", "label":"Value", "secret":true}),
+        ] {
+            let error = normalize_fields(Some(&json!([field])), true).unwrap_err();
+            assert!(error.contains("authenticate directly in the target UI"));
+        }
+    }
+
+    #[test]
+    fn model_schema_cannot_generate_a_secret_field() {
+        for tool in ask_user_model_tools() {
+            let encoded = serde_json::to_string(&tool["parameters"]).unwrap();
+            assert!(!encoded.contains("\"secret\""));
+        }
+    }
 }

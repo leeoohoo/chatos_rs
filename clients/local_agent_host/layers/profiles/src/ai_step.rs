@@ -769,9 +769,7 @@ fn shorten_old_tool_outputs(items: &mut [Value], compaction: &mut CheckpointComp
             tool_name,
             "agent_skill_activate" | "agent_skill_read_resource" | "capability_describe"
         );
-        let limit = if is_skill_context {
-            MAXIMUM_SKILL_OUTPUT_CHARS
-        } else if index >= recent_start {
+        let limit = if is_skill_context || index >= recent_start {
             MAXIMUM_SKILL_OUTPUT_CHARS
         } else {
             MAXIMUM_OLD_TOOL_OUTPUT_CHARS
