@@ -40,6 +40,7 @@ fn turn(
         owner_user_id: "user-1".to_string(),
         conversation_id: conversation_id.to_string(),
         expected_conversation_version,
+        conversation_if_missing: None,
         turn_id: format!("turn-{suffix}"),
         message_id: format!("message-{suffix}"),
         run_id: format!("run-{suffix}"),
@@ -152,6 +153,29 @@ async fn wait_for_user(
         )
         .await
         .expect("wait for user")
+}
+
+#[tokio::test]
+async fn first_turn_atomically_creates_a_missing_conversation() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    let mut first = turn("conversation-atomic", 1, "atomic");
+    first.conversation_if_missing = Some(conversation("conversation-atomic"));
+
+    let started = start(&storage, &first, 2_000)
+        .await
+        .expect("atomically create conversation and start Turn");
+
+    assert_eq!(started.conversation.conversation_id, "conversation-atomic");
+    assert_eq!(started.conversation.version, 2);
+    assert_eq!(started.turn.conversation_id, "conversation-atomic");
+    let stored = storage
+        .get_conversation("user-1", "conversation-atomic")
+        .await
+        .expect("get conversation")
+        .expect("conversation exists");
+    assert_eq!(stored.turns.len(), 1);
 }
 
 #[tokio::test]

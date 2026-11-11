@@ -8,10 +8,10 @@ use chatos_local_agent_ports::{
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, HostCommand, HostResult,
     LocalAgentRunRecord, LocalAgentRunStatus, LocalConversationAttachmentRecord,
-    LocalConversationAttachmentSpec, LocalConversationHistoryPage, LocalConversationMessageRecord,
-    LocalConversationMessageRole, LocalConversationResourceBinding, LocalConversationResourceKind,
-    LocalConversationTurnRecord, LocalConversationTurnStatus, ResumeConversationTurnCommand,
-    StartConversationTurnCommand,
+    LocalConversationAttachmentSpec, LocalConversationDetail, LocalConversationHistoryPage,
+    LocalConversationMessageRecord, LocalConversationMessageRole, LocalConversationRecord,
+    LocalConversationResourceBinding, LocalConversationResourceKind, LocalConversationTurnRecord,
+    LocalConversationTurnStatus, ResumeConversationTurnCommand, StartConversationTurnCommand,
 };
 use chrono::{DateTime, Utc};
 use serde_json::json;
@@ -150,11 +150,34 @@ impl LocalAgentRuntime {
         command: StartConversationTurnCommand,
     ) -> Result<chatos_local_agent_protocol::LocalConversationTurnStart, LocalAgentRuntimeError>
     {
-        let conversation = self
+        let now = self.now()?;
+        let existing_conversation = self
             .store
             .get_conversation(&command.owner_user_id, &command.conversation_id)
-            .await?
-            .ok_or_else(|| ClientStorageError::NotFound(command.conversation_id.clone()))?;
+            .await?;
+        let conversation = match (
+            existing_conversation,
+            command.conversation_if_missing.as_ref(),
+        ) {
+            (Some(conversation), _) => conversation,
+            (None, Some(seed)) => LocalConversationDetail {
+                conversation: LocalConversationRecord {
+                    conversation_id: seed.conversation_id.clone(),
+                    owner_user_id: seed.owner_user_id.clone(),
+                    title: seed.title.trim().to_string(),
+                    resource: seed.resource.clone(),
+                    version: 1,
+                    created_at_unix_ms: now,
+                    updated_at_unix_ms: now,
+                },
+                turns: Vec::new(),
+                messages: Vec::new(),
+                attachments: Vec::new(),
+            },
+            (None, None) => {
+                return Err(ClientStorageError::NotFound(command.conversation_id.clone()).into())
+            }
+        };
         let runtime_settings = self
             .store
             .get_conversation_runtime_settings(&command.owner_user_id, &command.conversation_id)
@@ -169,7 +192,6 @@ impl LocalAgentRuntime {
                 ));
             }
         }
-        let now = self.now()?;
         let explicit_capability_selection =
             normalized_explicit_capability_selection(&command.message_metadata)?;
         let team_executor_context = normalized_team_executor_context(
@@ -1642,6 +1664,7 @@ mod tests {
             owner_user_id: "user-1".to_string(),
             conversation_id: "conversation-1".to_string(),
             expected_conversation_version,
+            conversation_if_missing: None,
             turn_id: "turn-1".to_string(),
             message_id: "message-1".to_string(),
             run_id: "run-1".to_string(),
@@ -2035,6 +2058,33 @@ mod tests {
         };
         assert_eq!(result.run.input["project_id"], "project-1");
         assert_eq!(result.run.input["project_name"], "红果逆向");
+    }
+
+    #[tokio::test]
+    async fn host_start_turn_creates_missing_conversation_in_the_same_command() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+        runtime.initialize("user-1").await.expect("initialize");
+        let mut turn = start_turn(1);
+        turn.conversation_if_missing = Some(create_conversation());
+
+        let started = runtime
+            .try_handle(request(
+                "start-missing-conversation-turn",
+                HostCommand::StartConversationTurn(turn),
+            ))
+            .await
+            .expect("create conversation and start Turn");
+        let HostResult::ConversationTurnStarted { result } = started else {
+            panic!("unexpected start result")
+        };
+        assert_eq!(result.conversation.conversation_id, "conversation-1");
+        assert_eq!(result.conversation.version, 2);
+        assert_eq!(result.turn.status, LocalConversationTurnStatus::Running);
     }
 
     #[tokio::test]

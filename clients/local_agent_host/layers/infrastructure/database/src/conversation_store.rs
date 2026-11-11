@@ -181,6 +181,35 @@ impl LocalConversationStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut connection, command).await? {
                 return Ok(replay);
             }
+            if let Some(seed) = &turn.conversation_if_missing {
+                sqlx::query(
+                    "INSERT INTO local_conversations(\
+                     conversation_id, owner_user_id, title, resource_kind, resource_id, version, \
+                     created_at_unix_ms, updated_at_unix_ms) VALUES(?, ?, ?, ?, ?, 1, ?, ?) \
+                     ON CONFLICT(conversation_id) DO NOTHING",
+                )
+                .bind(&seed.conversation_id)
+                .bind(&seed.owner_user_id)
+                .bind(seed.title.trim())
+                .bind(seed.resource.as_ref().map(|value| match value.kind {
+                    chatos_local_agent_protocol::LocalConversationResourceKind::Contact => {
+                        "contact"
+                    }
+                    chatos_local_agent_protocol::LocalConversationResourceKind::Project => {
+                        "project"
+                    }
+                }))
+                .bind(
+                    seed.resource
+                        .as_ref()
+                        .map(|value| value.resource_id.as_str()),
+                )
+                .bind(now_unix_ms)
+                .bind(now_unix_ms)
+                .execute(&mut *connection)
+                .await
+                .db()?;
+            }
             let conversation = fetch_conversation_record_for_owner(
                 &mut connection,
                 &turn.owner_user_id,
@@ -188,6 +217,14 @@ impl LocalConversationStore for SqliteClientStorage {
             )
             .await?
             .ok_or_else(|| ClientStorageError::NotFound(turn.conversation_id.clone()))?;
+            if let Some(seed) = &turn.conversation_if_missing {
+                if conversation.resource != seed.resource {
+                    return Err(ClientStorageError::Conflict(format!(
+                        "conversation resource changed: {}",
+                        turn.conversation_id
+                    )));
+                }
+            }
             if conversation.version != turn.expected_conversation_version {
                 return Err(ClientStorageError::Conflict(format!(
                     "conversation version changed: {}",

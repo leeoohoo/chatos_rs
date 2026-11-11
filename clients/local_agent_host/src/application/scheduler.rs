@@ -482,6 +482,7 @@ mod tests {
                     owner_user_id: "user-1".to_string(),
                     conversation_id: "conversation-guided-scheduler".to_string(),
                     expected_conversation_version: 1,
+                    conversation_if_missing: None,
                     turn_id: "turn-guided-scheduler".to_string(),
                     message_id: "message-guided-scheduler-1".to_string(),
                     run_id: "run-guided-scheduler".to_string(),

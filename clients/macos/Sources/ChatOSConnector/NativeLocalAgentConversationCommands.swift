@@ -42,6 +42,7 @@ public struct LocalAgentConversationTurnStartInput: Sendable, Equatable {
     public let ownerUserID: String
     public let conversationID: String
     public let expectedConversationVersion: UInt64
+    public let conversationIfMissing: LocalAgentConversationSeed?
     public let turnID: String
     public let messageID: String
     public let runID: String
@@ -57,6 +58,7 @@ public struct LocalAgentConversationTurnStartInput: Sendable, Equatable {
         ownerUserID: String,
         conversationID: String,
         expectedConversationVersion: UInt64,
+        conversationIfMissing: LocalAgentConversationSeed? = nil,
         turnID: String,
         messageID: String,
         runID: String,
@@ -71,6 +73,7 @@ public struct LocalAgentConversationTurnStartInput: Sendable, Equatable {
         self.ownerUserID = ownerUserID
         self.conversationID = conversationID
         self.expectedConversationVersion = expectedConversationVersion
+        self.conversationIfMissing = conversationIfMissing
         self.turnID = turnID
         self.messageID = messageID
         self.runID = runID
@@ -81,6 +84,16 @@ public struct LocalAgentConversationTurnStartInput: Sendable, Equatable {
         self.modelConfigRevision = modelConfigRevision
         self.capabilityPolicyRevision = capabilityPolicyRevision
         self.maxIterations = maxIterations
+    }
+}
+
+public struct LocalAgentConversationSeed: Sendable, Equatable {
+    public let title: String
+    public let resource: LocalAgentConversationResourceBinding?
+
+    public init(title: String, resource: LocalAgentConversationResourceBinding? = nil) {
+        self.title = title
+        self.resource = resource
     }
 }
 
@@ -198,6 +211,17 @@ private struct StartTurnCommand: Encodable, Sendable {
         try container.encode(input.ownerUserID, forKey: .ownerUserID)
         try container.encode(input.conversationID, forKey: .conversationID)
         try container.encode(input.expectedConversationVersion, forKey: .expectedConversationVersion)
+        if let seed = input.conversationIfMissing {
+            try container.encode(
+                ConversationSeedCommand(
+                    conversationID: input.conversationID,
+                    ownerUserID: input.ownerUserID,
+                    title: seed.title,
+                    resource: seed.resource
+                ),
+                forKey: .conversationIfMissing
+            )
+        }
         try container.encode(input.turnID, forKey: .turnID)
         try container.encode(input.messageID, forKey: .messageID)
         try container.encode(input.runID, forKey: .runID)
@@ -274,6 +298,7 @@ private enum StartKeys: String, CodingKey {
     case ownerUserID = "owner_user_id"
     case conversationID = "conversation_id"
     case expectedConversationVersion = "expected_conversation_version"
+    case conversationIfMissing = "conversation_if_missing"
     case turnID = "turn_id"
     case messageID = "message_id"
     case runID = "run_id"
@@ -282,6 +307,19 @@ private enum StartKeys: String, CodingKey {
     case modelConfigRevision = "model_config_revision"
     case capabilityPolicyRevision = "capability_policy_revision"
     case maxIterations = "max_iterations"
+}
+
+private struct ConversationSeedCommand: Encodable, Sendable {
+    let conversationID: String
+    let ownerUserID: String
+    let title: String
+    let resource: LocalAgentConversationResourceBinding?
+
+    private enum CodingKeys: String, CodingKey {
+        case title, resource
+        case conversationID = "conversation_id"
+        case ownerUserID = "owner_user_id"
+    }
 }
 
 private enum UpdateKeys: String, CodingKey {

@@ -121,6 +121,8 @@ pub struct StartConversationTurnCommand {
     pub owner_user_id: String,
     pub conversation_id: String,
     pub expected_conversation_version: u64,
+    #[serde(default)]
+    pub conversation_if_missing: Option<CreateConversationCommand>,
     pub turn_id: String,
     pub message_id: String,
     pub run_id: String,
@@ -141,6 +143,21 @@ impl StartConversationTurnCommand {
         validate_identifier("conversation_id", &self.conversation_id)?;
         if self.expected_conversation_version == 0 {
             return Err("expected_conversation_version must be greater than zero".to_string());
+        }
+        if let Some(conversation) = &self.conversation_if_missing {
+            conversation.validate()?;
+            if conversation.owner_user_id != self.owner_user_id
+                || conversation.conversation_id != self.conversation_id
+            {
+                return Err(
+                    "conversation_if_missing identity must match the Turn conversation".to_string(),
+                );
+            }
+            if self.expected_conversation_version != 1 {
+                return Err(
+                    "conversation_if_missing requires expected_conversation_version 1".to_string(),
+                );
+            }
         }
         for (field, value) in [
             ("turn_id", self.turn_id.as_str()),
@@ -658,6 +675,7 @@ mod tests {
             owner_user_id: "user-1".to_string(),
             conversation_id: "conversation-1".to_string(),
             expected_conversation_version: 1,
+            conversation_if_missing: None,
             turn_id: "turn-1".to_string(),
             message_id: "message-1".to_string(),
             run_id: "run-1".to_string(),
