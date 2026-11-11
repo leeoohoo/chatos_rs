@@ -149,7 +149,7 @@ public enum ChatOSCodeReadWorkerEngine {
             return try context.resolvePetFile(request.arguments)
         case "verify_file_identity_v1":
             return try context.verifyFileIdentity(request.arguments)
-        case "artifact_stage_v1", "artifact_restore_v1":
+        case "artifact_stage_v1", "artifact_restore_v1", "artifact_stage_v2", "artifact_restore_v2":
             return try ArtifactWorkerOperations(
                 root: root,
                 rootIdentity: request.projectRootIdentity,

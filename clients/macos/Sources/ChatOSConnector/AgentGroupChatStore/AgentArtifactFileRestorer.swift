@@ -32,13 +32,13 @@ enum AgentArtifactFileRestorer {
         }
         do {
             let result = try await codeReadWorker.execute(
-                operation: "artifact_restore_v1",
-                arguments: [
+                operation: "artifact_restore_v2",
+                arguments: scope.destinationArguments.merging([
                     "source_path": .string(scope.sourcePath),
                     "destination_path": .string(scope.destinationPath),
                     "byte_size": .number(Double(expectedBytes)),
                     "sha256": .string(expectedSHA256.lowercased()),
-                ],
+                ]) { _, value in value },
                 projectRoot: scope.root,
                 requestCWD: nil,
                 defaultToolRoot: nil,

@@ -1,10 +1,108 @@
 @testable import ChatOSConnector
 import ChatOSCore
+import ChatOSCodeReadWorkerClient
 import CryptoKit
 import Foundation
 import XCTest
 
 final class NativeLocalAgentArtifactClientTests: XCTestCase {
+    func testFailedAttachmentRetriesAndRestoresWithRelocatedLibraryUsingRealProcesses() async throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let hostExecutable = ProcessInfo.processInfo.environment["CHATOS_LOCAL_AGENT_HOST_PATH"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? repository.appendingPathComponent("target-shared/debug/chatos_local_agent_host")
+        let workerExecutable = repository.appendingPathComponent(
+            "clients/macos/.build/out/Products/Debug/ChatOSCodeReadWorker"
+        )
+        guard FileManager.default.isExecutableFile(atPath: hostExecutable.path),
+              FileManager.default.isExecutableFile(atPath: workerExecutable.path) else {
+            if ProcessInfo.processInfo.environment["CHATOS_REQUIRE_NATIVE_HOST_TESTS"] == "1" {
+                XCTFail("Required native Host or code read worker integration executable is missing")
+                throw NativeLocalAgentHostError.notRunning
+            }
+            throw XCTSkip("Build the native Host and code read worker for artifact integration tests")
+        }
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("artifact-relocation-\(UUID().uuidString)")
+        let volumeRoot = ProcessInfo.processInfo.environment["CHATOS_ARTIFACT_TEST_VOLUME"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.temporaryDirectory
+        let relocated = volumeRoot.appendingPathComponent("artifact-library-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: relocated)
+        }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: relocated, withIntermediateDirectories: true)
+        if ProcessInfo.processInfo.environment["CHATOS_ARTIFACT_TEST_VOLUME"] != nil {
+            let sourceAttributes = try FileManager.default.attributesOfItem(atPath: root.path)
+            let destinationAttributes = try FileManager.default.attributesOfItem(atPath: relocated.path)
+            XCTAssertNotEqual(sourceAttributes[.systemNumber] as? NSNumber,
+                              destinationAttributes[.systemNumber] as? NSNumber)
+        }
+        let alias = root.appendingPathComponent("LocalAgent")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: relocated)
+        let host = NativeLocalAgentHostLifecycle(configuration: .init(
+            executableURL: hostExecutable,
+            databaseURL: alias.appendingPathComponent("local-agent.sqlite3")
+        ))
+        do {
+            try await host.startForBootstrap(ownerUserID: "alice")
+            let worker = CodeReadWorkerProcessClient(executableURL: workerExecutable)
+            let client = NativeLocalAgentArtifactClient(
+                host: host,
+                artifactDirectoryURL: alias.appendingPathComponent("local-agent.artifacts"),
+                stagingDirectoryURL: alias.appendingPathComponent("local-agent.artifact-staging"),
+                codeReadWorker: worker
+            )
+            let service = NativeAgentGroupChatService(
+                databaseURL: root.appendingPathComponent("AgentGroupChat.sqlite3"),
+                agentArtifactStore: client, codeReadWorker: worker
+            )
+            let store = try await service.store()
+            let agent = try await store.createAgent(
+                ownerUserID: "alice",
+                draft: .init(name: "文档助手", rolePrompt: "交付文档", modelConfigID: "test-model")
+            )
+            let room = try await store.openHumanAgentDirect(ownerUserID: "alice", agentID: agent.id)
+            let data = Data(("# 方向决策简报\n" + String(repeating: "中文内容\n", count: 24_000)).utf8)
+            let posted = try await store.postMessage(
+                ownerUserID: "alice", roomID: room.id,
+                draft: .init(senderKind: .agent, senderID: agent.id, content: "文档已附上。",
+                             attachments: [.init(name: "简报.md", mimeType: "text/markdown; charset=utf-8",
+                                                 kind: .file, origin: .file, data: data)])
+            )
+            let jobResult = try await store.claimNextAgentArtifactStorage(ownerUserID: "alice", nowUnixMs: 1)
+            let job = try XCTUnwrap(jobResult)
+            try await store.markAgentArtifactStorageFailed(
+                ownerUserID: "alice", attachmentID: job.attachmentID,
+                attempt: job.attempt, error: "旧版本归档失败", nowUnixMs: 1
+            )
+            try await service.retryAgentArtifactStorage(
+                ownerUserID: "alice", roomID: room.id, attachmentID: job.attachmentID
+            )
+            let messages = try await store.listMessages(ownerUserID: "alice", roomID: room.id)
+            let attachment = try XCTUnwrap(messages.last?.attachmentItems.first)
+            XCTAssertEqual(attachment.syncStatus, .synced)
+            XCTAssertNil(attachment.uploadError)
+            let artifactID = try XCTUnwrap(attachment.artifactID)
+            let archived = try await client.read(ownerUserID: "alice", artifactID: artifactID)
+            XCTAssertEqual(archived, data)
+            try FileManager.default.removeItem(at: job.request.fileURL)
+            let payload = try await store.messageAttachment(
+                ownerUserID: "alice", roomID: room.id,
+                messageID: posted.message.id, attachmentID: attachment.id
+            )
+            XCTAssertEqual(try Data(contentsOf: XCTUnwrap(payload).localFileURL), data)
+            await host.stop()
+        } catch {
+            await host.stop()
+            throw error
+        }
+    }
+
     func testCRUDCommandsRemainOwnerScopedAndCarryContent() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "artifact-client-\(UUID().uuidString)",
