@@ -14,7 +14,7 @@ final class AgentChatEmptyStateTests: XCTestCase {
         let initial = try XCTUnwrap(measurement.frame)
         XCTAssertEqual(initial.midX, 450, accuracy: 1)
         XCTAssertEqual(initial.midY, 300, accuracy: 1)
-        XCTAssertNil(findTable(in: hosting))
+        XCTAssertNil(findScrollView(in: hosting))
 
         window.setContentSize(NSSize(width: 500, height: 350))
         try await settle(hosting)
@@ -24,7 +24,7 @@ final class AgentChatEmptyStateTests: XCTestCase {
         XCTAssertEqual(resized.size, initial.size)
     }
 
-    func testFirstMessageReplacesEmptyStateWithNativeTimeline() async throws {
+    func testFirstMessageReplacesEmptyStateWithScrollableTimeline() async throws {
         let measurement = EmptyStateMeasurement()
         let hosting = NSHostingView(rootView: timeline(measurement: measurement))
         let window = mount(hosting, width: 900, height: 600)
@@ -32,11 +32,11 @@ final class AgentChatEmptyStateTests: XCTestCase {
         try await settle(hosting)
         hosting.rootView = timeline(items: [.init(id: "first")], measurement: measurement)
         try await settle(hosting)
-        XCTAssertEqual(try XCTUnwrap(findTable(in: hosting)).numberOfRows, 1)
+        XCTAssertNotNil(findScrollView(in: hosting))
 
         hosting.rootView = timeline(measurement: measurement)
         try await settle(hosting)
-        XCTAssertNil(findTable(in: hosting))
+        XCTAssertNil(findScrollView(in: hosting))
     }
 
     func testOlderHistoryActionIsNotCoveredByEmptyPlaceholder() async throws {
@@ -44,8 +44,27 @@ final class AgentChatEmptyStateTests: XCTestCase {
         let window = mount(hosting, width: 900, height: 600)
         defer { window.close() }
         try await settle(hosting)
-        // Only the load-older control is a row; no cropped empty state is hosted in the table.
-        XCTAssertEqual(try XCTUnwrap(findTable(in: hosting)).numberOfRows, 1)
+        XCTAssertNotNil(findScrollView(in: hosting))
+    }
+
+    func testRowsUseNaturalHeightsAndKeepExplicitSpacing() async throws {
+        let measurement = EmptyStateMeasurement()
+        let hosting = NSHostingView(rootView: timeline(
+            items: [
+                .init(id: "short", height: 80),
+                .init(id: "long", height: 220),
+            ],
+            measurement: measurement
+        ))
+        let window = mount(hosting, width: 900, height: 600)
+        defer { window.close() }
+        try await settle(hosting)
+
+        let short = try XCTUnwrap(measurement.rowFrames["short"])
+        let long = try XCTUnwrap(measurement.rowFrames["long"])
+        XCTAssertEqual(short.height, 80, accuracy: 1)
+        XCTAssertEqual(long.height, 220, accuracy: 1)
+        XCTAssertGreaterThanOrEqual(long.minY - short.maxY, 15)
     }
 
     private func timeline(
@@ -54,7 +73,15 @@ final class AgentChatEmptyStateTests: XCTestCase {
         AgentChatTimelineView(
             items: items, isInitialContentReady: true, hasOlderItems: hasOlder,
             isLoadingOlderItems: false, scrollToLatestRequest: 0, loadOlderItems: { nil },
-            rowContent: { Text($0.id) },
+            rowContent: { item in
+                Text(item.id)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: item.height)
+                    .onGeometryChange(
+                        for: CGRect.self,
+                        of: { $0.frame(in: .named("viewport")) }
+                    ) { measurement.rowFrames[item.id] = $0 }
+            },
             emptyContent: {
                 Text("开始对话")
                     .frame(width: 160, height: 90)
@@ -81,17 +108,19 @@ final class AgentChatEmptyStateTests: XCTestCase {
         }
     }
 
-    private func findTable(in view: NSView) -> NSTableView? {
-        if let table = view as? NSTableView { return table }
-        return view.subviews.lazy.compactMap { self.findTable(in: $0) }.first
+    private func findScrollView(in view: NSView) -> NSScrollView? {
+        if let scrollView = view as? NSScrollView { return scrollView }
+        return view.subviews.lazy.compactMap { self.findScrollView(in: $0) }.first
     }
 }
 
 private struct EmptyStateItem: Identifiable, Equatable {
     let id: String
+    var height: CGFloat = 20
 }
 
 @MainActor
 private final class EmptyStateMeasurement {
     var frame: CGRect?
+    var rowFrames: [String: CGRect] = [:]
 }
