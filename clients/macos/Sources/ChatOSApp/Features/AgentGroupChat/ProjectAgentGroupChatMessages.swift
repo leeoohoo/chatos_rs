@@ -102,6 +102,7 @@ extension ProjectAgentGroupChatView {
         }
         .frame(maxWidth: 980)
         .frame(maxWidth: .infinity, alignment: isHuman ? .trailing : .leading)
+        .padding(.vertical, 8)
     }
 
     @ViewBuilder
