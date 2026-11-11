@@ -1,26 +1,11 @@
 import ChatOSCore
 import SwiftUI
 
-private struct AgentChatTimelineBottomPreferenceKey: PreferenceKey {
-    static let defaultValue = CGFloat.greatestFiniteMagnitude
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 private struct AgentChatTimelineBottomMarker: View {
-    let coordinateSpaceName: String
-
     var body: some View {
-        GeometryReader { geometry in
-            Color.clear.preference(
-                key: AgentChatTimelineBottomPreferenceKey.self,
-                value: geometry.frame(in: .named(coordinateSpaceName)).maxY
-            )
-        }
-        .frame(height: 1)
-        .id(AgentChatTimelineViewConstants.bottomID)
+        Color.clear
+            .frame(height: 1)
+            .id(AgentChatTimelineViewConstants.bottomID)
     }
 }
 
@@ -59,8 +44,9 @@ enum AgentChatTimelineScrollMetrics {
     }
 }
 
-/// The shared timeline for team rooms and direct conversations. LazyVStack gives every row its
-/// natural content height while only creating rows needed for the visible scroll region.
+/// The shared timeline for team rooms and direct conversations. The loaded page is intentionally
+/// bounded, so a regular VStack is both cheap and deterministic: every message gets its natural
+/// height without estimated rows or layout-time geometry feedback.
 struct AgentChatTimelineView<Item: Identifiable & Equatable, RowContent: View, EmptyContent: View>: View
 where Item.ID == String {
     let items: [Item]
@@ -75,9 +61,8 @@ where Item.ID == String {
 
     @State private var hasPositionedInitially = false
     @State private var isPositioningInitially = false
-    @State private var isAtBottom = false
-    @State private var latestMarkerMaxY = CGFloat.greatestFiniteMagnitude
-    @State private var coordinateSpaceName = "agent-chat-timeline-\(UUID().uuidString)"
+    @State private var visibleTargetID: String?
+    @State private var followsLatest = true
 
     var body: some View {
         Group {
@@ -93,56 +78,47 @@ where Item.ID == String {
     }
 
     private var timeline: some View {
-        GeometryReader { viewport in
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: AgentChatTimelineViewConstants.rowSpacing) {
-                        if hasOlderItems {
-                            loadOlderButton(proxy: proxy)
-                        }
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentChatTimelineViewConstants.rowSpacing) {
+                    if hasOlderItems {
+                        loadOlderButton(proxy: proxy)
+                    }
 
-                        ForEach(items) { item in
-                            rowContent(item)
-                                .id(item.id)
-                        }
+                    ForEach(items) { item in
+                        rowContent(item)
+                            .id(item.id)
+                    }
 
-                        AgentChatTimelineBottomMarker(coordinateSpaceName: coordinateSpaceName)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(18)
+                    AgentChatTimelineBottomMarker()
                 }
-                .coordinateSpace(name: coordinateSpaceName)
-                .onPreferenceChange(AgentChatTimelineBottomPreferenceKey.self) { markerMaxY in
-                    if !hasPositionedInitially, latestMarkerMaxY != markerMaxY {
-                        latestMarkerMaxY = markerMaxY
-                    }
-                    let nextValue = AgentChatTimelineScrollMetrics.isAtBottom(
-                        markerMaxY: markerMaxY,
-                        viewportHeight: viewport.size.height
-                    )
-                    if nextValue != isAtBottom { isAtBottom = nextValue }
-                    positionInitially(proxy, viewportHeight: viewport.size.height)
+                .scrollTargetLayout()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(18)
+            }
+            .defaultScrollAnchor(.bottom)
+            .scrollPosition(id: $visibleTargetID, anchor: .bottom)
+            .onAppear {
+                positionInitially(proxy)
+            }
+            .onChange(of: isInitialContentReady) {
+                positionInitially(proxy)
+            }
+            .onChange(of: visibleTargetID) { _, targetID in
+                followsLatest = targetID == AgentChatTimelineViewConstants.bottomID
+            }
+            .onChange(of: items.last?.id) {
+                guard hasPositionedInitially else {
+                    positionInitially(proxy)
+                    return
                 }
-                .onAppear {
-                    positionInitially(proxy, viewportHeight: viewport.size.height)
-                }
-                .onChange(of: isInitialContentReady) {
-                    positionInitially(proxy, viewportHeight: viewport.size.height)
-                }
-                .onChange(of: viewport.size.height) { _, height in
-                    positionInitially(proxy, viewportHeight: height)
-                }
-                .onChange(of: items.last?.id) {
-                    guard hasPositionedInitially else {
-                        positionInitially(proxy, viewportHeight: viewport.size.height)
-                        return
-                    }
-                    guard isAtBottom else { return }
+                if followsLatest {
                     proxy.scrollTo(AgentChatTimelineViewConstants.bottomID, anchor: .bottom)
                 }
-                .onChange(of: scrollToLatestRequest) {
-                    proxy.scrollTo(AgentChatTimelineViewConstants.bottomID, anchor: .bottom)
-                }
+            }
+            .onChange(of: scrollToLatestRequest) {
+                followsLatest = true
+                proxy.scrollTo(AgentChatTimelineViewConstants.bottomID, anchor: .bottom)
             }
         }
     }
@@ -171,27 +147,16 @@ where Item.ID == String {
         .padding(.bottom, 4)
     }
 
-    private func positionInitially(
-        _ proxy: ScrollViewProxy,
-        viewportHeight: CGFloat
-    ) {
+    private func positionInitially(_ proxy: ScrollViewProxy) {
         guard !hasPositionedInitially,
               !isPositioningInitially,
               isInitialContentReady,
-              !items.isEmpty,
-              latestMarkerMaxY.isFinite,
-              latestMarkerMaxY < CGFloat.greatestFiniteMagnitude / 2,
-              viewportHeight > 0 else { return }
+              !items.isEmpty else { return }
         isPositioningInitially = true
         Task { @MainActor in
             await Task.yield()
-            await Task.yield()
-            if AgentChatTimelineScrollMetrics.shouldScrollToBottomInitially(
-                markerMaxY: latestMarkerMaxY,
-                viewportHeight: viewportHeight
-            ) {
-                proxy.scrollTo(AgentChatTimelineViewConstants.bottomID, anchor: .bottom)
-            }
+            followsLatest = true
+            proxy.scrollTo(AgentChatTimelineViewConstants.bottomID, anchor: .bottom)
             hasPositionedInitially = true
             isPositioningInitially = false
         }
