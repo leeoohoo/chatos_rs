@@ -298,6 +298,13 @@ impl LocalAgentRuntime {
                     .cloned()
                     .expect("normalized executor context has tool_options"),
             );
+            object.insert(
+                "project_id".to_string(),
+                context
+                    .get("project_id")
+                    .cloned()
+                    .expect("normalized executor context has project_id"),
+            );
             object.insert("team_executor_context".to_string(), context);
             "task_execution"
         } else {
@@ -1020,15 +1027,9 @@ fn normalized_team_executor_context(
             "delivery_id does not match the executor conversation identity",
         ));
     }
-    if !matches!(
-        conversation_resource,
-        Some(LocalConversationResourceBinding {
-            kind: LocalConversationResourceKind::Project,
-            resource_id,
-        }) if resource_id == project_id
-    ) {
+    if conversation_resource.is_some() {
         return Err(invalid_agent_context(
-            "executor conversation must be bound to its exact Project",
+            "executor conversations must not claim a user-facing resource binding",
         ));
     }
     let plan = values
@@ -1875,17 +1876,14 @@ mod tests {
     #[test]
     fn executor_context_is_project_bound_and_capability_scoped() {
         let metadata = team_executor_context();
-        let executor = normalized_team_executor_context(
-            &metadata,
-            "agent-team-executor-delivery-1",
-            Some(&project_resource()),
-        )
-        .unwrap()
-        .unwrap();
+        let executor =
+            normalized_team_executor_context(&metadata, "agent-team-executor-delivery-1", None)
+                .unwrap()
+                .unwrap();
         let normalized = normalized_agent_execution_context(
             &metadata,
             "agent-team-executor-delivery-1",
-            Some(&project_resource()),
+            None,
             Some(&executor),
         )
         .unwrap()
@@ -1898,7 +1896,7 @@ mod tests {
         assert!(normalized_team_executor_context(
             &metadata,
             "agent-team-executor-delivery-1",
-            None,
+            Some(&project_resource()),
         )
         .is_err());
         let mut escalated = metadata;
@@ -1907,7 +1905,7 @@ mod tests {
         assert!(normalized_team_executor_context(
             &escalated,
             "agent-team-executor-delivery-1",
-            Some(&project_resource()),
+            None,
         )
         .is_err());
     }
@@ -1927,13 +1925,10 @@ mod tests {
             "reason": "生成验收文档",
         }]);
 
-        let executor = normalized_team_executor_context(
-            &metadata,
-            "agent-team-executor-delivery-1",
-            Some(&project_resource()),
-        )
-        .unwrap()
-        .unwrap();
+        let executor =
+            normalized_team_executor_context(&metadata, "agent-team-executor-delivery-1", None)
+                .unwrap()
+                .unwrap();
 
         assert_eq!(
             executor["tool_options"]["plugin_hints"],
@@ -1955,12 +1950,10 @@ mod tests {
         let mut forged = metadata;
         forged["agent_team_execution"]["execution_plan"]["plugins"][0]["path"] =
             json!("C:\\private\\plugin.exe");
-        assert!(normalized_team_executor_context(
-            &forged,
-            "agent-team-executor-delivery-1",
-            Some(&project_resource()),
-        )
-        .is_err());
+        assert!(
+            normalized_team_executor_context(&forged, "agent-team-executor-delivery-1", None,)
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1972,21 +1965,27 @@ mod tests {
         );
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
         runtime.initialize("user-1").await.expect("initialize");
-        let conversation_id = "agent-team-executor-delivery-1";
         runtime
             .try_handle(request(
-                "create-executor-conversation",
+                "create-user-project-conversation",
                 HostCommand::CreateConversation(CreateConversationCommand {
-                    conversation_id: conversation_id.into(),
+                    conversation_id: "project-conversation-1".into(),
                     owner_user_id: "user-1".into(),
-                    title: "Executor".into(),
+                    title: "Project conversation".into(),
                     resource: Some(project_resource()),
                 }),
             ))
             .await
-            .expect("create executor conversation");
+            .expect("create the user-facing project conversation");
+        let conversation_id = "agent-team-executor-delivery-1";
         let mut turn = start_turn(1);
         turn.conversation_id = conversation_id.into();
+        turn.conversation_if_missing = Some(CreateConversationCommand {
+            conversation_id: conversation_id.into(),
+            owner_user_id: "user-1".into(),
+            title: "Executor".into(),
+            resource: None,
+        });
         turn.message_metadata = team_executor_context();
         let started = runtime
             .try_handle(request(

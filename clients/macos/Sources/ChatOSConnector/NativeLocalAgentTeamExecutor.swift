@@ -93,8 +93,7 @@ public actor NativeLocalAgentTeamExecutor {
     var conversation = try await ensureConversation(
       ownerUserID: room.ownerUserID,
       conversationID: conversationID,
-      title: "\(room.draft.name) · \(todo.title)",
-      projectID: room.projectID
+      title: "\(room.draft.name) · \(todo.title)"
     )
     let baseRunID = "agent-team-run-\(groupRun.id.uuidString.lowercased())"
     // Reconcile the latest deterministic Host Run after an app restart instead of creating a
@@ -130,8 +129,7 @@ public actor NativeLocalAgentTeamExecutor {
           conversationIfMissing: conversation.conversation.version == 1
             && conversation.turns.isEmpty
             ? .init(
-              title: "\(room.draft.name) · \(todo.title)",
-              resource: .init(kind: .project, resourceID: room.projectID)
+              title: "\(room.draft.name) · \(todo.title)"
             )
             : nil,
           turnID: turnID,
@@ -244,15 +242,14 @@ public actor NativeLocalAgentTeamExecutor {
   private func ensureConversation(
     ownerUserID: String,
     conversationID: String,
-    title: String,
-    projectID: String
+    title: String
   ) async throws -> LocalAgentConversationDetail {
     do {
       let existing = try await conversations.get(
         ownerUserID: ownerUserID,
         conversationID: conversationID
       )
-      guard existing.conversation.resource == .init(kind: .project, resourceID: projectID) else {
+      guard existing.conversation.resource == nil else {
         throw NativeLocalAgentPlatformToolError.invalidRunContext
       }
       return existing
@@ -267,7 +264,7 @@ public actor NativeLocalAgentTeamExecutor {
         conversationID: conversationID,
         ownerUserID: ownerUserID,
         title: title,
-        resource: .init(kind: .project, resourceID: projectID),
+        resource: nil,
         version: 1,
         createdAtUnixMs: 0,
         updatedAtUnixMs: 0

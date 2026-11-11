@@ -159,8 +159,7 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
             conversationID: "conversation-1",
             expectedConversationVersion: 1,
             conversationIfMissing: .init(
-                title: "Project 1 · First task",
-                resource: .init(kind: .project, resourceID: "project-1")
+                title: "Project 1 · First task"
             ),
             turnID: "turn-1",
             messageID: "message-1",
@@ -178,11 +177,7 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
         XCTAssertEqual(seed["conversation_id"], .string("conversation-1"))
         XCTAssertEqual(seed["owner_user_id"], .string("user-1"))
         XCTAssertEqual(seed["title"], .string("Project 1 · First task"))
-        guard case let .object(resource) = seed["resource"] else {
-            return XCTFail("Expected a project resource seed")
-        }
-        XCTAssertEqual(resource["kind"], .string("project"))
-        XCTAssertEqual(resource["resource_id"], .string("project-1"))
+        XCTAssertNil(seed["resource"])
     }
 
     func testCancelTurnUsesExpectedVersionsAndReason() async throws {
