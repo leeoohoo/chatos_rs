@@ -9,6 +9,8 @@ enum AgentContextAssembler {
               all.prefix(pins).allSatisfy({ [.system, .user].contains($0.role) && $0.toolCalls.isEmpty && $0.toolCallID == nil }) else {
             throw AgentContextError.invalidHistory
         }
+        let currentTurn = try currentTurnStart(in: all)
+        try validateCurrentTurn(all[currentTurn...])
         let indices = Dictionary(uniqueKeysWithValues: all.indices.map { (memory.scope.recordID(at: $0), $0) })
         var selected = Set<Int>()
         var selectedRecordIDs = Set<String>()
@@ -22,9 +24,10 @@ enum AgentContextAssembler {
                       selected.insert(index).inserted else {
                     throw AgentContextError.invalidHistory
                 }
-                // Current-run pinned instructions and trigger are appended from the authoritative
-                // checkpoint below, so do not inject the composed copies a second time.
-                if index >= pins { retained.append(record) }
+                // Compose excludes the current turn by contract. Its exact messages, including
+                // late system instructions and completed tool exchanges, come from the durable
+                // checkpoint below. Validate any returned copies without injecting them twice.
+                if index >= pins && index < currentTurn { retained.append(record) }
                 continue
             }
             guard memory.scope.allowsCrossRunHistory,
@@ -35,11 +38,13 @@ enum AgentContextAssembler {
             retained.append(record)
         }
         if context.blocks.allSatisfy({ $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
-            guard Set(pins..<all.count).isSubset(of: selected) else { throw AgentContextError.invalidHistory }
+            guard all.indices.filter({ $0 >= pins && $0 < currentTurn }).allSatisfy(selected.contains) else {
+                throw AgentContextError.invalidHistory
+            }
         }
 
         // Match ContextualTurnRunner: fixed instructions first, Memory Engine's composed blocks
-        // and recent records next, and the current task contract as sticky user input last.
+        // and recent records next, then the sticky task contract and its exact live continuation.
         var messages = all.prefix(pins).filter { $0.role == .system }
         let blockText = context.blocks.map { "[\($0.blockType)]\n\($0.text)" }
             .joined(separator: "\n\n===\n\n")
@@ -56,7 +61,37 @@ enum AgentContextAssembler {
         }
         messages.append(contentsOf: composeRecentRecords(retained))
         messages.append(contentsOf: all.prefix(pins).filter { $0.role == .user })
+        messages.append(contentsOf: all.indices.filter { $0 >= pins && $0 >= currentTurn }.map { all[$0] })
         return messages
+    }
+
+    static func currentTurnStart(in messages: [AgentMessage]) throws -> Int {
+        guard let index = messages.indices.reversed().first(where: {
+            messages[$0].role == .user && !messages[$0].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }) else { throw AgentContextError.invalidHistory }
+        return index
+    }
+
+    /// Historical recall may omit incomplete tool pairs. A live turn cannot: dropping an
+    /// acknowledged result could make a resumed model repeat an already completed operation.
+    private static func validateCurrentTurn(_ messages: ArraySlice<AgentMessage>) throws {
+        var pending = Set<String>()
+        var seen = Set<String>()
+        for message in messages {
+            if message.role == .tool {
+                guard message.toolCalls.isEmpty, let id = message.toolCallID,
+                      pending.remove(id) != nil else { throw AgentContextError.invalidHistory }
+            } else {
+                guard message.toolCallID == nil,
+                      message.role == .system || pending.isEmpty else { throw AgentContextError.invalidHistory }
+                if message.role != .assistant && !message.toolCalls.isEmpty { throw AgentContextError.invalidHistory }
+                for call in message.toolCalls {
+                    guard !call.id.isEmpty, seen.insert(call.id).inserted else { throw AgentContextError.invalidHistory }
+                    pending.insert(call.id)
+                }
+            }
+        }
+        guard pending.isEmpty else { throw AgentContextError.invalidHistory }
     }
 
     /// Memory Engine transports may decode and encode the Responses output again. JSON object

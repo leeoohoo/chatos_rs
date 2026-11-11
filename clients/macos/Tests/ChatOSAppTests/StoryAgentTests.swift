@@ -469,7 +469,7 @@ final class StoryAgentTests: XCTestCase {
     private var models: [MediaGenerationModel] {
         ["text", "image", "video"].map {
             .init(id: $0, name: $0, provider: "gpt",
-                  modelName: $0 == "video" ? "MiniMax-H3" : $0,
+                  modelName: $0 == "video" ? "MiniMax-H3" : ($0 == "image" ? "gpt-image-1" : "gpt-6.1-sol"),
                   enabled: true, taskEnabled: false, hasAPIKey: true)
         }
     }
@@ -653,7 +653,7 @@ private actor StoryLoopMemory: AgentMemoryServicing {
     func ensureThread() async throws {}
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws { self.entries += entries }
     func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
-        _ = request
-        return .init(blocks: [], recentRecords: entries.map { .init(id: $0.id, message: $0.message) })
+        return .init(blocks: [], recentRecords: entries.filter { $0.conversationTurnID != request.currentTurnID }
+            .map { .init(id: $0.id, message: $0.message) })
     }
 }

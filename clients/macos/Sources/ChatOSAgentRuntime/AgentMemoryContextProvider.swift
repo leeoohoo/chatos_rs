@@ -132,9 +132,7 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
             // The engine owns durable records and background summaries. It is
             // composed at this turn boundary, but it is never used as an
             // in-loop overflow recovery mechanism.
-            guard let currentUserIndex = state.messages.indices.reversed().first(where: {
-                state.messages[$0].role == .user && !state.messages[$0].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }) else { throw AgentContextError.invalidHistory }
+            let currentUserIndex = try AgentContextAssembler.currentTurnStart(in: state.messages)
             let composeRequest = try AgentMemoryComposeRequest(
                 modelCapability: modelCapability,
                 queryText: state.messages[currentUserIndex].content,

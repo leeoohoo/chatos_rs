@@ -409,11 +409,11 @@ extension LocalAgentGroupChatScheduler {
         let productSkillRouter = await productSkillSession.routerMarkdown()
         if !productSkillRouter.isEmpty {
             let marker = "<!-- chatos-product-skill-router -->"
-            if let index = checkpoint.messages.firstIndex(where: {
+            // A resumed Run keeps its frozen router. Replacing a synchronized message would
+            // invalidate both the checkpoint digest and Memory Engine's immutable record.
+            if !checkpoint.messages.contains(where: {
                 $0.role == .system && $0.content.hasPrefix(marker)
             }) {
-                checkpoint.messages[index].content = productSkillRouter
-            } else {
                 checkpoint.messages.append(.init(role: .system, content: productSkillRouter))
             }
         }

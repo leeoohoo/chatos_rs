@@ -62,6 +62,7 @@ final class AgentWorkerProcessClientTests: XCTestCase {
             service: AgentWorkerTestMemory()
         )
         checkpoint = try contextProvider.bind(checkpoint)
+        checkpoint.messages.append(.init(role: .system, content: "product Skill router added after Memory binding"))
         var policy = AgentRunPolicy()
         policy.maximumModelCalls = 2
         policy.maximumRequestRetries = 0
@@ -801,6 +802,11 @@ private actor AgentWorkerRecordedEvents {
 }
 
 private struct AgentWorkerTestModel: AgentModelClient {
+    let memoryCapabilitySnapshot = try? AgentModelCapabilitySnapshot(
+        revision: "worker-test-capability-v1", contextWindowTokens: 200_000, outputReserveTokens: 30_000,
+        protocolOverheadEstimatorID: "responses-json-v1", tokenizerID: nil
+    )
+
     func complete(
         messages: [AgentMessage],
         tools: [AgentToolDefinition],
@@ -847,8 +853,7 @@ private actor AgentWorkerTestMemory: AgentMemoryServicing {
     }
 
     func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
-        _ = request
-        return .init(blocks: [], recentRecords: messages.map {
+        return .init(blocks: [], recentRecords: messages.filter { $0.conversationTurnID != request.currentTurnID }.map {
             .init(id: $0.id, message: $0.message)
         })
     }

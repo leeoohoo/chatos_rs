@@ -94,21 +94,22 @@ actor SchedulerTestMemoryRegistry {
 }
 
 actor SchedulerTestMemory: AgentMemoryServicing {
-    private var records: [Int: AgentMemoryContextRecord] = [:]
+    private var records: [Int: AgentMemoryEntry] = [:]
 
     func ensureThread() async throws {}
 
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
         for entry in entries {
-            records[entry.index] = .init(id: entry.id, message: entry.message)
+            records[entry.index] = entry
         }
     }
 
     func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
-        _ = request
         return .init(
             blocks: [],
             recentRecords: records.keys.sorted().compactMap { records[$0] }
+                .filter { $0.conversationTurnID != request.currentTurnID }
+                .map { .init(id: $0.id, message: $0.message) }
         )
     }
 }

@@ -226,8 +226,8 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertTrue(result[1].content.contains("[thread_summary]\nprevious work"))
         XCTAssertTrue(result[1].content.contains("historical context only"))
         XCTAssertEqual(result.filter { $0.role == .tool }.map(\.toolCallID), ["a", "b"])
-        XCTAssertEqual(result[result.count - 2].content, "next")
-        XCTAssertEqual(result.last, checkpoint.messages[1], "Current task contract must remain sticky")
+        XCTAssertEqual(result[2], checkpoint.messages[1], "Current task must precede its live continuation")
+        XCTAssertEqual(result.last?.content, "next")
     }
 
     func testComposeAcceptsEquivalentResponseOutputWithDifferentJSONKeyOrder() throws {
@@ -242,6 +242,7 @@ final class AgentMemoryContextTests: XCTestCase {
             usage: .init(inputTokens: 12, cachedTokens: 3, outputTokens: 4, requests: 1)
         )
         checkpoint.messages.append(message)
+        checkpoint.messages.append(.init(role: .tool, content: "result", toolCallID: "call-1"))
         var memoryMessage = message
         memoryMessage.responseOutputJSON = memoryJSON
         let memory = AgentMemoryCheckpoint(scope: scope, pinnedMessageCount: 2)
@@ -266,6 +267,7 @@ final class AgentMemoryContextTests: XCTestCase {
             usage: .init(inputTokens: 12, outputTokens: 4, requests: 1)
         )
         checkpoint.messages.append(message)
+        checkpoint.messages.append(.init(role: .tool, content: "result", toolCallID: "call-1"))
         let memory = AgentMemoryCheckpoint(scope: scope, pinnedMessageCount: 2)
 
         var changedContent = message
@@ -369,7 +371,8 @@ final class AgentMemoryContextTests: XCTestCase {
 
     func testRejectsMissingHistoryWithoutSummaryAndUnknownRecords() throws {
         var (checkpoint, scope) = try fixture()
-        checkpoint.messages.append(.init(role: .assistant, content: "must not be dropped"))
+        checkpoint.messages += [.init(role: .assistant, content: "must not be dropped"),
+                                .init(role: .user, content: "next turn")]
         let memory = AgentMemoryCheckpoint(scope: scope, pinnedMessageCount: 2)
         for context in [AgentMemoryContext(blocks: [], recentRecords: []),
                         .init(blocks: [.init(blockType: "thread_summary", text: "summary")],
@@ -383,7 +386,8 @@ final class AgentMemoryContextTests: XCTestCase {
         let memory = AgentMemoryCheckpoint(scope: scope, pinnedMessageCount: 2)
         for message in [AgentMessage(role: .tool, content: "orphan", toolCallID: "unknown"),
                         .init(role: .assistant, toolCalls: [.init(id: "missing-result", name: "work", arguments: "{}")])] {
-            var checkpoint = base; checkpoint.messages.append(message)
+            var checkpoint = base
+            checkpoint.messages += [message, .init(role: .user, content: "next turn")]
             let result = try AgentContextAssembler.assemble(checkpoint: checkpoint, memory: memory,
                 context: .init(blocks: [.init(blockType: "thread_summary", text: "summary")],
                                recentRecords: [.init(id: scope.recordID(at: 2), message: message)]))
@@ -590,11 +594,11 @@ private actor TestMemory: AgentMemoryServicing {
         }
     }
     func compose(_ request: AgentMemoryComposeRequest) -> AgentMemoryContext {
-        _ = request
         composeCalls += 1
         return .init(
             blocks: [],
-            recentRecords: entries.map { .init(id: $0.id, message: $0.message) }
+            recentRecords: entries.filter { $0.conversationTurnID != request.currentTurnID }
+                .map { .init(id: $0.id, message: $0.message) }
         )
     }
     func flushSummary() { flushes += 1 }
