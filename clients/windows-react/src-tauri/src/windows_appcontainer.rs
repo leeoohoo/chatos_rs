@@ -87,6 +87,23 @@ static FIXED_PROFILE_AVAILABLE: Condvar = Condvar::new();
 const MAXIMUM_LEASE_TREE_ENTRIES: usize = 100_000;
 const MAXIMUM_LEASE_JOURNAL_BYTES: usize = 64 * 1_024 * 1_024;
 const MAXIMUM_LEASE_JOURNAL_ENTRIES: usize = 1_024;
+// Generated and dependency trees are intentionally outside the project workspace lease.
+// They are already excluded from project search and are commonly much larger than the
+// source tree; skipping them keeps the bounded ACL journal usable for real repositories
+// without granting access to package-manager or build output contents.
+const IGNORED_WORKSPACE_LEASE_DIRECTORIES: &[&str] = &[
+    ".build",
+    ".cache",
+    ".next",
+    ".vscode",
+    "DerivedData",
+    "Pods",
+    "build",
+    "dist",
+    "node_modules",
+    "target",
+    "vendor",
+];
 const WORKSPACE_JOURNAL_TEMPORARY_PREFIX: &str = ".appcontainer-workspace-";
 const PROFILE_JOURNAL_TEMPORARY_PREFIX: &str = ".appcontainer-profile-";
 const PROBE_TEMPORARY_PREFIX: &str = "chatos-appcontainer-probe-";
@@ -2021,6 +2038,14 @@ fn lease_tree_handles(root: &Path) -> Result<Vec<LeaseTreeHandle>, String> {
             if is_reparse_point(&metadata) {
                 continue;
             }
+            if metadata.is_dir()
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| IGNORED_WORKSPACE_LEASE_DIRECTORIES.contains(&name))
+            {
+                continue;
+            }
             let entry = open_acl_handle(&path)?;
             let final_path = final_path_from_handle(&entry.file)?;
             if !final_path.starts_with(&root_final_path) || final_path == root_final_path {
@@ -3205,6 +3230,30 @@ mod tests {
         assert_ne!(read_file_exit_code(&profile, &target).unwrap(), 0);
         lease.restore().unwrap();
         assert_eq!(manager.journal_count(), 0);
+    }
+
+    #[test]
+    fn workspace_tree_skips_generated_and_dependency_directories() {
+        let workspace = tempfile::tempdir().unwrap();
+        let source = workspace.path().join("src");
+        let target = workspace.path().join("target");
+        let dependency = workspace.path().join("node_modules");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        std::fs::create_dir(&dependency).unwrap();
+        std::fs::write(source.join("main.rs"), b"fn main() {}").unwrap();
+        std::fs::write(target.join("generated.bin"), b"generated").unwrap();
+        std::fs::write(dependency.join("package.js"), b"dependency").unwrap();
+
+        let tree = lease_tree_handles(workspace.path()).unwrap();
+        let paths = tree
+            .iter()
+            .map(|entry| entry.path.strip_prefix(workspace.path()).unwrap())
+            .collect::<Vec<_>>();
+        assert!(paths.iter().any(|path| *path == Path::new("src")));
+        assert!(paths.iter().any(|path| *path == Path::new("src/main.rs")));
+        assert!(!paths.iter().any(|path| path.starts_with("target")));
+        assert!(!paths.iter().any(|path| path.starts_with("node_modules")));
     }
 
     #[test]
