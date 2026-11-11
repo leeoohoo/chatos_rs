@@ -2,9 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::models::{
-    now_rfc3339, LocalConnectorDevice, LocalConnectorProjectBinding, LocalConnectorSandboxPairing,
-    LocalConnectorStoreStats, LocalConnectorWorkspace, DEVICE_STATUS_OFFLINE, DEVICE_STATUS_ONLINE,
-    DEVICE_STATUS_REVOKED,
+    now_rfc3339, LocalConnectorDevice, LocalConnectorSandboxPairing, LocalConnectorStoreStats,
+    LocalConnectorWorkspace, DEVICE_STATUS_OFFLINE, DEVICE_STATUS_ONLINE, DEVICE_STATUS_REVOKED,
 };
 
 use super::{db_error, decode_all, decode_optional, json, timestamp, ConnectorStore};
@@ -201,79 +200,6 @@ impl ConnectorStore {
             .map_err(db_error)
     }
 
-    pub async fn upsert_project_binding(
-        &self,
-        binding: &LocalConnectorProjectBinding,
-    ) -> Result<LocalConnectorProjectBinding, String> {
-        let mut updated = binding.clone();
-        updated.updated_at = now_rfc3339();
-        let value = sqlx::query_scalar(
-            "INSERT INTO local_connector_project_bindings(id,owner_user_id,project_id,mode,device_id,workspace_id,enabled,updated_at,data)
-             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
-             ON CONFLICT(owner_user_id,project_id,mode) DO UPDATE SET device_id=EXCLUDED.device_id,
-               workspace_id=EXCLUDED.workspace_id,enabled=EXCLUDED.enabled,updated_at=EXCLUDED.updated_at,
-               data=local_connector_project_bindings.data || jsonb_build_object(
-                 'device_id',EXCLUDED.data->'device_id','workspace_id',EXCLUDED.data->'workspace_id',
-                 'enabled',EXCLUDED.data->'enabled','updated_at',EXCLUDED.data->'updated_at')
-             RETURNING data",
-        ).bind(&updated.id).bind(&updated.owner_user_id).bind(&updated.project_id).bind(&updated.mode)
-            .bind(&updated.device_id).bind(&updated.workspace_id).bind(updated.enabled)
-            .bind(timestamp(&updated.updated_at)?).bind(json(&updated)?).fetch_one(&self.pool).await.map_err(db_error)?;
-        decode_optional(Some(value))?
-            .ok_or_else(|| "project binding not found after upsert".to_string())
-    }
-
-    pub async fn get_project_binding(
-        &self,
-        id: &str,
-    ) -> Result<Option<LocalConnectorProjectBinding>, String> {
-        decode_optional(
-            sqlx::query_scalar("SELECT data FROM local_connector_project_bindings WHERE id=$1")
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(db_error)?,
-        )
-    }
-
-    pub async fn list_project_bindings(
-        &self,
-        owner_user_id: &str,
-        project_id: Option<String>,
-        mode: Option<String>,
-    ) -> Result<Vec<LocalConnectorProjectBinding>, String> {
-        decode_all(sqlx::query_scalar(
-            "SELECT data FROM local_connector_project_bindings WHERE owner_user_id=$1
-             AND ($2::text IS NULL OR project_id=$2) AND ($3::text IS NULL OR mode=$3) ORDER BY updated_at DESC",
-        ).bind(owner_user_id).bind(project_id).bind(mode).fetch_all(&self.pool).await.map_err(db_error)?)
-    }
-
-    pub async fn update_project_binding(
-        &self,
-        binding: &LocalConnectorProjectBinding,
-    ) -> Result<(), String> {
-        let mut updated = binding.clone();
-        updated.updated_at = now_rfc3339();
-        sqlx::query("UPDATE local_connector_project_bindings SET device_id=$3,workspace_id=$4,enabled=$5,updated_at=$6,data=$7 WHERE id=$1 AND owner_user_id=$2")
-            .bind(&updated.id).bind(&updated.owner_user_id).bind(&updated.device_id).bind(&updated.workspace_id)
-            .bind(updated.enabled).bind(timestamp(&updated.updated_at)?).bind(json(&updated)?)
-            .execute(&self.pool).await.map(|_| ()).map_err(db_error)
-    }
-
-    pub async fn delete_project_binding(
-        &self,
-        owner_user_id: &str,
-        id: &str,
-    ) -> Result<(), String> {
-        sqlx::query("DELETE FROM local_connector_project_bindings WHERE id=$1 AND owner_user_id=$2")
-            .bind(id)
-            .bind(owner_user_id)
-            .execute(&self.pool)
-            .await
-            .map(|_| ())
-            .map_err(db_error)
-    }
-
     pub async fn upsert_sandbox_pairing(
         &self,
         pairing: &LocalConnectorSandboxPairing,
@@ -345,14 +271,13 @@ impl ConnectorStore {
     }
 
     pub async fn system_stats(&self) -> Result<LocalConnectorStoreStats, String> {
-        let row = sqlx::query_as::<_, (i64,i64,i64,i64,i64,i64,i64,i64)>(
+        let row = sqlx::query_as::<_, (i64,i64,i64,i64,i64,i64,i64)>(
             "SELECT
              (SELECT count(*) FROM local_connector_devices),
              (SELECT count(*) FROM local_connector_devices WHERE status='online'),
              (SELECT count(*) FROM local_connector_devices WHERE status='offline'),
              (SELECT count(*) FROM local_connector_devices WHERE status='revoked'),
              (SELECT count(*) FROM local_connector_workspaces),
-             (SELECT count(*) FROM local_connector_project_bindings),
              (SELECT count(*) FROM local_connector_sandbox_pairings),
              (SELECT count(*) FROM local_connector_active_sessions WHERE status='connected' AND expires_at>now())",
         ).fetch_one(&self.pool).await.map_err(db_error)?;
@@ -362,9 +287,8 @@ impl ConnectorStore {
             devices_offline: usize::try_from(row.2).unwrap_or(usize::MAX),
             devices_revoked: usize::try_from(row.3).unwrap_or(usize::MAX),
             workspaces_total: usize::try_from(row.4).unwrap_or(usize::MAX),
-            project_bindings_total: usize::try_from(row.5).unwrap_or(usize::MAX),
-            sandbox_pairings_total: usize::try_from(row.6).unwrap_or(usize::MAX),
-            active_sessions_total: usize::try_from(row.7).unwrap_or(usize::MAX),
+            sandbox_pairings_total: usize::try_from(row.5).unwrap_or(usize::MAX),
+            active_sessions_total: usize::try_from(row.6).unwrap_or(usize::MAX),
         })
     }
 }

@@ -15,7 +15,7 @@ use super::queries::{
     CompactTurnsQuery, CountThreadRecordsQuery, DeleteThreadRecordsQuery, ListThreadRecordsQuery,
     TurnProcessRecordsQuery,
 };
-use crate::api::{memory_auth::MemoryAuthContext, source_guard};
+use crate::api::{memory_auth::MemoryAuthContext, runtime_context, source_guard};
 use crate::models::{
     BatchSyncRecordsRequest, BatchSyncRecordsResponse, CompactTurnsResponse,
     ThreadRecordsPageResponse, TurnProcessRecordsResponse,
@@ -31,6 +31,16 @@ pub async fn batch_sync_records(
 ) -> Result<Json<BatchSyncRecordsResponse>, (axum::http::StatusCode, String)> {
     auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
+    runtime_context::verify(
+        &state,
+        req.runtime_context_assertion.as_str(),
+        req.tenant_id.as_str(),
+        req.source_id.as_str(),
+        thread_id.as_str(),
+        req.project_partition_key.as_str(),
+        "record_ingest",
+    )
+    .await?;
     let upserted_count =
         records::batch_sync_records(&state.config, &state.pool, thread_id.as_str(), &req)
             .await

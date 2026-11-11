@@ -504,6 +504,12 @@ struct GatewayModelConfigDTO: Decodable, Sendable {
     var taskThinkingLevel: String?
     var temperature: Double?
     var maxOutputTokens: Int?
+    var modelCapabilityRevision: String?
+    var contextWindowTokens: Int?
+    var outputReserveTokens: Int?
+    var protocolOverheadEstimatorID: String?
+    var tokenizerID: String?
+    var responsesCompactionThreshold: Int?
     var enabled: Bool?
     var taskEnabled: Bool?
     var hasAPIKey: Bool?
@@ -521,6 +527,12 @@ struct GatewayModelConfigDTO: Decodable, Sendable {
         case taskThinkingLevel = "task_thinking_level"
         case temperature
         case maxOutputTokens = "max_output_tokens"
+        case modelCapabilityRevision = "model_capability_revision"
+        case contextWindowTokens = "context_window_tokens"
+        case outputReserveTokens = "output_reserve_tokens"
+        case protocolOverheadEstimatorID = "protocol_overhead_estimator_id"
+        case tokenizerID = "tokenizer_id"
+        case responsesCompactionThreshold = "responses_compaction_threshold"
         case hasAPIKey = "has_api_key"
         case supportsImages = "supports_images"
         case supportsReasoning = "supports_reasoning"

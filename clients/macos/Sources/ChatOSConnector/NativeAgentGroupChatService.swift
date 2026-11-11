@@ -32,6 +32,9 @@ public struct NativeAgentGroupChatChange: Sendable, Equatable {
 
 /// Lazily opens the account-scoped Agent chat database. No remote service is required.
 public actor NativeAgentGroupChatService {
+    // Every scheduler using this collaboration service shares Agent-wide manager ownership.
+    nonisolated let activeDeliveryRegistry = LocalAgentActiveDeliveryRegistry()
+
     private struct ChangeObserver {
         let ownerUserID: String
         let roomID: String?

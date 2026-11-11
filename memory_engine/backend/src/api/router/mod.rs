@@ -208,6 +208,8 @@ mod tests {
             rollup_lock_timeout_secs: 300,
             internal_api_secrets,
             require_signed_internal_requests: true,
+            runtime_context_assertion_keys: crate::config::test_runtime_context_assertion_keys(),
+            model_capabilities: crate::config::test_model_capabilities(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_internal_base_url: "https://127.0.0.1:39192".to_string(),
             user_service_internal_http: reqwest::Client::new(),

@@ -13,6 +13,7 @@ mod http_error;
 mod identity;
 mod internal_audit;
 mod internal_token;
+pub mod model_workload;
 mod network;
 #[cfg(feature = "axum-support")]
 mod request_id;

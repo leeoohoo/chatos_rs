@@ -16,6 +16,26 @@ DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED="${CHATOS_DEPLOY_WECHAT_DEVELOPMENT_LOGI
 source "$SCRIPT_DIR/deploy-production-preflight.sh"
 validate_deploy_preflight
 
+fetch_release_branch_with_retries() {
+  local repository="$1"
+  local branch="$2"
+  local attempt
+  for attempt in 1 2 3; do
+    if GIT_TERMINAL_PROMPT=0 git \
+      -c http.lowSpeedLimit=1024 \
+      -c http.lowSpeedTime=20 \
+      -C "$repository" fetch --quiet origin "$branch"; then
+      return 0
+    fi
+    echo "[WARN] Git fetch failed or stalled for origin/$branch ($attempt/3)" >&2
+    if (( attempt < 3 )); then
+      sleep 3
+    fi
+  done
+  echo "[ERROR] unable to fetch origin/$branch after 3 bounded attempts" >&2
+  return 1
+}
+
 current_branch="$(git branch --show-current)"
 if [[ "$current_branch" != "$DEPLOY_BRANCH" ]]; then
   echo "[ERROR] production deploy must run from branch $DEPLOY_BRANCH; current branch is $current_branch" >&2
@@ -48,7 +68,7 @@ if (( ignored_dirty_count > 0 )); then
 fi
 
 echo "[INFO] checking origin/$DEPLOY_BRANCH"
-git fetch --quiet origin "$DEPLOY_BRANCH"
+fetch_release_branch_with_retries "$ROOT_DIR" "$DEPLOY_BRANCH"
 release_commit="$(git rev-parse HEAD)"
 origin_commit="$(git rev-parse "origin/$DEPLOY_BRANCH")"
 if [[ "$release_commit" != "$origin_commit" ]]; then
@@ -106,6 +126,26 @@ status_file="$deploy_root/deploy-status"
 pid_file="$deploy_root/deploy.pid"
 job_pid="${CHATOS_DEPLOY_JOB_PID:-}"
 log_file="$deploy_root/deploy-logs/$release_tag.log"
+
+fetch_release_branch_with_retries() {
+  local repository="$1"
+  local branch="$2"
+  local attempt
+  for attempt in 1 2 3; do
+    if GIT_TERMINAL_PROMPT=0 git \
+      -c http.lowSpeedLimit=1024 \
+      -c http.lowSpeedTime=20 \
+      -C "$repository" fetch --quiet origin "$branch"; then
+      return 0
+    fi
+    echo "[WARN] Git fetch failed or stalled for origin/$branch ($attempt/3)" >&2
+    if (( attempt < 3 )); then
+      sleep 3
+    fi
+  done
+  echo "[ERROR] unable to fetch origin/$branch after 3 bounded attempts" >&2
+  return 1
+}
 
 clear_deploy_pid() {
   local recorded_pid=""
@@ -198,6 +238,8 @@ deploy_all=0
 deploy_gateway_config=0
 deploy_services=()
 selected_runtime_services=()
+prepare_memory_worker_stopped=0
+memory_worker_was_running=0
 if [[ -z "$deploy_services_csv" ]]; then
   deploy_all=1
 else
@@ -352,6 +394,43 @@ restart_selected_release_with_retries() {
   return 1
 }
 
+prepare_stopped_memory_worker() {
+  local target_release="$1"
+  docker stop chatos-rs-memory-engine-worker-1 >/dev/null 2>&1 || true
+  (
+    cd "$target_release"
+    docker compose \
+      -f docker/compose.yml \
+      -f docker/compose.platform.yml \
+      --env-file docker/bootstrap.conf \
+      up --no-start --no-build --pull never --no-deps --force-recreate memory-engine-worker
+  )
+  if [[ "$(docker inspect -f '{{.State.Status}}' chatos-rs-memory-engine-worker-1)" != "created" ]]; then
+    echo "[ERROR] Memory Engine worker was not left stopped after release preparation" >&2
+    return 1
+  fi
+  echo "[OK] Memory Engine worker is prepared on the new image and remains stopped"
+}
+
+restore_memory_worker_runtime_state() {
+  if (( prepare_memory_worker_stopped == 0 || memory_worker_was_running == 0 )); then
+    return 0
+  fi
+
+  echo "[INFO] restoring the pre-deployment Memory Engine worker runtime state"
+  write_deploy_status running worker "Starting and verifying the Memory Engine worker"
+  docker start chatos-rs-memory-engine-worker-1 >/dev/null
+  # A successful docker start only proves that the process was spawned. Give the
+  # entrypoint time to fail closed before declaring the deployment complete.
+  sleep 3
+  if [[ "$(docker inspect -f '{{.State.Running}}' chatos-rs-memory-engine-worker-1)" != "true" ]]; then
+    echo "[ERROR] Memory Engine worker did not remain running after release cutover" >&2
+    docker logs --tail 100 chatos-rs-memory-engine-worker-1 >&2 || true
+    return 1
+  fi
+  echo "[OK] Memory Engine worker is running on the new release image"
+}
+
 wait_for_http_probe() {
   local label="$1"
   local acceptance="$2"
@@ -365,6 +444,10 @@ wait_for_http_probe() {
     case "$acceptance:$status" in
       success:2??|success:3??)
         echo "[OK] deployment probe $label returned HTTP $status"
+        return 0
+        ;;
+      unauthorized:401)
+        echo "[OK] deployment probe $label returned expected HTTP $status"
         return 0
         ;;
       route:???)
@@ -405,6 +488,12 @@ rollback() {
       fi
     else
       start_release_with_retries "$previous_release" || true
+    fi
+    if (( prepare_memory_worker_stopped == 1 )); then
+      prepare_stopped_memory_worker "$previous_release" || true
+      if (( memory_worker_was_running == 1 )); then
+        docker start chatos-rs-memory-engine-worker-1 >/dev/null || true
+      fi
     fi
   fi
   if [[ -n "$nginx_backup" && -f "$nginx_backup" ]]; then
@@ -455,7 +544,7 @@ fi
 
 echo "[INFO] fetching origin/$deploy_branch on the server"
 write_deploy_status running fetch "Fetching the requested Git commit"
-git -C "$source_repo" fetch --quiet origin "$deploy_branch"
+fetch_release_branch_with_retries "$source_repo" "$deploy_branch"
 server_origin_commit="$(git -C "$source_repo" rev-parse "origin/$deploy_branch")"
 if [[ "$server_origin_commit" != "$release_commit" ]]; then
   echo "[ERROR] server resolved a different origin/$deploy_branch commit" >&2
@@ -575,6 +664,9 @@ if (( deploy_all == 0 )); then
   if service_is_selected memory-engine-backend; then
     selected_migration_services+=(memory-engine-migrate)
   fi
+  if service_is_selected local-connector-service-backend; then
+    selected_migration_services+=(local-connector-migrate)
+  fi
   if [[ ${#selected_migration_services[@]} -gt 0 ]]; then
     echo "[INFO] applying selected PostgreSQL migrations before release cutover: ${selected_migration_services[*]}"
     write_deploy_status running migrate "Applying selected PostgreSQL migrations"
@@ -602,16 +694,31 @@ if [[ ${#deploy_services[@]} -gt 0 ]]; then
   fi
   echo "[INFO] runtime services selected for restart: ${selected_runtime_services[*]}"
 fi
+if service_is_selected memory-engine-backend; then
+  filtered_runtime_services=()
+  for service in "${selected_runtime_services[@]}"; do
+    if [[ "$service" != "memory-engine-worker" ]]; then
+      filtered_runtime_services+=("$service")
+    fi
+  done
+  selected_runtime_services=("${filtered_runtime_services[@]}")
+  prepare_memory_worker_stopped=1
+  if [[ "$(docker inspect -f '{{.State.Running}}' chatos-rs-memory-engine-worker-1 2>/dev/null || true)" == "true" ]]; then
+    memory_worker_was_running=1
+  fi
+  echo "[INFO] Memory Engine worker will be recreated on the release image and left stopped"
+fi
 if (( deploy_gateway_config == 1 )); then
   selected_runtime_services+=("apisix-gateway")
   echo "[INFO] gateway configuration selected for restart"
 fi
 
-if (( deploy_all == 1 || deploy_gateway_config == 1 )); then
-  nginx_backup="$deploy_root/backups/chatos-nginx-$release_tag.conf"
-  mkdir -p "$deploy_root/backups"
-  cp -p "$nginx_target" "$nginx_backup"
-fi
+# Every completed release owns the canonical public ingress configuration.
+# This also guarantees that a maintenance-window write block cannot survive a
+# later targeted service deployment and leave GET-only health probes green.
+nginx_backup="$deploy_root/backups/chatos-nginx-$release_tag.conf"
+mkdir -p "$deploy_root/backups"
+cp -p "$nginx_target" "$nginx_backup"
 
 ln -sfn "$release_dir" "$deploy_root/current.next"
 mv -Tf "$deploy_root/current.next" "$current_link"
@@ -628,11 +735,12 @@ if (( deploy_all == 0 )); then
 else
   start_release_with_retries "$release_dir"
 fi
-if (( deploy_all == 1 || deploy_gateway_config == 1 )); then
-  install -m 0644 "$release_dir/docker/nginx/jgoool-https.conf" "$nginx_target"
-  nginx -t
-  systemctl reload nginx
+if (( prepare_memory_worker_stopped == 1 )); then
+  prepare_stopped_memory_worker "$release_dir"
 fi
+install -m 0644 "$release_dir/docker/nginx/jgoool-https.conf" "$nginx_target"
+nginx -t
+systemctl reload nginx
 
 deadline=$((SECONDS + 300))
 write_deploy_status running health "Waiting for service health checks"
@@ -690,6 +798,27 @@ for url in \
 do
   wait_for_http_probe "public-$url" success "$url"
 done
+
+# Session restore is a POST even when it only reads browser session state. A
+# maintenance write guard or other ingress drift must therefore fail the
+# release instead of being hidden by GET-only frontend and health probes.
+wait_for_http_probe public-admin-session-write-route route \
+  --request POST \
+  --header 'Origin: https://admin.jgoool.com' \
+  --header 'Sec-Fetch-Site: same-origin' \
+  --header 'X-Chatos-Admin-Session: 1' \
+  https://admin.jgoool.com/api/admin/user-service/auth/admin/session
+
+# The public Local Connector contract is /api/local/*. APISIX rewrites it to
+# the backend-only /api/local-connectors/* namespace. A missing public route
+# returns 404, while the existing unauthenticated assertion route returns 401.
+wait_for_http_probe public-local-runtime-context-assertion-route unauthorized \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --data '{}' \
+  https://gateway.jgoool.com/api/local/runtime-context-assertions
+
+restore_memory_worker_runtime_state
 
 echo "[OK] production release is healthy: $release_tag"
 if [[ ${#deploy_services[@]} -gt 0 ]]; then

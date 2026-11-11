@@ -41,10 +41,6 @@ pub async fn run_pending_rollups_once(
         Some(auth.source_id()),
         PendingRollupOptions {
             max_threads: req.max_threads,
-            token_limit: req.token_limit,
-            count_limit: req.count_limit,
-            keep_level0_count: req.keep_level0_count,
-            max_level: req.max_level,
         },
     )
     .await

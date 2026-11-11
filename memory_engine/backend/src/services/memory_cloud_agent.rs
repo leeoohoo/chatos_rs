@@ -9,6 +9,7 @@ use chatos_cloud_agent_runtime::{
     create_cloud_agent_run, CloudAgentRunStore, CloudAgentStateStore, NewCloudAgentRun,
 };
 use serde_json::{json, Value};
+use tracing::warn;
 
 use crate::config::AppConfig;
 use crate::db::Db;
@@ -19,6 +20,7 @@ use crate::state::AppState;
 
 pub(crate) const MEMORY_CLOUD_AGENT_DEFERRED: &str = "memory_cloud_agent_deferred";
 pub(crate) const THREAD_SUMMARY_JOB_RESUME_KIND: &str = "thread_summary_job";
+pub(crate) const THREAD_RESUMMARIZE_JOB_RESUME_KIND: &str = "thread_resummarize_job";
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn generate_or_defer(
@@ -31,7 +33,7 @@ pub(crate) async fn generate_or_defer(
     owner_entity_type: &str,
     owner_entity_id: &str,
     spec: CloudSummaryPipelineSpec,
-    terminal_context: Value,
+    mut terminal_context: Value,
 ) -> Result<crate::services::ai_pipeline::SummaryBuildResult, String> {
     let agent_run_id = format!(
         "memory_agent:{}:{}",
@@ -57,11 +59,22 @@ pub(crate) async fn generate_or_defer(
             agent.job_type()
         ));
     }
+    let payload_contract = prepare_generation_from_terminal_context(
+        db,
+        &mut terminal_context,
+        &runtime,
+        &spec,
+        owner_entity_id,
+    )
+    .await?;
     let input = crate::cloud_agent_queue::MemoryCloudAgentInput {
-        pipeline: CloudSummaryPipelineState::new(CloudSummaryPipelineSpec {
-            summary_prompt: Some(runtime.prompt),
-            ..spec
-        })?,
+        pipeline: CloudSummaryPipelineState::new(
+            CloudSummaryPipelineSpec {
+                managed_prompt: Some(runtime.prompt),
+                ..spec
+            },
+            payload_contract,
+        )?,
         terminal_context,
     };
     let input = serde_json::to_value(input).map_err(|error| error.to_string())?;
@@ -102,6 +115,223 @@ pub(crate) async fn generate_or_defer(
             }
         }
     }
+}
+
+async fn prepare_generation_from_terminal_context(
+    db: &Db,
+    terminal_context: &mut Value,
+    runtime: &crate::services::control_plane::ManagedMemoryAgentRuntime,
+    spec: &CloudSummaryPipelineSpec,
+    job_run_id: &str,
+) -> Result<crate::models::structured_payload::MemoryPayloadContract, String> {
+    let Some(descriptor) = terminal_context.get("generation").cloned() else {
+        return Err("Memory generation descriptor is required before model execution".to_string());
+    };
+    let field = |name: &str| {
+        descriptor
+            .get(name)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| format!("Memory generation descriptor.{name} is required"))
+    };
+    let generation_step_key = field("generation_step_key")?;
+    let generation_kind = field("generation_kind")?;
+    let generation_profile = field("generation_profile")?;
+    let pipeline_revision = field("pipeline_revision")?;
+    if pipeline_revision != spec.pipeline_revision {
+        return Err(format!(
+            "Memory generation pipeline revision mismatch: descriptor={pipeline_revision}, loaded={}",
+            spec.pipeline_revision
+        ));
+    }
+    let input_digest = field("input_digest")?;
+    let input_manifest = descriptor
+        .get("input_manifest")
+        .ok_or_else(|| "Memory generation descriptor.input_manifest is required".to_string())?;
+    let policy_snapshot = descriptor
+        .get("policy_snapshot")
+        .ok_or_else(|| "Memory generation descriptor.policy_snapshot is required".to_string())?;
+    let policy_checksum = crate::services::generation_identity::sha256_json(policy_snapshot)?;
+    let pipeline_checksum =
+        crate::services::generation_identity::sha256_json(&serde_json::json!({
+            "pipeline_revision": spec.pipeline_revision,
+            "system_prompt": crate::ai::SUMMARY_SYSTEM_PROMPT,
+            "leaf_directive": spec.leaf_directive,
+            "merge_directive": spec.merge_directive,
+        }))?;
+    let config_snapshot = serde_json::json!({
+        "generation_profile": generation_profile,
+        "prompt_revision": runtime.prompt_revision,
+        "prompt_checksum": runtime.prompt_checksum,
+        "pipeline_revision": pipeline_revision,
+        "pipeline_checksum": pipeline_checksum,
+        "model_provider": runtime.model_provider,
+        "model_id": runtime.model_id,
+        "model_config_id": runtime.model_config_id,
+        "tokenizer_id": crate::services::generation_identity::TOKENIZER_ID,
+        "policy_checksum": policy_checksum,
+        "policy_snapshot": policy_snapshot,
+    });
+    let generation = crate::repositories::generation_commits::prepare_generation(
+        db,
+        crate::repositories::generation_commits::PrepareGeneration {
+            tenant_id: terminal_context
+                .get("tenant_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Memory generation tenant_id is required".to_string())?,
+            source_id: terminal_context
+                .get("source_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Memory generation source_id is required".to_string())?,
+            job_run_id,
+            generation_step_key,
+            generation_kind,
+            input_digest,
+            input_manifest,
+            config_snapshot: &config_snapshot,
+            project_partition_key: descriptor
+                .get("project_partition_key")
+                .and_then(Value::as_str),
+        },
+    )
+    .await?;
+    terminal_context["generation_id"] = serde_json::json!(generation.generation_id);
+    let payload_scope = terminal_context
+        .get("payload_scope")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Memory generation payload_scope is required".to_string())?;
+    let scope_field = |name: &str| {
+        payload_scope
+            .get(name)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| format!("Memory generation payload_scope.{name} is required"))
+    };
+    let source_refs = input_manifest
+        .get("inputs")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Memory generation input_manifest.inputs is required".to_string())?
+        .iter()
+        .map(|input| {
+            input
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| "Memory generation input id is invalid".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let scope_kind = scope_field("kind")?;
+    let subject_id = scope_field("subject_id")?;
+    let project_partition_key = payload_scope
+        .get("project_partition_key")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let mut supersession_candidates = Vec::new();
+    collect_matching_scope_fact_ids(
+        input_manifest,
+        scope_kind.as_str(),
+        subject_id.as_str(),
+        project_partition_key.as_deref(),
+        &mut supersession_candidates,
+    );
+    supersession_candidates.sort();
+    supersession_candidates.dedup();
+    let contract = crate::models::structured_payload::MemoryPayloadContract {
+        generation_id: generation.generation_id,
+        scope_kind,
+        subject_id,
+        project_partition_key,
+        source_refs,
+        supersession_candidates,
+        allow_empty_facts: generation_kind == "thread_summary"
+            && generation_step_key.starts_with("thread-l0:"),
+    };
+    contract.validate()?;
+    Ok(contract)
+}
+
+fn collect_matching_scope_fact_ids(
+    value: &Value,
+    scope_kind: &str,
+    subject_id: &str,
+    project_partition_key: Option<&str>,
+    result: &mut Vec<String>,
+) {
+    match value {
+        Value::Object(object) => {
+            if object.get("schema_version").and_then(Value::as_str)
+                == Some(crate::models::structured_payload::MEMORY_PAYLOAD_SCHEMA)
+                && payload_scope_matches(
+                    object.get("scope"),
+                    scope_kind,
+                    subject_id,
+                    project_partition_key,
+                )
+            {
+                for collection in [
+                    "completed",
+                    "decisions",
+                    "open_items",
+                    "blockers",
+                    "artifacts",
+                    "constraints",
+                    "stable_preferences",
+                    "uncertainties",
+                ] {
+                    if let Some(facts) = object.get(collection).and_then(Value::as_array) {
+                        result.extend(facts.iter().filter_map(|fact| {
+                            fact.get("fact_id")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        }));
+                    }
+                }
+                return;
+            }
+            for value in object.values() {
+                collect_matching_scope_fact_ids(
+                    value,
+                    scope_kind,
+                    subject_id,
+                    project_partition_key,
+                    result,
+                );
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                collect_matching_scope_fact_ids(
+                    value,
+                    scope_kind,
+                    subject_id,
+                    project_partition_key,
+                    result,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn payload_scope_matches(
+    scope: Option<&Value>,
+    scope_kind: &str,
+    subject_id: &str,
+    project_partition_key: Option<&str>,
+) -> bool {
+    let Some(scope) = scope.and_then(Value::as_object) else {
+        return false;
+    };
+    let payload_partition = match scope.get("project_partition_key") {
+        Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(value.as_str()),
+        _ => return false,
+    };
+    scope.get("kind").and_then(Value::as_str) == Some(scope_kind)
+        && scope.get("subject_id").and_then(Value::as_str) == Some(subject_id)
+        && payload_partition == project_partition_key
 }
 
 async fn refresh_subject_scope_slot(
@@ -208,6 +438,10 @@ fn completed_result_or_deferred(
             .and_then(Value::as_str)
             .ok_or_else(|| "Memory Cloud Agent result text is missing".to_string())?
             .to_string(),
+        structured_payload: build
+            .get("structured_payload")
+            .cloned()
+            .ok_or_else(|| "Memory Cloud Agent result structured_payload is missing".to_string())?,
         chunk_count: build
             .get("chunk_count")
             .and_then(Value::as_u64)
@@ -259,13 +493,12 @@ pub(crate) async fn finalize_terminal(
             .and_then(Value::as_str)
             .unwrap_or("Memory Cloud Agent failed")
             .to_string();
-        if is_thread_summary_resume_kind(resume_kind) {
+        if resume_kind == THREAD_RESUMMARIZE_JOB_RESUME_KIND {
             let job_run_id = terminal_context
                 .get("job_run_id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Memory summary terminal context has no job_run_id".to_string())?;
-            let dispatch_error = error.clone();
-            crate::services::summary::fail_cloud_summary_job(
+                .ok_or_else(|| "Memory resummarization terminal context has no job_run_id".to_string())?;
+            crate::services::summary::fail_covered_range_resummarize(
                 &state.pool,
                 tenant_id,
                 source_id,
@@ -274,14 +507,29 @@ pub(crate) async fn finalize_terminal(
                 error,
             )
             .await?;
-            crate::summary_queue::dead_letter_current_summary_dispatch(
-                state,
+        } else if is_thread_summary_resume_kind(resume_kind) {
+            let job_run_id = terminal_context
+                .get("job_run_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Memory summary terminal context has no job_run_id".to_string())?;
+            let dispatch_error = error.clone();
+            let dead_lettered = crate::services::summary::fail_cloud_summary_job(
+                &state.pool,
                 tenant_id,
                 source_id,
                 thread_id,
-                dispatch_error.as_str(),
+                job_run_id,
+                error,
             )
             .await?;
+            if dead_lettered {
+                warn!(
+                    thread_id,
+                    job_run_id,
+                    error = dispatch_error,
+                    "Memory Engine owned partition summary dispatch was dead-lettered"
+                );
+            }
         } else {
             finalize_failed_domain_job(state, &terminal_context, error).await?;
         }
@@ -290,6 +538,26 @@ pub(crate) async fn finalize_terminal(
     }
 
     match resume_kind {
+        THREAD_RESUMMARIZE_JOB_RESUME_KIND => {
+            let job_run_id = terminal_context
+                .get("job_run_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Memory resummarization terminal context has no job_run_id".to_string())?;
+            let result = crate::services::summary::resume_covered_range_resummarize(
+                &state.config,
+                &state.pool,
+                tenant_id,
+                source_id,
+                thread_id,
+                job_run_id,
+            )
+            .await;
+            match result {
+                Ok(_) => Ok(()),
+                Err(error) if error == MEMORY_CLOUD_AGENT_DEFERRED => Ok(()),
+                Err(error) => Err(error),
+            }
+        }
         THREAD_SUMMARY_JOB_RESUME_KIND => {
             let job_run_id = terminal_context
                 .get("job_run_id")
@@ -305,26 +573,22 @@ pub(crate) async fn finalize_terminal(
             )
             .await;
             match result {
-                Ok(_) => settle_summary_dispatch(state, tenant_id, source_id, thread_id).await,
-                Err(error) if error == MEMORY_CLOUD_AGENT_DEFERRED => Ok(()),
-                Err(error) => Err(error),
-            }
-        }
-        "thread_repair_direct" => {
-            let result = crate::services::summary::resume_thread_repair_summary(
-                &state.config,
-                &state.pool,
-                tenant_id,
-                source_id,
-                thread_id,
-                terminal_context
-                    .get("job_run_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            )
-            .await;
-            match result {
-                Ok(_) => Ok(()),
+                Ok(Some(_)) => {
+                    settle_summary_dispatch(
+                        state,
+                        tenant_id,
+                        source_id,
+                        thread_id,
+                        terminal_context
+                            .get("project_partition_key")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| {
+                                "Memory summary terminal context has no partition".to_string()
+                            })?,
+                    )
+                    .await
+                }
+                Ok(None) => Ok(()),
                 Err(error) if error == MEMORY_CLOUD_AGENT_DEFERRED => Ok(()),
                 Err(error) => Err(error),
             }
@@ -341,6 +605,10 @@ pub(crate) async fn finalize_terminal(
                 .get("job_run_id")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "subject memory terminal job_run_id is missing".to_string())?;
+            let generation_id = terminal_context
+                .get("generation_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "subject memory terminal generation_id is missing".to_string())?;
             let from_scope_runner = terminal_context
                 .get("from_scope_runner")
                 .and_then(Value::as_bool)
@@ -351,13 +619,14 @@ pub(crate) async fn finalize_terminal(
                 request,
                 from_scope_runner,
                 job_run_id,
+                generation_id,
                 terminal_context
                     .get("scope_lock_owner")
                     .and_then(Value::as_str),
             )
             .await;
             match result {
-                Ok(_) => release_subject_scope_slot(state, &terminal_context).await,
+                Ok(_) => Ok(()),
                 Err(error) if error == MEMORY_CLOUD_AGENT_DEFERRED => Ok(()),
                 Err(error) => Err(error),
             }
@@ -372,18 +641,54 @@ pub(crate) async fn finalize_terminal(
                     .await?;
             let settings =
                 crate::services::control_plane::build_rollup_settings_from_policy(&policy)?;
-            let Some(mut prepared) = crate::services::summary::prepare_thread_rollup(
+            let descriptor = terminal_context
+                .get("generation")
+                .ok_or_else(|| "rollup terminal generation descriptor is missing".to_string())?;
+            let input_ids = descriptor
+                .get("input_manifest")
+                .and_then(|value| value.get("inputs"))
+                .and_then(Value::as_array)
+                .ok_or_else(|| "rollup terminal frozen inputs are missing".to_string())?
+                .iter()
+                .map(|input| {
+                    input
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned)
+                        .ok_or_else(|| "rollup terminal frozen input id is invalid".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let policy = descriptor
+                .get("policy_snapshot")
+                .ok_or_else(|| "rollup terminal policy snapshot is missing".to_string())?;
+            let level = policy
+                .get("source_level")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| "rollup terminal source_level is missing".to_string())?;
+            let trigger_reason = policy
+                .get("trigger_reason")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "rollup terminal trigger_reason is missing".to_string())?;
+            let project_partition_key = descriptor
+                .get("project_partition_key")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "rollup terminal project partition is missing".to_string())?;
+            let selected = crate::repositories::summaries::list_summaries_by_ids(
                 &state.pool,
                 tenant_id,
                 source_id,
                 thread_id,
-                &settings,
+                input_ids.as_slice(),
             )
-            .await?
-            else {
-                return Ok(());
+            .await?;
+            let prepared = crate::services::summary::PreparedThreadRollup {
+                thread_id: thread_id.to_string(),
+                project_partition_key: project_partition_key.to_string(),
+                level,
+                selected,
+                trigger_reason: trigger_reason.to_string(),
+                cloud_job_run_id: Some(job_run_id.to_string()),
             };
-            prepared.cloud_job_run_id = Some(job_run_id.to_string());
             let result = crate::services::summary::run_prepared_thread_rollup(
                 &state.config,
                 &state.pool,
@@ -413,7 +718,12 @@ fn is_thread_summary_resume_kind(resume_kind: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_thread_summary_resume_kind, THREAD_SUMMARY_JOB_RESUME_KIND};
+    use serde_json::json;
+
+    use super::{
+        collect_matching_scope_fact_ids, is_thread_summary_resume_kind,
+        THREAD_SUMMARY_JOB_RESUME_KIND,
+    };
 
     #[test]
     fn thread_summary_resume_route_is_not_a_scheduler_trigger() {
@@ -424,6 +734,51 @@ mod tests {
         assert!(!is_thread_summary_resume_kind("scheduler"));
         assert!(!is_thread_summary_resume_kind("thread_direct"));
     }
+
+    #[test]
+    fn supersession_candidates_are_restricted_to_the_output_scope() {
+        let input = json!({
+            "inputs": [{
+                "fact_id": "untrusted-recursive-id",
+                "structured_payload": {
+                    "schema_version": "memory_payload_v1",
+                    "scope": {
+                        "kind": "thread",
+                        "subject_id": "agent:test",
+                        "project_partition_key": "project:alpha"
+                    },
+                    "completed": [{"fact_id": "thread-fact"}],
+                    "decisions": [], "open_items": [], "blockers": [],
+                    "artifacts": [], "constraints": [],
+                    "stable_preferences": [], "uncertainties": []
+                }
+            }, {
+                "structured_payload": {
+                    "schema_version": "memory_payload_v1",
+                    "scope": {
+                        "kind": "project",
+                        "subject_id": "project:alpha",
+                        "project_partition_key": "project:alpha"
+                    },
+                    "completed": [],
+                    "decisions": [{"fact_id": "project-fact"}],
+                    "open_items": [], "blockers": [], "artifacts": [],
+                    "constraints": [], "stable_preferences": [], "uncertainties": []
+                }
+            }]
+        });
+        let mut candidates = Vec::new();
+
+        collect_matching_scope_fact_ids(
+            &input,
+            "project",
+            "project:alpha",
+            Some("project:alpha"),
+            &mut candidates,
+        );
+
+        assert_eq!(candidates, vec!["project-fact"]);
+    }
 }
 
 async fn settle_summary_dispatch(
@@ -431,18 +786,17 @@ async fn settle_summary_dispatch(
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
+    project_partition_key: &str,
 ) -> Result<(), String> {
-    if let Some(event) = crate::repositories::threads::get_summary_dispatch_state(
+    crate::repositories::thread_partitions::consume_current_summary_dispatch(
         &state.pool,
         tenant_id,
         source_id,
         thread_id,
+        project_partition_key,
     )
-    .await?
-    {
-        crate::repositories::threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;
-    }
-    Ok(())
+    .await
+    .map(|_| ())
 }
 
 async fn finalize_failed_domain_job(
@@ -467,8 +821,25 @@ async fn finalize_failed_domain_job(
             error_message: Some(error),
         },
     )
-    .await
-    .map(|_| ())
+    .await?;
+    if terminal_context.get("resume_kind").and_then(Value::as_str) == Some("rollup_job") {
+        let required = |key: &str| {
+            terminal_context
+                .get(key)
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("failed rollup terminal {key} is missing"))
+        };
+        crate::repositories::thread_partitions::release_rollup_claim(
+            &state.pool,
+            required("tenant_id")?,
+            required("source_id")?,
+            required("thread_id")?,
+            required("project_partition_key")?,
+            job_run_id,
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 async fn release_subject_scope_slot(

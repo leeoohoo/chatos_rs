@@ -14,6 +14,7 @@ fn summary_memory_block_includes_summary_level() {
         summary_type: "thread_incremental".to_string(),
         level: 2,
         summary_text: "durable summary".to_string(),
+        structured_payload: None,
         created_at: "2026-01-01T00:00:00Z".to_string(),
         metadata: None,
     });

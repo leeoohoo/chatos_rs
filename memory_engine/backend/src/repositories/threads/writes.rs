@@ -5,13 +5,10 @@ use sqlx::types::Json;
 
 use crate::db::Db;
 use crate::models::{
-    now_plus_seconds_rfc3339, now_rfc3339, DeleteThreadResponse, EngineRecord, EngineThread,
-    UpsertThreadRequest,
+    now_plus_seconds_rfc3339, now_rfc3339, DeleteThreadResponse, EngineThread, UpsertThreadRequest,
 };
 use crate::repositories::postgres::{decode, json, optional_timestamp, timestamp};
-use crate::repositories::{records, subject_memory_scopes};
-
-const SUMMARY_LOCK_TIMEOUT_SECS: i64 = 300;
+use crate::repositories::subject_memory_scopes;
 
 pub async fn upsert_thread(
     db: &Db,
@@ -33,27 +30,6 @@ pub async fn upsert_thread(
         labels: req.labels,
         metadata: req.metadata,
         status: status.clone(),
-        summary_status: existing
-            .as_ref()
-            .map(|item| item.summary_status.clone())
-            .unwrap_or_else(|| "idle".to_string()),
-        summary_job_run_id: existing
-            .as_ref()
-            .and_then(|item| item.summary_job_run_id.clone()),
-        summary_locked_at: existing
-            .as_ref()
-            .and_then(|item| item.summary_locked_at.clone()),
-        summary_lock_expires_at: existing
-            .as_ref()
-            .and_then(|item| item.summary_lock_expires_at.clone()),
-        pending_record_count: existing
-            .as_ref()
-            .map(|item| item.pending_record_count)
-            .unwrap_or(0),
-        pending_summary_tokens: existing
-            .as_ref()
-            .map(|item| item.pending_summary_tokens)
-            .unwrap_or(0),
         created_at: existing
             .as_ref()
             .map(|item| item.created_at.clone())
@@ -82,13 +58,13 @@ pub async fn upsert_thread(
     }
     let result = sqlx::query(
         "INSERT INTO engine_threads \
-         (id,tenant_id,source_id,subject_id,thread_type,external_thread_id,status,summary_status, \
-          pending_record_count,pending_summary_tokens,summary_job_run_id,summary_locked_at, \
-          summary_lock_expires_at,created_at,updated_at,archived_at,data) \
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) \
+         (id,tenant_id,source_id,subject_id,thread_type,external_thread_id,status, \
+          created_at,updated_at,archived_at,data) \
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) \
          ON CONFLICT(tenant_id,source_id,id) DO UPDATE SET subject_id=EXCLUDED.subject_id,thread_type=EXCLUDED.thread_type, \
          external_thread_id=EXCLUDED.external_thread_id,status=EXCLUDED.status, \
          updated_at=EXCLUDED.updated_at,archived_at=EXCLUDED.archived_at,data=EXCLUDED.data \
+         WHERE engine_threads.recall_eligible \
          ",
     )
     .bind(&thread.id)
@@ -98,12 +74,6 @@ pub async fn upsert_thread(
     .bind(&thread.thread_type)
     .bind(&thread.external_thread_id)
     .bind(&thread.status)
-    .bind(&thread.summary_status)
-    .bind(thread.pending_record_count)
-    .bind(thread.pending_summary_tokens)
-    .bind(&thread.summary_job_run_id)
-    .bind(optional_timestamp(thread.summary_locked_at.as_deref())?)
-    .bind(optional_timestamp(thread.summary_lock_expires_at.as_deref())?)
     .bind(timestamp(&thread.created_at)?)
     .bind(timestamp(&thread.updated_at)?)
     .bind(optional_timestamp(thread.archived_at.as_deref())?)
@@ -111,31 +81,11 @@ pub async fn upsert_thread(
     .execute(db)
     .await
     .map_err(|error| error.to_string())?;
-    debug_assert!(result.rows_affected() > 0);
+    if result.rows_affected() == 0 {
+        return Err("retired thread identity cannot be reused".to_string());
+    }
     subject_memory_scopes::ensure_thread_identity_scopes(db, &thread).await?;
     Ok(thread)
-}
-
-pub(crate) async fn ensure_thread_scope(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-) -> Result<(), String> {
-    let exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM engine_threads \
-         WHERE tenant_id=$1 AND source_id=$2 AND id=$3)",
-    )
-    .bind(tenant_id)
-    .bind(source_id)
-    .bind(thread_id)
-    .fetch_one(db)
-    .await
-    .map_err(|error| error.to_string())?;
-    if !exists {
-        return Err("thread not found in the requested tenant and source scope".to_string());
-    }
-    Ok(())
 }
 
 pub async fn delete_thread(
@@ -146,27 +96,122 @@ pub async fn delete_thread(
 ) -> Result<DeleteThreadResponse, String> {
     let mut tx = db.begin().await.map_err(|error| error.to_string())?;
     let deleted_records =
-        count_scope(&mut tx, "engine_records", tenant_id, source_id, thread_id).await?;
+        count_recall_eligible(&mut tx, "engine_records", tenant_id, source_id, thread_id).await?;
     let deleted_summaries =
-        count_scope(&mut tx, "engine_summaries", tenant_id, source_id, thread_id).await?;
-    let deleted_snapshots = count_scope(
-        &mut tx,
-        "engine_thread_snapshots",
-        tenant_id,
-        source_id,
-        thread_id,
+        count_recall_eligible(&mut tx, "engine_summaries", tenant_id, source_id, thread_id).await?;
+    let deleted_snapshots = 0;
+    let now = now_rfc3339();
+    sqlx::query(
+        "UPDATE engine_summary_record_coverage SET status='retired',retired_at=$4, \
+         retired_reason='thread_retired' WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 \
+         AND status='active'",
     )
-    .await?;
-    let deleted_thread =
-        sqlx::query("DELETE FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3")
-            .bind(tenant_id)
-            .bind(source_id)
-            .bind(thread_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|error| error.to_string())?
-            .rows_affected()
-            > 0;
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(timestamp(&now)?)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE engine_memory_derivation_edges edge SET status='retired',retired_at=$4, \
+         retired_reason='thread_retired' WHERE edge.tenant_id=$1 AND edge.source_id=$2 \
+         AND edge.status='active' AND ( \
+           (edge.input_kind='thread_summary' AND EXISTS(SELECT 1 FROM engine_summaries summary \
+             WHERE summary.tenant_id=$1 AND summary.source_id=$2 AND summary.id=edge.input_id \
+               AND summary.thread_id=$3)) OR \
+           (edge.output_kind='thread_summary' AND EXISTS(SELECT 1 FROM engine_summaries summary \
+             WHERE summary.tenant_id=$1 AND summary.source_id=$2 AND summary.id=edge.output_id \
+               AND summary.thread_id=$3)))",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(timestamp(&now)?)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE engine_memory_fact_projections fact SET status='retired',retired_at=$4 \
+         WHERE fact.tenant_id=$1 AND fact.source_id=$2 AND fact.output_kind='thread_summary' \
+         AND fact.status IN ('active','uncertain') AND EXISTS( \
+           SELECT 1 FROM engine_summaries summary WHERE summary.tenant_id=$1 \
+           AND summary.source_id=$2 AND summary.thread_id=$3 AND summary.id=fact.output_id)",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(timestamp(&now)?)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE engine_records SET recall_eligible=false,retired_at=$4, \
+         retired_reason='thread_retired',summary_status='retired', \
+         data=jsonb_set(data,'{summary_status}',to_jsonb('retired'::text),true) \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND recall_eligible",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(timestamp(&now)?)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE engine_summaries SET status='retired',recall_eligible=false,retired_at=$4, \
+         retired_reason='thread_retired',updated_at=$4, \
+         data=jsonb_set(jsonb_set(data,'{status}',to_jsonb('retired'::text),true), \
+                        '{updated_at}',to_jsonb($5::text),true) \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND recall_eligible",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(timestamp(&now)?)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE engine_thread_summary_partitions SET pending_record_count=0, \
+         pending_summary_tokens=0,summary_status='idle',summary_job_run_id=NULL, \
+         summary_locked_at=NULL,summary_lock_expires_at=NULL,updated_at=$4 \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(timestamp(&now)?)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "DELETE FROM engine_compact_turns WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    let deleted_thread = sqlx::query(
+        "UPDATE engine_threads SET status='retired',recall_eligible=false,retired_at=$4, \
+         retired_reason='business_delete',updated_at=$4, \
+         data=jsonb_set(jsonb_set(data,'{status}',to_jsonb('retired'::text),true), \
+                        '{updated_at}',to_jsonb($5::text),true) \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND recall_eligible",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(timestamp(&now)?)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?
+    .rows_affected()
+        > 0;
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(DeleteThreadResponse {
         deleted_thread,
@@ -174,75 +219,6 @@ pub async fn delete_thread(
         deleted_summaries,
         deleted_snapshots,
     })
-}
-
-pub async fn refresh_summary_queue_state(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-) -> Result<Option<EngineThread>, String> {
-    let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
-        "SELECT data FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 \
-         AND summary_status='pending' ORDER BY created_at,id",
-    )
-    .bind(tenant_id)
-    .bind(source_id)
-    .bind(thread_id)
-    .fetch_all(db)
-    .await
-    .map_err(|error| error.to_string())?;
-    let records = rows
-        .into_iter()
-        .map(decode::<EngineRecord>)
-        .collect::<Result<Vec<_>, _>>()?;
-    mutate_thread(db, tenant_id, source_id, thread_id, false, |thread| {
-        if thread.summary_status == "running" {
-            return false;
-        }
-        thread.pending_record_count = records.len() as i64;
-        thread.pending_summary_tokens = records
-            .iter()
-            .map(records::estimate_pending_record_tokens)
-            .sum();
-        thread.summary_status = if records.is_empty() {
-            "idle"
-        } else {
-            "pending"
-        }
-        .to_string();
-        true
-    })
-    .await
-}
-
-pub async fn apply_summary_queue_state_delta(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    pending_record_count_delta: i64,
-    pending_summary_tokens_delta: i64,
-) -> Result<Option<EngineThread>, String> {
-    if pending_record_count_delta == 0 && pending_summary_tokens_delta == 0 {
-        return Ok(None);
-    }
-    mutate_thread(db, tenant_id, source_id, thread_id, false, |thread| {
-        thread.pending_record_count =
-            (thread.pending_record_count + pending_record_count_delta).max(0);
-        thread.pending_summary_tokens =
-            (thread.pending_summary_tokens + pending_summary_tokens_delta).max(0);
-        if thread.summary_status != "running" {
-            thread.summary_status = if thread.pending_record_count > 0 {
-                "pending"
-            } else {
-                "idle"
-            }
-            .to_string();
-        }
-        true
-    })
-    .await
 }
 
 pub async fn begin_record_sync(
@@ -258,7 +234,7 @@ pub async fn begin_record_sync(
         "UPDATE engine_threads SET record_sync_inflight=record_sync_inflight+1, \
          record_sync_lease_expires_at=$4,updated_at=$5, \
          data=jsonb_set(data,'{updated_at}',to_jsonb($6::text),true) \
-         WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND recall_eligible",
     )
     .bind(tenant_id)
     .bind(source_id)
@@ -286,251 +262,10 @@ pub async fn finish_record_sync(
         "UPDATE engine_threads SET record_sync_inflight=GREATEST(record_sync_inflight-1,0), \
          record_sync_lease_expires_at=CASE WHEN record_sync_inflight-1>0 THEN record_sync_lease_expires_at ELSE NULL END, \
          updated_at=$4,data=jsonb_set(data,'{updated_at}',to_jsonb($5::text),true) \
-         WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND recall_eligible",
     )
     .bind(tenant_id).bind(source_id).bind(thread_id).bind(timestamp(&now)?).bind(&now)
     .execute(db).await.map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-pub async fn try_acquire_summary_slot(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    job_run_id: &str,
-) -> Result<Option<EngineThread>, String> {
-    let now = now_rfc3339();
-    let expires = now_plus_seconds_rfc3339(SUMMARY_LOCK_TIMEOUT_SECS);
-    conditional_summary_mutation(db, tenant_id, source_id, thread_id,
-        "AND (summary_status<>'running' OR summary_lock_expires_at IS NULL OR summary_lock_expires_at<=now())",
-        None,
-        |thread| {
-            thread.summary_status = "running".to_string();
-            thread.summary_job_run_id = Some(job_run_id.to_string());
-            thread.summary_locked_at = Some(now.clone());
-            thread.summary_lock_expires_at = Some(expires.clone());
-        }).await
-}
-
-pub async fn refresh_summary_slot(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    job_run_id: &str,
-    lock_timeout_secs: i64,
-) -> Result<bool, String> {
-    let expires = now_plus_seconds_rfc3339(lock_timeout_secs.max(SUMMARY_LOCK_TIMEOUT_SECS));
-    Ok(conditional_summary_mutation(
-        db,
-        tenant_id,
-        source_id,
-        thread_id,
-        "AND summary_status='running' AND summary_job_run_id=$4",
-        Some(job_run_id),
-        |thread| {
-            thread.summary_lock_expires_at = Some(expires.clone());
-        },
-    )
-    .await?
-    .is_some())
-}
-
-pub async fn release_summary_slot(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    job_run_id: &str,
-    consumed_record_count: i64,
-    consumed_summary_tokens: i64,
-) -> Result<Option<EngineThread>, String> {
-    conditional_summary_mutation(
-        db,
-        tenant_id,
-        source_id,
-        thread_id,
-        "AND summary_job_run_id=$4",
-        Some(job_run_id),
-        |thread| {
-            thread.pending_record_count =
-                (thread.pending_record_count - consumed_record_count.max(0)).max(0);
-            thread.pending_summary_tokens =
-                (thread.pending_summary_tokens - consumed_summary_tokens.max(0)).max(0);
-            thread.summary_status = if thread.pending_record_count > 0 {
-                "pending"
-            } else {
-                "idle"
-            }
-            .to_string();
-            thread.summary_job_run_id = None;
-            thread.summary_locked_at = None;
-            thread.summary_lock_expires_at = None;
-        },
-    )
-    .await
-}
-
-pub async fn release_expired_summary_slot(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-) -> Result<Option<EngineThread>, String> {
-    conditional_summary_mutation(
-        db,
-        tenant_id,
-        source_id,
-        thread_id,
-        "AND summary_status='running' AND (summary_lock_expires_at IS NULL OR summary_lock_expires_at<=now())",
-        None,
-        |thread| {
-            thread.summary_status = if thread.pending_record_count > 0 {
-                "pending"
-            } else {
-                "idle"
-            }
-            .to_string();
-            thread.summary_job_run_id = None;
-            thread.summary_locked_at = None;
-            thread.summary_lock_expires_at = None;
-        },
-    )
-    .await
-}
-
-pub async fn try_acquire_rollup_slot(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    job_run_id: &str,
-    lock_timeout_secs: i64,
-) -> Result<Option<EngineThread>, String> {
-    let now = now_rfc3339();
-    let expires = now_plus_seconds_rfc3339(lock_timeout_secs.max(30));
-    let row = sqlx::query_scalar::<_, Json<serde_json::Value>>(
-        "UPDATE engine_threads SET rollup_job_run_id=$4,rollup_locked_at=$5,rollup_lock_expires_at=$6, \
-         updated_at=$5,data=jsonb_set(data,'{updated_at}',to_jsonb($7::text),true) \
-         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 \
-         AND (rollup_job_run_id IS NULL OR rollup_job_run_id=$4 OR rollup_lock_expires_at IS NULL OR rollup_lock_expires_at<=now()) \
-         RETURNING data",
-    ).bind(tenant_id).bind(source_id).bind(thread_id).bind(job_run_id)
-      .bind(timestamp(&now)?).bind(timestamp(&expires)?).bind(&now)
-      .fetch_optional(db).await.map_err(|error| error.to_string())?;
-    row.map(decode).transpose()
-}
-
-pub async fn release_rollup_slot(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    job_run_id: &str,
-) -> Result<(), String> {
-    let now = now_rfc3339();
-    sqlx::query(
-        "UPDATE engine_threads SET rollup_job_run_id=NULL,rollup_locked_at=NULL,rollup_lock_expires_at=NULL, \
-         updated_at=$5,data=jsonb_set(data,'{updated_at}',to_jsonb($6::text),true) \
-         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND rollup_job_run_id=$4",
-    ).bind(tenant_id).bind(source_id).bind(thread_id).bind(job_run_id)
-      .bind(timestamp(&now)?).bind(&now).execute(db).await.map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-async fn conditional_summary_mutation<F>(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    condition: &str,
-    condition_value: Option<&str>,
-    mutate: F,
-) -> Result<Option<EngineThread>, String>
-where
-    F: FnOnce(&mut EngineThread),
-{
-    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
-    let sql = format!("SELECT data FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3 {condition} FOR UPDATE");
-    let mut query = sqlx::query_scalar::<_, Json<serde_json::Value>>(sqlx::AssertSqlSafe(sql))
-        .bind(tenant_id)
-        .bind(source_id)
-        .bind(thread_id);
-    if let Some(value) = condition_value {
-        query = query.bind(value);
-    }
-    let row = query
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
-    let Some(row) = row else {
-        tx.commit().await.map_err(|error| error.to_string())?;
-        return Ok(None);
-    };
-    let mut thread: EngineThread = decode(row)?;
-    mutate(&mut thread);
-    thread.updated_at = now_rfc3339();
-    save_thread(&mut tx, &thread).await?;
-    tx.commit().await.map_err(|error| error.to_string())?;
-    Ok(Some(thread))
-}
-
-async fn mutate_thread<F>(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    allow_running: bool,
-    mutate: F,
-) -> Result<Option<EngineThread>, String>
-where
-    F: FnOnce(&mut EngineThread) -> bool,
-{
-    let condition = if allow_running {
-        ""
-    } else {
-        "AND summary_status<>'running'"
-    };
-    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
-    let sql = format!("SELECT data FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3 {condition} FOR UPDATE");
-    let row = sqlx::query_scalar::<_, Json<serde_json::Value>>(sqlx::AssertSqlSafe(sql))
-        .bind(tenant_id)
-        .bind(source_id)
-        .bind(thread_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
-    let Some(row) = row else {
-        tx.commit().await.map_err(|error| error.to_string())?;
-        return Ok(None);
-    };
-    let mut thread: EngineThread = decode(row)?;
-    if !mutate(&mut thread) {
-        tx.commit().await.map_err(|error| error.to_string())?;
-        return Ok(None);
-    }
-    thread.updated_at = now_rfc3339();
-    save_thread(&mut tx, &thread).await?;
-    tx.commit().await.map_err(|error| error.to_string())?;
-    Ok(Some(thread))
-}
-
-async fn save_thread(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    thread: &EngineThread,
-) -> Result<(), String> {
-    sqlx::query(
-        "UPDATE engine_threads SET summary_status=$4,pending_record_count=$5,pending_summary_tokens=$6, \
-         summary_job_run_id=$7,summary_locked_at=$8,summary_lock_expires_at=$9,updated_at=$10,data=$11 \
-         WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
-    ).bind(&thread.tenant_id).bind(&thread.source_id).bind(&thread.id)
-      .bind(&thread.summary_status).bind(thread.pending_record_count)
-      .bind(thread.pending_summary_tokens).bind(&thread.summary_job_run_id)
-      .bind(optional_timestamp(thread.summary_locked_at.as_deref())?)
-      .bind(optional_timestamp(thread.summary_lock_expires_at.as_deref())?)
-      .bind(timestamp(&thread.updated_at)?).bind(json(thread)?)
-      .execute(&mut **tx).await.map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -541,7 +276,8 @@ async fn load_thread(
     thread_id: &str,
 ) -> Result<Option<EngineThread>, String> {
     sqlx::query_scalar::<_, Json<serde_json::Value>>(
-        "SELECT data FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+        "SELECT data FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3 \
+         AND recall_eligible",
     )
     .bind(tenant_id)
     .bind(source_id)
@@ -553,7 +289,7 @@ async fn load_thread(
     .transpose()
 }
 
-async fn count_scope(
+async fn count_recall_eligible(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     table: &str,
     tenant_id: &str,
@@ -561,7 +297,8 @@ async fn count_scope(
     thread_id: &str,
 ) -> Result<i64, String> {
     let sql = format!(
-        "SELECT count(*) FROM {table} WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3"
+        "SELECT count(*) FROM {table} WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 \
+         AND recall_eligible"
     );
     sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(tenant_id)

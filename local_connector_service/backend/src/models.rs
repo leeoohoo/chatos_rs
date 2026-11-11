@@ -13,10 +13,6 @@ pub const DEVICE_STATUS_REVOKED: &str = "revoked";
 pub const WORKSPACE_STATUS_ACTIVE: &str = "active";
 pub const WORKSPACE_STATUS_DISABLED: &str = "disabled";
 
-pub const BINDING_MODE_MCP: &str = "local_mcp";
-pub const BINDING_MODE_TERMINAL: &str = "local_terminal";
-pub const BINDING_MODE_SANDBOX: &str = "local_sandbox";
-
 pub const SANDBOX_MODE_LOCAL_PROCESS: &str = "local_process";
 pub const SANDBOX_READINESS_READY: &str = "ready";
 pub const SANDBOX_READINESS_SETUP_REQUIRED: &str = "setup_required";
@@ -101,7 +97,6 @@ pub struct LocalConnectorStoreStats {
     pub devices_offline: usize,
     pub devices_revoked: usize,
     pub workspaces_total: usize,
-    pub project_bindings_total: usize,
     pub sandbox_pairings_total: usize,
     pub active_sessions_total: usize,
 }
@@ -243,43 +238,6 @@ impl LocalConnectorWorkspace {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalConnectorProjectBinding {
-    pub id: String,
-    pub owner_user_id: String,
-    pub project_id: String,
-    pub device_id: String,
-    pub workspace_id: String,
-    pub mode: String,
-    pub enabled: bool,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-impl LocalConnectorProjectBinding {
-    pub fn new(
-        owner_user_id: String,
-        project_id: String,
-        device_id: String,
-        workspace_id: String,
-        mode: String,
-        enabled: bool,
-    ) -> Self {
-        let now = now_rfc3339();
-        Self {
-            id: Uuid::new_v4().to_string(),
-            owner_user_id,
-            project_id,
-            device_id,
-            workspace_id,
-            mode: normalize_binding_mode(Some(mode)),
-            enabled,
-            created_at: now.clone(),
-            updated_at: now,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalConnectorSandboxPairing {
     pub id: String,
     pub owner_user_id: String,
@@ -408,14 +366,6 @@ pub fn normalize_workspace_status(value: Option<String>) -> String {
     match value.as_deref().map(str::trim) {
         Some(WORKSPACE_STATUS_DISABLED) => WORKSPACE_STATUS_DISABLED.to_string(),
         _ => WORKSPACE_STATUS_ACTIVE.to_string(),
-    }
-}
-
-pub fn normalize_binding_mode(value: Option<String>) -> String {
-    match value.as_deref().map(str::trim) {
-        Some(BINDING_MODE_TERMINAL) => BINDING_MODE_TERMINAL.to_string(),
-        Some(BINDING_MODE_SANDBOX) => BINDING_MODE_SANDBOX.to_string(),
-        _ => BINDING_MODE_MCP.to_string(),
     }
 }
 

@@ -30,7 +30,7 @@ pub use subject_memories::{
 };
 pub use summaries::{
     SdkDeleteThreadSummaryRequest, SdkGetThreadActiveSummaryStatusRequest,
-    SdkListThreadSummariesRequest, SdkRunThreadActiveSummaryRequest,
-    SdkRunThreadRepairSummaryRequest, SdkRunThreadSummaryRequest,
+    SdkListThreadSummariesRequest, SdkRunPendingSummaryRebuildRequest,
+    SdkRunThreadActiveSummaryRequest, SdkRunThreadSummaryRequest,
 };
 pub use threads::{SdkGetThreadRequest, SdkListThreadsRequest, SdkUpsertThreadRequest};

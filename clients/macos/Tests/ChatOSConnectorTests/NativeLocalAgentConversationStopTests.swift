@@ -65,6 +65,8 @@ final class NativeLocalAgentConversationStopTests: XCTestCase {
         try await service.configure(ownerUserID: "user-1", bootstrap: .init(
             modelSnapshots: [.init(
                 ownerUserID: "user-1", modelConfigRef: "model-1", modelConfigRevision: "revision-1",
+                modelCapabilityRevision: "capability-v1", contextWindowTokens: 200_000,
+                outputReserveTokens: 30_000, protocolOverheadEstimatorID: "responses-json-v1",
                 credentialRef: "env:TEST", baseURL: "https://example.test/v1", model: "test",
                 provider: "openai", supportsResponses: true
             )],

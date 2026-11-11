@@ -43,7 +43,6 @@ export function PoliciesSectionContainer(props: PoliciesSectionContainerProps) {
       selectedKey={catalog.selectedPolicyViewKey}
       onSelect={catalog.setSelectedPolicyViewKey}
       onReload={() => void loadPoliciesPage()}
-      policyMap={catalog.policyMap}
     />
   );
 }

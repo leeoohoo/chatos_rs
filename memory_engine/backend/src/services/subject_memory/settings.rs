@@ -24,8 +24,8 @@ fn build_settings(
         return Err("empty source_thread_label".to_string());
     }
 
-    let configured = |name: &str, request_value: Option<i64>, policy_value: Option<i64>| {
-        request_value.or(policy_value).ok_or_else(|| {
+    let configured = |name: &str, policy_value: Option<i64>| {
+        policy_value.ok_or_else(|| {
             format!("subject_memory job policy {name} is not configured in Configuration Center")
         })
     };
@@ -52,15 +52,15 @@ fn build_settings(
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| format!("Subject memory {}", req.subject_id)),
-        token_limit: configured("token_limit", req.token_limit, policy.token_limit)?.max(500),
-        count_limit: configured("count_limit", req.count_limit, policy.count_limit)?.max(0),
-        keep_level0_count: configured(
-            "keep_level0_count",
-            req.keep_level0_count,
-            policy.keep_level0_count,
+        token_limit: configured("max_model_input_tokens", policy.max_model_input_tokens)?.max(500),
+        source_batch_token_limit: configured(
+            "max_source_batch_tokens",
+            policy.max_source_batch_tokens,
         )?
-        .max(0),
-        max_level: configured("max_level", req.max_level, policy.max_level)?.max(1),
+        .max(500),
+        count_limit: configured("count_limit", policy.count_limit)?.max(0),
+        keep_level0_count: configured("keep_level0_count", policy.keep_level0_count)?.max(0),
+        max_level: configured("max_level", policy.max_level)?.max(1),
         memory_metadata: req.memory_metadata.clone(),
     })
 }

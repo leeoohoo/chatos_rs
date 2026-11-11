@@ -3,7 +3,72 @@
 
 use super::{schema, SqliteClientStorage};
 use sqlx::{sqlite::SqliteConnectOptions, Connection, Row, SqliteConnection};
+use std::str::FromStr;
 use uuid::Uuid;
+
+#[tokio::test]
+async fn version_forty_eight_discards_runtime_settings_before_referenced_snapshots() {
+    let mut connection = SqliteConnection::connect_with(
+        &SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .foreign_keys(true),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TABLE local_model_config_snapshots(\
+           owner_user_id TEXT NOT NULL, model_config_ref TEXT NOT NULL,\
+           model_config_revision TEXT NOT NULL, responses_compaction_threshold INTEGER,\
+           PRIMARY KEY(owner_user_id, model_config_ref, model_config_revision))",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TABLE local_conversation_runtime_settings(\
+           owner_user_id TEXT NOT NULL, conversation_id TEXT NOT NULL,\
+           selected_model_config_ref TEXT NOT NULL, selected_model_config_revision TEXT NOT NULL,\
+           PRIMARY KEY(owner_user_id, conversation_id),\
+           FOREIGN KEY(owner_user_id, selected_model_config_ref, selected_model_config_revision)\
+             REFERENCES local_model_config_snapshots(\
+               owner_user_id, model_config_ref, model_config_revision))",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO local_model_config_snapshots VALUES('user-1', 'model-1', 'revision-1', NULL)",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO local_conversation_runtime_settings VALUES(\
+           'user-1', 'conversation-1', 'model-1', 'revision-1')",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+
+    for statement in schema::SCHEMA_V48 {
+        sqlx::query(sqlx::AssertSqlSafe(*statement))
+            .execute(&mut connection)
+            .await
+            .unwrap();
+    }
+
+    for table in [
+        "local_conversation_runtime_settings",
+        "local_model_config_snapshots",
+    ] {
+        let count: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
+    }
+}
 
 #[tokio::test]
 async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
@@ -402,7 +467,7 @@ async fn failed_migration_preserves_recovery_backup() {
         .await
         .is_err());
     let backups = migration_backups(&database_path);
-    assert_eq!(backups.len(), 2);
+    assert_eq!(backups, vec![first_backup.clone()]);
     assert_eq!(
         std::fs::read(&first_backup).expect("first recovery snapshot survives retry"),
         first_bytes
@@ -652,6 +717,12 @@ async fn version_forty_two_accepts_legacy_hook_events_without_recovery_payloads(
     .expect("legacy Hook invocation");
     let mut connection = storage.pool.acquire().await.expect("connection");
     for statement in [
+        "ALTER TABLE local_model_config_snapshots DROP COLUMN tokenizer_id",
+        "ALTER TABLE local_model_config_snapshots DROP COLUMN protocol_overhead_estimator_id",
+        "ALTER TABLE local_model_config_snapshots DROP COLUMN output_reserve_tokens",
+        "ALTER TABLE local_model_config_snapshots DROP COLUMN context_window_tokens",
+        "ALTER TABLE local_model_config_snapshots DROP COLUMN model_capability_revision",
+        "DELETE FROM client_schema_migrations WHERE version = 48",
         "DROP TRIGGER local_memory_outbox_activity_update",
         "DROP TRIGGER local_memory_outbox_activity_insert",
         "DROP TABLE local_memory_outbox_activity",
@@ -735,6 +806,12 @@ pub(super) async fn rewind_receipt_v36(connection: &mut SqliteConnection) {
 
 pub(super) async fn rewind_receipt_v37(connection: &mut SqliteConnection) {
     for statement in [
+        "ALTER TABLE local_model_config_snapshots DROP COLUMN tokenizer_id",
+        "ALTER TABLE local_model_config_snapshots DROP COLUMN protocol_overhead_estimator_id",
+        "ALTER TABLE local_model_config_snapshots DROP COLUMN output_reserve_tokens",
+        "ALTER TABLE local_model_config_snapshots DROP COLUMN context_window_tokens",
+        "ALTER TABLE local_model_config_snapshots DROP COLUMN model_capability_revision",
+        "DELETE FROM client_schema_migrations WHERE version = 48",
         "DROP TRIGGER local_memory_outbox_activity_update",
         "DROP TRIGGER local_memory_outbox_activity_insert",
         "DROP TABLE local_memory_outbox_activity",

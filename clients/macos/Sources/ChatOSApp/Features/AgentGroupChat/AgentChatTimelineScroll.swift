@@ -1,6 +1,19 @@
 import ChatOSCore
 import SwiftUI
 
+private struct AgentChatTimelineBottomMarker: View {
+    var body: some View {
+        Color.clear
+            .frame(height: 1)
+            .id(AgentChatTimelineViewConstants.bottomID)
+    }
+}
+
+private enum AgentChatTimelineViewConstants {
+    static let bottomID = "agent-chat-timeline-bottom"
+    static let rowSpacing: CGFloat = 16
+}
+
 /// Only changes that affect message rows may update their hosted content. Scheduler activity,
 /// drafts and task-board changes must not recreate historical Markdown documents.
 struct AgentChatTimelineRowState: Equatable {
@@ -10,33 +23,11 @@ struct AgentChatTimelineRowState: Equatable {
     var actionIDs: Set<String> = []
 }
 
-enum AgentChatTimelineScrollMetrics {
-    static func shouldScrollToBottomInitially(
-        markerMaxY: CGFloat,
-        viewportHeight: CGFloat
-    ) -> Bool {
-        guard markerMaxY.isFinite, markerMaxY < CGFloat.greatestFiniteMagnitude / 2,
-              viewportHeight > 0 else { return false }
-        return markerMaxY > viewportHeight
-    }
-
-    static func isAtBottom(
-        markerMaxY: CGFloat,
-        viewportHeight: CGFloat,
-        tolerance: CGFloat = 32
-    ) -> Bool {
-        guard markerMaxY.isFinite, markerMaxY < CGFloat.greatestFiniteMagnitude / 2,
-              viewportHeight > 0 else { return false }
-        return markerMaxY <= viewportHeight + tolerance
-    }
-}
-
-/// The native table creates/recycles views only for visible rows. Loaded history remains cheap
-/// metadata; scrolling no longer feeds positions through SwiftUI or lays out a whole page.
+/// The shared timeline for team rooms and direct conversations. The loaded page is intentionally
+/// bounded. LazyVStack is the system virtualization layer: it gives every visible message its
+/// natural height without estimated AppKit rows or layout-time geometry feedback.
 struct AgentChatTimelineView<Item: Identifiable & Equatable, RowContent: View, EmptyContent: View>: View
 where Item.ID == String {
-    @Environment(\.interfaceFontScale) private var fontScale
-    @Environment(\.colorScheme) private var colorScheme
     let items: [Item]
     let isInitialContentReady: Bool
     let hasOlderItems: Bool
@@ -47,6 +38,10 @@ where Item.ID == String {
     @ViewBuilder let rowContent: (Item) -> RowContent
     @ViewBuilder let emptyContent: () -> EmptyContent
 
+    @State private var hasPositionedInitially = false
+    @State private var isPositioningInitially = false
+    @State private var followsLatest = true
+
     var body: some View {
         Group {
             if items.isEmpty && !hasOlderItems {
@@ -54,47 +49,112 @@ where Item.ID == String {
                 emptyContent()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                AgentChatNativeTimeline(
-                    entries: entries,
-                    rowState: rowState,
-                    fontScale: fontScale,
-                    colorScheme: colorScheme,
-                    isInitialContentReady: isInitialContentReady && !items.isEmpty,
-                    scrollToLatestRequest: scrollToLatestRequest
-                )
+                timeline
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var entries: [AgentChatTimelineEntry] {
-        var result: [AgentChatTimelineEntry] = []
-        if hasOlderItems {
-            let loading = isLoadingOlderItems
-            result.append(.init(id: "timeline:load-older", value: loading) {
-                AnyView(HStack {
-                    Spacer()
-                    Button {
-                        Task { _ = await loadOlderItems() }
-                    } label: {
-                        if loading {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Label("加载更早消息", systemImage: "clock.arrow.circlepath")
-                        }
+    private var timeline: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: AgentChatTimelineViewConstants.rowSpacing) {
+                    if hasOlderItems {
+                        loadOlderButton(proxy: proxy)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .disabled(loading)
-                    Spacer()
-                }.padding(.vertical, 8))
-            })
-        }
-        result += items.map { item in
-            AgentChatTimelineEntry(id: "timeline:item:\(item.id)", value: item) {
-                AnyView(rowContent(item))
+
+                    ForEach(items) { item in
+                        rowContent(item)
+                            .id(item.id)
+                    }
+
+                    AgentChatTimelineBottomMarker()
+                }
+                .scrollTargetLayout()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(18)
+            }
+            .agentChatTracksLatest($followsLatest)
+            .onAppear {
+                positionInitially(proxy)
+            }
+            .onChange(of: isInitialContentReady) {
+                positionInitially(proxy)
+            }
+            .onChange(of: items.last?.id) {
+                guard hasPositionedInitially else {
+                    positionInitially(proxy)
+                    return
+                }
+                if followsLatest {
+                    proxy.scrollTo(AgentChatTimelineViewConstants.bottomID, anchor: .bottom)
+                }
+            }
+            .onChange(of: scrollToLatestRequest) {
+                followsLatest = true
+                proxy.scrollTo(AgentChatTimelineViewConstants.bottomID, anchor: .bottom)
             }
         }
-        return result
+    }
+
+    private func loadOlderButton(proxy: ScrollViewProxy) -> some View {
+        HStack {
+            Spacer()
+            Button {
+                Task {
+                    guard let anchorID = await loadOlderItems() else { return }
+                    await Task.yield()
+                    proxy.scrollTo(anchorID, anchor: .top)
+                }
+            } label: {
+                if isLoadingOlderItems {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("加载更早消息", systemImage: "clock.arrow.circlepath")
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .disabled(isLoadingOlderItems)
+            Spacer()
+        }
+        .padding(.bottom, 4)
+    }
+
+    private func positionInitially(_ proxy: ScrollViewProxy) {
+        guard !hasPositionedInitially,
+              !isPositioningInitially,
+              isInitialContentReady,
+              !items.isEmpty else { return }
+        isPositioningInitially = true
+        Task { @MainActor in
+            await Task.yield()
+            await Task.yield()
+            followsLatest = true
+            proxy.scrollTo(AgentChatTimelineViewConstants.bottomID, anchor: .bottom)
+            hasPositionedInitially = true
+            isPositioningInitially = false
+        }
+    }
+}
+
+private extension View {
+    /// `scrollPosition` writes its binding while SwiftUI is resolving a lazy stack. On macOS that
+    /// can invalidate the window's constraints from inside the same layout transaction. Use the
+    /// system scroll-geometry callback instead: it reports a stable, equatable "at bottom" value
+    /// after scrolling without making the selected row part of layout state.
+    @ViewBuilder
+    func agentChatTracksLatest(_ followsLatest: Binding<Bool>) -> some View {
+        if #available(macOS 15.0, *) {
+            onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.visibleRect.maxY >= geometry.contentSize.height - 24
+            } action: { _, isAtBottom in
+                if followsLatest.wrappedValue != isAtBottom {
+                    followsLatest.wrappedValue = isAtBottom
+                }
+            }
+        } else {
+            self
+        }
     }
 }

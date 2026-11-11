@@ -186,6 +186,13 @@ extension LocalAgentGroupChatSchedulerTests {
             name: LocalAgentChatToolProvider.completeManagerCycleToolName,
             arguments: "{}"
         )
+        // Runtime persists the trigger and assistant call before marking a tool in flight.
+        // An orphan pending call is not a resumable production checkpoint.
+        checkpoint.messages += [
+            .init(role: .user, content: "继续处理未读消息"),
+            .init(role: .system, content: "<!-- chatos-product-skill-router -->\nFrozen instructions"),
+            .init(role: .assistant, toolCalls: [call]),
+        ]
         checkpoint.pendingCalls = [call]
         checkpoint.inFlightCallID = call.id
         checkpoint.status = .running

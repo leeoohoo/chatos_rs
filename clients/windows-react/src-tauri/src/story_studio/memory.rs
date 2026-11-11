@@ -8,24 +8,48 @@ use memory_engine_sdk::{
     UpsertRecordInput,
 };
 use serde_json::{json, Map, Value};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::authentication::{runtime_api_base_url, AuthenticationManager};
 
 use super::planning::{
     StoryAgentMemoryCheckpoint, StoryAgentMemoryScope, StoryAgentMessage, StoryAgentMessageRole,
-    StoryAgentToolCall, StoryPlanningRun,
+    StoryAgentToolCall, StoryModelCapabilitySnapshot, StoryPlanningRun,
 };
 
 const MEMORY_SOURCE_ID: &str = "chatos";
-const STORY_AGENT_SUBJECT_ID: &str = "agent:builtin-story-agent";
-const STORY_AGENT_THREAD_ID: &str = "client-agent:agent:builtin-story-agent";
 const MAXIMUM_MEMORY_RECORDS: usize = 64;
 const MAXIMUM_MEMORY_BLOCKS: usize = 16;
 const MAXIMUM_MEMORY_CONTEXT_BYTES: usize = 2 * 1_024 * 1_024;
 
 pub(super) struct StoryMemoryAdapter {
     client: MemoryEngineClient,
+    assertion_http: reqwest::Client,
+    assertion_base_url: String,
+    access_token: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct IssueRuntimeContextAssertionRequest<'a> {
+    runtime_kind: &'a str,
+    project_id: Option<&'a str>,
+    runtime_id: &'a str,
+    operation: &'a str,
+    source_id: Option<&'a str>,
+    canonical_agent_subject_id: Option<&'a str>,
+    thread_id: Option<&'a str>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueRuntimeContextAssertionResponse {
+    runtime_context_assertion: String,
+    source_id: String,
+    canonical_agent_subject_id: String,
+    thread_id: String,
+    project_partition_key: String,
+    runtime_identity_revision: String,
 }
 
 impl StoryMemoryAdapter {
@@ -34,13 +58,22 @@ impl StoryMemoryAdapter {
         owner_user_id: &str,
     ) -> Result<Self, String> {
         let token = authentication.access_token_for_owner(owner_user_id).await?;
+        let assertion_http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|_| memory_configuration_error())?;
         let client = MemoryEngineClient::new_direct(
             memory_base_url()?,
             Duration::from_secs(30),
             MEMORY_SOURCE_ID,
         )?
-        .with_bearer_token(token);
-        Ok(Self { client })
+        .with_bearer_token(token.clone());
+        Ok(Self {
+            client,
+            assertion_http,
+            assertion_base_url: runtime_api_base_url().trim_end_matches('/').to_string(),
+            access_token: token,
+        })
     }
 
     pub(super) async fn ensure_thread(
@@ -60,22 +93,10 @@ impl StoryMemoryAdapter {
                     external_thread_id: Some(scope.thread_id.clone()),
                     title: None,
                     labels: Some(vec![
-                        "memory-schema:v2".into(),
-                        scope.subject_id.clone(),
-                        "thread-kind:story_agent".into(),
+                        "client_agent".into(),
+                        "memory_mapping:client_agent.v1".into(),
                     ]),
-                    metadata: Some(json!({
-                        "agent_id": STORY_AGENT_SUBJECT_ID
-                            .strip_prefix("agent:")
-                            .unwrap_or(STORY_AGENT_SUBJECT_ID),
-                        "agent_name": "剧情规划 Agent",
-                        "thread_kind": "story_agent",
-                        "run_id": scope.run_id,
-                        "project_id": scope
-                            .project_subject_id
-                            .strip_prefix("project:")
-                            .unwrap_or(scope.project_subject_id.as_str()),
-                    })),
+                    metadata: None,
                     status: None,
                     created_at: None,
                     updated_at: None,
@@ -98,19 +119,25 @@ impl StoryMemoryAdapter {
         &self,
         owner_user_id: &str,
         scope: &StoryAgentMemoryScope,
-        records: Vec<UpsertRecordInput>,
+        mut records: Vec<UpsertRecordInput>,
     ) -> Result<(), String> {
         validate_scope(scope, owner_user_id)?;
         if records.is_empty() || records.len() > 32 {
             return Err(memory_contract_error());
         }
         let expected_count = records.len();
+        let assertion = self
+            .issue_runtime_context_assertion(owner_user_id, scope, "record_ingest")
+            .await?;
+        enrich_source_unit_records(&mut records, assertion.runtime_identity_revision.as_str())?;
         let response = self
             .client
-            .batch_sync_records(
+            .ingest_thread_records(
                 &scope.thread_id,
                 &SdkBatchSyncRecordsRequest {
                     tenant_id: owner_user_id.to_owned(),
+                    project_partition_key: assertion.project_partition_key,
+                    runtime_context_assertion: assertion.runtime_context_assertion,
                     records,
                 },
             )
@@ -135,7 +162,15 @@ impl StoryMemoryAdapter {
         if records.is_empty() || records.len() > 32 {
             return Err(memory_contract_error());
         }
-        for expected in records {
+        let assertion = self
+            .issue_runtime_context_assertion(owner_user_id, scope, "record_ingest")
+            .await?;
+        let mut expected_records = records.to_vec();
+        enrich_source_unit_records(
+            expected_records.as_mut_slice(),
+            assertion.runtime_identity_revision.as_str(),
+        )?;
+        for expected in &expected_records {
             let stored = self
                 .client
                 .get_record(&expected.id, Some(owner_user_id), Some(&scope.thread_id))
@@ -153,22 +188,42 @@ impl StoryMemoryAdapter {
         &self,
         owner_user_id: &str,
         scope: &StoryAgentMemoryScope,
+        capability: &StoryModelCapabilitySnapshot,
+        query_text: &str,
+        current_turn_id: &str,
     ) -> Result<ComposeContextResponse, String> {
         validate_scope(scope, owner_user_id)?;
+        if capability.revision.trim().is_empty()
+            || capability.protocol_overhead_estimator_id.trim().is_empty()
+            || capability.context_window_tokens < 2_048
+            || capability.output_reserve_tokens < 256
+            || capability.output_reserve_tokens >= capability.context_window_tokens
+            || query_text.trim().is_empty()
+            || current_turn_id.trim().is_empty()
+        {
+            return Err(memory_contract_error());
+        }
+        let assertion = self
+            .issue_runtime_context_assertion(owner_user_id, scope, "compose")
+            .await?;
         let response = self
             .client
             .compose_context(&SdkComposeContextRequest {
                 tenant_id: owner_user_id.to_owned(),
                 subject_id: Some(scope.subject_id.clone()),
-                related_subject_ids: Some(vec![scope.project_subject_id.clone()]),
+                context_project_subject_id: Some(format!("project:{}", scope.project_id)),
                 thread_id: scope.thread_id.clone(),
-                policy: Some(ComposeContextPolicy {
-                    include_recent_records: Some(true),
-                    include_thread_summary: Some(true),
-                    include_subject_memory: Some(true),
-                    recent_record_limit: Some(MAXIMUM_MEMORY_RECORDS),
-                    summary_limit: Some(2),
-                }),
+                query_text: Some(query_text.to_string()),
+                current_turn_id: Some(current_turn_id.to_string()),
+                model_capability_revision: capability.revision.clone(),
+                policy: ComposeContextPolicy {
+                    max_memory_tokens: 24_000,
+                    max_recent_record_tokens: 12_000,
+                    max_thread_summary_tokens: 6_000,
+                    max_project_memory_tokens: 4_000,
+                    max_agent_memory_tokens: 4_000,
+                },
+                runtime_context_assertion: assertion.runtime_context_assertion,
             })
             .await
             .map_err(memory_transport_error)?;
@@ -184,6 +239,54 @@ impl StoryMemoryAdapter {
         }
         Ok(response)
     }
+
+    async fn issue_runtime_context_assertion(
+        &self,
+        owner_user_id: &str,
+        scope: &StoryAgentMemoryScope,
+        operation: &str,
+    ) -> Result<IssueRuntimeContextAssertionResponse, String> {
+        validate_scope(scope, owner_user_id)?;
+        let response = self
+            .assertion_http
+            .post(format!(
+                "{}/api/local-connectors/runtime-context-assertions",
+                self.assertion_base_url
+            ))
+            .bearer_auth(self.access_token.as_str())
+            .json(&IssueRuntimeContextAssertionRequest {
+                runtime_kind: "story_studio",
+                project_id: Some(scope.project_id.as_str()),
+                runtime_id: scope.run_id.as_str(),
+                operation,
+                source_id: None,
+                canonical_agent_subject_id: None,
+                thread_id: None,
+            })
+            .send()
+            .await
+            .map_err(memory_transport_error)?;
+        if !response.status().is_success() {
+            return Err(memory_transport_error(format!(
+                "runtime context assertion issuer returned {}",
+                response.status()
+            )));
+        }
+        let assertion = response
+            .json::<IssueRuntimeContextAssertionResponse>()
+            .await
+            .map_err(memory_transport_error)?;
+        if assertion.runtime_context_assertion.trim().is_empty()
+            || assertion.source_id != scope.source_id
+            || assertion.canonical_agent_subject_id != scope.subject_id
+            || assertion.thread_id != scope.thread_id
+            || assertion.project_partition_key != format!("project:{}", scope.project_id)
+            || assertion.runtime_identity_revision.trim().is_empty()
+        {
+            return Err(memory_contract_error());
+        }
+        Ok(assertion)
+    }
 }
 
 pub(super) fn bind_memory(
@@ -192,31 +295,6 @@ pub(super) fn bind_memory(
     now_unix_ms: u64,
 ) -> Result<(), String> {
     if let Some(memory) = run.checkpoint.memory.as_ref() {
-        let legacy = memory.scope.thread_id != STORY_AGENT_THREAD_ID
-            || memory.scope.subject_id != STORY_AGENT_SUBJECT_ID
-            || memory.scope.project_subject_id.is_empty();
-        if legacy {
-            if memory.sync_in_flight_end.is_some() {
-                return Err(memory_contract_error());
-            }
-            let record_epoch_unix_ms = memory.record_epoch_unix_ms;
-            let pinned_message_count = memory.pinned_message_count;
-            let scope = canonical_scope(run)?;
-            run.checkpoint.memory = Some(StoryAgentMemoryCheckpoint {
-                scope,
-                record_epoch_unix_ms,
-                pinned_message_count,
-                synced_message_count: 0,
-                synced_digest: String::new(),
-                thread_created: false,
-                sync_in_flight_end: None,
-            });
-        }
-        let memory = run
-            .checkpoint
-            .memory
-            .as_ref()
-            .ok_or_else(memory_contract_error)?;
         validate_checkpoint(run, owner_user_id, memory)?;
         run.uses_cloud_memory = true;
         return Ok(());
@@ -235,7 +313,18 @@ pub(super) fn bind_memory(
     {
         return Err(memory_contract_error());
     }
-    let scope = canonical_scope(run)?;
+    let scope = StoryAgentMemoryScope {
+        tenant_hash: run.owner_hash.clone(),
+        source_id: MEMORY_SOURCE_ID.into(),
+        project_id: run.project_id.clone(),
+        thread_id: format!(
+            "client-agent:story:{}:{}",
+            run.project_id, run.checkpoint.id
+        ),
+        subject_id: format!("agent:story-studio:{}", run.project_id),
+        run_id: run.checkpoint.id.clone(),
+        runtime_scope: run.checkpoint.scope.clone(),
+    };
     run.checkpoint.memory = Some(StoryAgentMemoryCheckpoint {
         scope,
         record_epoch_unix_ms: now_unix_ms,
@@ -276,7 +365,7 @@ pub(super) fn memory_records(
                 &memory.scope,
                 memory.record_epoch_unix_ms,
                 index,
-                &run.checkpoint.messages[index],
+                run.checkpoint.messages.as_slice(),
             )
         })
         .collect()
@@ -319,12 +408,12 @@ pub(super) fn assemble_memory_input(
         if index >= memory.synced_message_count {
             return Err(memory_contract_error());
         }
-        let message = run
-            .checkpoint
-            .messages
-            .get(index)
-            .ok_or_else(memory_contract_error)?;
-        let expected = memory_record(&memory.scope, memory.record_epoch_unix_ms, index, message)?;
+        let expected = memory_record(
+            &memory.scope,
+            memory.record_epoch_unix_ms,
+            index,
+            run.checkpoint.messages.as_slice(),
+        )?;
         if !record_matches_hashed_tenant(record, &expected, &memory.scope)
             || !selected.insert(index)
         {
@@ -378,9 +467,12 @@ fn validate_checkpoint(
     validate_scope(&memory.scope, owner_user_id)?;
     if memory.scope.run_id != run.checkpoint.id
         || memory.scope.runtime_scope != run.checkpoint.scope
-        || memory.scope.thread_id != STORY_AGENT_THREAD_ID
-        || memory.scope.subject_id != STORY_AGENT_SUBJECT_ID
-        || memory.scope.project_subject_id != format!("project:{}", run.project_id)
+        || memory.scope.thread_id
+            != format!(
+                "client-agent:story:{}:{}",
+                run.project_id, run.checkpoint.id
+            )
+        || memory.scope.subject_id != format!("client-agent:story:{}", run.project_id)
         || memory.pinned_message_count == 0
         || memory.pinned_message_count > run.checkpoint.messages.len()
         || memory.synced_message_count > run.checkpoint.messages.len()
@@ -427,10 +519,13 @@ fn validate_scope(scope: &StoryAgentMemoryScope, owner_identity: &str) -> Result
     };
     if scope.tenant_hash != owner_hash
         || scope.source_id != MEMORY_SOURCE_ID
-        || scope.thread_id != STORY_AGENT_THREAD_ID
-        || scope.subject_id != STORY_AGENT_SUBJECT_ID
-        || !scope.project_subject_id.starts_with("project:")
-        || scope.project_subject_id.len() <= "project:".len()
+        || scope.project_id.trim().is_empty()
+        || scope.project_id.chars().any(char::is_control)
+        || scope.thread_id
+            != format!("client-agent:story:{}:{}", scope.project_id, scope.run_id)
+        || scope.subject_id != format!("agent:story-studio:{}", scope.project_id)
+        || scope.thread_id.trim().is_empty()
+        || scope.subject_id.trim().is_empty()
         || scope.run_id.trim().is_empty()
         || scope.runtime_scope.trim().is_empty()
     {
@@ -443,8 +538,9 @@ fn memory_record(
     scope: &StoryAgentMemoryScope,
     record_epoch_unix_ms: u64,
     index: usize,
-    message: &StoryAgentMessage,
+    messages: &[StoryAgentMessage],
 ) -> Result<UpsertRecordInput, String> {
+    let message = messages.get(index).ok_or_else(memory_contract_error)?;
     let mut payload = Map::new();
     if !message.tool_calls.is_empty() {
         payload.insert(
@@ -477,32 +573,42 @@ fn memory_record(
             Value::from(index as u64),
         ),
         (
-            "memory_project_id".into(),
-            Value::String(scope.project_subject_id.clone()),
-        ),
-        (
-            "agent_id".into(),
-            Value::String(
-                STORY_AGENT_SUBJECT_ID
-                    .strip_prefix("agent:")
-                    .unwrap_or(STORY_AGENT_SUBJECT_ID)
-                    .into(),
-            ),
-        ),
-        ("thread_kind".into(), Value::String("story_agent".into())),
-        (
-            "project_id".into(),
-            Value::String(
-                scope
-                    .project_subject_id
-                    .strip_prefix("project:")
-                    .unwrap_or(scope.project_subject_id.as_str())
-                    .into(),
-            ),
+            "conversation_turn_id".into(),
+            Value::String(conversation_turn_id(scope, messages, index)?),
         ),
     ]);
     if let Some(call_id) = &message.tool_call_id {
         metadata.insert("tool_call_id".into(), Value::String(call_id.clone()));
+        let (assistant_index, assistant) = messages[..index]
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, candidate)| {
+                candidate.role == StoryAgentMessageRole::Assistant
+                    && candidate.tool_calls.iter().any(|call| &call.id == call_id)
+            })
+            .ok_or_else(memory_contract_error)?;
+        let ordinal = assistant
+            .tool_calls
+            .iter()
+            .position(|call| &call.id == call_id)
+            .ok_or_else(memory_contract_error)?;
+        metadata.insert(
+            "assistant_record_id".into(),
+            Value::String(format!(
+                "client-agent:{}:message:{assistant_index}",
+                scope.run_id
+            )),
+        );
+        metadata.insert(
+            "tool_exchange_id".into(),
+            Value::String(format!("story:{}:tool:{assistant_index}", scope.run_id)),
+        );
+        metadata.insert("tool_result_ordinal".into(), Value::from(ordinal as u64));
+        metadata.insert(
+            "tool_result_count".into(),
+            Value::from(assistant.tool_calls.len() as u64),
+        );
     }
     if let Some(output) = &message.response_output_json {
         metadata.insert(
@@ -548,19 +654,78 @@ fn memory_record(
     })
 }
 
-fn canonical_scope(run: &StoryPlanningRun) -> Result<StoryAgentMemoryScope, String> {
-    if run.project_id.trim().is_empty() || run.checkpoint.scope.trim().is_empty() {
+fn enrich_source_unit_records(
+    records: &mut [UpsertRecordInput],
+    runtime_identity_revision: &str,
+) -> Result<(), String> {
+    if runtime_identity_revision.trim().is_empty() {
         return Err(memory_contract_error());
     }
-    Ok(StoryAgentMemoryScope {
-        tenant_hash: run.owner_hash.clone(),
-        source_id: MEMORY_SOURCE_ID.into(),
-        thread_id: STORY_AGENT_THREAD_ID.into(),
-        subject_id: STORY_AGENT_SUBJECT_ID.into(),
-        project_subject_id: format!("project:{}", run.project_id),
-        run_id: run.checkpoint.id.clone(),
-        runtime_scope: run.checkpoint.scope.clone(),
-    })
+    for record in records {
+        let digest_input = json!({
+            "id": record.id,
+            "role": record.role,
+            "record_type": record.record_type,
+            "content": record.content,
+            "structured_payload": record.structured_payload,
+        });
+        let digest = serde_json::to_vec(&digest_input).map_err(|_| memory_contract_error())?;
+        let metadata = record
+            .metadata
+            .get_or_insert_with(|| Value::Object(Map::new()))
+            .as_object_mut()
+            .ok_or_else(memory_contract_error)?;
+        metadata.insert(
+            "project_context_assertion_id".into(),
+            Value::String(runtime_identity_revision.to_string()),
+        );
+        metadata.insert(
+            "content_identity_digest".into(),
+            Value::String(format!("sha256:{:x}", Sha256::digest(digest))),
+        );
+    }
+    Ok(())
+}
+
+pub(super) fn current_memory_query(run: &StoryPlanningRun) -> Result<(String, String), String> {
+    let memory = run
+        .checkpoint
+        .memory
+        .as_ref()
+        .ok_or_else(memory_contract_error)?;
+    let (index, message) = run
+        .checkpoint
+        .messages
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, message)| {
+            message.role == StoryAgentMessageRole::User && !message.content.trim().is_empty()
+        })
+        .ok_or_else(memory_contract_error)?;
+    Ok((
+        message.content.clone(),
+        conversation_turn_id(
+            &memory.scope,
+            run.checkpoint.messages.as_slice(),
+            index,
+        )?,
+    ))
+}
+
+fn conversation_turn_id(
+    scope: &StoryAgentMemoryScope,
+    messages: &[StoryAgentMessage],
+    index: usize,
+) -> Result<String, String> {
+    if index >= messages.len() {
+        return Err(memory_contract_error());
+    }
+    let turn_start = messages[..=index]
+        .iter()
+        .rposition(|message| message.role == StoryAgentMessageRole::User)
+        .unwrap_or(index);
+    Ok(format!("story:{}:turn:{turn_start}", scope.run_id))
 }
 
 fn record_matches(
@@ -685,7 +850,7 @@ fn memory_base_url() -> Result<String, String> {
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
-fn memory_transport_error(_error: String) -> String {
+fn memory_transport_error(_error: impl std::fmt::Display) -> String {
     "剧情规划历史服务暂时不可用，检查点已保留，可稍后恢复。".into()
 }
 

@@ -32,7 +32,26 @@ struct MemoryRecordEnvelope: Decodable, Sendable { let item: MemoryRecordDTO? }
 struct MemorySyncRequest: Encodable, Sendable {
     let tenant_id: String
     let source_id: String
+    let project_partition_key: String
+    let runtime_context_assertion: String
     let records: [MemoryRecordInput]
+}
+struct MemoryRuntimeAssertionRequest: Encodable, Sendable {
+    let runtime_kind: String
+    let project_id: String?
+    let runtime_id: String
+    let operation: String
+    let source_id: String
+    let canonical_agent_subject_id: String
+    let thread_id: String
+}
+struct MemoryRuntimeAssertionResponse: Decodable, Sendable {
+    let runtime_context_assertion: String
+    let source_id: String
+    let canonical_agent_subject_id: String
+    let thread_id: String
+    let project_partition_key: String
+    let runtime_identity_revision: String
 }
 struct MemorySyncResponse: Decodable, Sendable {
     let thread_id: String

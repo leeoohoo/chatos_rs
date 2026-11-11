@@ -8,6 +8,7 @@ description: Operate the Agent-level ChatOS communication layer: read all unread
 This Skill belongs to the current Agent, not to a room:
 
 - On every start or retry, call `chat_read_all_unread` to inspect unread messages from all group and direct conversations.
+- After every tool, inspect the latest `chatos-runtime-state` system snapshot. When `inbox.has_new_messages` is true or `inbox.status` is unavailable, call `chat_read_all_unread` before continuing. This is shared across the current Agent's conversations; new messages do not start a second communication layer.
 - Use only `chat_send_message` to send. To reply, pass the source `reply_to_message_ref`; ChatOS resolves its conversation internally.
 - To contact another Agent proactively, pass `target_agent_ref`; ChatOS creates or reuses the direct conversation and wakes that Agent.
 - To post proactively to a project team, pass `team_ref`. Never request or manage a `conversation_ref`.

@@ -18,12 +18,12 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         let markdownBytes: Int
         let codeUTF16Count: Int
         let timelineItemCount: Int
-        let nativeTimelineRows: Int
-        let nativeTimelineInitialConstructedRows: Int
-        let nativeTimelineScrolledConstructedRows: Int
+        let lazyTimelineRows: Int
+        let lazyTimelineInitialConstructedRows: Int
+        let lazyTimelineScrolledConstructedRows: Int
         let timeline1000BuildMilliseconds: Double
-        let nativeTimelineInitialLayoutMilliseconds: Double
-        let nativeTimelineScrollLayoutMilliseconds: Double
+        let lazyTimelineInitialLayoutMilliseconds: Double
+        let lazyTimelineScrollLayoutMilliseconds: Double
         let todo100ProjectionMilliseconds: Double
         let megabyteMarkdownParseMilliseconds: Double
         let megabyteMarkdownBlockCount: Int
@@ -38,6 +38,14 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         let mainActorMaximumGapMilliseconds: Double
         let mainActorMaximumGapPhase: String
         let concurrentWallMilliseconds: Double
+    }
+
+    private struct LazyTimelineItem: Identifiable, Equatable {
+        let id: String
+    }
+
+    private final class LazyTimelineMeasurement {
+        var constructedIDs: Set<String> = []
     }
 
     func testFixedCompositeScenario() async throws {
@@ -114,8 +122,8 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         )
         let todoMilliseconds = Self.milliseconds(since: todoStart)
 
-        probe.phase = "native_timeline"
-        let nativeTimeline = try await measureNativeTimeline(
+        probe.phase = "lazy_timeline"
+        let lazyTimeline = try await measureLazyTimeline(
             rows: 1_000,
             window: timelineWindow
         )
@@ -131,14 +139,14 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
 
         XCTAssertEqual(timelineItems.count, 2_000)
         XCTAssertEqual(todoPresentations.count, 100)
-        XCTAssertEqual(nativeTimeline.rows, 1_000)
-        XCTAssertGreaterThan(nativeTimeline.initialConstructedRows, 0)
-        XCTAssertLessThan(nativeTimeline.initialConstructedRows, 30)
+        XCTAssertEqual(lazyTimeline.rows, 1_000)
+        XCTAssertGreaterThan(lazyTimeline.initialConstructedRows, 0)
+        XCTAssertLessThan(lazyTimeline.initialConstructedRows, 30)
         XCTAssertGreaterThan(
-            nativeTimeline.scrolledConstructedRows,
-            nativeTimeline.initialConstructedRows
+            lazyTimeline.scrolledConstructedRows,
+            lazyTimeline.initialConstructedRows
         )
-        XCTAssertLessThan(nativeTimeline.scrolledConstructedRows, 60)
+        XCTAssertLessThan(lazyTimeline.scrolledConstructedRows, 60)
         XCTAssertFalse(markdownBlockCount == 0)
         XCTAssertEqual(codeSpanCount, 0, "600k source must use responsive plain-text fallback")
         XCTAssertGreaterThan(probe.sampleCount, 0)
@@ -146,8 +154,8 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         // These are generous regression ceilings, not claims about typical latency. The
         // multi-round runner preserves raw samples and applies the tighter comparison gate.
         XCTAssertLessThan(timelineMilliseconds, 100)
-        XCTAssertLessThan(nativeTimeline.initialLayoutMilliseconds, 100)
-        XCTAssertLessThan(nativeTimeline.scrollLayoutMilliseconds, 100)
+        XCTAssertLessThan(lazyTimeline.initialLayoutMilliseconds, 100)
+        XCTAssertLessThan(lazyTimeline.scrollLayoutMilliseconds, 100)
         XCTAssertLessThan(todoMilliseconds, 100)
         XCTAssertLessThan(codeMilliseconds, 100)
         XCTAssertLessThan(markdownMilliseconds, 2_000)
@@ -165,12 +173,12 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
             markdownBytes: markdown.utf8.count,
             codeUTF16Count: code.utf16.count,
             timelineItemCount: timelineItems.count,
-            nativeTimelineRows: nativeTimeline.rows,
-            nativeTimelineInitialConstructedRows: nativeTimeline.initialConstructedRows,
-            nativeTimelineScrolledConstructedRows: nativeTimeline.scrolledConstructedRows,
+            lazyTimelineRows: lazyTimeline.rows,
+            lazyTimelineInitialConstructedRows: lazyTimeline.initialConstructedRows,
+            lazyTimelineScrolledConstructedRows: lazyTimeline.scrolledConstructedRows,
             timeline1000BuildMilliseconds: timelineMilliseconds,
-            nativeTimelineInitialLayoutMilliseconds: nativeTimeline.initialLayoutMilliseconds,
-            nativeTimelineScrollLayoutMilliseconds: nativeTimeline.scrollLayoutMilliseconds,
+            lazyTimelineInitialLayoutMilliseconds: lazyTimeline.initialLayoutMilliseconds,
+            lazyTimelineScrollLayoutMilliseconds: lazyTimeline.scrollLayoutMilliseconds,
             todo100ProjectionMilliseconds: todoMilliseconds,
             megabyteMarkdownParseMilliseconds: markdownMilliseconds,
             megabyteMarkdownBlockCount: markdownBlockCount,
@@ -394,7 +402,7 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         }
     }
 
-    private func measureNativeTimeline(
+    private func measureLazyTimeline(
         rows: Int,
         window: NSWindow
     ) async throws -> (
@@ -404,60 +412,58 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         initialLayoutMilliseconds: Double,
         scrollLayoutMilliseconds: Double
     ) {
-        let coordinator = AgentChatTimelineCoordinator()
-        let scrollView = coordinator.makeScrollView()
-        scrollView.frame = window.contentView?.bounds
-            ?? NSRect(x: 0, y: 0, width: 900, height: 600)
-        window.contentView = scrollView
-        defer {
-            coordinator.stop()
-        }
-
-        var constructedIDs = Set<String>()
-        let entries = (0..<rows).map { index in
-            AgentChatTimelineEntry(id: "scenario-row-\(index)", value: index) {
-                constructedIDs.insert("scenario-row-\(index)")
-                return AnyView(Text("Scenario row \(index)").frame(height: 100))
-            }
-        }
-        let input = AgentChatNativeTimeline(
-            entries: entries,
-            rowState: .init(),
-            fontScale: 1,
-            colorScheme: .light,
+        let measurement = LazyTimelineMeasurement()
+        let items = (0..<rows).map { LazyTimelineItem(id: "scenario-row-\($0)") }
+        let hosting = NSHostingView(rootView: AgentChatTimelineView(
+            items: items,
             isInitialContentReady: true,
-            scrollToLatestRequest: 0
-        )
+            hasOlderItems: false,
+            isLoadingOlderItems: false,
+            scrollToLatestRequest: 0,
+            loadOlderItems: { nil },
+            rowContent: { item in
+                let index = item.id.dropFirst("scenario-row-".count)
+                return Text("Scenario row \(index)")
+                    .frame(height: 100)
+                    .onAppear { measurement.constructedIDs.insert(item.id) }
+            },
+            emptyContent: { EmptyView() }
+        ))
+        hosting.frame = window.contentView?.bounds
+            ?? NSRect(x: 0, y: 0, width: 900, height: 600)
+        window.contentView = hosting
 
         let initialStart = DispatchTime.now().uptimeNanoseconds
-        coordinator.update(input)
-        try await settleNativeTimeline(coordinator)
+        try await settleLazyTimeline(hosting)
         let initialMilliseconds = Self.milliseconds(since: initialStart)
-        let initialConstructedRows = constructedIDs.count
+        let initialConstructedRows = measurement.constructedIDs.count
 
+        let scrollView = try XCTUnwrap(findScrollView(in: hosting))
         let scrollStart = DispatchTime.now().uptimeNanoseconds
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: 8_000))
         scrollView.reflectScrolledClipView(scrollView.contentView)
-        try await settleNativeTimeline(coordinator)
+        try await settleLazyTimeline(hosting)
         let scrollMilliseconds = Self.milliseconds(since: scrollStart)
 
         return (
-            rows: coordinator.table.numberOfRows,
+            rows: items.count,
             initialConstructedRows: initialConstructedRows,
-            scrolledConstructedRows: constructedIDs.count,
+            scrolledConstructedRows: measurement.constructedIDs.count,
             initialLayoutMilliseconds: initialMilliseconds,
             scrollLayoutMilliseconds: scrollMilliseconds
         )
     }
 
-    private func settleNativeTimeline(
-        _ coordinator: AgentChatTimelineCoordinator
-    ) async throws {
+    private func settleLazyTimeline(_ hosting: NSView) async throws {
         for _ in 0..<3 {
-            coordinator.scrollView?.layoutSubtreeIfNeeded()
-            coordinator.table.layoutSubtreeIfNeeded()
+            hosting.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(2))
         }
+    }
+
+    private func findScrollView(in view: NSView) -> NSScrollView? {
+        if let scrollView = view as? NSScrollView { return scrollView }
+        return view.subviews.lazy.compactMap { self.findScrollView(in: $0) }.first
     }
 
     nonisolated private static func milliseconds(since start: UInt64) -> Double {

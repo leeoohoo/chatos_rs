@@ -51,7 +51,9 @@ pub(super) fn main_chat_scoped_tools(mut tools: Vec<Value>, input: &Value) -> Ve
         // Remove Rust-owned Main Chat helpers as well, so task/project/skill tools are absent
         // from the model request instead of relying on prompt instructions to avoid them.
         tools.retain(|tool| {
-            tool_name(tool).is_some_and(|name| name.starts_with("plugin_installer_"))
+            tool_name(tool).is_some_and(|name| {
+                name.starts_with("plugin_installer_") || name == "local_attachment_read"
+            })
         });
         return tools;
     }

@@ -49,6 +49,19 @@ struct NativeModelSelectionPolicyTests {
         #expect(model.isSelectable(for: .taskCreation))
     }
 
+    @Test
+    func nativeRuntimeAndAgentBuilderRejectMediaModels() throws {
+        let candidates = [model("gpt-6-luna"), model("gpt-image-2"), model("MiniMax-H3")]
+        #expect(LocalAgentBuilderService.modelOptions(from: candidates).map(\.id) == ["gpt-6-luna"])
+        for name in ["gpt-image-2", "MiniMax-H3"] {
+            let data = try JSONSerialization.data(withJSONObject: ["id": name, "name": name, "provider": "gpt",
+                "model": name, "enabled": true, "task_enabled": true, "has_api_key": true])
+            let model = try JSONDecoder().decode(GatewayModelConfigDTO.self, from: data)
+            #expect(!model.isSelectable(for: .general))
+            #expect(!model.isSelectable(for: .taskCreation))
+        }
+    }
+
     private func model(
         _ id: String, enabled: Bool = true, taskEnabled: Bool = true, hasAPIKey: Bool = true
     ) -> LocalConnectorModelConfig {
@@ -62,6 +75,10 @@ struct NativeModelSelectionPolicyTests {
             ownerUserID: "owner-1",
             modelConfigRef: "general",
             modelConfigRevision: "revision-1",
+            modelCapabilityRevision: "capability-v1",
+            contextWindowTokens: 200_000,
+            outputReserveTokens: 30_000,
+            protocolOverheadEstimatorID: "responses-json-v1",
             credentialRef: "env:GENERAL",
             baseURL: baseURL,
             model: "test-model",

@@ -31,11 +31,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         )
         .route(
             "/api/memory-engine/v1/admin/job-policies/{job_type}",
-            get(admin_api::get_job_policy).put(admin_api::upsert_job_policy),
-        )
-        .route(
-            "/api/memory-engine/v1/admin/job-policies/{job_type}/generate-prompt",
-            post(admin_api::generate_job_policy_prompt),
+            get(admin_api::get_job_policy),
         )
         .route(
             "/api/memory-engine/v1/admin/job-runs",
@@ -64,5 +60,57 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route(
             "/api/memory-engine/v1/admin/sources/{source_id}/rotate-key",
             post(sources_api::admin_rotate_source_secret),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/reliability/migrations",
+            get(admin_api::list_migration_runs),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/reliability/dashboard",
+            get(admin_api::reliability_dashboard),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/reliability/rebuild-backlog",
+            get(admin_api::list_rebuild_backlog),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/reliability/compose-dry-run",
+            post(admin_api::compose_dry_run),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/reliability/queues",
+            get(admin_api::list_reliability_queues),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/reliability/operator-actions",
+            get(admin_api::list_operator_actions),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/reliability/rebuild-backlog/rearm",
+            post(admin_api::rearm_rebuild_backlog),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/reliability/resummarize",
+            post(admin_api::resummarize_covered_range),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/reliability/retire-summary",
+            post(admin_api::retire_summary),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/reliability/restore-pending",
+            post(admin_api::restore_record_pending),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/reliability/queues/rearm",
+            post(admin_api::rearm_reliability_queue),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/reliability/records/{record_id}/coverage",
+            get(admin_api::record_coverage),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/reliability/outputs/{output_kind}/{output_id}/lineage",
+            get(admin_api::output_lineage),
         )
 }

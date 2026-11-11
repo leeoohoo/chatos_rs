@@ -21,6 +21,7 @@ pub struct QueueReplayRequest {
     pub item_id: String,
     pub tenant_id: Option<String>,
     pub source_id: Option<String>,
+    pub project_partition_key: Option<String>,
     pub version: Option<i64>,
     pub event_type: Option<String>,
     pub reason: String,
@@ -34,6 +35,7 @@ pub struct QueueReplayResponse {
     pub item_id: String,
     pub tenant_id: Option<String>,
     pub source_id: Option<String>,
+    pub project_partition_key: Option<String>,
     pub version: Option<i64>,
     pub event_type: Option<String>,
     pub event_enqueued: bool,
@@ -79,6 +81,7 @@ pub async fn replay(
                 item_id,
                 input.tenant_id.as_deref(),
                 input.source_id.as_deref(),
+                input.project_partition_key.as_deref(),
                 input.version,
                 input.event_type.as_deref(),
                 reason,
@@ -120,6 +123,7 @@ pub async fn replay(
                 "item_id": item_id,
                 "tenant_id": replay.tenant_id,
                 "source_id": replay.source_id,
+                "project_partition_key": replay.project_partition_key,
                 "version": replay.version,
                 "event_type": replay.event_type,
                 "reason": reason,
@@ -144,7 +148,7 @@ fn required_identity_text(
         .ok_or_else(|| format!("{field} is required and must contain at most {max_len} characters"))
 }
 
-fn required_text(values: &BTreeMap<String, Value>, key: &str) -> Result<String, String> {
+pub(crate) fn required_text(values: &BTreeMap<String, Value>, key: &str) -> Result<String, String> {
     values
         .get(key)
         .and_then(Value::as_str)

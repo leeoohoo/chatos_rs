@@ -24,6 +24,7 @@ pub(super) async fn send_text_request(
     user_prompt: &str,
     requested_max_tokens: Option<i64>,
     effective_temperature: f64,
+    response_format: Option<&Value>,
 ) -> Result<String, String> {
     request_responses(
         client,
@@ -32,6 +33,7 @@ pub(super) async fn send_text_request(
         user_prompt,
         requested_max_tokens,
         effective_temperature,
+        response_format,
     )
     .await
 }
@@ -43,6 +45,7 @@ async fn request_responses(
     user_prompt: &str,
     requested_max_tokens: Option<i64>,
     effective_temperature: f64,
+    response_format: Option<&Value>,
 ) -> Result<String, String> {
     let endpoint = build_responses_endpoint(client.base_url.as_str());
     let body = build_responses_body(
@@ -54,6 +57,7 @@ async fn request_responses(
         false,
         true,
         false,
+        response_format,
     );
 
     send_stream_request(client, api_key, endpoint.as_str(), &body).await
@@ -69,6 +73,7 @@ fn build_responses_body(
     no_system_messages: bool,
     input_as_list: bool,
     disable_thinking: bool,
+    response_format: Option<&Value>,
 ) -> Value {
     let wrapped_user_prompt = if no_system_messages && !system_prompt.trim().is_empty() {
         format!(
@@ -95,6 +100,9 @@ fn build_responses_body(
     }
     if disable_thinking {
         body["thinking"] = json!({ "type": "disabled" });
+    }
+    if let Some(response_format) = response_format {
+        body["text"] = json!({"format": response_format});
     }
     body
 }

@@ -15,7 +15,8 @@ pub async fn get_summary_by_id(
     summary_id: &str,
 ) -> Result<Option<EngineSummary>, String> {
     sqlx::query_scalar::<_, Json<serde_json::Value>>(
-        "SELECT data FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+        "SELECT data FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND id=$3 \
+         AND recall_eligible",
     )
     .bind(tenant_id)
     .bind(source_id)
@@ -66,6 +67,43 @@ pub async fn list_latest_thread_summaries_at_level(
         .push_bind(limit.max(1));
     fetch(db, q).await
 }
+
+pub async fn list_latest_thread_summary_frontier(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    summary_type: &str,
+    limit: i64,
+) -> Result<Vec<EngineSummary>, String> {
+    let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT summary.data FROM engine_summaries summary \
+         WHERE summary.tenant_id=$1 AND summary.source_id=$2 AND summary.thread_id=$3 \
+           AND summary.summary_type=$4 AND summary.status='done' AND summary.recall_eligible \
+           AND NOT EXISTS( \
+             SELECT 1 FROM engine_memory_derivation_edges edge \
+             JOIN engine_summaries output \
+               ON output.tenant_id=edge.tenant_id AND output.source_id=edge.source_id \
+              AND output.id=edge.output_id \
+             WHERE edge.tenant_id=summary.tenant_id AND edge.source_id=summary.source_id \
+               AND edge.status='active' AND edge.input_kind='thread_summary' \
+               AND edge.input_id=summary.id AND edge.output_kind='thread_summary' \
+               AND output.thread_id=summary.thread_id AND output.summary_type=$4 \
+               AND output.status='done' AND output.recall_eligible \
+           ) \
+         ORDER BY summary.level DESC,summary.created_at DESC LIMIT $5",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(summary_type)
+    .bind(limit.max(1))
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    decode_summaries(rows)
+}
+
 pub async fn list_latest_thread_summaries_at_level_for_project(
     db: &Db,
     tenant_id: &str,
@@ -85,12 +123,8 @@ pub async fn list_latest_thread_summaries_at_level_for_project(
         Some("done"),
         Some(level.max(0)),
     );
-    if let Some(project_subject_id) = project_subject_id {
-        q.push(" AND BTRIM(COALESCE(data #>> '{metadata,project_subject_id}',''))=")
-            .push_bind(project_subject_id);
-    } else {
-        q.push(" AND BTRIM(COALESCE(data #>> '{metadata,project_subject_id}',''))=''");
-    }
+    q.push(" AND project_partition_key=")
+        .push_bind(project_subject_id.unwrap_or("__none__"));
     q.push(" ORDER BY created_at DESC LIMIT ")
         .push_bind(limit.max(1));
     fetch(db, q).await

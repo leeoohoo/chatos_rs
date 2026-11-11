@@ -1,17 +1,14 @@
 use crate::authentication::{
     model_credential_environment_variable, AuthenticationManager, GatewayAgentCapability,
-    GatewayModelConfig, GatewayNativeAgentRuntimeSettings,
+    GatewayModelConfig,
 };
 use crate::host_lifecycle::transport::{request, ManagedHost};
 use crate::{
     agent_plugin_runtime::capability_broker_tool_schemas,
     attachment_tool_worker::{
-        attachment_read_tool_schema, project_dashboard_tool_schemas, team_asset_tool_schemas,
-        team_chat_read_tool_schemas, team_chat_write_tool_schemas, todo_execution_tool_schemas,
-        todo_planning_read_tool_schemas, todo_planning_write_tool_schemas,
-    },
-    plugin_installer_tool_worker::{
-        plugin_installer_revision, plugin_installer_tool_schemas, PLUGIN_INSTALLER_INSTRUCTIONS,
+        attachment_read_tool_schema, team_asset_tool_schemas, team_chat_read_tool_schemas,
+        team_chat_write_tool_schemas, todo_execution_tool_schemas, todo_planning_read_tool_schemas,
+        todo_planning_write_tool_schemas,
     },
     terminal_tool_worker::{
         project_read_tool_schemas, project_write_tool_schemas, terminal_tool_schemas,
@@ -33,7 +30,7 @@ const MAIN_CHAT_PROFILE: &str = "main_chat";
 const TASK_EXECUTION_PROFILE: &str = "task_execution";
 const TASK_POLICY_PROFILE: &str = "task_policy_internal";
 const EXECUTION_AGENT_KEY: &str = "local_agent_execution_agent";
-const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-agent-plugin-skill-runtime-v24";
+const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-agent-plugin-skill-runtime-v22";
 const MAX_TASK_ITERATIONS: u32 = 600;
 
 const MAIN_CHAT_INSTRUCTIONS: &str = include_str!(
@@ -187,24 +184,6 @@ async fn persisted_capabilities_are_complete(host: &mut ManagedHost, owner_user_
     if !valid_main_chat_snapshot(&main, owner_user_id) {
         return false;
     }
-    let installer_revision = plugin_installer_revision(&main.capability_policy_revision);
-    let Ok(HostResult::CapabilityPolicySnapshot {
-        snapshot: installer,
-    }) = request(
-        host,
-        HostCommand::GetCapabilityPolicySnapshot(GetCapabilityPolicySnapshotCommand {
-            owner_user_id: owner_user_id.to_owned(),
-            profile_key: MAIN_CHAT_PROFILE.into(),
-            capability_policy_revision: installer_revision,
-        }),
-    )
-    .await
-    else {
-        return false;
-    };
-    if !valid_plugin_installer_snapshot(&installer, owner_user_id) {
-        return false;
-    }
     for profile_key in [TASK_EXECUTION_PROFILE, TASK_POLICY_PROFILE] {
         let result = request(
             host,
@@ -230,23 +209,9 @@ async fn persisted_capabilities_are_complete(host: &mut ManagedHost, owner_user_
     true
 }
 
-fn valid_plugin_installer_snapshot(
-    snapshot: &LocalCapabilityPolicySnapshot,
-    owner_user_id: &str,
-) -> bool {
-    snapshot.owner_user_id == owner_user_id
-        && snapshot.profile_key == MAIN_CHAT_PROFILE
-        && snapshot
-            .capability_policy_revision
-            .starts_with("plugin-installer-")
-        && snapshot.instructions.as_deref() == Some(PLUGIN_INSTALLER_INSTRUCTIONS)
-        && snapshot.tools == plugin_installer_tool_schemas()
-}
-
 fn valid_main_chat_snapshot(snapshot: &LocalCapabilityPolicySnapshot, owner_user_id: &str) -> bool {
     let mut expected_tools = vec![attachment_read_tool_schema()];
     expected_tools.extend(team_asset_tool_schemas());
-    expected_tools.extend(project_dashboard_tool_schemas());
     expected_tools.extend(team_chat_read_tool_schemas());
     expected_tools.extend(team_chat_write_tool_schemas());
     expected_tools.extend(todo_planning_read_tool_schemas());
@@ -321,29 +286,13 @@ async fn refresh_from_gateway(
         .iter()
         .map(|model| model.id.clone())
         .collect::<Vec<_>>();
-    let (resolved, capability, managed_runtime) = tokio::join!(
+    let (resolved, capability) = tokio::join!(
         authentication.resolved_models_for_owner(owner_user_id, model_config_refs),
         authentication.local_agent_capability_for_owner(owner_user_id),
-        authentication.managed_runtime_config_for_owner(owner_user_id),
     );
     let resolved = resolved.map_err(|error| error.message)?;
     let capability = capability.map_err(|error| error.message)?;
-    let managed_runtime = managed_runtime.map_err(|error| error.message)?;
     validate_capability(&capability, owner_user_id)?;
-    let managed_agent_runtime = managed_runtime
-        .native_agent_runtime_settings
-        .as_ref()
-        .ok_or_else(|| "账号缺少本地 Agent 运行时配置。".to_owned())?;
-    let responses_compaction_threshold =
-        managed_responses_compaction_threshold(managed_agent_runtime)?;
-    let task_max_iterations = managed_runtime
-        .local_task_execution_settings
-        .as_ref()
-        .map(|settings| settings.max_iterations)
-        .unwrap_or(MAX_TASK_ITERATIONS as usize);
-    if !(2..=10_000).contains(&task_max_iterations) {
-        return Err("本地 Task 运行时上限超出 Windows 支持范围。".into());
-    }
 
     let mut environment = persisted.credential_environment.clone();
     let mut refreshed_variables = BTreeSet::new();
@@ -355,12 +304,7 @@ async fn refresh_from_gateway(
             return Err("模型目录刷新顺序不一致。".into());
         }
         let mut option = model_option_from_gateway(&resolved);
-        let (snapshot, credential, variable) = resolved_snapshot(
-            resolved,
-            owner_user_id,
-            managed_agent_runtime,
-            responses_compaction_threshold,
-        )?;
+        let (snapshot, credential, variable) = resolved_snapshot(resolved, owner_user_id)?;
         option.model_config_revision = snapshot.model_config_revision.clone();
         if !refreshed_variables.insert(variable.clone()) {
             return Err("模型标识产生了重复的凭据环境变量。".into());
@@ -386,8 +330,6 @@ async fn refresh_from_gateway(
         owner_user_id,
         &capability.policy_revision,
         &task_enabled_refs,
-        u32::try_from(task_max_iterations)
-            .map_err(|_| "本地 Task 运行时上限超出 Windows 支持范围。")?,
     )
     .await?;
     Ok(RefreshedControlPlane {
@@ -422,8 +364,6 @@ fn validate_capability(
 fn resolved_snapshot(
     model: GatewayModelConfig,
     owner_user_id: &str,
-    managed_runtime: &GatewayNativeAgentRuntimeSettings,
-    responses_compaction_threshold: usize,
 ) -> Result<(LocalModelConfigSnapshot, String, String), String> {
     if model.owner_user_id != owner_user_id || !model.enabled {
         return Err("模型配置与当前账号不匹配。".into());
@@ -447,6 +387,23 @@ fn resolved_snapshot(
     let model_name = required("model", model.model)?;
     let provider = required("provider", model.provider)?;
     let model_config_ref = required("model_config_ref", model.id)?;
+    let model_capability_revision = model
+        .model_capability_revision
+        .and_then(non_empty)
+        .ok_or_else(|| "模型配置缺少 capability revision。".to_owned())?;
+    let context_window_tokens = model
+        .context_window_tokens
+        .and_then(|value| u64::try_from(value).ok())
+        .ok_or_else(|| "模型配置缺少有效的上下文窗口能力。".to_owned())?;
+    let output_reserve_tokens = model
+        .output_reserve_tokens
+        .and_then(|value| u64::try_from(value).ok())
+        .ok_or_else(|| "模型配置缺少有效的输出预留能力。".to_owned())?;
+    let protocol_overhead_estimator_id = model
+        .protocol_overhead_estimator_id
+        .and_then(non_empty)
+        .ok_or_else(|| "模型配置缺少协议开销估算器。".to_owned())?;
+    let tokenizer_id = model.tokenizer_id.and_then(non_empty);
     let variable = model_credential_environment_variable(&model_config_ref);
     let revision = model_revision(
         &model_config_ref,
@@ -456,16 +413,24 @@ fn resolved_snapshot(
         model.task_thinking_level.as_deref(),
         model.temperature,
         model.max_output_tokens,
+        &model_capability_revision,
+        context_window_tokens,
+        output_reserve_tokens,
+        &protocol_overhead_estimator_id,
+        tokenizer_id.as_deref(),
         model.supports_images,
         model.supports_responses,
-        managed_runtime.maximum_request_retries,
-        responses_compaction_threshold,
     );
     Ok((
         LocalModelConfigSnapshot {
             owner_user_id: owner_user_id.to_owned(),
             model_config_ref,
             model_config_revision: revision,
+            model_capability_revision,
+            context_window_tokens,
+            output_reserve_tokens,
+            protocol_overhead_estimator_id,
+            tokenizer_id,
             credential_ref: format!("env:{variable}"),
             base_url,
             model: model_name,
@@ -478,14 +443,10 @@ fn resolved_snapshot(
             thinking_level: model.task_thinking_level.and_then(non_empty),
             include_prompt_cache_retention: false,
             request_body_limit_bytes: None,
-            max_transient_retries: Some(
-                u32::try_from(managed_runtime.maximum_request_retries)
-                    .map_err(|_| "本地 Agent 重试次数超出 Windows 支持范围。")?,
-            ),
-            responses_compaction_threshold: Some(
-                u64::try_from(responses_compaction_threshold)
-                    .map_err(|_| "本地 Agent 上下文窗口超出 Windows 支持范围。")?,
-            ),
+            max_transient_retries: None,
+            responses_compaction_threshold: model
+                .responses_compaction_threshold
+                .and_then(|value| u64::try_from(value).ok()),
             output_format: None,
         },
         credential,
@@ -675,11 +636,10 @@ async fn publish_capabilities(
     owner_user_id: &str,
     gateway_revision: &str,
     task_enabled_refs: &[String],
-    task_max_iterations: u32,
 ) -> Result<(), String> {
     let revision = capability_revision(gateway_revision);
     let task_policy = json!({
-        "max_iterations": task_max_iterations,
+        "max_iterations": MAX_TASK_ITERATIONS,
         "allowed_model_config_ids": task_enabled_refs,
         "enabled_builtin_kinds": ["CodeMaintainerRead", "CodeMaintainerWrite", "TerminalController"],
         "external_mcp_config_ids": [],
@@ -691,21 +651,12 @@ async fn publish_capabilities(
         LocalCapabilityPolicySnapshot {
             owner_user_id: owner_user_id.to_owned(),
             profile_key: MAIN_CHAT_PROFILE.into(),
-            capability_policy_revision: plugin_installer_revision(&revision),
-            instructions: Some(PLUGIN_INSTALLER_INSTRUCTIONS.into()),
-            prefixed_input_items: Vec::new(),
-            tools: plugin_installer_tool_schemas(),
-        },
-        LocalCapabilityPolicySnapshot {
-            owner_user_id: owner_user_id.to_owned(),
-            profile_key: MAIN_CHAT_PROFILE.into(),
             capability_policy_revision: revision.clone(),
             instructions: Some(strip_skill_frontmatter(MAIN_CHAT_INSTRUCTIONS)),
             prefixed_input_items: Vec::new(),
             tools: {
                 let mut tools = vec![attachment_read_tool_schema()];
                 tools.extend(team_asset_tool_schemas());
-                tools.extend(project_dashboard_tool_schemas());
                 tools.extend(team_chat_read_tool_schemas());
                 tools.extend(team_chat_write_tool_schemas());
                 tools.extend(todo_planning_read_tool_schemas());
@@ -763,10 +714,13 @@ fn model_revision(
     thinking_level: Option<&str>,
     temperature: Option<f64>,
     max_output_tokens: Option<i64>,
+    model_capability_revision: &str,
+    context_window_tokens: u64,
+    output_reserve_tokens: u64,
+    protocol_overhead_estimator_id: &str,
+    tokenizer_id: Option<&str>,
     supports_images: bool,
     supports_responses: bool,
-    maximum_request_retries: usize,
-    responses_compaction_threshold: usize,
 ) -> String {
     let fields = [
         id.to_owned(),
@@ -780,38 +734,17 @@ fn model_revision(
         max_output_tokens
             .map(|value| value.to_string())
             .unwrap_or_default(),
+        model_capability_revision.to_owned(),
+        context_window_tokens.to_string(),
+        output_reserve_tokens.to_string(),
+        protocol_overhead_estimator_id.to_owned(),
+        tokenizer_id.unwrap_or_default().to_owned(),
         supports_images.to_string(),
         supports_responses.to_string(),
-        maximum_request_retries.to_string(),
-        responses_compaction_threshold.to_string(),
     ];
     let mut digest = Sha256::new();
     digest.update(fields.join("\0").as_bytes());
     format!("sha256-{:x}", digest.finalize())
-}
-
-fn managed_responses_compaction_threshold(
-    settings: &GatewayNativeAgentRuntimeSettings,
-) -> Result<usize, String> {
-    if !(1..=10_000).contains(&settings.maximum_model_calls)
-        || settings.maximum_request_retries > 10
-        || !(5..=1_800).contains(&settings.request_timeout_seconds)
-        || !(10..=86_400).contains(&settings.run_timeout_seconds)
-        || !(1..=100).contains(&settings.maximum_no_progress_rounds)
-    {
-        return Err("本地 Agent 运行时配置超出 Windows 支持范围。".into());
-    }
-    if settings.context_window_tokens <= settings.output_reserve_tokens {
-        return Err("本地 Agent 上下文窗口必须大于输出预留。".into());
-    }
-    let threshold = settings.context_window_tokens - settings.output_reserve_tokens;
-    if !(2_048..=2_000_000).contains(&threshold) {
-        return Err("本地 Agent 上下文压缩阈值超出 Windows 支持范围。".into());
-    }
-    if settings.maximum_request_retries > 20 {
-        return Err("本地 Agent 重试次数超出 Windows 支持范围。".into());
-    }
-    Ok(threshold)
 }
 
 fn capability_revision(gateway_revision: &str) -> String {
@@ -883,37 +816,6 @@ mod tests {
             option.thinking_levels,
             ["low", "medium", "high", "xhigh", "max"]
         );
-    }
-
-    #[test]
-    fn managed_runtime_settings_resolve_the_host_compaction_threshold() {
-        let settings = GatewayNativeAgentRuntimeSettings {
-            maximum_model_calls: 725,
-            maximum_request_retries: 3,
-            request_timeout_seconds: 240,
-            run_timeout_seconds: 8_000,
-            maximum_no_progress_rounds: 9,
-            context_window_tokens: 1_500_000,
-            output_reserve_tokens: 40_000,
-        };
-        assert_eq!(
-            managed_responses_compaction_threshold(&settings),
-            Ok(1_460_000)
-        );
-    }
-
-    #[test]
-    fn managed_runtime_settings_reject_an_invalid_context_budget() {
-        let settings = GatewayNativeAgentRuntimeSettings {
-            maximum_model_calls: 600,
-            maximum_request_retries: 2,
-            request_timeout_seconds: 180,
-            run_timeout_seconds: 7_200,
-            maximum_no_progress_rounds: 8,
-            context_window_tokens: 30_000,
-            output_reserve_tokens: 30_000,
-        };
-        assert!(managed_responses_compaction_threshold(&settings).is_err());
     }
 
     #[test]

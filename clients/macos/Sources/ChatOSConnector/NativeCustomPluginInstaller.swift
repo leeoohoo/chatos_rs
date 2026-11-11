@@ -142,13 +142,15 @@ extension NativePluginInstaller {
             ]
             try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
                 .write(to: packageRoot.appendingPathComponent("chatos.plugin.json"), options: .atomic)
-            return try preparedCustomPlugin(
+            var prepared = try preparedCustomPlugin(
                 packageRoot: packageRoot,
                 temporaryRootURL: stagingRoot,
                 pluginIDSeed: "npm:\(input.packageName):\(input.componentKey)",
                 source: .customMCP,
                 sourceSummary: "npm \(input.packageName)@\(input.packageVersion) · \(input.binaryName) \(input.arguments.joined(separator: " ")) · \(input.accessProfile.rawValue)"
             )
+            prepared.record.customMCPDraft = draft
+            return prepared
         } catch {
             try? FileManager.default.removeItem(at: stagingRoot)
             throw error
@@ -182,13 +184,15 @@ extension NativePluginInstaller {
                     "导入目录必须至少包含一个有效 Skill、stdio MCP 或 Hook"
                 )
             }
-            return try preparedCustomPlugin(
+            var prepared = try preparedCustomPlugin(
                 packageRoot: packageRoot,
                 temporaryRootURL: stagingRoot,
                 pluginIDSeed: "folder:\(sourceURL.path):\(manifest.name)",
                 source: .localPlugin,
                 sourceSummary: "\(imported.formatName) · \(sourceURL.path)"
             )
+            prepared.record.sourceDraft = .init(kind: .localFolder, location: sourceURL.path)
+            return prepared
         } catch {
             try? FileManager.default.removeItem(at: stagingRoot)
             throw error
@@ -275,7 +279,7 @@ extension NativePluginInstaller {
                 )
                 source = .npmPlugin
                 summary = "npm Agent Plugin · \(input.location)@\(version)"
-                identity = "npm-plugin:\(input.location):\(version)"
+                identity = "npm-plugin:\(input.location)"
             }
 
             try removeSymbolicLinks(in: acquiredRoot)
@@ -295,13 +299,15 @@ extension NativePluginInstaller {
                 )
             }
             let suffix = input.subdirectory.map { " · \($0)" } ?? ""
-            return try preparedCustomPlugin(
+            var prepared = try preparedCustomPlugin(
                 packageRoot: packageRoot,
                 temporaryRootURL: stagingRoot,
                 pluginIDSeed: "\(identity):\(input.subdirectory ?? ""):\(manifest.name)",
                 source: source,
                 sourceSummary: "\(imported.formatName) · \(summary)\(suffix)"
             )
+            prepared.record.sourceDraft = draft
+            return prepared
         } catch {
             try? FileManager.default.removeItem(at: stagingRoot)
             throw error

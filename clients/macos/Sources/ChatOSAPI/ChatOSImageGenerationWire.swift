@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSModelCapabilities
 import Foundation
 
 extension ChatOSMediaGenerationService {
@@ -6,6 +7,9 @@ extension ChatOSMediaGenerationService {
         runtime: RuntimeModelConfig,
         request: ImageGenerationRequest
     ) throws -> HTTPRequest {
+        guard ModelWorkload.forModel(runtime.model) == .image else {
+            throw MediaGenerationClientError.unsupportedImageModel(runtime.model)
+        }
         guard let apiKey = runtime.apiKey?.trimmingCharacters(in: .whitespacesAndNewlines),
               let baseURLText = runtime.baseURL?.trimmingCharacters(in: .whitespacesAndNewlines) else {
             throw MediaGenerationClientError.invalidModelConfiguration

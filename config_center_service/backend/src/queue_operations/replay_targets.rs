@@ -14,6 +14,7 @@ struct MemoryEngineReplayResponse {
     tenant_id: String,
     source_id: String,
     item_id: String,
+    project_partition_key: Option<String>,
     version: i64,
     event_type: Option<String>,
     event_enqueued: bool,
@@ -38,12 +39,25 @@ pub(super) async fn replay_memory_engine(
     item_id: &str,
     tenant_id: Option<&str>,
     source_id: Option<&str>,
+    project_partition_key: Option<&str>,
     version: Option<i64>,
     event_type: Option<&str>,
     reason: &str,
 ) -> Result<QueueReplayResponse, String> {
     let tenant_id = required_identity_text(tenant_id, "tenant_id", 200)?;
     let source_id = required_identity_text(source_id, "source_id", 200)?;
+    let project_partition_key = project_partition_key
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if stream == "summary" && project_partition_key.is_none() {
+        return Err("summary replay requires project_partition_key".to_string());
+    }
+    if stream != "summary" && project_partition_key.is_some() {
+        return Err(format!(
+            "{stream} replay does not accept project_partition_key"
+        ));
+    }
     let version = version.filter(|value| *value > 0).ok_or_else(|| {
         "positive dead-letter version is required for Memory Engine replay".to_string()
     })?;
@@ -95,6 +109,7 @@ pub(super) async fn replay_memory_engine(
             "tenant_id": tenant_id,
             "source_id": source_id,
             "item_id": item_id,
+            "project_partition_key": project_partition_key,
             "version": version,
             "event_type": event_type,
             "reason": reason,
@@ -127,6 +142,7 @@ pub(super) async fn replay_memory_engine(
         || memory_replay.tenant_id != tenant_id
         || memory_replay.source_id != source_id
         || memory_replay.item_id != item_id
+        || memory_replay.project_partition_key != project_partition_key
         || memory_replay.version != version
         || memory_replay.event_type != event_type
     {
@@ -139,6 +155,7 @@ pub(super) async fn replay_memory_engine(
         item_id: item_id.to_string(),
         tenant_id: Some(tenant_id),
         source_id: Some(source_id),
+        project_partition_key,
         version: Some(version),
         event_type,
         event_enqueued: memory_replay.event_enqueued,
@@ -204,6 +221,7 @@ pub(super) async fn replay_plugin_management(
         item_id: marketplace_id.to_string(),
         tenant_id: None,
         source_id: None,
+        project_partition_key: None,
         version: Some(version),
         event_type: None,
         event_enqueued: true,

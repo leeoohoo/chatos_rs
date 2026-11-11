@@ -34,7 +34,7 @@ final class AgentGroupChatErrorPresentationTests: XCTestCase {
 
         XCTAssertEqual(viewModel.composerState.draftMessage.count, 200)
         XCTAssertEqual(workspaceUpdateCount, 0)
-        XCTAssertEqual(composerUpdateCount, 200)
+        XCTAssertEqual(composerUpdateCount, 1)
         withExtendedLifetime((workspaceCancellable, composerCancellable)) {}
     }
 
@@ -64,8 +64,30 @@ final class AgentGroupChatErrorPresentationTests: XCTestCase {
 
         XCTAssertEqual(viewModel.composerState.draftMessage.count, 200)
         XCTAssertEqual(timelineUpdateCount, 0)
-        XCTAssertEqual(composerUpdateCount, 200)
+        XCTAssertEqual(composerUpdateCount, 1)
         withExtendedLifetime((timelineCancellable, composerCancellable)) {}
+    }
+
+    func testComposerDraftPublishesMentionAndSendPresentationChanges() {
+        let state = AgentChatComposerState()
+        var updateCount = 0
+        let cancellable = state.objectWillChange.sink {
+            updateCount += 1
+        }
+
+        state.draftMessage = "ordinary"
+        state.draftMessage = "ordinary text"
+        XCTAssertEqual(updateCount, 1, "ordinary typing should stay inside NSTextView")
+
+        state.draftMessage = "@"
+        state.draftMessage = "@知"
+        state.draftMessage = "@知绘"
+        state.draftMessage = "@知绘 "
+        XCTAssertEqual(updateCount, 5, "mention suggestions must follow their active query")
+
+        state.draftMessage = ""
+        XCTAssertEqual(updateCount, 6, "clearing the draft must disable the send button")
+        withExtendedLifetime(cancellable) {}
     }
 
     func testSchedulerIssueIgnoresAnotherConversation() {

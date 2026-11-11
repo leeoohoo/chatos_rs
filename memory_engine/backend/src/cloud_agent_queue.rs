@@ -58,6 +58,7 @@ impl CloudAgentProfile for MemoryCloudAgentProfile {
             json!({
                 "summary_build": {
                     "text": result.text,
+                    "structured_payload": result.structured_payload,
                     "chunk_count": result.chunk_count,
                     "overflow_retry_count": result.overflow_retry_count,
                 },
@@ -87,11 +88,78 @@ impl CloudAgentProfile for MemoryCloudAgentProfile {
 }
 
 async fn refresh_domain_slots(state: &AppState, terminal_context: &Value) -> Result<(), String> {
-    refresh_summary_slot(state, terminal_context).await?;
+    refresh_resummarization_claim(state, terminal_context).await?;
+    refresh_partition_summary_claim(state, terminal_context).await?;
+    refresh_rollup_slot(state, terminal_context).await?;
     refresh_subject_scope_slot(state, terminal_context).await
 }
 
-async fn refresh_summary_slot(state: &AppState, terminal_context: &Value) -> Result<(), String> {
+async fn refresh_resummarization_claim(
+    state: &AppState,
+    terminal_context: &Value,
+) -> Result<(), String> {
+    if terminal_context.get("resume_kind").and_then(Value::as_str)
+        != Some(crate::services::memory_cloud_agent::THREAD_RESUMMARIZE_JOB_RESUME_KIND)
+    {
+        return Ok(());
+    }
+    let required = |key: &str| {
+        terminal_context
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| format!("resummarization Cloud Agent {key} is missing"))
+    };
+    let refreshed = crate::services::summary::refresh_covered_range_resummarize_claim(
+        &state.pool,
+        required("tenant_id")?,
+        required("source_id")?,
+        required("previous_summary_id")?,
+        required("job_run_id")?,
+        i64::try_from(state.config.ai_request_timeout_secs)
+            .unwrap_or(i64::MAX)
+            .saturating_mul(2)
+            .saturating_add(60),
+    )
+    .await?;
+    if !refreshed {
+        return Err("covered-range resummarization claim was lost before Cloud Agent execution"
+            .to_string());
+    }
+    Ok(())
+}
+
+async fn refresh_rollup_slot(state: &AppState, terminal_context: &Value) -> Result<(), String> {
+    if terminal_context.get("resume_kind").and_then(Value::as_str) != Some("rollup_job") {
+        return Ok(());
+    }
+    let required = |key: &str| {
+        terminal_context
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| format!("rollup Cloud Agent {key} is missing"))
+    };
+    let refreshed = crate::repositories::thread_partitions::refresh_rollup_claim(
+        &state.pool,
+        required("tenant_id")?,
+        required("source_id")?,
+        required("thread_id")?,
+        required("project_partition_key")?,
+        required("job_run_id")?,
+        state.config.rollup_lock_timeout_secs,
+    )
+    .await?;
+    if !refreshed {
+        return Err("rollup partition claim was lost before Cloud Agent execution".to_string());
+    }
+    Ok(())
+}
+
+async fn refresh_partition_summary_claim(
+    state: &AppState,
+    terminal_context: &Value,
+) -> Result<(), String> {
     let is_summary = matches!(
         terminal_context.get("resume_kind").and_then(Value::as_str),
         Some(crate::services::memory_cloud_agent::THREAD_SUMMARY_JOB_RESUME_KIND)
@@ -115,16 +183,21 @@ async fn refresh_summary_slot(state: &AppState, terminal_context: &Value) -> Res
         .get("job_run_id")
         .and_then(Value::as_str)
         .ok_or_else(|| "summary Cloud Agent job_run_id is missing".to_string())?;
+    let project_partition_key = terminal_context
+        .get("project_partition_key")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "summary Cloud Agent project_partition_key is missing".to_string())?;
     let lock_timeout_secs = state
         .config
         .ai_request_timeout_secs
         .saturating_mul(2)
         .saturating_add(60);
-    let refreshed = crate::repositories::threads::refresh_summary_slot(
+    let refreshed = crate::repositories::thread_partitions::refresh_summary_claim(
         &state.pool,
         tenant_id,
         source_id,
         thread_id,
+        project_partition_key,
         job_run_id,
         i64::try_from(lock_timeout_secs).unwrap_or(i64::MAX),
     )

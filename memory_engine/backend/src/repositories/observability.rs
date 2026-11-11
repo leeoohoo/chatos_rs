@@ -29,7 +29,7 @@ async fn summary_backlog_stats(db: &Db) -> Result<MemoryEngineSummaryBacklogStat
     let (pending_threads, pending_records, pending_tokens) = sqlx::query_as::<_, (i64, i64, i64)>(
         "SELECT COUNT(*),COALESCE(SUM(pending_record_count),0)::BIGINT, \
              COALESCE(SUM(pending_summary_tokens),0)::BIGINT \
-             FROM engine_threads WHERE pending_record_count>0",
+             FROM engine_thread_summary_partitions WHERE pending_record_count>0",
     )
     .fetch_one(db)
     .await
@@ -62,7 +62,7 @@ async fn reconcile_backlog_stats(db: &Db) -> Result<MemoryEngineReconcileBacklog
     let repair_stale_before = now - chrono::Duration::seconds(THREAD_REPAIR_STALE_JOB_TIMEOUT_SECS);
     let (candidate_threads, running_jobs, stale_running_jobs) = try_join!(
         sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM engine_threads \
+            "SELECT COUNT(*) FROM engine_thread_summary_partitions \
              WHERE summary_status='pending' AND pending_record_count>0"
         )
         .fetch_one(db),

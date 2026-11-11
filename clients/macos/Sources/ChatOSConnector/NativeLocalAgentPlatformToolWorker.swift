@@ -561,8 +561,10 @@ public actor NativeLocalAgentPlatformToolWorker {
         "tool_name": .string(claim.invocation.toolName),
         "phase": .string("native_platform_execution"),
       ])
-      let requiresReview = claim.invocation.sideEffecting
-        && (error as? NativeLocalAgentPlatformToolError)?.isKnownPreEffectFailure != true
+      let knownPreEffectFailure =
+        (error as? NativeLocalAgentPlatformToolError)?.isKnownPreEffectFailure == true
+        || error is NativeLocalAgentPluginInstallerToolError
+      let requiresReview = claim.invocation.sideEffecting && !knownPreEffectFailure
       return requiresReview
         ? .needsReview(reason: summary, detail: detail)
         : .failed(error: summary, detail: detail)
@@ -590,6 +592,8 @@ public actor NativeLocalAgentPlatformToolWorker {
       raw = error.errorDescription ?? "Local platform tool failed."
     case let error as NativeLocalAgentAttachmentVaultError:
       raw = error.errorDescription ?? "Local attachment access failed."
+    case let error as NativeLocalAgentPluginInstallerToolError:
+      raw = error.errorDescription ?? "Plugin installer rejected the request."
     default:
       // Do not forward arbitrary native error descriptions. They can
       // contain filesystem paths, process arguments, or credentials.

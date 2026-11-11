@@ -19,9 +19,7 @@ use chatos_agent::{
     LOCAL_TASK_EXECUTION_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
 };
 use chrono::Utc;
-use memory_engine_sdk::{
-    memory_policy_config_key, memory_policy_env_key, ManagedMemoryPolicy, MemoryPolicyKind,
-};
+use memory_engine_sdk::{memory_policy_config_key, ManagedMemoryPolicy, MemoryPolicyKind};
 use serde_json::{json, Value};
 
 use super::constants::*;
@@ -257,62 +255,75 @@ fn memory_policy_definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
         (MemoryPolicyKind::Summary, "消息总结", 400),
         (MemoryPolicyKind::Rollup, "总结聚合", 500),
         (MemoryPolicyKind::SubjectMemory, "主题记忆与记忆归并", 600),
-        (MemoryPolicyKind::ThreadRepair, "修复总结", 700),
     ] {
         let defaults = kind.defaults();
         let category = format!("Memory Engine / {title}");
-        definitions.push(memory_policy_definition(
-            kind,
-            "enabled",
-            "启用",
-            format!("是否启用{title}任务").as_str(),
-            category.as_str(),
-            "boolean",
-            json!(defaults.enabled),
-            None,
-            None,
-            false,
-            order,
-            now,
-        ));
         push_optional_integer_definition(
             &mut definitions,
             kind,
             &defaults,
-            "token_limit",
-            "输入 Token 阈值",
-            "累计待处理内容达到该值后触发任务，同时作为单次处理或分块使用的输入 Token 上限",
+            "dispatch_threshold_tokens",
+            "派发 Token 阈值",
+            "累计待处理内容达到该值后派发生成任务",
             category.as_str(),
-            128,
+            1,
             2_000_000,
             order + 1,
             now,
         );
-        if kind != MemoryPolicyKind::ThreadRepair {
+        for (field, label, description, offset) in [
+            (
+                "max_source_batch_tokens",
+                "源批次硬上限",
+                "一次冻结的源输入 Token 硬上限",
+                2,
+            ),
+            (
+                "max_model_input_tokens",
+                "模型输入硬上限",
+                "单次模型请求的输入 Token 硬上限",
+                3,
+            ),
+        ] {
             push_optional_integer_definition(
                 &mut definitions,
                 kind,
                 &defaults,
-                "interval_seconds",
-                "调度间隔（秒）",
-                "自动扫描待处理任务的间隔；Outbox 补偿间隔由 Queue 分类单独控制",
+                field,
+                label,
+                description,
                 category.as_str(),
-                3,
-                86_400,
-                order + 3,
+                128,
+                2_000_000,
+                order + offset,
+                now,
+            );
+        }
+        if kind == MemoryPolicyKind::Summary {
+            push_optional_integer_definition(
+                &mut definitions,
+                kind,
+                &defaults,
+                "max_leaf_tokens",
+                "叶节点硬上限",
+                "单个 leaf 分块的 Token 硬上限",
+                category.as_str(),
+                128,
+                2_000_000,
+                order + 4,
                 now,
             );
             push_optional_integer_definition(
                 &mut definitions,
                 kind,
                 &defaults,
-                "max_threads_per_tick",
-                "每轮最大处理数",
-                "单轮自动扫描最多处理的线程或主题数量",
+                "max_merge_rounds",
+                "最大归并轮数",
+                "oversized Pipeline 允许的最大归并轮数",
                 category.as_str(),
                 1,
-                10_000,
-                order + 4,
+                128,
+                order + 5,
                 now,
             );
         }
@@ -380,9 +391,11 @@ fn push_optional_integer_definition(
     now: &str,
 ) {
     let default_value = match field {
-        "token_limit" => defaults.token_limit,
-        "interval_seconds" => defaults.interval_seconds,
-        "max_threads_per_tick" => defaults.max_threads_per_tick,
+        "dispatch_threshold_tokens" => defaults.dispatch_threshold_tokens,
+        "max_source_batch_tokens" => defaults.max_source_batch_tokens,
+        "max_model_input_tokens" => defaults.max_model_input_tokens,
+        "max_leaf_tokens" => defaults.max_leaf_tokens,
+        "max_merge_rounds" => defaults.max_merge_rounds,
         "count_limit" => defaults.count_limit,
         "keep_level0_count" => defaults.keep_level0_count,
         "max_level" => defaults.max_level,
@@ -420,7 +433,6 @@ fn memory_policy_definition(
     now: &str,
 ) -> ConfigDefinitionRecord {
     let key = memory_policy_config_key(kind, field);
-    let env_alias = memory_policy_env_key(kind, field);
     let mut record = definition(
         key.as_str(),
         display_name,
@@ -433,8 +445,8 @@ fn memory_policy_definition(
         min,
         max,
         &[],
-        "next_run",
-        &[env_alias.as_str()],
+        "hot_reload",
+        &[],
         ui_order,
         now,
     );

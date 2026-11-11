@@ -3,6 +3,7 @@
 
 export * from './types/agents';
 export * from './types/jobs';
+export * from './types/reliability';
 export * from './types/sources';
 export * from './types/summaries';
 export * from './types/threads';

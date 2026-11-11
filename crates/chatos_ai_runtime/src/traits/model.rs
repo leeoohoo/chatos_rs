@@ -46,6 +46,11 @@ pub struct RuntimeMessage {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelRuntimeConfig {
+    pub model_capability_revision: String,
+    pub context_window_tokens: usize,
+    pub output_reserve_tokens: usize,
+    pub protocol_overhead_estimator_id: String,
+    pub tokenizer_id: Option<String>,
     pub base_url: String,
     pub api_key: String,
     pub model: String,
@@ -145,6 +150,24 @@ macro_rules! impl_model_request_builders {
 }
 
 impl ModelRuntimeConfig {
+    pub fn validate_model_capability(&self) -> Result<(), String> {
+        if self.model_capability_revision.trim().is_empty()
+            || self.protocol_overhead_estimator_id.trim().is_empty()
+            || self.context_window_tokens < 2_048
+            || self.output_reserve_tokens < 256
+            || self.output_reserve_tokens >= self.context_window_tokens
+        {
+            return Err("published model capability snapshot is required".to_string());
+        }
+        if self
+            .max_output_tokens
+            .is_some_and(|value| value <= 0 || value as usize > self.output_reserve_tokens)
+        {
+            return Err("max_output_tokens must not exceed output_reserve_tokens".to_string());
+        }
+        Ok(())
+    }
+
     pub fn openai_compatible(
         base_url: impl Into<String>,
         api_key: impl Into<String>,
@@ -174,6 +197,11 @@ impl ModelRuntimeConfig {
             self.supports_responses,
         );
         ModelRequest {
+            model_capability_revision: self.model_capability_revision.clone(),
+            context_window_tokens: self.context_window_tokens,
+            output_reserve_tokens: self.output_reserve_tokens,
+            protocol_overhead_estimator_id: self.protocol_overhead_estimator_id.clone(),
+            tokenizer_id: self.tokenizer_id.clone(),
             input,
             model: self.model.clone(),
             provider: self.provider.clone(),
@@ -221,6 +249,11 @@ impl ModelRuntimeConfig {
 
 #[derive(Debug, Clone)]
 pub struct ModelRequest {
+    pub model_capability_revision: String,
+    pub context_window_tokens: usize,
+    pub output_reserve_tokens: usize,
+    pub protocol_overhead_estimator_id: String,
+    pub tokenizer_id: Option<String>,
     pub input: Value,
     pub model: String,
     pub provider: String,
@@ -261,6 +294,11 @@ impl ModelRequest {
         input: Value,
     ) -> Self {
         Self {
+            model_capability_revision: String::new(),
+            context_window_tokens: 0,
+            output_reserve_tokens: 0,
+            protocol_overhead_estimator_id: String::new(),
+            tokenizer_id: None,
             input,
             model: model.into(),
             provider: provider.into(),

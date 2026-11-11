@@ -324,6 +324,13 @@ fn decode_model_config(
 ) -> Result<ModelRuntimeConfig, String> {
     snapshot.validate()?;
     Ok(ModelRuntimeConfig {
+        model_capability_revision: snapshot.model_capability_revision,
+        context_window_tokens: usize::try_from(snapshot.context_window_tokens)
+            .map_err(|_| "context_window_tokens does not fit this platform".to_string())?,
+        output_reserve_tokens: usize::try_from(snapshot.output_reserve_tokens)
+            .map_err(|_| "output_reserve_tokens does not fit this platform".to_string())?,
+        protocol_overhead_estimator_id: snapshot.protocol_overhead_estimator_id,
+        tokenizer_id: snapshot.tokenizer_id,
         base_url: snapshot.base_url,
         api_key,
         model: snapshot.model,
@@ -354,6 +361,10 @@ fn decode_model_config(
             .transpose()
             .map_err(|_| "responses_compaction_threshold does not fit this platform".to_string())?,
         output_format: snapshot.output_format.map(decode_output_format),
+    })
+    .and_then(|config| {
+        config.validate_model_capability()?;
+        Ok(config)
     })
 }
 

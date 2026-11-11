@@ -8,10 +8,10 @@ use chatos_local_agent_ports::{
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, HostCommand, HostResult,
     LocalAgentRunRecord, LocalAgentRunStatus, LocalConversationAttachmentRecord,
-    LocalConversationAttachmentSpec, LocalConversationHistoryPage, LocalConversationMessageRecord,
-    LocalConversationMessageRole, LocalConversationResourceBinding, LocalConversationResourceKind,
-    LocalConversationTurnRecord, LocalConversationTurnStatus, ResumeConversationTurnCommand,
-    StartConversationTurnCommand,
+    LocalConversationAttachmentSpec, LocalConversationDetail, LocalConversationHistoryPage,
+    LocalConversationMessageRecord, LocalConversationMessageRole, LocalConversationRecord,
+    LocalConversationResourceBinding, LocalConversationResourceKind, LocalConversationTurnRecord,
+    LocalConversationTurnStatus, ResumeConversationTurnCommand, StartConversationTurnCommand,
 };
 use chrono::{DateTime, Utc};
 use serde_json::json;
@@ -150,11 +150,34 @@ impl LocalAgentRuntime {
         command: StartConversationTurnCommand,
     ) -> Result<chatos_local_agent_protocol::LocalConversationTurnStart, LocalAgentRuntimeError>
     {
-        let conversation = self
+        let now = self.now()?;
+        let existing_conversation = self
             .store
             .get_conversation(&command.owner_user_id, &command.conversation_id)
-            .await?
-            .ok_or_else(|| ClientStorageError::NotFound(command.conversation_id.clone()))?;
+            .await?;
+        let conversation = match (
+            existing_conversation,
+            command.conversation_if_missing.as_ref(),
+        ) {
+            (Some(conversation), _) => conversation,
+            (None, Some(seed)) => LocalConversationDetail {
+                conversation: LocalConversationRecord {
+                    conversation_id: seed.conversation_id.clone(),
+                    owner_user_id: seed.owner_user_id.clone(),
+                    title: seed.title.trim().to_string(),
+                    resource: seed.resource.clone(),
+                    version: 1,
+                    created_at_unix_ms: now,
+                    updated_at_unix_ms: now,
+                },
+                turns: Vec::new(),
+                messages: Vec::new(),
+                attachments: Vec::new(),
+            },
+            (None, None) => {
+                return Err(ClientStorageError::NotFound(command.conversation_id.clone()).into())
+            }
+        };
         let runtime_settings = self
             .store
             .get_conversation_runtime_settings(&command.owner_user_id, &command.conversation_id)
@@ -169,7 +192,6 @@ impl LocalAgentRuntime {
                 ));
             }
         }
-        let now = self.now()?;
         let explicit_capability_selection =
             normalized_explicit_capability_selection(&command.message_metadata)?;
         let team_executor_context = normalized_team_executor_context(
@@ -275,6 +297,13 @@ impl LocalAgentRuntime {
                     .get("tool_options")
                     .cloned()
                     .expect("normalized executor context has tool_options"),
+            );
+            object.insert(
+                "project_id".to_string(),
+                context
+                    .get("project_id")
+                    .cloned()
+                    .expect("normalized executor context has project_id"),
             );
             object.insert("team_executor_context".to_string(), context);
             "task_execution"
@@ -385,6 +414,19 @@ impl LocalAgentRuntime {
             }
         };
         let thread_id = format!("client-agent:agent:{agent_id}");
+        // Snapshot the committed outbox before reading Memory. Reading it after
+        // the HTTP response could lose an update that synced between the reads.
+        let pending = if command.before_cursor.is_none() {
+            self.store
+                .list_pending_conversation_memory_records(
+                    &command.owner_user_id,
+                    &thread_id,
+                    &command.conversation_id,
+                )
+                .await?
+        } else {
+            Vec::new()
+        };
         let remote = source
             .list_conversation_records(
                 &command.owner_user_id,
@@ -395,8 +437,29 @@ impl LocalAgentRuntime {
             )
             .await
             .map_err(LocalAgentRuntimeError::InvalidRunState)?;
-        let mut messages =
-            authoritative_messages(&command.conversation_id, remote.records.as_slice())?;
+        let mut records = remote.records;
+        for pending in pending {
+            let input: chatos_ai_runtime::SaveRecordInput = serde_json::from_value(pending.payload)
+                .map_err(|error| {
+                    LocalAgentRuntimeError::InvalidRunState(format!(
+                        "decode committed conversation update failed: {error}"
+                    ))
+                })?;
+            let metadata = input.packed_metadata();
+            records.push(AuthoritativeConversationRecord {
+                record_id: input.message_id.unwrap_or(pending.record_id),
+                role: input.role,
+                content: input.content,
+                structured_payload: input.structured_payload,
+                metadata,
+                created_at: input.created_at.ok_or_else(|| {
+                    LocalAgentRuntimeError::InvalidRunState(
+                        "committed conversation update requires created_at".to_string(),
+                    )
+                })?,
+            });
+        }
+        let mut messages = authoritative_messages(&command.conversation_id, &records)?;
         let mut attachments = authoritative_attachments(&command.conversation_id, &messages)?;
         if command.before_cursor.is_none() {
             let local_page = self
@@ -512,8 +575,8 @@ fn authoritative_messages(
     conversation_id: &str,
     records: &[AuthoritativeConversationRecord],
 ) -> Result<Vec<LocalConversationMessageRecord>, LocalAgentRuntimeError> {
-    let mut seen_message_ids = HashSet::new();
-    let mut messages = Vec::new();
+    let mut snapshots =
+        HashMap::<String, ((i64, bool, String), LocalConversationMessageRecord)>::new();
     for record in records {
         let mut metadata = record.metadata.clone().unwrap_or_else(|| json!({}));
         if let Some(ui_metadata) = metadata
@@ -552,9 +615,6 @@ fn authoritative_messages(
             .filter(|value| !value.is_empty())
             .unwrap_or(record.record_id.as_str())
             .to_string();
-        if !seen_message_ids.insert(message_id.clone()) {
-            continue;
-        }
         let created_at = DateTime::parse_from_rfc3339(record.created_at.trim())
             .map_err(|_| {
                 LocalAgentRuntimeError::InvalidRunState(format!(
@@ -564,7 +624,25 @@ fn authoritative_messages(
             })?
             .with_timezone(&Utc);
         let created_at_unix_ms = created_at.timestamp_millis();
-        let ordinal = authoritative_ordinal(created_at_unix_ms, record.record_id.as_str());
+        let ordinal = authoritative_ordinal(created_at_unix_ms, message_id.as_str());
+        // Several immutable Memory snapshots can represent one mutable UI card.
+        // Callback time orders task states; survey snapshots carry their update
+        // time in created_at. Never let hash/HTTP record order pick the UI state.
+        let callback = metadata.get("task_runner_async");
+        let snapshot_at = callback
+            .and_then(|value| value.get("callback_at_unix_ms"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(created_at_unix_ms);
+        let terminal = callback
+            .and_then(|value| value.get("event"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|event| {
+                matches!(
+                    event,
+                    "task.completed" | "task.failed" | "task.blocked" | "task.cancelled"
+                )
+            });
+        let revision = (snapshot_at, terminal, record.record_id.clone());
         let content = match record.role.as_str() {
             "user" => json!({"text": record.content}),
             _ => record
@@ -578,8 +656,8 @@ fn authoritative_messages(
                 })
                 .unwrap_or_else(|| serde_json::Value::String(record.content.clone())),
         };
-        messages.push(LocalConversationMessageRecord {
-            message_id,
+        let message = LocalConversationMessageRecord {
+            message_id: message_id.clone(),
             conversation_id: conversation_id.to_string(),
             turn_id: turn_id.to_string(),
             ordinal,
@@ -591,8 +669,27 @@ fn authoritative_messages(
             content,
             metadata,
             created_at_unix_ms,
-        });
+        };
+        match snapshots.entry(message_id) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert((revision, message));
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let (previous_revision, previous) = entry.get_mut();
+                let first_created_at = previous.created_at_unix_ms.min(created_at_unix_ms);
+                if revision > *previous_revision {
+                    *previous_revision = revision;
+                    *previous = message;
+                }
+                previous.created_at_unix_ms = first_created_at;
+                previous.ordinal = authoritative_ordinal(first_created_at, &previous.message_id);
+            }
+        }
     }
+    let mut messages = snapshots
+        .into_values()
+        .map(|(_, message)| message)
+        .collect::<Vec<_>>();
     messages.sort_by(|left, right| {
         left.created_at_unix_ms
             .cmp(&right.created_at_unix_ms)
@@ -930,15 +1027,9 @@ fn normalized_team_executor_context(
             "delivery_id does not match the executor conversation identity",
         ));
     }
-    if !matches!(
-        conversation_resource,
-        Some(LocalConversationResourceBinding {
-            kind: LocalConversationResourceKind::Project,
-            resource_id,
-        }) if resource_id == project_id
-    ) {
+    if conversation_resource.is_some() {
         return Err(invalid_agent_context(
-            "executor conversation must be bound to its exact Project",
+            "executor conversations must not claim a user-facing resource binding",
         ));
     }
     let plan = values
@@ -1251,6 +1342,246 @@ mod tests {
 
     struct TranscriptFixture;
 
+    struct LiveTranscriptFixture {
+        storage: Arc<SqliteClientStorage>,
+        records: std::sync::Mutex<Vec<AuthoritativeConversationRecord>>,
+        sync_during_read: std::sync::atomic::AtomicBool,
+    }
+
+    #[async_trait]
+    impl LocalConversationTranscriptSource for LiveTranscriptFixture {
+        async fn list_conversation_records(
+            &self,
+            tenant_id: &str,
+            thread_id: &str,
+            conversation_id: &str,
+            _before_cursor: Option<&str>,
+            _limit: u32,
+        ) -> Result<AuthoritativeConversationPage, String> {
+            assert_eq!(tenant_id, "user-1");
+            assert_eq!(thread_id, "client-agent:agent:jiguli");
+            assert_eq!(conversation_id, "conversation-1");
+            // The HTTP response can reflect a snapshot taken before ingestion,
+            // even if the outbox is marked synced by the time it arrives.
+            let records = self.records.lock().unwrap().clone();
+            if self
+                .sync_during_read
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                while let Some(claimed) = self
+                    .storage
+                    .claim_next_memory_record("user-1", "sync", 20_000, 30_000)
+                    .await
+                    .unwrap()
+                {
+                    self.storage
+                        .complete_memory_record(
+                            &claimed.source_id,
+                            &claimed.record_id,
+                            "sync",
+                            claimed.version,
+                            21_000,
+                        )
+                        .await
+                        .unwrap();
+                }
+            }
+            Ok(AuthoritativeConversationPage {
+                records,
+                next_before_cursor: Some("older".to_string()),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn committed_replies_are_visible_before_sync_and_remote_takes_over_without_duplicates() {
+        use chatos_ai_runtime::SaveRecordInput;
+
+        for sync_during_read in [false, true] {
+            let storage = Arc::new(SqliteClientStorage::connect_memory().await.unwrap());
+            storage
+                .configure_memory_projection("user-1", "chatos", 9_000)
+                .await
+                .unwrap();
+            let user = SaveRecordInput::user_message("client-agent:agent:jiguli", "list files")
+                .with_message_id("message-2")
+                .with_conversation_turn_id("turn-2")
+                .with_metadata(json!({"conversation_id":"conversation-1"}))
+                .with_created_at("2026-11-10T10:00:00Z");
+            let reply =
+                SaveRecordInput::assistant_message("client-agent:agent:jiguli", "task created")
+                    .with_message_id("run-2:assistant:1")
+                    .with_conversation_turn_id("turn-2")
+                    .with_metadata(json!({"conversation_id":"conversation-1"}))
+                    .with_created_at("2026-11-10T10:00:01Z");
+            let callback = |id: &str, event: &str, at: i64, content: &str| {
+                SaveRecordInput::assistant_message("client-agent:agent:jiguli", content)
+                    .with_message_id(id)
+                    .with_conversation_turn_id("turn-2")
+                    .with_metadata(json!({
+                        "conversation_id":"conversation-1",
+                        "ui_message_id":"task-callback-2",
+                        "task_runner_async":{"event":event,"callback_at_unix_ms":at}
+                    }))
+                    .with_created_at("2026-11-10T10:00:02Z")
+            };
+            let running = callback("event-running", "task.run.started", 1_000, "running");
+            let completed = callback("event-completed", "task.completed", 2_000, "done");
+            let record = |input: &SaveRecordInput| AuthoritativeConversationRecord {
+                record_id: input.message_id.clone().unwrap(),
+                role: input.role.clone(),
+                content: input.content.clone(),
+                structured_payload: input.structured_payload.clone(),
+                metadata: input.packed_metadata(),
+                created_at: input.created_at.clone().unwrap(),
+            };
+            for (index, input) in [&user, &reply, &completed].into_iter().enumerate() {
+                storage
+                    .enqueue_memory_record(
+                        input.message_id.as_deref().unwrap(),
+                        "user-1",
+                        "chatos",
+                        "client-agent:agent:jiguli",
+                        &serde_json::to_value(input).unwrap(),
+                        10_000 + index as i64,
+                    )
+                    .await
+                    .unwrap();
+            }
+            let source = Arc::new(LiveTranscriptFixture {
+                storage: storage.clone(),
+                records: std::sync::Mutex::new(vec![record(&running)]),
+                sync_during_read: std::sync::atomic::AtomicBool::new(sync_during_read),
+            });
+            let runtime = LocalAgentRuntime::with_clock(storage.clone(), Arc::new(|| Ok(10_000)))
+                .with_conversation_transcript_source(source.clone());
+            runtime.initialize("user-1").await.unwrap();
+            runtime
+                .try_handle(request(
+                    "create-live",
+                    HostCommand::CreateConversation(create_conversation()),
+                ))
+                .await
+                .unwrap();
+            let command = GetConversationHistoryCommand {
+                owner_user_id: "user-1".to_string(),
+                conversation_id: "conversation-1".to_string(),
+                before_cursor: None,
+                limit: 10,
+            };
+            let live = runtime
+                .authoritative_conversation_history(command.clone())
+                .await
+                .unwrap();
+            assert_eq!(live.turns.len(), 1);
+            assert_eq!(live.turns[0].user_message_id, "message-2");
+            assert_eq!(live.messages.len(), 3);
+            assert_eq!(live.messages[1].message_id, "run-2:assistant:1");
+            assert_eq!(live.messages[1].content, json!("task created"));
+            assert_eq!(live.messages[2].message_id, "task-callback-2");
+            assert_eq!(live.messages[2].content, json!("done"));
+            assert_eq!(live.next_before_cursor.as_deref(), Some("older"));
+
+            let older = runtime
+                .authoritative_conversation_history(GetConversationHistoryCommand {
+                    before_cursor: Some("older".to_string()),
+                    ..command.clone()
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                older.messages.len(),
+                1,
+                "older pages must not repeat live updates"
+            );
+            assert_eq!(older.messages[0].content, json!("running"));
+
+            *source.records.lock().unwrap() = vec![
+                record(&user),
+                record(&reply),
+                record(&running),
+                record(&completed),
+            ];
+            source
+                .sync_during_read
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            runtime
+                .authoritative_conversation_history(command.clone())
+                .await
+                .unwrap();
+            assert!(storage
+                .list_pending_conversation_memory_records(
+                    "user-1",
+                    "client-agent:agent:jiguli",
+                    "conversation-1"
+                )
+                .await
+                .unwrap()
+                .is_empty());
+            let synced = runtime
+                .authoritative_conversation_history(command)
+                .await
+                .unwrap();
+            assert_eq!(synced.messages, live.messages);
+        }
+    }
+
+    #[test]
+    fn projection_history_keeps_latest_snapshot_regardless_of_record_order() {
+        let snapshot =
+            |id: &str, event: &str, at: i64, content: &str| AuthoritativeConversationRecord {
+                record_id: id.to_string(),
+                role: "assistant".to_string(),
+                content: content.to_string(),
+                structured_payload: None,
+                metadata: Some(json!({
+                    "conversation_turn_id":"turn-1",
+                    "ui_message_id":"callback-1",
+                    "memory_projection_event":true,
+                    "task_runner_async":{
+                        "event":event,
+                        "callback_at_unix_ms":at
+                    }
+                })),
+                created_at: "2026-11-10T10:00:00Z".to_string(),
+            };
+        let running = snapshot("projection-event:z", "task.run.started", 1_000, "running");
+        for completed_at in [1_000, 2_000] {
+            let completed = snapshot("projection-event:a", "task.completed", completed_at, "done");
+            for records in [
+                vec![running.clone(), completed.clone()],
+                vec![completed.clone(), running.clone()],
+            ] {
+                let messages = super::authoritative_messages("conversation-1", &records).unwrap();
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].message_id, "callback-1");
+                assert_eq!(messages[0].content, json!("done"));
+                assert_eq!(
+                    messages[0].metadata["task_runner_async"]["event"],
+                    "task.completed"
+                );
+            }
+        }
+
+        let mut open = running;
+        open.metadata = Some(json!({
+            "conversation_turn_id":"turn-1", "ui_message_id":"survey-1",
+            "ui_structured_content":true, "memory_projection_event":true
+        }));
+        open.structured_payload = Some(json!({"type":"requirement_survey_status","status":"open"}));
+        let mut resolved = open.clone();
+        resolved.record_id = "projection-event:b".to_string();
+        resolved.created_at = "2026-11-10T10:00:01Z".to_string();
+        resolved.structured_payload =
+            Some(json!({"type":"requirement_survey_status","status":"resolved"}));
+        for records in [vec![open.clone(), resolved.clone()], vec![resolved, open]] {
+            let messages = super::authoritative_messages("conversation-1", &records).unwrap();
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].content["status"], "resolved");
+            assert_eq!(messages[0].created_at_unix_ms, 1_794_304_800_000);
+        }
+    }
+
     #[async_trait]
     impl LocalConversationTranscriptSource for TranscriptFixture {
         async fn list_conversation_records(
@@ -1334,6 +1665,7 @@ mod tests {
             owner_user_id: "user-1".to_string(),
             conversation_id: "conversation-1".to_string(),
             expected_conversation_version,
+            conversation_if_missing: None,
             turn_id: "turn-1".to_string(),
             message_id: "message-1".to_string(),
             run_id: "run-1".to_string(),
@@ -1544,17 +1876,14 @@ mod tests {
     #[test]
     fn executor_context_is_project_bound_and_capability_scoped() {
         let metadata = team_executor_context();
-        let executor = normalized_team_executor_context(
-            &metadata,
-            "agent-team-executor-delivery-1",
-            Some(&project_resource()),
-        )
-        .unwrap()
-        .unwrap();
+        let executor =
+            normalized_team_executor_context(&metadata, "agent-team-executor-delivery-1", None)
+                .unwrap()
+                .unwrap();
         let normalized = normalized_agent_execution_context(
             &metadata,
             "agent-team-executor-delivery-1",
-            Some(&project_resource()),
+            None,
             Some(&executor),
         )
         .unwrap()
@@ -1567,7 +1896,7 @@ mod tests {
         assert!(normalized_team_executor_context(
             &metadata,
             "agent-team-executor-delivery-1",
-            None,
+            Some(&project_resource()),
         )
         .is_err());
         let mut escalated = metadata;
@@ -1576,7 +1905,7 @@ mod tests {
         assert!(normalized_team_executor_context(
             &escalated,
             "agent-team-executor-delivery-1",
-            Some(&project_resource()),
+            None,
         )
         .is_err());
     }
@@ -1596,13 +1925,10 @@ mod tests {
             "reason": "生成验收文档",
         }]);
 
-        let executor = normalized_team_executor_context(
-            &metadata,
-            "agent-team-executor-delivery-1",
-            Some(&project_resource()),
-        )
-        .unwrap()
-        .unwrap();
+        let executor =
+            normalized_team_executor_context(&metadata, "agent-team-executor-delivery-1", None)
+                .unwrap()
+                .unwrap();
 
         assert_eq!(
             executor["tool_options"]["plugin_hints"],
@@ -1624,12 +1950,10 @@ mod tests {
         let mut forged = metadata;
         forged["agent_team_execution"]["execution_plan"]["plugins"][0]["path"] =
             json!("C:\\private\\plugin.exe");
-        assert!(normalized_team_executor_context(
-            &forged,
-            "agent-team-executor-delivery-1",
-            Some(&project_resource()),
-        )
-        .is_err());
+        assert!(
+            normalized_team_executor_context(&forged, "agent-team-executor-delivery-1", None,)
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1641,21 +1965,27 @@ mod tests {
         );
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
         runtime.initialize("user-1").await.expect("initialize");
-        let conversation_id = "agent-team-executor-delivery-1";
         runtime
             .try_handle(request(
-                "create-executor-conversation",
+                "create-user-project-conversation",
                 HostCommand::CreateConversation(CreateConversationCommand {
-                    conversation_id: conversation_id.into(),
+                    conversation_id: "project-conversation-1".into(),
                     owner_user_id: "user-1".into(),
-                    title: "Executor".into(),
+                    title: "Project conversation".into(),
                     resource: Some(project_resource()),
                 }),
             ))
             .await
-            .expect("create executor conversation");
+            .expect("create the user-facing project conversation");
+        let conversation_id = "agent-team-executor-delivery-1";
         let mut turn = start_turn(1);
         turn.conversation_id = conversation_id.into();
+        turn.conversation_if_missing = Some(CreateConversationCommand {
+            conversation_id: conversation_id.into(),
+            owner_user_id: "user-1".into(),
+            title: "Executor".into(),
+            resource: None,
+        });
         turn.message_metadata = team_executor_context();
         let started = runtime
             .try_handle(request(
@@ -1727,6 +2057,33 @@ mod tests {
         };
         assert_eq!(result.run.input["project_id"], "project-1");
         assert_eq!(result.run.input["project_name"], "红果逆向");
+    }
+
+    #[tokio::test]
+    async fn host_start_turn_creates_missing_conversation_in_the_same_command() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+        runtime.initialize("user-1").await.expect("initialize");
+        let mut turn = start_turn(1);
+        turn.conversation_if_missing = Some(create_conversation());
+
+        let started = runtime
+            .try_handle(request(
+                "start-missing-conversation-turn",
+                HostCommand::StartConversationTurn(turn),
+            ))
+            .await
+            .expect("create conversation and start Turn");
+        let HostResult::ConversationTurnStarted { result } = started else {
+            panic!("unexpected start result")
+        };
+        assert_eq!(result.conversation.conversation_id, "conversation-1");
+        assert_eq!(result.conversation.version, 2);
+        assert_eq!(result.turn.status, LocalConversationTurnStatus::Running);
     }
 
     #[tokio::test]
@@ -1999,6 +2356,83 @@ mod tests {
             LocalConversationTurnStatus::Cancelled
         );
         assert!(cancelled.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn profile_failure_reaches_conversation_history_with_the_specific_error() {
+        let storage = Arc::new(SqliteClientStorage::connect_memory().await.unwrap());
+        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+        runtime.initialize("user-1").await.unwrap();
+        runtime
+            .try_handle(request(
+                "create-error-conversation",
+                HostCommand::CreateConversation(create_conversation()),
+            ))
+            .await
+            .unwrap();
+        runtime
+            .try_handle(request(
+                "start-error-turn",
+                HostCommand::StartConversationTurn(start_turn(1)),
+            ))
+            .await
+            .unwrap();
+        let claimed = runtime
+            .try_handle(request(
+                "claim-error-turn",
+                HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".into(),
+                    worker_id: "worker".into(),
+                    lease_duration_ms: 10_000,
+                }),
+            ))
+            .await
+            .unwrap();
+        let HostResult::Claim { claim: Some(claim) } = claimed else {
+            panic!("missing claim")
+        };
+        let error = "complete model request exceeds frozen context budget: estimated_input_tokens=621861, output_reserve_tokens=30000, context_window_tokens=200000";
+        let committed = runtime
+            .try_handle(request(
+                "commit-error-turn",
+                HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".into(),
+                    run_id: claim.run.run_id,
+                    claim_token: claim.claim_token,
+                    expected_version: claim.run.version,
+                    outcome: LocalAgentStepOutcome::NeedsReview {
+                        reason: "Local Agent profile step failed".into(),
+                        detail: json!({"error":error}),
+                    },
+                }),
+            ))
+            .await
+            .unwrap();
+        let HostResult::Run { run } = committed else {
+            panic!("missing Run")
+        };
+        assert_eq!(run.terminal_outcome.as_ref().unwrap()["error"], error);
+        let result = runtime
+            .try_handle(request(
+                "read-error-history",
+                HostCommand::GetConversation(GetConversationCommand {
+                    owner_user_id: "user-1".into(),
+                    conversation_id: "conversation-1".into(),
+                }),
+            ))
+            .await
+            .unwrap();
+        let HostResult::Conversation {
+            conversation: detail,
+        } = result
+        else {
+            panic!("missing conversation")
+        };
+        assert_eq!(detail.turns[0].status, LocalConversationTurnStatus::Failed);
+        let last = detail.messages.last().unwrap();
+        assert_eq!(last.role, LocalConversationMessageRole::Assistant);
+        assert_eq!(last.content["error"], error);
+        assert_eq!(last.content["status"], "needs_review");
     }
 
     #[tokio::test]

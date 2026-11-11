@@ -37,6 +37,19 @@ struct LocalConnectorModelSelectionPolicyTests {
             .map(\.id) == ["task"])
     }
 
+    @Test
+    func agentModelsExcludeMediaEvenWhenVisionAndTaskSwitchesAreEnabled() {
+        var chat = model("gpt-6-luna", taskEnabled: true)
+        chat.supportsImages = true
+        var image = model("gpt-image-2", taskEnabled: true)
+        image.supportsImages = true
+        let video = model("MiniMax-H3", taskEnabled: true)
+        for scope in [LocalConnectorModelSelectionScope.general, .taskCreation] {
+            #expect(LocalConnectorModelSelectionPolicy.models(from: [chat, image, video], scope: scope)
+                .map(\.id) == ["gpt-6-luna"])
+        }
+    }
+
     private func model(_ id: String, taskEnabled: Bool) -> LocalConnectorModelConfig {
         .init(id: id, name: id, provider: "gpt", modelName: id,
               enabled: true, taskEnabled: taskEnabled, hasAPIKey: true,

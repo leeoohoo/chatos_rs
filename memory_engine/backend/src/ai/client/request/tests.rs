@@ -20,6 +20,7 @@ fn responses_request_is_text_generation_only() {
         false,
         false,
         false,
+        None,
     );
 
     assert_pure_generation_request(&body);
@@ -40,9 +41,33 @@ fn responses_request_preserves_managed_output_target_above_four_thousand() {
         false,
         true,
         false,
+        None,
     );
 
     assert_eq!(body["max_output_tokens"], 8_000);
+}
+
+#[test]
+fn responses_request_enforces_structured_output_format() {
+    let format = serde_json::json!({
+        "type":"json_schema",
+        "name":"memory_payload_v1",
+        "strict":true,
+        "schema":{"type":"object"}
+    });
+    let body = build_responses_body(
+        "model",
+        "system",
+        "user",
+        Some(8_000),
+        0.0,
+        false,
+        true,
+        false,
+        Some(&format),
+    );
+
+    assert_eq!(body["text"]["format"], format);
 }
 
 #[test]

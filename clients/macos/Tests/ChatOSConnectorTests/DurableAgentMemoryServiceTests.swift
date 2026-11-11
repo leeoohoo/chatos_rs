@@ -30,19 +30,21 @@ final class DurableAgentMemoryServiceTests: XCTestCase {
                 id: scope.recordID(at: 0),
                 index: 0,
                 message: .init(role: .system, content: "系统约束"),
-                createdAt: Date(timeIntervalSince1970: 1)
+                createdAt: Date(timeIntervalSince1970: 1),
+                conversationTurnID: "turn-0"
             ),
             AgentMemoryEntry(
                 id: scope.recordID(at: 1),
                 index: 1,
                 message: .init(role: .user, content: "离线消息"),
-                createdAt: Date(timeIntervalSince1970: 2)
+                createdAt: Date(timeIntervalSince1970: 2),
+                conversationTurnID: "turn-1"
             ),
         ]
 
         try await offline.ensureThread()
         try await offline.sync(entries, reconciling: false)
-        let localContext = try await offline.compose()
+        let localContext = try await offline.compose(try composeRequest())
         XCTAssertEqual(localContext.recentRecords.map(\.message.content), ["系统约束", "离线消息"])
 
         // Simulate the shared connectivity gate reopening after its backoff.
@@ -56,7 +58,7 @@ final class DurableAgentMemoryServiceTests: XCTestCase {
         try await recovered.ensureThread()
         let uploaded = await remote.entries
         XCTAssertEqual(uploaded.map(\.id), entries.map(\.id))
-        let recoveredContext = try await recovered.compose()
+        let recoveredContext = try await recovered.compose(try composeRequest())
         XCTAssertEqual(recoveredContext.recentRecords.map(\.message.content), ["系统约束", "离线消息"])
         let syncCalls = await remote.syncCalls
         XCTAssertEqual(syncCalls, 1)
@@ -76,12 +78,14 @@ final class DurableAgentMemoryServiceTests: XCTestCase {
         )
         let first = AgentMemoryEntry(
             id: scope.recordID(at: 0), index: 0,
-            message: .init(role: .user, content: "原始内容"), createdAt: Date(timeIntervalSince1970: 1)
+            message: .init(role: .user, content: "原始内容"), createdAt: Date(timeIntervalSince1970: 1),
+            conversationTurnID: "turn-0"
         )
         try await store.enqueue([first], scope: scope)
         let changed = AgentMemoryEntry(
             id: first.id, index: 0,
-            message: .init(role: .user, content: "被修改"), createdAt: first.createdAt
+            message: .init(role: .user, content: "被修改"), createdAt: first.createdAt,
+            conversationTurnID: "turn-0"
         )
         do {
             try await store.enqueue([changed], scope: scope)
@@ -108,7 +112,8 @@ final class DurableAgentMemoryServiceTests: XCTestCase {
             // Checkpoint epochs are decoded relative to Apple's reference date, while the cache
             // JSON strategy round-trips through Unix milliseconds. The two paths can differ by
             // one floating-point ULP even though they represent the same millisecond.
-            createdAt: Date(timeIntervalSinceReferenceDate: 811_581_748.966_327)
+            createdAt: Date(timeIntervalSinceReferenceDate: 811_581_748.966_327),
+            conversationTurnID: "turn-0"
         )
 
         try await store.enqueue([entry], scope: scope)
@@ -120,6 +125,20 @@ final class DurableAgentMemoryServiceTests: XCTestCase {
 
         try await store.enqueue([entry], scope: scope)
     }
+}
+
+private func composeRequest() throws -> AgentMemoryComposeRequest {
+    try AgentMemoryComposeRequest(
+        modelCapability: AgentModelCapabilitySnapshot(
+            revision: "test-capability-v1",
+            contextWindowTokens: 200_000,
+            outputReserveTokens: 30_000,
+            protocolOverheadEstimatorID: "responses-json-v1",
+            tokenizerID: nil
+        ),
+        queryText: "current query",
+        currentTurnID: "turn-current"
+    )
 }
 
 private func rewriteStoredEntryWithEquivalentPrettyPrintedJSON(
@@ -186,7 +205,8 @@ private struct OfflineAgentMemory: AgentMemoryServicing {
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
         throw URLError(.notConnectedToInternet)
     }
-    func compose() async throws -> AgentMemoryContext {
+    func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
+        _ = request
         throw URLError(.notConnectedToInternet)
     }
 }
@@ -200,8 +220,9 @@ private actor RecordingAgentMemory: AgentMemoryServicing {
         syncCalls += 1
         self.entries.append(contentsOf: entries)
     }
-    func compose() async throws -> AgentMemoryContext {
-        .init(
+    func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
+        _ = request
+        return .init(
             blocks: [],
             recentRecords: entries.map { .init(id: $0.id, message: $0.message) }
         )

@@ -2,11 +2,32 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use sqlx::types::Json;
-use sqlx::{Postgres, QueryBuilder};
+use sqlx::{Postgres, QueryBuilder, Transaction};
 use uuid::Uuid;
 
 use crate::models::{now_rfc3339, EngineSubjectMemory, UpsertSubjectMemoryRequest};
 use crate::repositories::postgres::decode;
+
+pub(crate) async fn lock_subject_memory_logical_key(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: &str,
+    source_id: &str,
+    subject_id: &str,
+    memory_key: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended(\
+         concat_ws(chr(31),$1,$2,$3,$4),0))",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(subject_id)
+    .bind(memory_key)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
 
 pub(crate) fn build_subject_memory_query<'a>(
     tenant_id: &'a str,
@@ -22,7 +43,7 @@ pub(crate) fn build_subject_memory_query<'a>(
         .push_bind(source_id)
         .push(" AND subject_id=")
         .push_bind(subject_id)
-        .push(" AND status='active'");
+        .push(" AND status='active' AND recall_eligible");
     if let Some(value) = memory_type.map(str::trim).filter(|value| !value.is_empty()) {
         query.push(" AND memory_type=").push_bind(value);
     }
@@ -64,6 +85,8 @@ pub(crate) fn build_subject_memory(
         confidence: req.confidence,
         last_seen_at: req.last_seen_at,
         metadata: req.metadata,
+        payload_schema: None,
+        structured_payload: None,
         status: req.status.unwrap_or_else(|| "active".to_string()),
         rollup_status: rollup_status
             .map(ToOwned::to_owned)

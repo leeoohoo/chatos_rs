@@ -5,6 +5,72 @@ import Testing
 @testable import ChatOSConnector
 
 struct NativeCustomPluginInstallationTests {
+    @Test("installer updates a moved source in place, binds preflight to the target, and preserves disabled state")
+    func installerSourceUpdateKeepsIdentity() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("InstallerUpdate-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent("state.json")
+        try Self.writeInitialState(to: stateURL, ownerUserID: "update-owner")
+        let service = NativeLocalConnectorService(
+            configuration: .init(gatewayBaseURL: URL(string: "https://connector.example.test")!, stateURL: stateURL),
+            ticketProvider: CustomPluginRejectingTicketProvider(),
+            pluginInstallerFactory: { NativePluginInstaller(rootURL: $0, npmInstall: Self.installOfflineREAFixture(in:)) }
+        )
+        let original = root.appendingPathComponent("original")
+        let moved = root.appendingPathComponent("moved")
+        try Self.writeNativeHookFixture(at: original, version: "1.0.0", command: "node hooks/stable.js", permissions: [])
+        try Self.writeNativeHookFixture(at: moved, version: "2.0.0", command: "node hooks/stable.js", permissions: [])
+        let firstSource = LocalConnectorPluginSourceDraft(kind: .localFolder, location: original.path)
+        let first = try await service.inspectPluginSource(firstSource)
+        try await service.installPluginSource(firstSource, expectedFingerprint: first.fingerprint)
+        let oldRecord = try #require(await service.installerPluginRecords().values.first)
+        let wrapper = LocalConnectorCustomMCPDraft(
+            displayName: "Wrong wrapper", componentKey: "rea", packageName: "rea-agents",
+            packageVersion: "6.5.0", binaryName: "rea", arguments: ["mcp"], accessProfile: .restricted
+        )
+        await #expect(throws: NativeConnectorError.self) {
+            _ = try await service.inspectCustomMCP(wrapper, replacingPluginID: oldRecord.pluginID)
+        }
+        #expect(await service.installerPluginRecords().count == 1)
+        try await service.updatePluginEnabled(id: oldRecord.pluginID, enabled: false)
+        let newSource = LocalConnectorPluginSourceDraft(kind: .localFolder, location: moved.path)
+        let untargeted = try await service.inspectPluginSource(newSource)
+        let targeted = try await service.inspectPluginSource(newSource, replacingPluginID: oldRecord.pluginID)
+        #expect(untargeted.fingerprint != targeted.fingerprint)
+        await #expect(throws: NativeConnectorError.self) {
+            try await service.installPluginSource(newSource, expectedFingerprint: untargeted.fingerprint, replacingPluginID: oldRecord.pluginID)
+        }
+        #expect(await service.installerPluginRecord(id: oldRecord.pluginID)?.version == "1.0.0")
+        try await service.installPluginSource(newSource, expectedFingerprint: targeted.fingerprint, replacingPluginID: oldRecord.pluginID)
+        let records = await service.installerPluginRecords()
+        #expect(records.count == 1)
+        let updated = try #require(records[oldRecord.pluginID])
+        #expect(updated.version == "2.0.0")
+        #expect(updated.sourceDraft == newSource)
+        #expect(!FileManager.default.fileExists(atPath: oldRecord.installationPath))
+        let info = await service.installerPluginInfo(updated)
+        #expect(info["enabled"] == .bool(false))
+        #expect(await service.installerInstalledPlugins(query: "hook-upgrade").count == 1)
+        let persisted = try NativeConnectorStateStore(stateURL: stateURL).load()
+        #expect(persisted.installedPluginRecords?[oldRecord.pluginID]?.sourceDraft == newSource)
+        try Self.requireNoCustomPluginTransactionResidue(in: root.appendingPathComponent("Plugins"))
+    }
+
+    @Test("installer recovers legacy scoped npm Plugin sources without requesting screenshots")
+    func installerRecoversLegacyNPMPackage() throws {
+        let record = NativeInstalledPluginRecord(
+            pluginID: "legacy-ponytail", releaseID: "old-release", version: "5.3.2",
+            artifactSHA256: "fixture", installationPath: "/unused", installedAt: "fixture",
+            source: .npmPlugin,
+            sourceSummary: "Codex Plugin · npm Agent Plugin · @dietrichgebert/ponytail@5.3.2"
+        )
+        let source = try #require(NativeLocalConnectorService.installerSourceDraft(record))
+        #expect(source.kind == .npmPackage)
+        #expect(source.location == "@dietrichgebert/ponytail")
+        #expect(source.exactVersion == "5.3.2")
+        #expect(source.subdirectory == nil)
+    }
+
     @Test("custom MCP access profiles grant only their declared permission sets")
     func accessProfilePermissionsAreExplicit() {
         let restricted = NativeCustomMCPAccessPolicy.permissions(for: .restricted).map(\.id)

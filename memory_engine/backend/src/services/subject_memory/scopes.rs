@@ -211,13 +211,7 @@ pub(crate) fn scope_job_request(scope: &EngineSubjectMemoryScope) -> RunSubjectM
         source_thread_label: scope.source_thread_label.clone(),
         relation_subject_id: scope.relation_subject_id.clone(),
         source_summary_type: scope.source_summary_type.clone(),
-        summary_prompt: None,
-        rollup_summary_prompt: None,
         prompt_title: scope.prompt_title.clone(),
-        token_limit: None,
-        count_limit: None,
-        keep_level0_count: None,
-        max_level: None,
         memory_metadata: scope.memory_metadata.clone(),
         scope_key: Some(scope.scope_key.clone()),
     }

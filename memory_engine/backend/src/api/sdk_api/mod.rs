@@ -30,7 +30,7 @@ pub use subject_memories::{
 };
 pub use summaries::{
     delete_thread_summary, get_thread_active_summary_status, list_thread_summaries,
-    run_thread_active_summary, run_thread_repair_summary, run_thread_summary,
+    run_pending_summary_rebuild, run_thread_active_summary, run_thread_summary,
 };
 pub use threads::{delete_thread, get_thread, list_threads, upsert_thread};
 

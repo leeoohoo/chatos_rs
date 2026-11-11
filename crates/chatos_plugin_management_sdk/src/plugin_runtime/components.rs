@@ -8,8 +8,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::plugin_manifest::{
-    PluginComponentKind, PluginManifest, PluginMcpServer, PluginPathRef,
-    PluginPermissionRequirement, component_key_from_path,
+    component_key_from_path, PluginComponentKind, PluginManifest, PluginMcpServer, PluginPathRef,
+    PluginPermissionRequirement,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

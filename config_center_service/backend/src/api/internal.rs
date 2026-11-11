@@ -1,4 +1,8 @@
 use super::*;
+use crate::models::AuditEventRecord;
+
+const CONFIG_QUEUE_REPLAY_SCOPE: &str = "config.queue.replay";
+const CONFIG_QUEUE_REPAIR_SCOPE: &str = "config.queue.repair";
 
 pub fn build_internal_router(state: AppState) -> Router {
     Router::new()
@@ -10,6 +14,14 @@ pub fn build_internal_router(state: AppState) -> Router {
             "/internal/config/v1/instances/heartbeat",
             post(instance_heartbeat),
         )
+        .route(
+            "/internal/config/v1/environments/{environment}/queue-operations",
+            post(internal_replay_queue_operation),
+        )
+        .route(
+            "/internal/config/v1/environments/{environment}/memory-engine/rebuild-backlog/rearm",
+            post(internal_rearm_memory_rebuild),
+        )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_internal,
@@ -19,6 +31,207 @@ pub fn build_internal_router(state: AppState) -> Router {
         .layer(middleware::from_fn(
             chatos_service_runtime::request_id_middleware,
         ))
+}
+
+#[derive(Debug, Deserialize, serde::Serialize)]
+struct InternalRearmMemoryRebuildRequest {
+    tenant_id: String,
+    source_id: String,
+    thread_id: String,
+    project_partition_key: String,
+    rebuild_kind: String,
+    reason: String,
+}
+
+async fn internal_rearm_memory_rebuild(
+    State(state): State<AppState>,
+    Extension(caller): Extension<InternalServiceTokenClaims>,
+    Path(environment): Path<String>,
+    Json(input): Json<InternalRearmMemoryRebuildRequest>,
+) -> Response {
+    let resource_id = format!(
+        "{}/{}:{}:{}",
+        environment.trim(),
+        input.thread_id.trim(),
+        input.project_partition_key.trim(),
+        input.rebuild_kind.trim()
+    );
+    let response = rearm_memory_rebuild_as_service(&state, &caller, &environment, &input).await;
+    record_config_center_internal_resource_access(
+        &caller,
+        ConfigCenterInternalResourceAudit {
+            resource_type: "memory_rebuild_backlog",
+            resource_id: resource_id.as_str(),
+            resource_name: None,
+            action: "rearm",
+            outcome: internal_response_outcome(response.status()),
+        },
+    );
+    response
+}
+
+async fn rearm_memory_rebuild_as_service(
+    state: &AppState,
+    caller: &InternalServiceTokenClaims,
+    environment: &str,
+    input: &InternalRearmMemoryRebuildRequest,
+) -> Response {
+    if caller.caller != "memory-engine" {
+        return error(
+            StatusCode::FORBIDDEN,
+            "Memory rebuild repair requires the Memory Engine service identity",
+        );
+    }
+    if input.reason.trim().len() < 8 {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Memory rebuild repair reason must contain at least 8 characters",
+        );
+    }
+    let release = match state.store.get_active_release(environment.trim()).await {
+        Ok(Some(release)) => release,
+        Ok(None) => {
+            return error(
+                StatusCode::NOT_FOUND,
+                format!("active configuration release not found for {environment}"),
+            )
+        }
+        Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, err),
+    };
+    let base_url = match crate::queue_operations::required_text(
+        &release.values,
+        crate::catalog::CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+    ) {
+        Ok(value) => value,
+        Err(err) => return error(StatusCode::BAD_REQUEST, err),
+    };
+    let secret = match crate::queue_operations::required_text(
+        &release.values,
+        crate::catalog::MEMORY_ENGINE_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
+    ) {
+        Ok(value) => value,
+        Err(err) => return error(StatusCode::BAD_REQUEST, err),
+    };
+    let token = match chatos_service_runtime::issue_internal_service_token_with_trace_id(
+        secret.as_str(),
+        "configuration-center",
+        "memory-engine",
+        "memory.admin",
+        60,
+        caller.trace_id.as_str(),
+    ) {
+        Ok(token) => token,
+        Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, err),
+    };
+    let downstream = match state
+        .memory_engine_http_client()
+        .post(format!(
+            "{}/admin/reliability/rebuild-backlog/rearm",
+            base_url.trim_end_matches('/')
+        ))
+        .header("x-memory-caller", "configuration-center")
+        .header("x-memory-internal-token", token)
+        .json(input)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            tracing::error!(
+                trace_id = caller.trace_id.as_str(),
+                error = err.to_string().as_str(),
+                "Memory rebuild repair request failed"
+            );
+            return error(
+                StatusCode::BAD_GATEWAY,
+                "Memory rebuild repair request failed",
+            );
+        }
+    };
+    let status = downstream.status();
+    let body = match downstream.json::<serde_json::Value>().await {
+        Ok(body) => body,
+        Err(err) => {
+            return error(
+                StatusCode::BAD_GATEWAY,
+                format!("decode Memory rebuild repair response failed: {err}"),
+            )
+        }
+    };
+    if !status.is_success() {
+        return (status, Json(body)).into_response();
+    }
+    let audit = AuditEventRecord {
+        id: caller.trace_id.clone(),
+        environment: Some(environment.trim().to_string()),
+        action: "memory.rebuild.rearm".to_string(),
+        actor_user_id: format!("service:{}", caller.caller),
+        actor_display_name: "Memory Engine release operator".to_string(),
+        release_id: Some(release.id),
+        changed_keys: Vec::new(),
+        detail: Some(json!({
+            "tenant_id": input.tenant_id,
+            "source_id": input.source_id,
+            "thread_id": input.thread_id,
+            "project_partition_key": input.project_partition_key,
+            "rebuild_kind": input.rebuild_kind,
+            "reason": input.reason,
+            "memory_operation": body,
+        })),
+        created_at: Utc::now().to_rfc3339(),
+    };
+    if let Err(err) = state.store.insert_audit(&audit).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, err);
+    }
+    Json(body).into_response()
+}
+
+async fn internal_replay_queue_operation(
+    State(state): State<AppState>,
+    Extension(caller): Extension<InternalServiceTokenClaims>,
+    Path(environment): Path<String>,
+    Json(input): Json<crate::queue_operations::QueueReplayRequest>,
+) -> Response {
+    let resource_id = format!(
+        "{}/{}:{}/{}",
+        environment.trim(),
+        input.service.trim(),
+        input.stream.trim(),
+        input.item_id.trim()
+    );
+    let response = replay_queue_operation_as_service(&state, &caller, &environment, input).await;
+    record_config_center_internal_resource_access(
+        &caller,
+        ConfigCenterInternalResourceAudit {
+            resource_type: "queue_dead_letter",
+            resource_id: resource_id.as_str(),
+            resource_name: None,
+            action: "replay",
+            outcome: internal_response_outcome(response.status()),
+        },
+    );
+    response
+}
+
+async fn replay_queue_operation_as_service(
+    state: &AppState,
+    caller: &InternalServiceTokenClaims,
+    environment: &str,
+    input: crate::queue_operations::QueueReplayRequest,
+) -> Response {
+    if caller.caller != "memory-engine" || input.service.trim() != "memory-engine" {
+        return error(
+            StatusCode::FORBIDDEN,
+            "Memory Engine queue replay requires the matching service identity",
+        );
+    }
+    let service_user = CurrentUser {
+        user_id: format!("service:{}", caller.caller),
+        username: caller.caller.clone(),
+        display_name: "Memory Engine release operator".to_string(),
+        role: "service_operator".to_string(),
+    };
+    result_json(crate::queue_operations::replay(state, environment, &service_user, "", input).await)
 }
 
 #[derive(Debug, Deserialize)]
@@ -279,6 +492,18 @@ fn internal_request_scope(method: &Method, path: &str) -> Option<&'static str> {
     if method == Method::POST && path == "/internal/config/v1/instances/heartbeat" {
         return Some(CONFIG_INSTANCE_HEARTBEAT_SCOPE);
     }
+    if method == Method::POST
+        && path.starts_with("/internal/config/v1/environments/")
+        && path.ends_with("/queue-operations")
+    {
+        return Some(CONFIG_QUEUE_REPLAY_SCOPE);
+    }
+    if method == Method::POST
+        && path.starts_with("/internal/config/v1/environments/")
+        && path.ends_with("/memory-engine/rebuild-backlog/rearm")
+    {
+        return Some(CONFIG_QUEUE_REPAIR_SCOPE);
+    }
     None
 }
 
@@ -306,7 +531,7 @@ mod tests {
     use super::{
         authenticate_internal_request, build_config_center_internal_audit_event,
         internal_request_scope, internal_response_outcome, require_matching_service_identity,
-        ConfigCenterInternalResourceAudit,
+        ConfigCenterInternalResourceAudit, CONFIG_QUEUE_REPAIR_SCOPE, CONFIG_QUEUE_REPLAY_SCOPE,
     };
     use chatos_config_sdk::{
         CONFIG_CENTER_AUDIENCE, CONFIG_CENTER_CALLER_HEADER, CONFIG_CENTER_TOKEN_HEADER,
@@ -322,6 +547,27 @@ mod tests {
         assert_eq!(
             internal_request_scope(&Method::POST, "/internal/config/v1/instances/heartbeat"),
             Some(CONFIG_INSTANCE_HEARTBEAT_SCOPE)
+        );
+        assert_eq!(
+            internal_request_scope(
+                &Method::POST,
+                "/internal/config/v1/environments/production/queue-operations"
+            ),
+            Some(CONFIG_QUEUE_REPLAY_SCOPE)
+        );
+        assert_eq!(
+            internal_request_scope(
+                &Method::GET,
+                "/internal/config/v1/environments/production/queue-operations"
+            ),
+            None
+        );
+        assert_eq!(
+            internal_request_scope(
+                &Method::POST,
+                "/internal/config/v1/environments/production/memory-engine/rebuild-backlog/rearm"
+            ),
+            Some(CONFIG_QUEUE_REPAIR_SCOPE)
         );
         assert_eq!(
             internal_request_scope(&Method::POST, "/internal/config/v1/snapshots/memory-engine"),

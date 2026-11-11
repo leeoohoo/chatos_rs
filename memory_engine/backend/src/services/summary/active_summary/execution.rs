@@ -9,11 +9,11 @@ use crate::db::Db;
 use crate::models::{
     EngineJobRun, GetThreadActiveSummaryStatusRequest, RunThreadActiveSummaryResponse,
 };
-use crate::repositories::{control_plane as cp_repo, threads};
+use crate::repositories::{control_plane as cp_repo, thread_partitions};
 
 use super::super::thread_summary::{
-    execute_existing_summary_job, load_thread_summary_execution_context, start_thread_summary_job,
-    ThreadSummaryExecutionContext, THREAD_DIRECT_TRIGGER,
+    execute_existing_summary_job, load_thread_summary_execution_context_for_partition,
+    start_thread_summary_job, ThreadSummaryExecutionContext, THREAD_DIRECT_TRIGGER,
 };
 
 pub async fn run_thread_active_summary(
@@ -22,14 +22,23 @@ pub async fn run_thread_active_summary(
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
+    project_partition_key: &str,
     trigger_reason: Option<&str>,
 ) -> Result<RunThreadActiveSummaryResponse, String> {
-    let thread = threads::get_thread_by_id(db, tenant_id, source_id, thread_id)
-        .await?
-        .ok_or_else(|| "thread not found".to_string())?;
-    let pending_before_count = thread.pending_record_count.max(0);
+    let partition = thread_partitions::get_summary_partition_state(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        project_partition_key,
+    )
+    .await?;
+    let pending_before_count = partition
+        .as_ref()
+        .map(|state| state.pending_record_count.max(0))
+        .unwrap_or(0);
     if let Some(existing_job) =
-        find_running_summary_job(db, tenant_id, source_id, thread_id).await?
+        find_running_summary_job(db, tenant_id, source_id, thread_id, project_partition_key).await?
     {
         info!(
             "[MEMORY-ENGINE-ACTIVE-SUMMARY] reuse-running tenant_id={} source_id={} thread_id={} job_run_id={}",
@@ -42,8 +51,14 @@ pub async fn run_thread_active_summary(
         ));
     }
 
-    let mut ctx =
-        load_thread_summary_execution_context(db, tenant_id, source_id, thread_id).await?;
+    let mut ctx = load_thread_summary_execution_context_for_partition(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        project_partition_key,
+    )
+    .await?;
     ctx.settings.cloud_resume_kind =
         Some(crate::services::memory_cloud_agent::THREAD_SUMMARY_JOB_RESUME_KIND.to_string());
     if !ctx.should_run() {
@@ -64,9 +79,9 @@ pub async fn run_thread_active_summary(
         });
     }
 
-    if let Some(existing_job_run_id) = ctx
-        .thread
-        .summary_job_run_id
+    if let Some(existing_job_run_id) = partition
+        .as_ref()
+        .and_then(|state| state.summary_job_run_id.as_deref())
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -95,7 +110,8 @@ pub async fn run_thread_active_summary(
         Ok(job_run) => job_run,
         Err(err) if err.contains("slot already occupied") => {
             if let Some(existing_job) =
-                find_running_summary_job(db, tenant_id, source_id, thread_id).await?
+                find_running_summary_job(db, tenant_id, source_id, thread_id, project_partition_key)
+                    .await?
             {
                 info!(
                     "[MEMORY-ENGINE-ACTIVE-SUMMARY] reused-raced-running tenant_id={} source_id={} thread_id={} job_run_id={}",
@@ -128,10 +144,11 @@ pub async fn run_thread_active_summary(
     );
 
     info!(
-        "[MEMORY-ENGINE-ACTIVE-SUMMARY] triggered tenant_id={} source_id={} thread_id={} job_run_id={} trigger_reason={}",
+        "[MEMORY-ENGINE-ACTIVE-SUMMARY] triggered tenant_id={} source_id={} thread_id={} partition={} job_run_id={} trigger_reason={}",
         tenant_id,
         source_id,
         thread_id,
+        project_partition_key,
         job_run_id,
         trigger_reason.unwrap_or("-")
     );
@@ -148,15 +165,18 @@ pub async fn get_thread_active_summary_status(
     thread_id: &str,
     req: GetThreadActiveSummaryStatusRequest,
 ) -> Result<RunThreadActiveSummaryResponse, String> {
-    let thread = threads::get_thread_by_id(
+    let partition = thread_partitions::get_summary_partition_state(
         db,
         req.tenant_id.as_str(),
         req.source_id.as_str(),
         thread_id,
+        req.project_partition_key.as_str(),
     )
-    .await?
-    .ok_or_else(|| "thread not found".to_string())?;
-    let pending_after_count = thread.pending_record_count.max(0);
+    .await?;
+    let pending_after_count = partition
+        .as_ref()
+        .map(|state| state.pending_record_count.max(0))
+        .unwrap_or(0);
 
     let job = if let Some(job_run_id) = req
         .job_run_id
@@ -165,27 +185,23 @@ pub async fn get_thread_active_summary_status(
         .filter(|value| !value.is_empty())
     {
         cp_repo::get_job_run_by_id(db, job_run_id).await?
-    } else if let Some(job_run_id) = thread
-        .summary_job_run_id
+    } else if let Some(job_run_id) = partition
+        .as_ref()
+        .and_then(|state| state.summary_job_run_id.as_deref())
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
         cp_repo::get_job_run_by_id(db, job_run_id).await?
     } else {
-        cp_repo::list_job_runs(
+        find_latest_summary_job(
             db,
-            Some("summary"),
-            None,
-            Some(thread_id),
-            None,
-            Some(req.tenant_id.as_str()),
-            Some(req.source_id.as_str()),
-            10,
+            req.tenant_id.as_str(),
+            req.source_id.as_str(),
+            thread_id,
+            req.project_partition_key.as_str(),
         )
         .await?
-        .into_iter()
-        .next()
     };
 
     let Some(job) = job else {
@@ -232,7 +248,7 @@ fn spawn_detached_active_summary_job(
             source_id_owned.as_str(),
             thread_id_owned.as_str(),
             job_run_id_owned.as_str(),
-            Some(ctx),
+            ctx,
         )
         .await
         {
@@ -251,6 +267,7 @@ async fn find_running_summary_job(
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
+    project_partition_key: &str,
 ) -> Result<Option<EngineJobRun>, String> {
     cp_repo::list_job_runs(
         db,
@@ -263,7 +280,38 @@ async fn find_running_summary_job(
         10,
     )
     .await
-    .map(|mut items| items.drain(..).next())
+    .map(|items| {
+        items.into_iter().find(|job| {
+            metadata_str(job.metadata.as_ref(), "project_partition_key").as_deref()
+                == Some(project_partition_key)
+        })
+    })
+}
+
+async fn find_latest_summary_job(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    project_partition_key: &str,
+) -> Result<Option<EngineJobRun>, String> {
+    cp_repo::list_job_runs(
+        db,
+        Some("summary"),
+        None,
+        Some(thread_id),
+        None,
+        Some(tenant_id),
+        Some(source_id),
+        50,
+    )
+    .await
+    .map(|items| {
+        items.into_iter().find(|job| {
+            metadata_str(job.metadata.as_ref(), "project_partition_key").as_deref()
+                == Some(project_partition_key)
+        })
+    })
 }
 
 fn build_running_response(

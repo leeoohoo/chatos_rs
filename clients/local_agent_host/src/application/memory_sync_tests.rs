@@ -84,6 +84,7 @@ async fn context_cache_round_trips_by_exact_memory_scope() {
         meta: ComposeContextMeta {
             summary_count: 0,
             recent_record_count: 0,
+            ..Default::default()
         },
     };
     cache.store(&scope, &response).await.expect("store");
@@ -110,6 +111,7 @@ async fn context_cache_rejects_expired_or_locally_overtaken_facts() {
         meta: ComposeContextMeta {
             summary_count: 0,
             recent_record_count: 0,
+            ..Default::default()
         },
     })
     .unwrap();

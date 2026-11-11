@@ -99,7 +99,7 @@ fn classify_resource(path: &str) -> ClassifiedResource<'_> {
         ["threads", ..]
             if segments.contains(&"summaries")
                 || segments.contains(&"active-summary")
-                || segments.contains(&"repair-summaries") =>
+                || segments.contains(&"pending-rebuild") =>
         {
             "memory_summary"
         }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::task::{LOCAL_TASK_MAX_OWNED_PATH_BYTES, LOCAL_TASK_MAX_OWNED_PATHS};
+use crate::task::{LOCAL_TASK_MAX_OWNED_PATHS, LOCAL_TASK_MAX_OWNED_PATH_BYTES};
 use serde_json::Value;
 use std::collections::HashSet;
 use unicode_normalization::UnicodeNormalization;

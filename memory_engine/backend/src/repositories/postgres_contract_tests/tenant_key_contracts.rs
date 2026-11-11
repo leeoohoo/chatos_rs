@@ -183,41 +183,41 @@ async fn postgres_allows_tenant_scoped_ids_and_keeps_mutations_isolated() {
     assert_eq!(tenant_b_record.content, "attacker record");
 
     let summary_id = format!("scope-summary-shared-{suffix}");
-    let make_summary =
-        |tenant: &str, source: &str, subject: &str, text: &str| UpsertThreadSummaryRequest {
-            tenant_id: tenant.to_string(),
-            source_id: source.to_string(),
-            subject_id: subject.to_string(),
-            summary_type: "thread_incremental".to_string(),
-            level: Some(0),
-            source_digest: None,
-            summary_text: text.to_string(),
-            source_record_start_id: None,
-            source_record_end_id: None,
-            source_record_count: Some(1),
-            status: Some("done".to_string()),
-            rollup_status: Some("pending".to_string()),
-            rollup_summary_id: None,
-            rolled_up_at: None,
-            subject_memory_summarized: Some(0),
-            subject_memory_summarized_at: None,
-            metadata: None,
-            created_at: Some(timestamp.clone()),
-            updated_at: Some(timestamp.clone()),
-        };
-    crate::repositories::summaries::upsert_thread_summary(
+    crate::repositories::summaries::insert_test_summary(
         &pool,
+        Some(&summary_id),
+        &tenant_a,
+        &source_a,
         &thread_a,
-        &summary_id,
-        make_summary(&tenant_a, &source_a, &subject_a, "owner summary"),
+        &subject_a,
+        "thread_incremental",
+        0,
+        None,
+        "owner summary",
+        None,
+        None,
+        1,
+        None,
+        Some("__none__"),
     )
     .await
     .expect("insert owner summary");
-    crate::repositories::summaries::upsert_thread_summary(
+    crate::repositories::summaries::insert_test_summary(
         &pool,
+        Some(&summary_id),
+        &tenant_b,
+        &source_b,
         &thread_b,
-        &summary_id,
-        make_summary(&tenant_b, &source_b, &subject_b, "attacker summary"),
+        &subject_b,
+        "thread_incremental",
+        0,
+        None,
+        "attacker summary",
+        None,
+        None,
+        1,
+        None,
+        Some("__none__"),
     )
     .await
     .expect("same summary id is valid in another tenant");

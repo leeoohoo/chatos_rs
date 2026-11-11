@@ -93,7 +93,7 @@ struct ContactConversationView: View {
                     if contactID == WorkspaceSystemContact.pluginInstallerID {
                         Label(
                             model.localized(
-                                "直接告诉我想安装的 MCP、npm 包名或本地 Plugin 文件夹；安装能力只在此对话可用。",
+                                "告诉我想安装或更新的插件，支持平台插件市场、MCP、npm、Git 和本地 Plugin；安装能力只在此对话可用。",
                                 english: "Tell me which MCP, npm package, or local Plugin folder to install. Installation tools are available only in this conversation."
                             ),
                             systemImage: "lock.shield.fill"

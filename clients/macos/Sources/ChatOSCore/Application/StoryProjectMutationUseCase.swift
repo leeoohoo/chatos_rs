@@ -156,9 +156,14 @@ public struct StoryProjectMutationUseCase: Sendable {
         _ selection: StoryModelSelection,
         available: [MediaGenerationModel]
     ) throws -> StoryModelSelection {
-        let eligibleIDs = Set(available.lazy.filter { $0.enabled && $0.hasAPIKey }.map(\.id))
-        guard [selection.textModelID, selection.imageModelID, selection.videoModelID]
-            .allSatisfy(eligibleIDs.contains) else {
+        let eligible = available.filter { $0.enabled && $0.hasAPIKey }
+        guard eligible.contains(where: { $0.id == selection.textModelID && $0.supportsChat }),
+              eligible.contains(where: { $0.id == selection.imageModelID && $0.supportsImageGeneration }),
+              eligible.contains(where: {
+                  $0.id == selection.videoModelID
+                    && $0.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .caseInsensitiveCompare("MiniMax-H3") == .orderedSame
+              }) else {
             throw StoryError.missingModel
         }
         var result = selection

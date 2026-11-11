@@ -49,6 +49,8 @@ pub(crate) fn new_summary(
         subject_memory_summarized: 0,
         subject_memory_summarized_at: None,
         metadata,
+        payload_schema: None,
+        structured_payload: None,
         created_at: now.clone(),
         updated_at: now,
     }
@@ -64,7 +66,9 @@ pub(crate) fn build_summary_query<'a>(
     level: Option<i64>,
 ) -> QueryBuilder<Postgres> {
     let mut query = QueryBuilder::new(select);
-    query.push(" WHERE thread_id=").push_bind(thread_id);
+    query
+        .push(" WHERE recall_eligible AND thread_id=")
+        .push_bind(thread_id);
     append(&mut query, "tenant_id", tenant_id);
     append(&mut query, "source_id", source_id);
     append(&mut query, "summary_type", summary_type);

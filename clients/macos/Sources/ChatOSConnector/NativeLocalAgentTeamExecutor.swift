@@ -93,8 +93,7 @@ public actor NativeLocalAgentTeamExecutor {
     var conversation = try await ensureConversation(
       ownerUserID: room.ownerUserID,
       conversationID: conversationID,
-      title: "\(room.draft.name) · \(todo.title)",
-      projectID: room.projectID
+      title: "\(room.draft.name) · \(todo.title)"
     )
     let baseRunID = "agent-team-run-\(groupRun.id.uuidString.lowercased())"
     // Reconcile the latest deterministic Host Run after an app restart instead of creating a
@@ -127,6 +126,12 @@ public actor NativeLocalAgentTeamExecutor {
           ownerUserID: room.ownerUserID,
           conversationID: conversationID,
           expectedConversationVersion: conversation.conversation.version,
+          conversationIfMissing: conversation.conversation.version == 1
+            && conversation.turns.isEmpty
+            ? .init(
+              title: "\(room.draft.name) · \(todo.title)"
+            )
+            : nil,
           turnID: turnID,
           messageID: "agent-team-message-\(groupRun.id.uuidString.lowercased())-\(attempt)",
           runID: hostRunID,
@@ -237,35 +242,37 @@ public actor NativeLocalAgentTeamExecutor {
   private func ensureConversation(
     ownerUserID: String,
     conversationID: String,
-    title: String,
-    projectID: String
+    title: String
   ) async throws -> LocalAgentConversationDetail {
     do {
       let existing = try await conversations.get(
         ownerUserID: ownerUserID,
         conversationID: conversationID
       )
-      guard existing.conversation.resource == .init(kind: .project, resourceID: projectID) else {
+      guard existing.conversation.resource == nil else {
         throw NativeLocalAgentPlatformToolError.invalidRunContext
       }
       return existing
     } catch let error as NativeLocalAgentHostError {
       guard case let .hostError(code, _, _) = error, code == "not_found" else { throw error }
     }
-    do {
-      return try await conversations.create(
-        ownerUserID: ownerUserID,
+    // A fresh team executor conversation is inserted by start_conversation_turn in the
+    // same database transaction as its first Turn. Keeping creation and start in one Host
+    // command prevents a Host restart or package replacement from leaving a durable gap.
+    return .init(
+      conversation: .init(
         conversationID: conversationID,
-        title: title,
-        resource: .init(kind: .project, resourceID: projectID)
-      )
-    } catch let error as NativeLocalAgentHostError {
-      guard case let .hostError(code, _, _) = error, code == "conflict" else { throw error }
-      return try await conversations.get(
         ownerUserID: ownerUserID,
-        conversationID: conversationID
-      )
-    }
+        title: title,
+        resource: nil,
+        version: 1,
+        createdAtUnixMs: 0,
+        updatedAtUnixMs: 0
+      ),
+      turns: [],
+      messages: [],
+      attachments: []
+    )
   }
 
   private func existingRun(

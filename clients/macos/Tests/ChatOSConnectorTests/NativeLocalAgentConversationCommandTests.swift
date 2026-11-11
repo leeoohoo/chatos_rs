@@ -151,6 +151,35 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
         XCTAssertEqual(command["max_iterations"], .number(12))
     }
 
+    func testStartTurnEncodesAtomicConversationSeed() async throws {
+        let host = ConversationCommandHostStub()
+        let client = NativeLocalAgentConversationClient(host: host)
+        _ = try await client.startTurn(.init(
+            ownerUserID: "user-1",
+            conversationID: "conversation-1",
+            expectedConversationVersion: 1,
+            conversationIfMissing: .init(
+                title: "Project 1 · First task"
+            ),
+            turnID: "turn-1",
+            messageID: "message-1",
+            runID: "run-1",
+            message: "Inspect the project",
+            modelConfigRef: "model-1",
+            modelConfigRevision: "model-revision-1",
+            capabilityPolicyRevision: "capability-revision-1"
+        ))
+
+        let command = try await host.lastCommandObject()
+        guard case let .object(seed) = command["conversation_if_missing"] else {
+            return XCTFail("Expected an atomic conversation seed")
+        }
+        XCTAssertEqual(seed["conversation_id"], .string("conversation-1"))
+        XCTAssertEqual(seed["owner_user_id"], .string("user-1"))
+        XCTAssertEqual(seed["title"], .string("Project 1 · First task"))
+        XCTAssertNil(seed["resource"])
+    }
+
     func testCancelTurnUsesExpectedVersionsAndReason() async throws {
         let host = ConversationCommandHostStub()
         let client = NativeLocalAgentConversationClient(host: host)

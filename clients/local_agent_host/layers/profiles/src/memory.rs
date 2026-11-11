@@ -113,9 +113,14 @@ pub(super) fn memory_plan(
         source_id,
         thread_id.clone(),
     )
-    .with_subject_id(agent_subject_id);
+    .with_subject_id(agent_subject_id)
+    .with_compose_context(
+        optional_input_string(&claim.run.input, initial_text_field),
+        Some(turn_id.clone()),
+        claim.run.model_config_revision.clone(),
+    );
     if let Some(project_id) = project_id {
-        scope = scope.with_related_subject_ids([format!("project:{project_id}")]);
+        scope = scope.with_context_project_subject_id(format!("project:{project_id}"));
     }
     Ok(LocalMemoryPlan {
         scope,
@@ -497,7 +502,10 @@ mod tests {
         assert_eq!(plan.scope.source_id, "local_agent");
         assert_eq!(plan.scope.thread_id, "client-agent:agent:jiguli");
         assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:jiguli"));
-        assert_eq!(plan.scope.related_subject_ids, vec!["project:project-1"]);
+        assert_eq!(
+            plan.scope.context_project_subject_id.as_deref(),
+            Some("project:project-1")
+        );
         let user = plan.user_record.expect("user record");
         assert_eq!(user.message_id.as_deref(), Some("message-1"));
         assert_eq!(user.conversation_id, "client-agent:agent:jiguli");
@@ -614,7 +622,10 @@ mod tests {
         let plan = memory_plan(&claim, "local_agent", "prompt").expect("plan");
 
         assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:agent-1"));
-        assert_eq!(plan.scope.related_subject_ids, vec!["project:project-1"]);
+        assert_eq!(
+            plan.scope.context_project_subject_id.as_deref(),
+            Some("project:project-1")
+        );
         let metadata = plan.record_options.assistant_metadata.expect("metadata");
         assert_eq!(metadata["thread_kind"], "todo_execution");
         assert_eq!(metadata["agent_name"], "工程 Agent");
@@ -642,7 +653,10 @@ mod tests {
 
         assert_eq!(plan.thread_id, "client-agent:agent:agent-1");
         assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:agent-1"));
-        assert_eq!(plan.scope.related_subject_ids, vec!["project:project-1"]);
+        assert_eq!(
+            plan.scope.context_project_subject_id.as_deref(),
+            Some("project:project-1")
+        );
         let metadata = plan.record_options.assistant_metadata.expect("metadata");
         assert_eq!(metadata["thread_kind"], "agent_conversation");
         assert_eq!(metadata["memory_project_id"], "project-1");

@@ -12,14 +12,18 @@ const SNAPSHOT_SELECT: &str =
     "SELECT owner_user_id, model_config_ref, model_config_revision, credential_ref, base_url, model, provider, \
      supports_responses, supports_images, instructions, temperature, max_output_tokens, \
      thinking_level, include_prompt_cache_retention, request_body_limit_bytes, \
-     max_transient_retries, responses_compaction_threshold, output_format_json FROM local_model_config_snapshots \
+     max_transient_retries, responses_compaction_threshold, output_format_json, \
+     model_capability_revision, context_window_tokens, output_reserve_tokens, \
+     protocol_overhead_estimator_id, tokenizer_id FROM local_model_config_snapshots \
      WHERE owner_user_id = ? AND model_config_ref = ? AND model_config_revision = ?";
 
 const LATEST_SNAPSHOT_SELECT: &str =
     "SELECT owner_user_id, model_config_ref, model_config_revision, credential_ref, base_url, model, provider, \
      supports_responses, supports_images, instructions, temperature, max_output_tokens, \
      thinking_level, include_prompt_cache_retention, request_body_limit_bytes, \
-     max_transient_retries, responses_compaction_threshold, output_format_json FROM local_model_config_snapshots \
+     max_transient_retries, responses_compaction_threshold, output_format_json, \
+     model_capability_revision, context_window_tokens, output_reserve_tokens, \
+     protocol_overhead_estimator_id, tokenizer_id FROM local_model_config_snapshots \
      WHERE owner_user_id = ? AND model_config_ref = ? \
      ORDER BY created_at_unix_ms DESC, rowid DESC LIMIT 1";
 
@@ -129,7 +133,9 @@ impl LocalModelConfigSnapshotStore for SqliteClientStorage {
              s.credential_ref, s.base_url, s.model, s.provider, s.supports_responses, \
              s.supports_images, s.instructions, s.temperature, s.max_output_tokens, \
              s.thinking_level, s.include_prompt_cache_retention, s.request_body_limit_bytes, \
-             s.max_transient_retries, s.responses_compaction_threshold, s.output_format_json \
+             s.max_transient_retries, s.responses_compaction_threshold, s.output_format_json, \
+             s.model_capability_revision, s.context_window_tokens, s.output_reserve_tokens, \
+             s.protocol_overhead_estimator_id, s.tokenizer_id \
              FROM local_model_config_snapshots s \
              WHERE s.owner_user_id = ? AND NOT EXISTS ( \
                SELECT 1 FROM local_model_config_snapshots newer \
@@ -158,8 +164,10 @@ async fn insert_snapshot(
          owner_user_id, model_config_ref, model_config_revision, credential_ref, base_url, model, provider, \
          supports_responses, supports_images, instructions, temperature, max_output_tokens, \
          thinking_level, include_prompt_cache_retention, request_body_limit_bytes, \
-         max_transient_retries, responses_compaction_threshold, output_format_json, created_at_unix_ms) \
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         max_transient_retries, responses_compaction_threshold, output_format_json, created_at_unix_ms, \
+         model_capability_revision, context_window_tokens, output_reserve_tokens, \
+         protocol_overhead_estimator_id, tokenizer_id) \
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&snapshot.owner_user_id)
     .bind(&snapshot.model_config_ref)
@@ -186,6 +194,11 @@ async fn insert_snapshot(
             .transpose()?,
     )
     .bind(now_unix_ms)
+    .bind(&snapshot.model_capability_revision)
+    .bind(snapshot.context_window_tokens as i64)
+    .bind(snapshot.output_reserve_tokens as i64)
+    .bind(&snapshot.protocol_overhead_estimator_id)
+    .bind(&snapshot.tokenizer_id)
     .execute(&mut *connection)
     .await
     .db()?;
@@ -222,6 +235,7 @@ fn decode_snapshot(
         owner_user_id: row.try_get("owner_user_id").db()?,
         model_config_ref: row.try_get("model_config_ref").db()?,
         model_config_revision: row.try_get("model_config_revision").db()?,
+        model_capability_revision: row.try_get("model_capability_revision").db()?,
         credential_ref: row.try_get("credential_ref").db()?,
         base_url: row.try_get("base_url").db()?,
         model: row.try_get("model").db()?,
@@ -233,6 +247,10 @@ fn decode_snapshot(
         instructions: row.try_get("instructions").db()?,
         temperature: row.try_get("temperature").db()?,
         max_output_tokens: row.try_get("max_output_tokens").db()?,
+        context_window_tokens: decode_positive_u64(row, "context_window_tokens")?,
+        output_reserve_tokens: decode_positive_u64(row, "output_reserve_tokens")?,
+        protocol_overhead_estimator_id: row.try_get("protocol_overhead_estimator_id").db()?,
+        tokenizer_id: row.try_get("tokenizer_id").db()?,
         thinking_level: row.try_get("thinking_level").db()?,
         include_prompt_cache_retention: decode_bool("include_prompt_cache_retention", retention)?,
         request_body_limit_bytes: request_limit
@@ -272,6 +290,16 @@ fn decode_snapshot(
     Ok(snapshot)
 }
 
+fn decode_positive_u64(
+    row: &sqlx::sqlite::SqliteRow,
+    column: &str,
+) -> Result<u64, ClientStorageError> {
+    let value: i64 = row.try_get(column).db()?;
+    u64::try_from(value).map_err(|_| {
+        ClientStorageError::InvalidState(format!("{column} must be a positive integer"))
+    })
+}
+
 fn decode_bool(name: &str, value: i64) -> Result<bool, ClientStorageError> {
     match value {
         0 => Ok(false),
@@ -297,6 +325,11 @@ mod tests {
 
     fn snapshot(owner_user_id: &str, model: &str) -> LocalModelConfigSnapshot {
         LocalModelConfigSnapshot {
+            model_capability_revision: "capability-v1".to_string(),
+            context_window_tokens: 200_000,
+            output_reserve_tokens: 30_000,
+            protocol_overhead_estimator_id: "responses-json-v1".to_string(),
+            tokenizer_id: Some("o200k_base".to_string()),
             owner_user_id: owner_user_id.to_string(),
             model_config_ref: "default".to_string(),
             model_config_revision: "revision-1".to_string(),

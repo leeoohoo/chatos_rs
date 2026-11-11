@@ -4,7 +4,8 @@
 use async_trait::async_trait;
 use chatos_ai_runtime::{
     AiRuntime, ContextualTurnRunner, MemoryContextComposer, MemoryEngineRecordWriter,
-    MemoryRecordScope, MemoryRecordWriter,
+    MemoryRecordScope, MemoryRecordWriter, RuntimeContextAssertionProvider,
+    RuntimeContextAssertionRequest,
 };
 use chatos_local_agent_ports::{
     AuthoritativeConversationPage, AuthoritativeConversationRecord,
@@ -25,6 +26,79 @@ pub struct LocalMemoryRuntimeServices {
     pub sync_worker: LocalMemorySyncWorker,
     pub transcript_source: Arc<dyn LocalConversationTranscriptSource>,
     pub source_id: String,
+}
+
+#[derive(Clone)]
+struct LocalConnectorRuntimeContextAssertionProvider {
+    client: MemoryEngineClient,
+    endpoint: String,
+}
+
+#[derive(Serialize)]
+struct LocalRuntimeContextAssertionRequest<'a> {
+    runtime_kind: &'static str,
+    project_id: Option<&'a str>,
+    runtime_id: &'a str,
+    operation: &'a str,
+    source_id: &'a str,
+    canonical_agent_subject_id: &'a str,
+    thread_id: &'a str,
+}
+
+#[derive(Deserialize)]
+struct LocalRuntimeContextAssertionResponse {
+    runtime_context_assertion: String,
+    source_id: String,
+    canonical_agent_subject_id: String,
+    thread_id: String,
+    project_partition_key: String,
+    runtime_identity_revision: String,
+}
+
+impl LocalConnectorRuntimeContextAssertionProvider {
+    fn new(endpoint: String, client: MemoryEngineClient) -> Self {
+        Self { client, endpoint }
+    }
+}
+
+#[async_trait]
+impl RuntimeContextAssertionProvider for LocalConnectorRuntimeContextAssertionProvider {
+    async fn issue(&self, request: RuntimeContextAssertionRequest<'_>) -> Result<String, String> {
+        let project_id = match request.project_partition_key {
+            "__none__" => None,
+            value => Some(
+                value
+                    .strip_prefix("project:")
+                    .ok_or_else(|| "Memory project partition is not canonical".to_string())?,
+            ),
+        };
+        let response: LocalRuntimeContextAssertionResponse = self
+            .client
+            .post_with_user_auth(
+                self.endpoint.as_str(),
+                &LocalRuntimeContextAssertionRequest {
+                    runtime_kind: "local_agent",
+                    project_id,
+                    runtime_id: request.thread_id,
+                    operation: request.operation,
+                    source_id: request.source_id,
+                    canonical_agent_subject_id: request.canonical_agent_subject_id,
+                    thread_id: request.thread_id,
+                },
+            )
+            .await
+            .map_err(|error| format!("issue Memory runtime context assertion failed: {error}"))?;
+        if response.runtime_context_assertion.trim().is_empty()
+            || response.source_id != request.source_id
+            || response.canonical_agent_subject_id != request.canonical_agent_subject_id
+            || response.thread_id != request.thread_id
+            || response.project_partition_key != request.project_partition_key
+            || response.runtime_identity_revision.trim().is_empty()
+        {
+            return Err("Memory runtime context assertion scope mismatch".to_string());
+        }
+        Ok(response.runtime_context_assertion)
+    }
 }
 
 #[derive(Clone)]
@@ -192,13 +266,23 @@ impl LocalMemoryRuntimeConfig {
         S: LocalMemoryOutboxStore + 'static,
     {
         let source_id = required("Memory source_id", &self.source_id)?;
+        self.access_token.as_ref().ok_or_else(|| {
+            "Memory access token is required for runtime context assertion issuance".to_string()
+        })?;
         let client = self.build_client()?;
-        let composer = MemoryContextComposer::from_client(client.clone());
-        let remote_writer: Arc<dyn MemoryRecordWriter> =
-            Arc::new(MemoryEngineRecordWriter::from_client(
+        let assertion_provider = LocalConnectorRuntimeContextAssertionProvider::new(
+            runtime_context_assertion_endpoint(&self.base_url)?,
+            client.clone(),
+        );
+        let composer = MemoryContextComposer::from_client(client.clone())
+            .with_runtime_context_assertion_provider(assertion_provider.clone());
+        let remote_writer: Arc<dyn MemoryRecordWriter> = Arc::new(
+            MemoryEngineRecordWriter::from_client(
                 client.clone(),
                 MemoryRecordScope::per_record_tenant("tenant_id"),
-            ));
+            )
+            .with_runtime_context_assertion_provider(assertion_provider),
+        );
         let outbox_store: Arc<dyn LocalMemoryOutboxStore> = store;
         let outbox_writer =
             LocalMemoryOutboxWriter::new(Arc::clone(&outbox_store), source_id.clone())?;
@@ -254,6 +338,20 @@ fn user_service_refresh_endpoint(memory_base_url: &str) -> Result<String, String
     Ok(url.to_string())
 }
 
+fn runtime_context_assertion_endpoint(memory_base_url: &str) -> Result<String, String> {
+    let mut url = reqwest::Url::parse(memory_base_url.trim())
+        .map_err(|error| format!("Memory base_url is invalid: {error}"))?;
+    let path = url.path().trim_end_matches('/');
+    let prefix = path
+        .find("/api/memory")
+        .map(|index| &path[..index])
+        .unwrap_or(path);
+    url.set_path(&format!("{prefix}/api/local/runtime-context-assertions"));
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string())
+}
+
 fn required(label: &str, value: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
@@ -269,6 +367,10 @@ fn normalized(value: Option<String>) -> Option<String> {
         (!value.is_empty()).then_some(value)
     })
 }
+
+#[cfg(test)]
+#[path = "memory_auth_tests.rs"]
+mod auth_tests;
 
 #[cfg(test)]
 mod tests {
@@ -365,6 +467,21 @@ mod tests {
             user_service_refresh_endpoint("https://gateway.example/prefix/api/memory-engine/v1")
                 .expect("url"),
             "https://gateway.example/prefix/api/user/auth/refresh"
+        );
+    }
+
+    #[test]
+    fn derives_public_runtime_context_assertion_endpoint_from_gateway_memory_url() {
+        assert_eq!(
+            runtime_context_assertion_endpoint("https://gateway.example/api/memory").expect("url"),
+            "https://gateway.example/api/local/runtime-context-assertions"
+        );
+        assert_eq!(
+            runtime_context_assertion_endpoint(
+                "https://gateway.example/prefix/api/memory-engine/v1?ignored=true"
+            )
+            .expect("url"),
+            "https://gateway.example/prefix/api/local/runtime-context-assertions"
         );
     }
 

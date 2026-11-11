@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 
 public struct AgentRuntime: Sendable {
+    public static let runtimeStateMarker = "<!-- chatos-runtime-state -->"
     private static let toolResultReadToolName = "tool_result_read"
     private static let inlineToolResultMaximumCharacters = 160_000
     private static let inlineToolResultBatchMaximumCharacters = 800_000
@@ -46,7 +47,31 @@ public struct AgentRuntime: Sendable {
         let started = Date()
         let elapsedBefore = state.elapsedSeconds
         let registry = Dictionary(uniqueKeysWithValues: modelTools.map { ($0.name, $0) })
-        let contextPolicy = policy.context ?? AgentContextPolicy()
+        let modelCapability = model.memoryCapabilitySnapshot
+        if contextProvider != nil, modelCapability == nil {
+            throw AgentRuntimeError.modelConfigurationUnavailable
+        }
+        if contextProvider != nil {
+            guard var memory = state.memory, let modelCapability else {
+                throw AgentRuntimeError.modelConfigurationUnavailable
+            }
+            if let frozen = memory.modelCapability {
+                guard frozen == modelCapability else {
+                    throw AgentRuntimeError.modelConfigurationUnavailable
+                }
+            } else {
+                guard state.modelCalls == 0 else {
+                    throw AgentRuntimeError.modelConfigurationUnavailable
+                }
+                memory.modelCapability = modelCapability
+                state.memory = memory
+            }
+        }
+        var contextPolicy = policy.context ?? AgentContextPolicy()
+        if let modelCapability {
+            contextPolicy.windowTokens = modelCapability.contextWindowTokens
+            contextPolicy.outputReserveTokens = modelCapability.outputReserveTokens
+        }
         // Memory Engine is composed once at the start of this run/resume. New
         // messages are appended locally for the rest of the model/tool loop so
         // official OpenAI Responses can keep one stable continuation and let
@@ -88,6 +113,7 @@ public struct AgentRuntime: Sendable {
                    memory.syncedMessageCount < state.messages.count {
                     let synced = try await contextProvider.prepare(
                         checkpoint: snapshot(state), tools: modelTools, policy: contextPolicy,
+                        modelCapability: modelCapability!,
                         deadline: deadline, synchronizeOnly: true,
                         shouldPause: { false }, record: record
                     )
@@ -117,6 +143,7 @@ public struct AgentRuntime: Sendable {
                 if let completion = state.completionResult {
                     if let contextProvider {
                         let synced = try await contextProvider.prepare(checkpoint: snapshot(state), tools: modelTools, policy: contextPolicy,
+                            modelCapability: modelCapability!,
                             deadline: deadline, synchronizeOnly: true, shouldPause: shouldPause, record: record)
                         state = synced.checkpoint
                     } else if state.memory != nil { throw AgentContextError.unavailable }
@@ -172,7 +199,10 @@ public struct AgentRuntime: Sendable {
                     // tool-batch budget is exceeded; tool_result_read pages the preserved receipt.
                     let persistedOutcome = outcome
                     let currentBatchCharacters = state.messages.reversed()
-                        .prefix(while: { $0.role == .tool })
+                        .prefix(while: {
+                            $0.role == .tool || ($0.role == .system && $0.content.hasPrefix(Self.runtimeStateMarker))
+                        })
+                        .filter { $0.role == .tool }
                         .reduce(into: 0) { total, message in
                             total = total.saturatingAdding(message.content.unicodeScalars.count)
                         }
@@ -211,6 +241,7 @@ public struct AgentRuntime: Sendable {
                     if activeModelMessages == nil {
                         let prepared = try await contextProvider.prepare(
                             checkpoint: snapshot(state), tools: modelTools, policy: contextPolicy,
+                            modelCapability: modelCapability!,
                             deadline: deadline, synchronizeOnly: false,
                             shouldPause: shouldPause, record: record
                         )

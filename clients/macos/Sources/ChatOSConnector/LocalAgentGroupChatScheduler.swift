@@ -49,17 +49,42 @@ actor LocalAgentExecutorTaskRegistry {
 /// an interrupted app process. Recovery may run alongside the communication fast lane, so the
 /// database's `running` state alone is not enough to decide whether a checkpoint needs resuming.
 actor LocalAgentActiveDeliveryRegistry {
+    enum Acquisition: Equatable {
+        case acquired
+        case deliveryActive
+        case managerActive
+    }
+
+    private struct ManagerKey: Hashable {
+        let ownerUserID: String
+        let agentID: String
+    }
+
     private var deliveryIDs: Set<String> = []
+    private var managers: [ManagerKey: String] = [:]
 
     /// Atomically claims in-process ownership of a delivery. Manual resume, Human retry, and
-    /// crash recovery all use this gate so a durable `running` checkpoint cannot be executed by
-    /// two tasks at once.
-    func acquire(deliveryID: String) -> Bool {
-        deliveryIDs.insert(deliveryID).inserted
+    /// crash recovery all use this gate. Manager ownership is Agent-wide across conversations;
+    /// executor ownership remains independent, and duplicate execution of a Delivery is rejected.
+    func acquire(
+        deliveryID: String,
+        ownerUserID: String,
+        agentID: String,
+        lane: LocalAgentRunLane
+    ) -> Acquisition {
+        guard !deliveryIDs.contains(deliveryID) else { return .deliveryActive }
+        if lane == .manager {
+            let key = ManagerKey(ownerUserID: ownerUserID, agentID: agentID)
+            guard managers[key] == nil else { return .managerActive }
+            managers[key] = deliveryID
+        }
+        deliveryIDs.insert(deliveryID)
+        return .acquired
     }
 
     func unregister(deliveryID: String) {
         deliveryIDs.remove(deliveryID)
+        managers = managers.filter { $0.value != deliveryID }
     }
 }
 
@@ -352,7 +377,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         self.limits = limits
         let executorTaskRegistry = LocalAgentExecutorTaskRegistry()
         self.executorTaskRegistry = executorTaskRegistry
-        self.activeDeliveryRegistry = LocalAgentActiveDeliveryRegistry()
+        self.activeDeliveryRegistry = service.activeDeliveryRegistry
         self.executionGovernor = LocalAgentExecutionGovernor(
             limit: max(1, maximumConcurrentExecutions),
             machineGovernor: machineResourceGovernor

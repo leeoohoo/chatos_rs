@@ -5,12 +5,11 @@ use reqwest::Method;
 use serde::Serialize;
 
 use crate::models::{
-    RunThreadActiveSummaryResponse, RunThreadRepairSummaryResponse, RunThreadSummaryResponse,
-    SdkGetThreadActiveSummaryStatusRequest, SdkRunThreadActiveSummaryRequest,
-    SdkRunThreadRepairSummaryRequest, SdkRunThreadSummaryRequest,
+    RunPendingSummaryRebuildResponse, RunThreadActiveSummaryResponse, RunThreadSummaryResponse,
+    SdkGetThreadActiveSummaryStatusRequest, SdkRunPendingSummaryRebuildRequest,
+    SdkRunThreadActiveSummaryRequest, SdkRunThreadSummaryRequest,
 };
 
-use super::super::transport::append_optional_query;
 use super::super::{require_direct_source_id, AuthMode, MemoryEngineClient};
 
 impl MemoryEngineClient {
@@ -18,11 +17,15 @@ impl MemoryEngineClient {
         &self,
         thread_id: &str,
         tenant_id: &str,
+        project_partition_key: &str,
+        runtime_context_assertion: &str,
     ) -> Result<RunThreadSummaryResponse, String> {
         #[derive(Serialize)]
         struct DirectRunThreadSummaryRequest<'a> {
             tenant_id: &'a str,
             source_id: &'a str,
+            project_partition_key: &'a str,
+            runtime_context_assertion: &'a str,
         }
 
         match &self.auth {
@@ -31,6 +34,8 @@ impl MemoryEngineClient {
                 let req = DirectRunThreadSummaryRequest {
                     tenant_id,
                     source_id,
+                    project_partition_key,
+                    runtime_context_assertion,
                 };
                 self.send_json(
                     Method::POST,
@@ -42,6 +47,8 @@ impl MemoryEngineClient {
             AuthMode::SystemKey { .. } => {
                 let req = SdkRunThreadSummaryRequest {
                     tenant_id: tenant_id.to_string(),
+                    project_partition_key: project_partition_key.to_string(),
+                    runtime_context_assertion: runtime_context_assertion.to_string(),
                 };
                 self.send_json(
                     Method::POST,
@@ -60,12 +67,16 @@ impl MemoryEngineClient {
         &self,
         thread_id: &str,
         tenant_id: &str,
+        project_partition_key: &str,
+        runtime_context_assertion: &str,
         trigger_reason: Option<&str>,
     ) -> Result<RunThreadActiveSummaryResponse, String> {
         #[derive(Serialize)]
         struct DirectRunThreadActiveSummaryRequest<'a> {
             tenant_id: &'a str,
             source_id: &'a str,
+            project_partition_key: &'a str,
+            runtime_context_assertion: &'a str,
             trigger_reason: Option<&'a str>,
         }
 
@@ -75,6 +86,8 @@ impl MemoryEngineClient {
                 let req = DirectRunThreadActiveSummaryRequest {
                     tenant_id,
                     source_id,
+                    project_partition_key,
+                    runtime_context_assertion,
                     trigger_reason,
                 };
                 self.send_json(
@@ -90,6 +103,8 @@ impl MemoryEngineClient {
             AuthMode::SystemKey { .. } => {
                 let req = SdkRunThreadActiveSummaryRequest {
                     tenant_id: tenant_id.to_string(),
+                    project_partition_key: project_partition_key.to_string(),
+                    runtime_context_assertion: runtime_context_assertion.to_string(),
                     trigger_reason: trigger_reason.map(ToOwned::to_owned),
                 };
                 self.send_json(
@@ -109,34 +124,44 @@ impl MemoryEngineClient {
         &self,
         thread_id: &str,
         tenant_id: &str,
+        project_partition_key: &str,
+        runtime_context_assertion: &str,
         job_run_id: Option<&str>,
     ) -> Result<RunThreadActiveSummaryResponse, String> {
+        #[derive(Serialize)]
+        struct DirectGetThreadActiveSummaryStatusRequest<'a> {
+            tenant_id: &'a str,
+            source_id: &'a str,
+            project_partition_key: &'a str,
+            runtime_context_assertion: &'a str,
+            job_run_id: Option<&'a str>,
+        }
         match &self.auth {
             AuthMode::Direct { source_id } => {
                 let source_id =
                     require_direct_source_id(source_id, "get_thread_active_summary_status")?;
-                let mut query = String::new();
-                append_optional_query(&mut query, "tenant_id", Some(tenant_id));
-                append_optional_query(&mut query, "source_id", Some(source_id));
-                append_optional_query(&mut query, "job_run_id", job_run_id);
-                let suffix = if query.is_empty() {
-                    String::new()
-                } else {
-                    format!("?{query}")
+                let req = DirectGetThreadActiveSummaryStatusRequest {
+                    tenant_id,
+                    source_id,
+                    project_partition_key,
+                    runtime_context_assertion,
+                    job_run_id,
                 };
                 self.send_json(
-                    Method::GET,
+                    Method::POST,
                     &format!(
-                        "/threads/{}/active-summary/status{suffix}",
+                        "/threads/{}/active-summary/status",
                         urlencoding::encode(thread_id)
                     ),
-                    Option::<&()>::None,
+                    Some(&req),
                 )
                 .await
             }
             AuthMode::SystemKey { .. } => {
                 let req = SdkGetThreadActiveSummaryStatusRequest {
                     tenant_id: tenant_id.to_string(),
+                    project_partition_key: project_partition_key.to_string(),
+                    runtime_context_assertion: runtime_context_assertion.to_string(),
                     job_run_id: job_run_id.map(ToOwned::to_owned),
                 };
                 self.send_json(
@@ -152,28 +177,34 @@ impl MemoryEngineClient {
         }
     }
 
-    pub async fn run_thread_repair_summary(
+    pub async fn run_pending_summary_rebuild(
         &self,
         thread_id: &str,
         tenant_id: &str,
-    ) -> Result<RunThreadRepairSummaryResponse, String> {
+        project_partition_key: &str,
+        runtime_context_assertion: &str,
+    ) -> Result<RunPendingSummaryRebuildResponse, String> {
         #[derive(Serialize)]
-        struct DirectRunThreadRepairSummaryRequest<'a> {
+        struct DirectRunPendingSummaryRebuildRequest<'a> {
             tenant_id: &'a str,
             source_id: &'a str,
+            project_partition_key: &'a str,
+            runtime_context_assertion: &'a str,
         }
 
         match &self.auth {
             AuthMode::Direct { source_id } => {
-                let source_id = require_direct_source_id(source_id, "run_thread_repair_summary")?;
-                let req = DirectRunThreadRepairSummaryRequest {
+                let source_id = require_direct_source_id(source_id, "run_pending_summary_rebuild")?;
+                let req = DirectRunPendingSummaryRebuildRequest {
                     tenant_id,
                     source_id,
+                    project_partition_key,
+                    runtime_context_assertion,
                 };
                 self.send_json(
                     Method::POST,
                     &format!(
-                        "/threads/{}/repair-summaries/run",
+                        "/threads/{}/pending-rebuild/run",
                         urlencoding::encode(thread_id)
                     ),
                     Some(&req),
@@ -181,13 +212,15 @@ impl MemoryEngineClient {
                 .await
             }
             AuthMode::SystemKey { .. } => {
-                let req = SdkRunThreadRepairSummaryRequest {
+                let req = SdkRunPendingSummaryRebuildRequest {
                     tenant_id: tenant_id.to_string(),
+                    project_partition_key: project_partition_key.to_string(),
+                    runtime_context_assertion: runtime_context_assertion.to_string(),
                 };
                 self.send_json(
                     Method::POST,
                     &format!(
-                        "/sdk/threads/{}/repair-summaries/run",
+                        "/sdk/threads/{}/pending-rebuild/run",
                         urlencoding::encode(thread_id)
                     ),
                     Some(&req),

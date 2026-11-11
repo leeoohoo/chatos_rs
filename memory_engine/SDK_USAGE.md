@@ -1,19 +1,15 @@
 # Memory Engine SDK 使用文档
 
-`memory_engine_sdk` 是 Rust 版客户端，用来调用 Memory Engine 的线程、消息记录、总结、记忆、上下文和后台任务接口。
+`memory_engine_sdk` 是 Memory Engine 的 Rust 客户端。当前契约只有一条生产路径：调用方写入带项目分区和 Runtime Context Assertion 的原子 Source Unit，Runtime 使用冻结模型能力版本计算预算，再调用 compose。
 
-它默认对应的是“平台直接接管线程和消息数据”的接入模式。接入系统不需要自己再维护另一套独立的会话/消息存储，只需要把线程和消息写入平台即可。
-
-## 1. 引入依赖
+## 1. 引入和初始化
 
 ```toml
 [dependencies]
 memory_engine_sdk = { path = "../crates/memory_engine_sdk" }
 ```
 
-## 2. 初始化
-
-如果你是“业务 source 直接接入”的模式，请使用 `new_direct`：
+绑定单一 `source_id` 的调用方使用 direct client：
 
 ```rust
 use memory_engine_sdk::MemoryEngineClient;
@@ -22,220 +18,182 @@ use std::time::Duration;
 let client = MemoryEngineClient::new_direct(
     "http://127.0.0.1:7081",
     Duration::from_secs(30),
-    "your_source_id",
+    "source_001",
 )?
-.with_internal_service_auth("your-caller", "your_caller_specific_secret");
+.with_internal_service_auth("local-agent-host", "caller-specific-secret");
 ```
 
-如果你是“平台直接接管线程和消息数据”的模式，可以使用 `new_platform`：
+跨 source 的平台服务使用 `new_platform`；系统密钥调用方使用 `new_system`。服务间请求必须配置 `.with_internal_service_auth(caller, secret)`，用户请求使用 `.with_bearer_token(...)`。
+
+## 2. Runtime Context Assertion
+
+写入、compose、总结和删除操作都必须携带短期 Runtime Context Assertion。Assertion 冻结并绑定：
+
+- principal、tenant、source、canonical Agent subject；
+- thread 和 `project_partition_key`；
+- allowed operation；
+- runtime identity revision、签发时间、过期时间和唯一 `jti`。
 
 ```rust
-let client = MemoryEngineClient::new_platform(
-    "http://127.0.0.1:7081",
-    Duration::from_secs(30),
-)?
-.with_internal_service_auth("your-caller", "your_caller_specific_secret");
-```
+use memory_engine_sdk::RuntimeContextAssertionIssuer;
 
-注意：
+let issuer = RuntimeContextAssertionIssuer::new(
+    "runtime-context-signing-secret",
+    "local-agent-host-2026-11",
+    "local-agent-host",
+    "runtime-identity-v3",
+    60,
+)?;
 
-- `new_platform` 适合不绑定单一 `source_id` 的平台级读查询或按需触发的聚合任务
-- 需要明确 `source_id` 作用域的 direct 写接口或线程级调度接口，应该改用 `new_direct`
-- 如果误用 `new_platform` 调用这类必须绑定 source 的接口，SDK 现在会尽早返回明确错误
-- 服务间调用必须使用 `.with_internal_service_auth(caller, secret)` 签发短期 token；用户请求使用 `.with_bearer_token(...)`，不支持静态 operator token
-
-如果你使用系统级账号：
-
-```rust
-let client = MemoryEngineClient::new_system(
-    "http://127.0.0.1:7081",
-    Duration::from_secs(30),
-    "your_system_id",
-    "your_secret_key",
-)?
-.with_internal_service_auth("your-caller", "your_caller_specific_secret");
-```
-
-## 3. 常用接口
-
-- `upsert_thread`
-- `get_thread`
-- `list_threads`
-- `delete_thread`
-- `ingest_thread_records`
-- `batch_sync_records`（兼容旧名称）
-- `list_thread_records`
-- `list_thread_records_page`
-- `compose_context`
-- `upsert_thread_snapshot`
-- `get_latest_thread_snapshot`
-- `list_thread_summaries`
-- `run_thread_summary`
-- `run_thread_repair_summary`
-- `run_pending_summaries_once`
-- `run_pending_rollups_once`
-- `query_subject_memories`
-- `upsert_subject_memory_scope`
-
-## 4. 使用示例
-
-### 4.1 创建或更新线程
-
-```rust
-use memory_engine_sdk::SdkUpsertThreadRequest;
-
-let thread = client.upsert_thread(
+let assertion = issuer.issue(
+    "user_001",
+    "tenant_001",
+    "source_001",
+    "agent:assistant_001",
     "thread_001",
-    &SdkUpsertThreadRequest {
-        tenant_id: "tenant_001".to_string(),
-        subject_id: "subject_001".to_string(),
-        thread_type: "chat".to_string(),
-        external_thread_id: None,
-        title: Some("测试线程".to_string()),
-        labels: Some(vec!["demo".to_string()]),
-        metadata: None,
-        status: Some("active".to_string()),
-        created_at: None,
-        updated_at: None,
-        archived_at: None,
-    },
-).await?;
+    "project:project_001",
+    &["record_ingest", "context_compose", "summary_run"],
+)?;
 ```
 
-### 4.2 查询线程
+服务端会严格校验 scope、operation、签名、有效期和 replay；校验失败时请求直接失败。
+
+## 3. 写入线程和 Source Unit
 
 ```rust
-let thread = client.get_thread("thread_001", Some("tenant_001")).await?;
-```
-
-### 4.3 写入消息记录
-
-```rust
-use memory_engine_sdk::{SdkBatchSyncRecordsRequest, UpsertRecordInput};
+use memory_engine_sdk::{SdkBatchSyncRecordsRequest, SdkUpsertThreadRequest, UpsertRecordInput};
 use serde_json::json;
 
-let resp = client.ingest_thread_records(
-    "thread_001",
-    &SdkBatchSyncRecordsRequest {
-        tenant_id: "tenant_001".to_string(),
-        records: vec![UpsertRecordInput {
-            id: "record_001".to_string(),
-            external_record_id: None,
-            role: "user".to_string(),
-            record_type: "message".to_string(),
-            content: "hello".to_string(),
-            structured_payload: Some(json!({"lang": "zh"})),
-            metadata: None,
-            summary_status: None,
-            summary_id: None,
-            summarized_at: None,
-            created_at: "2026-05-11T00:00:00Z".to_string(),
-        }],
-    },
-).await?;
-```
-
-### 4.4 组装上下文
-
-```rust
-use memory_engine_sdk::{ComposeContextPolicy, SdkComposeContextRequest};
-
-let ctx = client.compose_context(&SdkComposeContextRequest {
-    tenant_id: "tenant_001".to_string(),
-    subject_id: Some("subject_001".to_string()),
-    related_subject_ids: None,
-    thread_id: "thread_001".to_string(),
-    policy: Some(ComposeContextPolicy {
-        include_recent_records: Some(true),
-        include_thread_summary: Some(true),
-        include_subject_memory: Some(true),
-        recent_record_limit: None,
-        summary_limit: None,
-    }),
-}).await?;
-```
-
-### 4.5 分页读取线程记录
-
-```rust
-use memory_engine_sdk::SdkListThreadRecordsRequest;
-
-let page = client
-    .list_thread_records_page(
+client
+    .upsert_thread(
         "thread_001",
-        &SdkListThreadRecordsRequest {
+        &SdkUpsertThreadRequest {
             tenant_id: "tenant_001".to_string(),
-            role: None,
-            record_type: Some("message".to_string()),
-            summary_status: None,
-            limit: Some(20),
-            offset: Some(0),
-            order: Some("asc".to_string()),
+            subject_id: "agent:assistant_001".to_string(),
+            thread_type: "chat".to_string(),
+            external_thread_id: None,
+            title: Some("Memory reliability implementation".to_string()),
+            labels: None,
+            metadata: None,
+            status: Some("active".to_string()),
+            created_at: None,
+            updated_at: None,
+            archived_at: None,
         },
     )
     .await?;
 
-println!("total={}", page.total);
-println!("page_size={}", page.items.len());
+let response = client
+    .ingest_thread_records(
+        "thread_001",
+        &SdkBatchSyncRecordsRequest {
+            tenant_id: "tenant_001".to_string(),
+            project_partition_key: "project:project_001".to_string(),
+            runtime_context_assertion: assertion.clone(),
+            records: vec![UpsertRecordInput {
+                id: "record_001".to_string(),
+                external_record_id: None,
+                role: "user".to_string(),
+                record_type: "message".to_string(),
+                content: "继续实现可靠性方案".to_string(),
+                structured_payload: Some(json!({"source_unit_revision": "source-unit-v2"})),
+                metadata: Some(json!({
+                    "turn_id": "turn_001",
+                    "memory_project_id": "project_001"
+                })),
+                summary_status: None,
+                summary_id: None,
+                summarized_at: None,
+                created_at: "2026-11-09T00:00:00Z".to_string(),
+            }],
+        },
+    )
+    .await?;
 ```
 
-兼容说明：
+一个工具交换必须作为完整 Source Unit 写入，不能把 tool call、tool result 或最终 assistant output 拆成可被独立压缩的半条记录。
 
-- `list_thread_records_page` 返回后端分页契约：`items + total`
-- `list_thread_records` 继续保留，语义不变，只返回 `Vec<EngineRecord>`
-- 如果调用方需要分页总数或与管理台接口对齐，优先使用 `list_thread_records_page`
+## 4. Compose 上下文
 
-### 4.6 触发复盘总结（thread repair）
+`ComposeContextPolicy` 的五个字段都是 token 硬预算，不接受条数限制或 `include_*` 开关：
 
 ```rust
-let resp = client
-    .run_thread_repair_summary("thread_001", "tenant_001")
+use memory_engine_sdk::{ComposeContextPolicy, SdkComposeContextRequest};
+
+let context = client
+    .compose_context(&SdkComposeContextRequest {
+        tenant_id: "tenant_001".to_string(),
+        subject_id: Some("agent:assistant_001".to_string()),
+        context_project_subject_id: Some("project:project_001".to_string()),
+        thread_id: "thread_001".to_string(),
+        query_text: Some("memory reliability remaining work".to_string()),
+        current_turn_id: Some("turn_002".to_string()),
+        model_capability_revision: "model-capability-200k-v1".to_string(),
+        runtime_context_assertion: assertion.clone(),
+        policy: ComposeContextPolicy {
+            max_memory_tokens: 24_000,
+            max_recent_record_tokens: 8_000,
+            max_thread_summary_tokens: 8_000,
+            max_project_memory_tokens: 5_000,
+            max_agent_memory_tokens: 3_000,
+        },
+    })
+    .await?;
+```
+
+调用方必须传已发布的 `model_capability_revision`。服务端按冻结的 context window、output reserve、tokenizer/estimator 和 compose policy 计算预算；必需内容超硬上限或检索前置条件不完整时直接失败。
+
+返回值中的 `meta.budget_requested`、`meta.budget_effective`、`meta.budget_used`、`selected_count_by_pool`、`dropped_count_by_reason` 和 `needs_compaction` 用于解释本次选择。
+
+## 5. 总结与待处理重建
+
+正常线程总结：
+
+```rust
+let response = client
+    .run_thread_summary(
+        "thread_001",
+        "tenant_001",
+        "project:project_001",
+        &assertion,
+    )
+    .await?;
+```
+
+只对仍处于 pending 的原子 Source Unit 执行 durable rebuild：
+
+```rust
+let response = client
+    .run_pending_summary_rebuild(
+        "thread_001",
+        "tenant_001",
+        "project:project_001",
+        &assertion,
+    )
     .await?;
 
-if resp.accepted && resp.running {
-    println!(
-        "repair accepted, still running, job_run_id={:?}, pending_source_records={}",
-        resp.job_run_id,
-        resp.source_record_count
-    );
+if response.accepted && response.running {
+    println!("job_run_id={:?}", response.job_run_id);
 }
 ```
 
-`run_thread_repair_summary` 现在是“立即接单、后台执行”的语义：
+`generated=false` 且 `running=true` 表示 Cloud Agent job 已持久化并等待继续执行；最终状态由 job 状态接口或管理平台读取。covered-range resummarize 是受审计的管理操作，不由普通 SDK 暴露。
 
-- 接口成功返回时，通常会得到 `accepted=true`、`running=true`
-- `job_run_id` 表示这次后台复盘任务对应的 job id
-- `generated=false` 不再代表失败，只表示这次 HTTP 返回时任务还没跑完
-- 如果当前线程没有待复盘消息，会返回 `accepted=false`、`running=false`
-- 如果同一线程已经有一个 `thread_repair` 正在执行，会直接复用现有运行中的 job，并返回它的 `job_run_id`
+## 6. 读取与分页
 
-调用方建议：
+常用读取接口包括：
 
-- 不要再把 `generated=false` 直接当成“复盘失败”
-- 应该把 `accepted=true && running=true` 视为“已成功发起后台复盘”
-- 最终状态请通过你自己的状态接口、任务面板或实时事件判断
+- `get_thread`、`list_threads`；
+- `list_thread_records_page`；
+- `list_thread_summaries`；
+- `query_subject_memories`；
+- `get_thread_active_summary_status`。
 
-## 5. 认证模式说明
+记录分页使用完整 cursor 对 `after_created_at + after_id`；两者必须同时提供。`items`、`total` 和 `has_more` 是当前分页契约。
 
-- `new_direct`：适合业务方直接按 `source_id` 接入。
-- `new_platform`：适合平台侧不预绑定单一 `source_id` 的 direct 读查询；若要调用依赖明确 source 作用域的写接口，请改用 `new_direct`。
-- `new_system`：适合平台侧或内部系统级调用。
-- 服务间使用 `.with_internal_service_auth(caller, secret)`，用户请求使用 `.with_bearer_token(...)`；静态 operator token 已移除。
+## 7. 运行要求
 
-## 6. 常见约定
-
-- `base_url` 建议传 `http://127.0.0.1:7081`
-- `timeout` 建议至少 `30s`
-- `run_thread_repair_summary` 不需要把 HTTP timeout 调得特别长，因为它会立即返回后台运行状态
-- 所有接口都返回 `Result<_, String>`
-- 失败时直接读取错误字符串即可
-
-## 7. 启动服务
-
-如果你要先启动服务，再接 SDK：
-
-```bash
-docker/deploy.sh up
-```
-
-后端默认端口是 `7081`，前端默认端口是 `4178`。
+- Memory Engine 默认地址：`http://127.0.0.1:7081`。
+- SDK 方法返回 `Result<_, String>`。
+- Configuration Center 的 Memory policy、Managed Agent Prompt、pipeline profile、模型能力和 tokenizer revision 缺失或校验失败时，服务启动或 generation 会 fail closed。
+- Runtime Context Assertion 最长 TTL 为 300 秒；每次调用应使用与当前 scope 和 operation 匹配的新 assertion。

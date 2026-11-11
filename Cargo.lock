@@ -408,10 +408,12 @@ dependencies = [
  "chatos_service_runtime",
  "chrono",
  "futures",
+ "hex",
  "memory_engine_sdk",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1908,6 +1910,7 @@ dependencies = [
  "futures",
  "hex",
  "libc",
+ "memory_engine_sdk",
  "redis",
  "reqwest",
  "ring",
@@ -1981,11 +1984,13 @@ name = "memory_engine_sdk"
 version = "0.1.0"
 dependencies = [
  "chatos_service_runtime",
+ "jsonwebtoken",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]

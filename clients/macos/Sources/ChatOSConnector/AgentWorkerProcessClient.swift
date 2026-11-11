@@ -89,6 +89,7 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
         try policy.validate()
         guard checkpoint.scope == scope,
               checkpoint.memory != nil ? contextProvider != nil : contextProvider == nil,
+              contextProvider == nil || model.memoryCapabilitySnapshot != nil,
               shutdownGraceSeconds.isFinite,
               (1...120).contains(shutdownGraceSeconds),
               resourcePolicy.maximumPhysicalMemoryBytes > 0,
@@ -241,6 +242,7 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
             tools: tools,
             hasContextProvider: contextProvider != nil,
             modelUsesServerSideCompaction: model.usesServerSideCompaction,
+            modelCapabilitySnapshot: model.memoryCapabilitySnapshot,
             modelTransportConfiguration: modelTransportConfiguration
         )))
 
@@ -344,6 +346,7 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
                         checkpoint: request.checkpoint,
                         tools: request.tools,
                         policy: request.policy,
+                        modelCapability: request.modelCapability,
                         deadline: request.deadline,
                         synchronizeOnly: request.synchronizeOnly,
                         shouldPause: { Task.isCancelled },

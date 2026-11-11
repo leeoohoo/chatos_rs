@@ -359,6 +359,7 @@ mod tests {
                         owner_user_id: "user-1".into(),
                         conversation_id: "conversation-survey-flow".into(),
                         expected_conversation_version: 1,
+                        conversation_if_missing: None,
                         turn_id: "turn-survey-flow".into(),
                         message_id: "message-survey-flow".into(),
                         run_id: "run-survey-flow".into(),

@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSModelCapabilities
 import ChatOSAgentRuntime
 import Foundation
 
@@ -32,7 +33,7 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
             id: configID,
             expectedAuthenticationSessionID: session
         )
-        guard config.enabled, let key = config.apiKey, !key.isEmpty,
+        guard config.enabled, ModelWorkload.forModel(config.model) == .chat, let key = config.apiKey, !key.isEmpty,
               let raw = config.baseURL,
               let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             throw AgentRuntimeError.modelConfigurationUnavailable
@@ -52,15 +53,25 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
             return .init(statusCode: response.statusCode, headers: response.headers, body: response.body)
         }
         let resolvedThinking = thinkingLevel ?? config.taskThinkingLevel
-        let context = policy.context ?? .init()
-        let maximumOutputTokens = context.outputReserveTokens
+        let capability = try AgentModelCapabilitySnapshot(
+            revision: config.modelCapabilityRevision ?? "",
+            contextWindowTokens: config.contextWindowTokens ?? 0,
+            outputReserveTokens: config.outputReserveTokens ?? 0,
+            protocolOverheadEstimatorID: config.protocolOverheadEstimatorID ?? "",
+            tokenizerID: config.tokenizerID
+        )
+        guard config.maxOutputTokens.map({ $0 > 0 && $0 <= capability.outputReserveTokens }) ?? true else {
+            throw AgentRuntimeError.modelConfigurationUnavailable
+        }
+        let maximumOutputTokens = config.maxOutputTokens ?? capability.outputReserveTokens
         let promptCacheKey = "story-agent:\(configID):\(resolvedThinking ?? "default")"
         let model: any AgentModelClient = try AgentResponsesModelClient(
             baseURL: url, model: config.model, apiKey: key,
             thinking: resolvedThinking,
             maximumOutputTokens: maximumOutputTokens,
             promptCacheKey: promptCacheKey,
-            compactionThreshold: context.windowTokens - context.outputReserveTokens,
+            compactionThreshold: capability.contextWindowTokens - capability.outputReserveTokens,
+            capabilitySnapshot: capability,
             transport: send, streamTransport: stream
         )
         let workerTransportConfiguration: AgentWorkerModelTransportConfiguration? = if workerModelTransportEnabled {
@@ -72,7 +83,7 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
                 maximumOutputTokens: maximumOutputTokens,
                 temperature: nil,
                 promptCacheKey: promptCacheKey,
-                compactionThreshold: context.windowTokens - context.outputReserveTokens
+                compactionThreshold: capability.contextWindowTokens - capability.outputReserveTokens
             ))
         } else {
             nil
@@ -81,13 +92,14 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
             model: model,
             client: client,
             session: session,
+            memoryCapabilitySnapshot: capability,
             workerTransportConfiguration: workerTransportConfiguration
         )
     }
 
     public func plan(_ request: StoryPlanningRequest) async throws -> Data {
         let config = try await loadModelConfig(id: request.modelConfigID)
-        guard config.enabled, let key = config.apiKey, !key.isEmpty,
+        guard config.enabled, ModelWorkload.forModel(config.model) == .chat, let key = config.apiKey, !key.isEmpty,
               let raw = config.baseURL, let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
               ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil,
               url.user == nil, url.password == nil else {
@@ -146,6 +158,7 @@ private struct StorySessionBoundModel: AgentModelClient {
     let model: any AgentModelClient
     let client: ChatOSAPIClient
     let session: UUID
+    let memoryCapabilitySnapshot: AgentModelCapabilitySnapshot?
     let workerTransportConfiguration: AgentWorkerModelTransportConfiguration?
     var usesServerSideCompaction: Bool { model.usesServerSideCompaction }
 
@@ -179,10 +192,22 @@ private struct Config: Decodable {
     var apiKey: String?
     var baseURL: String?
     var taskThinkingLevel: String?
+    var maxOutputTokens: Int?
+    var modelCapabilityRevision: String?
+    var contextWindowTokens: Int?
+    var outputReserveTokens: Int?
+    var protocolOverheadEstimatorID: String?
+    var tokenizerID: String?
     enum CodingKeys: String, CodingKey {
         case enabled, model, provider
         case apiKey = "api_key"
         case baseURL = "base_url"
         case taskThinkingLevel = "task_thinking_level"
+        case maxOutputTokens = "max_output_tokens"
+        case modelCapabilityRevision = "model_capability_revision"
+        case contextWindowTokens = "context_window_tokens"
+        case outputReserveTokens = "output_reserve_tokens"
+        case protocolOverheadEstimatorID = "protocol_overhead_estimator_id"
+        case tokenizerID = "tokenizer_id"
     }
 }

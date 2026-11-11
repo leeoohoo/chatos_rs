@@ -91,7 +91,7 @@ enum LocalAgentTurnProcessMapper {
         case "run_paused": ("执行已暂停", safeDetail(payload["reason"]?.string), .streaming, .update)
         case "run_needs_review", "claim_expired_needs_review": (
             "执行状态需要检查",
-            safeDetail(payload["reason"]?.string),
+            safeDetail(NativeLocalAgentMessageTaskGraphService.needsReviewError(from: [event])),
             .failed,
             .update
         )

@@ -73,7 +73,11 @@ extension LocalAgentGroupChatSchedulerTests {
         )
         var checkpoint = AgentRunCheckpoint(
             scope: LocalAgentGroupChatRun.runtimeScope(for: context),
-            messages: [.init(role: .system, content: "system")]
+            messages: [
+                .init(role: .system, content: "system"),
+                .init(role: .user, content: "执行当前绑定的 Todo"),
+                .init(role: .assistant, toolCalls: [interruptedCall]),
+            ]
         )
         checkpoint.id = runID
         checkpoint.status = .needsReview
@@ -88,7 +92,7 @@ extension LocalAgentGroupChatSchedulerTests {
             runID: runID,
             runtimeScope: checkpoint.scope
         )
-        checkpoint.memory = .init(scope: memoryScope, pinnedMessageCount: 1)
+        checkpoint.memory = .init(scope: memoryScope, pinnedMessageCount: 2)
         checkpoint.memory?.threadCreated = true
         try await store.saveRun(try LocalAgentGroupChatRun(
             id: runID,
@@ -225,7 +229,10 @@ extension LocalAgentGroupChatSchedulerTests {
         )
         var checkpoint = AgentRunCheckpoint(
             scope: LocalAgentGroupChatRun.runtimeScope(for: context),
-            messages: [.init(role: .system, content: "system")]
+            messages: [
+                .init(role: .system, content: "system"),
+                .init(role: .user, content: "执行当前绑定的 Todo"),
+            ]
         )
         checkpoint.id = runID
         checkpoint.status = .paused
@@ -239,7 +246,7 @@ extension LocalAgentGroupChatSchedulerTests {
             runID: runID,
             runtimeScope: checkpoint.scope
         )
-        checkpoint.memory = .init(scope: memoryScope, pinnedMessageCount: 1)
+        checkpoint.memory = .init(scope: memoryScope, pinnedMessageCount: 2)
         checkpoint.memory?.threadCreated = true
         try await store.saveRun(try LocalAgentGroupChatRun(
             id: runID,

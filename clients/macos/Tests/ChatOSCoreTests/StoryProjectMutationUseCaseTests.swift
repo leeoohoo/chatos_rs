@@ -31,7 +31,7 @@ struct StoryProjectMutationUseCaseTests {
         let persistence = RecordingStoryProjectMutationPersistence()
         let useCase = StoryProjectMutationUseCase(persistence: persistence)
         var unavailable = Self.models
-        unavailable[1].hasAPIKey = false
+        unavailable[2].hasAPIKey = false
 
         await #expect(throws: StoryError.self) {
             _ = try await useCase.create(
@@ -46,6 +46,22 @@ struct StoryProjectMutationUseCaseTests {
                 ownerUserID: "   ",
                 availableModels: Self.models
             )
+        }
+        #expect(await persistence.requests.isEmpty)
+    }
+
+    @Test("models cannot be swapped between planning, image, and video operations")
+    func rejectsWrongWorkloads() async {
+        let persistence = RecordingStoryProjectMutationPersistence()
+        let useCase = StoryProjectMutationUseCase(persistence: persistence)
+        for selection in [StoryModelSelection(textModelID: "video", imageModelID: "image", videoModelID: "video"),
+                          StoryModelSelection(textModelID: "text", imageModelID: "text", videoModelID: "video"),
+                          StoryModelSelection(textModelID: "text", imageModelID: "image", videoModelID: "image")] {
+            var draft = Self.project()
+            draft.models = selection
+            await #expect(throws: StoryError.missingModel) {
+                _ = try await useCase.create(draft, ownerUserID: "alice", availableModels: Self.models)
+            }
         }
         #expect(await persistence.requests.isEmpty)
     }
@@ -69,7 +85,7 @@ struct StoryProjectMutationUseCaseTests {
                 title: "  Updated Story  ",
                 description: "updated description",
                 models: .init(
-                    textModelID: "video",
+                    textModelID: "text2",
                     imageModelID: "image",
                     videoModelID: "video"
                 )
@@ -87,7 +103,7 @@ struct StoryProjectMutationUseCaseTests {
         #expect(saved.createdAt == createdAt)
         #expect(saved.id == current.id)
         #expect(saved.version == current.version)
-        #expect(saved.models.textModelID == "video")
+        #expect(saved.models.textModelID == "text2")
         #expect(saved.models.supportedVideoDurations == Array(4...15))
         #expect(await persistence.requests.first?.preservingVideoSegmentIDs == preserving)
     }
@@ -282,6 +298,8 @@ struct StoryProjectMutationUseCaseTests {
 
     private static var models: [MediaGenerationModel] {
         [
+            .init(id: "text2", name: "Text 2", provider: "gpt", modelName: "gpt-6-luna",
+                  enabled: true, taskEnabled: false, hasAPIKey: true),
             .init(
                 id: "text",
                 name: "Text",
@@ -295,7 +313,7 @@ struct StoryProjectMutationUseCaseTests {
                 id: "image",
                 name: "Image",
                 provider: "provider",
-                modelName: "image-model",
+                modelName: "gpt-image-2",
                 enabled: true,
                 taskEnabled: false,
                 hasAPIKey: true

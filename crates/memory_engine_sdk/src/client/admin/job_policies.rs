@@ -3,7 +3,7 @@
 
 use reqwest::Method;
 
-use crate::models::{EngineJobPolicy, ListResponse, UpsertEngineJobPolicyRequest};
+use crate::models::{EngineJobPolicy, ListResponse};
 
 use super::super::MemoryEngineClient;
 
@@ -20,19 +20,6 @@ impl MemoryEngineClient {
             Method::GET,
             &format!("/admin/job-policies/{}", urlencoding::encode(job_type)),
             Option::<&()>::None,
-        )
-        .await
-    }
-
-    pub async fn upsert_job_policy(
-        &self,
-        job_type: &str,
-        req: &UpsertEngineJobPolicyRequest,
-    ) -> Result<EngineJobPolicy, String> {
-        self.send_json(
-            Method::PUT,
-            &format!("/admin/job-policies/{}", urlencoding::encode(job_type)),
-            Some(req),
         )
         .await
     }
@@ -53,12 +40,11 @@ mod tests {
             "items": [
                 {
                     "job_type": "summary",
-                    "enabled": true,
-                    "summary_prompt": null,
-                    "rollup_summary_prompt": null,
-                    "token_limit": 1200,
-                    "interval_seconds": 60,
-                    "max_threads_per_tick": 10,
+                    "dispatch_threshold_tokens": 1200,
+                    "max_source_batch_tokens": 8000,
+                    "max_model_input_tokens": 32000,
+                    "max_leaf_tokens": 6000,
+                    "max_merge_rounds": 8,
                     "count_limit": 12,
                     "keep_level0_count": 3,
                     "max_level": 2,

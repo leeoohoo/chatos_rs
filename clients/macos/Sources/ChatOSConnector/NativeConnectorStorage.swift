@@ -88,6 +88,8 @@ struct NativeInstalledPluginRecord: Codable, Sendable, Equatable {
     var packageFileSHA256: [String: String]? = nil
     var source: LocalConnectorPluginSource? = nil
     var sourceSummary: String? = nil
+    var sourceDraft: LocalConnectorPluginSourceDraft? = nil
+    var customMCPDraft: LocalConnectorCustomMCPDraft? = nil
 }
 
 struct NativeConnectorStateStore: Sendable {

@@ -57,14 +57,14 @@ pub fn compose_response_to_input_items_with_budget(
     items
 }
 
-pub(super) fn standard_compose_policy() -> Option<ComposeContextPolicy> {
-    Some(ComposeContextPolicy {
-        include_recent_records: Some(true),
-        include_thread_summary: Some(true),
-        include_subject_memory: Some(true),
-        recent_record_limit: None,
-        summary_limit: Some(2),
-    })
+pub(super) fn standard_compose_policy() -> ComposeContextPolicy {
+    ComposeContextPolicy {
+        max_memory_tokens: 24_000,
+        max_recent_record_tokens: 12_000,
+        max_thread_summary_tokens: 6_000,
+        max_project_memory_tokens: 4_000,
+        max_agent_memory_tokens: 4_000,
+    }
 }
 
 fn engine_record_to_input_items(

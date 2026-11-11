@@ -343,6 +343,7 @@ extension LocalAgentGroupChatScheduler {
                             store: store,
                             ownerUserID: ownerUserID
                         ) else {
+                            exhaustedAgentIDs.insert(agentID)
                             continue
                         }
                         inFlightCount += 1
@@ -493,7 +494,10 @@ extension LocalAgentGroupChatScheduler {
                     let run = runs[nextRunIndex]
                     nextRunIndex += 1
                     let deliveryID = run.context.deliveryID
-                    guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else {
+                    guard await activeDeliveryRegistry.acquire(
+                        deliveryID: deliveryID, ownerUserID: ownerUserID,
+                        agentID: run.context.agentID, lane: run.context.lane
+                    ) == .acquired else {
                         await executionPermit.releaseAndWait()
                         continue
                     }
@@ -855,6 +859,7 @@ extension LocalAgentGroupChatScheduler {
                             store: store,
                             ownerUserID: ownerUserID
                         ) else {
+                            exhaustedAgentIDs.insert(member.agentID)
                             continue
                         }
                         inFlightCount += 1
@@ -943,7 +948,16 @@ extension LocalAgentGroupChatScheduler {
                 todoID = nil
             }
             let handle = todoID == nil ? nil : LocalAgentExecutorCancellationHandle()
-            guard await activeDeliveryRegistry.acquire(deliveryID: work.delivery.id) else {
+            let ownership = await activeDeliveryRegistry.acquire(
+                deliveryID: work.delivery.id, ownerUserID: ownerUserID,
+                agentID: work.delivery.targetAgentID, lane: work.delivery.lane
+            )
+            guard ownership == .acquired else {
+                if ownership == .managerActive {
+                    try await store.deferUnstartedManagerDelivery(
+                        ownerUserID: ownerUserID, deliveryID: work.delivery.id
+                    )
+                }
                 await work.executionPermit.releaseAndWait()
                 return nil
             }
@@ -982,16 +996,6 @@ extension LocalAgentGroupChatScheduler {
                     detail: Self.failureDetail(error)
                 )
             }
-            // The failure wrapper itself can fail while persisting its terminal state. Keep
-            // invalidation outside that wrapper so a visible room always reconciles durable
-            // state after this claimed attempt leaves the scheduler.
-            await service.publishChange(.init(
-                ownerUserID: ownerUserID,
-                roomID: work.room.id,
-                agentID: work.delivery.targetAgentID,
-                kind: .roomUpdated
-            ))
-            await work.executionPermit.releaseAndWait()
             return OrderedDeliveryAttemptReceipt(order: work.order, receipt: receipt)
         }
         prepared.cancellationHandle?.install { task.cancel() }
@@ -1001,6 +1005,13 @@ extension LocalAgentGroupChatScheduler {
            let handle = prepared.cancellationHandle {
             await executorTaskRegistry.unregister(todoID: todoID, handle: handle)
         }
+        await work.executionPermit.releaseAndWait()
+        await service.publishChange(.init(
+            ownerUserID: ownerUserID,
+            roomID: work.room.id,
+            agentID: work.delivery.targetAgentID,
+            kind: .roomUpdated
+        ))
         return completed
     }
 

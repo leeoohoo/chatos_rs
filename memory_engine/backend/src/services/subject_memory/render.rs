@@ -5,7 +5,6 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::models::EngineSubjectMemory;
-use crate::services::ai_pipeline::SummaryBuildResult;
 
 use super::PendingSourceSummary;
 
@@ -13,7 +12,7 @@ pub(crate) fn summary_to_subject_memory_block(item: &PendingSourceSummary) -> St
     let project_prefix = project_id_from_summary_metadata(item.metadata.as_ref())
         .map(|project_id| format!("[project_id={}]", project_id))
         .unwrap_or_default();
-    format!(
+    let mut rendered = format!(
         "{}[summary_id={}][thread_id={}][created_at={}][summary_type={}][level={}]\n{}",
         project_prefix,
         item.id,
@@ -22,14 +21,22 @@ pub(crate) fn summary_to_subject_memory_block(item: &PendingSourceSummary) -> St
         item.summary_type,
         item.level,
         item.summary_text
-    )
+    );
+    if let Some(payload) = item.structured_payload.as_ref() {
+        rendered.push_str(format!("\n[structured_payload]\n{payload}").as_str());
+    }
+    rendered
 }
 
 pub(crate) fn subject_memory_to_rollup_block(item: &EngineSubjectMemory) -> String {
-    format!(
-        "[level={}][memory_key={}][updated_at={}]\n{}",
-        item.level, item.memory_key, item.updated_at, item.text
-    )
+    let mut rendered = format!(
+        "[memory_id={}][level={}][memory_key={}][updated_at={}]\n{}",
+        item.id, item.level, item.memory_key, item.updated_at, item.text
+    );
+    if let Some(payload) = item.structured_payload.as_ref() {
+        rendered.push_str(format!("\n[structured_payload]\n{payload}").as_str());
+    }
+    rendered
 }
 
 pub(crate) fn build_memory_metadata(
@@ -50,37 +57,6 @@ pub(crate) fn build_memory_metadata(
         Value::String(source_thread_label.to_string()),
     );
     Some(Value::Object(map))
-}
-
-pub(crate) fn decorate_generated_text(
-    build: SummaryBuildResult,
-    oversized_count: Option<usize>,
-    label: &str,
-    keep_level0_count: i64,
-) -> String {
-    let mut text = build.text;
-    if build.chunk_count > 1 {
-        text.push_str(&format!(
-            "\n\n[meta] This {} was merged from {} chunks.",
-            label, build.chunk_count
-        ));
-    }
-    if build.overflow_retry_count > 0 {
-        text.push_str(&format!(
-            "\n\n[meta] Context overflow retry count: {}.",
-            build.overflow_retry_count
-        ));
-    }
-    if let Some(count) = oversized_count.filter(|value| *value > 0) {
-        text.push_str(&format!(
-            "\n\n[meta] {} oversized source memories were marked rolled up without being merged into the body.",
-            count
-        ));
-    }
-    if keep_level0_count > 0 {
-        let _ = keep_level0_count;
-    }
-    text
 }
 
 pub(crate) fn digest_from_ids(namespace: &str, ids: &[String]) -> Option<String> {
@@ -147,6 +123,7 @@ mod tests {
             summary_type: "thread_incremental".to_string(),
             level: 0,
             summary_text: "project facts".to_string(),
+            structured_payload: None,
             metadata: Some(json!({"project_subject_id": "project:alpha"})),
             created_at: "2026-11-05T00:00:00Z".to_string(),
         };

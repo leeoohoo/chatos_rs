@@ -21,7 +21,8 @@ use super::{
     execution::StoryPlanningExecutionLease,
     media::StoryStudioManager,
     memory::{
-        assemble_memory_input, bind_memory, memory_records, synced_digest, StoryMemoryAdapter,
+        assemble_memory_input, bind_memory, current_memory_query, memory_records, synced_digest,
+        StoryMemoryAdapter,
     },
     planning::{
         project_fingerprint, StoryAgentContextPolicy, StoryAgentMessage, StoryAgentMessageRole,
@@ -197,6 +198,22 @@ impl StoryPlanningRuntime<'_> {
                 return Err(error);
             }
         };
+        match run.model_capability.as_ref() {
+            Some(snapshot) if snapshot != &model.capability => {
+                return Err("剧情规划运行的模型能力快照已变化，不能继续旧运行。".into())
+            }
+            Some(_) => {}
+            None => {
+                if run.checkpoint.model_calls > 0 {
+                    return Err(
+                        "剧情规划旧运行缺少冻结模型能力快照，不能继续发送模型请求。".into(),
+                    );
+                }
+                run.model_capability = Some(model.capability.clone());
+                self.persist(run, lease, "model_capability_frozen", "已冻结模型能力快照")
+                    .await?;
+            }
+        }
         let runtime = AiRuntime::builder()
             .with_max_iterations(run.policy.maximum_model_calls as usize)
             .with_request_read_timeout(Duration::from_secs(
@@ -288,9 +305,16 @@ impl StoryPlanningRuntime<'_> {
                     .ok_or_else(|| "剧情规划历史记录无效。".to_owned())?
                     .scope
                     .clone();
+                let (query_text, current_turn_id) = current_memory_query(run)?;
                 let response = match tokio::select! {
                     _ = lease.cancellation.cancelled() => Err("剧情规划已取消。".into()),
-                    response = memory.compose(self.owner_user_id, &scope) => response,
+                    response = memory.compose(
+                        self.owner_user_id,
+                        &scope,
+                        &model.capability,
+                        query_text.as_str(),
+                        current_turn_id.as_str(),
+                    ) => response,
                 } {
                     Ok(response) => response,
                     Err(error) => {
@@ -363,10 +387,10 @@ impl StoryPlanningRuntime<'_> {
             .await?;
             let input = Value::Array(active_model_input.to_vec());
             let request_body_limit = usize::try_from(
-                run.policy
-                    .context
-                    .window_tokens
-                    .saturating_sub(run.policy.context.output_reserve_tokens),
+                model
+                    .capability
+                    .context_window_tokens
+                    .saturating_sub(model.capability.output_reserve_tokens),
             )
             .unwrap_or(usize::MAX / 4)
             .saturating_mul(4)
@@ -974,6 +998,7 @@ struct ResolvedStoryModel {
     temperature: Option<f64>,
     max_output_tokens: Option<i64>,
     thinking_level: Option<String>,
+    capability: super::planning::StoryModelCapabilitySnapshot,
 }
 
 fn resolved_model(
@@ -1007,6 +1032,34 @@ fn resolved_model(
     {
         return Err("文字模型 API 地址无效。".into());
     }
+    let capability = super::planning::StoryModelCapabilitySnapshot {
+        revision: model
+            .model_capability_revision
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "文字模型缺少 capability revision。".to_owned())?,
+        context_window_tokens: model
+            .context_window_tokens
+            .and_then(|value| u64::try_from(value).ok())
+            .filter(|value| *value >= 2_048)
+            .ok_or_else(|| "文字模型缺少有效上下文窗口。".to_owned())?,
+        output_reserve_tokens: model
+            .output_reserve_tokens
+            .and_then(|value| u64::try_from(value).ok())
+            .filter(|value| *value >= 256)
+            .ok_or_else(|| "文字模型缺少有效输出预留。".to_owned())?,
+        protocol_overhead_estimator_id: model
+            .protocol_overhead_estimator_id
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "文字模型缺少协议开销估算器。".to_owned())?,
+        tokenizer_id: model.tokenizer_id.filter(|value| !value.trim().is_empty()),
+    };
+    if capability.output_reserve_tokens >= capability.context_window_tokens
+        || model
+            .max_output_tokens
+            .is_some_and(|value| value <= 0 || value as u64 > capability.output_reserve_tokens)
+    {
+        return Err("文字模型能力快照无效。".into());
+    }
     Ok(ResolvedStoryModel {
         base_url,
         api_key,
@@ -1016,6 +1069,7 @@ fn resolved_model(
         temperature: model.temperature,
         max_output_tokens: model.max_output_tokens,
         thinking_level: model.task_thinking_level,
+        capability,
     })
 }
 

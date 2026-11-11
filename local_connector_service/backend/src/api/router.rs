@@ -14,18 +14,17 @@ use super::managed_runtime_config::get_managed_runtime_config;
 use super::metrics::{health_handler, prometheus_metrics};
 use super::{
     connect_device, controlled_network_readiness, create_device,
-    create_managed_requirements_assignment, create_managed_requirements_policy,
-    create_project_binding, create_workspace, current_user_handler,
-    delete_managed_requirements_assignment, delete_managed_requirements_policy,
-    delete_project_binding, delete_workspace, disconnect_device, get_agent_prompt_bundle,
-    get_agent_prompt_bundle_manifest, get_device, get_managed_requirements, heartbeat_device,
-    issue_controlled_network_policy, list_devices, list_managed_requirements_assignments,
-    list_managed_requirements_policies, list_plugin_install_sources, list_project_bindings,
-    list_workspaces, proxy_plugin_release_artifact, require_public_auth,
-    resolve_local_runtime_capabilities, revoke_device, system_stats_handler,
+    create_managed_requirements_assignment, create_managed_requirements_policy, create_workspace,
+    current_user_handler, delete_managed_requirements_assignment,
+    delete_managed_requirements_policy, delete_workspace, disconnect_device,
+    get_agent_prompt_bundle, get_agent_prompt_bundle_manifest, get_device,
+    get_managed_requirements, heartbeat_device, issue_runtime_context_assertion, list_devices,
+    list_managed_requirements_assignments, list_managed_requirements_policies,
+    list_plugin_install_sources, list_workspaces, proxy_plugin_release_artifact,
+    require_public_auth, resolve_local_runtime_capabilities, revoke_device, system_stats_handler,
     update_managed_requirements_assignment, update_managed_requirements_policy,
-    update_plugin_preference, update_project_binding, update_workspace,
-    user_service_protected_proxy, user_service_public_proxy, AuthState,
+    update_plugin_preference, update_workspace, user_service_protected_proxy,
+    user_service_public_proxy, AuthState,
 };
 
 fn protected_api(state: &AppState) -> Router<AppState> {
@@ -129,10 +128,6 @@ fn protected_api(state: &AppState) -> Router<AppState> {
             get(controlled_network_readiness),
         )
         .route(
-            "/api/local-connectors/devices/{id}/controlled-network/policy",
-            get(issue_controlled_network_policy),
-        )
-        .route(
             "/api/local-connectors/devices/{id}/managed-requirements",
             get(get_managed_requirements),
         )
@@ -182,12 +177,8 @@ fn protected_api(state: &AppState) -> Router<AppState> {
             put(update_workspace).delete(delete_workspace),
         )
         .route(
-            "/api/local-connectors/project-bindings",
-            get(list_project_bindings).post(create_project_binding),
-        )
-        .route(
-            "/api/local-connectors/project-bindings/{id}",
-            put(update_project_binding).delete(delete_project_binding),
+            "/api/local-connectors/runtime-context-assertions",
+            post(issue_runtime_context_assertion),
         )
         .route(
             "/api/plugin-management/agent-capabilities/{agent_key}",

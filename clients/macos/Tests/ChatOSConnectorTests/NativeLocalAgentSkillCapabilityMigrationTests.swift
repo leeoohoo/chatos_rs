@@ -210,6 +210,8 @@ final class NativeLocalAgentSkillCapabilityMigrationTests: XCTestCase {
     private static var models: [LocalAgentModelConfigSnapshot] {
         ["model-1", "model-2"].map {
             .init(ownerUserID: "user-1", modelConfigRef: $0, modelConfigRevision: "model-rev",
+                  modelCapabilityRevision: "capability-v1", contextWindowTokens: 200_000,
+                  outputReserveTokens: 30_000, protocolOverheadEstimatorID: "responses-json-v1",
                   credentialRef: "env:UNUSED_TEST_CREDENTIAL", baseURL: "https://example.invalid",
                   model: "test", provider: "test", supportsResponses: true)
         }

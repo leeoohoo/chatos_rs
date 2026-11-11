@@ -148,6 +148,7 @@ pub(super) struct StoryAgentInstructionBundle {
 pub(super) struct StoryAgentMemoryScope {
     pub tenant_hash: String,
     pub source_id: String,
+    pub project_id: String,
     pub thread_id: String,
     pub subject_id: String,
     #[serde(default)]
@@ -166,6 +167,16 @@ pub(super) struct StoryAgentMemoryCheckpoint {
     pub synced_digest: String,
     pub thread_created: bool,
     pub sync_in_flight_end: Option<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct StoryModelCapabilitySnapshot {
+    pub revision: String,
+    pub context_window_tokens: u64,
+    pub output_reserve_tokens: u64,
+    pub protocol_overhead_estimator_id: String,
+    pub tokenizer_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -221,6 +232,8 @@ pub(super) struct StoryPlanningRun {
     pub uses_cloud_memory: bool,
     pub consent_at_unix_ms: u64,
     pub policy: StoryAgentRunPolicy,
+    #[serde(default)]
+    pub model_capability: Option<StoryModelCapabilitySnapshot>,
     pub checkpoint: StoryAgentCheckpoint,
     pub draft: StoryProject,
     pub read_through: usize,
@@ -275,6 +288,7 @@ impl StoryPlanningRun {
             uses_cloud_memory: false,
             consent_at_unix_ms: now_unix_ms,
             policy,
+            model_capability: None,
             checkpoint: StoryAgentCheckpoint {
                 id: run_id,
                 scope,

@@ -166,7 +166,7 @@ impl Fixture {
             &storage.pool,
             &database,
             34,
-            super::migration::SCHEMA_VERSION,
+            super::migration::SCHEMA_VERSION - 1,
         )
         .await
         .unwrap();
@@ -598,11 +598,24 @@ async fn crash_and_recover(point: &str, committed_version: i64, incomplete: bool
             .iter()
             .filter(|path| !before.iter().any(|(existing, _)| existing == *path))
             .collect::<Vec<_>>();
-        assert_eq!(retry_backups.len(), 1);
-        assert!(!retry_backups[0].to_string_lossy().ends_with(".incomplete"));
-        // The retry must back up the latest committed state, which may be v35
-        // or v36, rather than copying the earlier v34 recovery point.
-        assert_source(retry_backups[0], committed_version).await;
+        let reusable_published_snapshot = committed_version == 34
+            && before.iter().any(|(path, _)| {
+                path != &fixture.original_backup
+                    && path.to_string_lossy().ends_with(".backup.sqlite")
+            });
+        if reusable_published_snapshot {
+            assert!(retry_backups.is_empty());
+            assert!(after.iter().any(|path| {
+                before.iter().any(|(existing, _)| existing == path)
+                    && path != &fixture.original_backup
+            }));
+        } else {
+            assert_eq!(retry_backups.len(), 1);
+            assert!(!retry_backups[0].to_string_lossy().ends_with(".incomplete"));
+            // A partial backup, or a migration that committed a newer source version, needs one
+            // new verified snapshot. A published exact-version snapshot is reused instead.
+            assert_source(retry_backups[0], committed_version).await;
+        }
         if committed_version > 34 {
             let rollback_backups = after
                 .iter()

@@ -4,9 +4,39 @@
 use crate::models::{UserModelConfigRecord, UserModelProviderRecord, UserModelSettingsRecord};
 use crate::secrets::{decrypt_optional_secret, encrypt_optional_secret};
 
-use super::{fetch_all, fetch_optional, json, timestamp, AppStore};
+use super::{fetch_all, fetch_optional, json, now_rfc3339, timestamp, AppStore};
 
 impl AppStore {
+    /// Repair provider-derived availability for every account after the importer
+    /// incorrectly coupled it to chat budgeting. Preserve task-list preferences,
+    /// identities, credentials, and explicitly published model-specific budgets.
+    pub async fn reconcile_provider_model_catalog(&self) -> Result<usize, String> {
+        let providers = self.list_user_model_providers(None).await?;
+        let configs = self.list_user_model_configs(None).await?;
+        let mut repaired = 0;
+        for mut config in configs {
+            let Some(provider) = providers.iter().find(|provider| {
+                provider.owner_user_id == config.owner_user_id
+                    && (config.source_provider_id.as_deref() == Some(&provider.id)
+                        || (config.source_provider_id.is_none()
+                            && config.provider == provider.provider
+                            && normalized_base_url(config.base_url.as_deref())
+                                == normalized_base_url(provider.base_url.as_deref())))
+            }) else {
+                continue;
+            };
+            let changed = config.enabled != provider.enabled;
+            config.enabled = provider.enabled;
+            let published = crate::model_policy::publish_missing_chat_budget(&mut config);
+            if changed || published {
+                config.updated_at = now_rfc3339();
+                self.save_user_model_config(&config).await?;
+                repaired += 1;
+            }
+        }
+        Ok(repaired)
+    }
+
     fn has_usable_api_key(value: Option<&str>) -> bool {
         value.map(str::trim).is_some_and(|value| !value.is_empty())
     }

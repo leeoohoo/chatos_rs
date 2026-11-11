@@ -3,11 +3,11 @@
 
 use crate::db::Db;
 use crate::models::{EngineRecord, EngineSummary};
-use crate::repositories::{records, summaries};
+use crate::repositories::summaries;
 use crate::services::ai_pipeline::{estimate_tokens_text, MIN_TOKEN_LIMIT};
 
 use super::render::{record_to_summary_block, summary_to_rollup_block};
-use super::{PendingRecordSelection, RepairRecordSelection};
+use super::PendingRecordSelection;
 
 pub(crate) fn select_pending_records_for_summary(
     records: Vec<EngineRecord>,
@@ -15,9 +15,9 @@ pub(crate) fn select_pending_records_for_summary(
 ) -> PendingRecordSelection {
     let effective_limit = token_limit.max(MIN_TOKEN_LIMIT);
     let mut selected = Vec::new();
-    let mut oversized = Vec::new();
+    let oversized = Vec::new();
     let mut selected_token_count = 0_i64;
-    let mut oversized_token_count = 0_i64;
+    let oversized_token_count = 0_i64;
     let project_subject_id = records.first().and_then(record_project_subject_id);
 
     for record in records {
@@ -27,9 +27,11 @@ pub(crate) fn select_pending_records_for_summary(
         let block = record_to_summary_block(&record);
         let record_tokens = estimate_tokens_text(block.as_str());
         if record_tokens > effective_limit {
-            oversized_token_count += record_tokens;
-            oversized.push(record);
-            continue;
+            if selected.is_empty() {
+                selected_token_count = record_tokens;
+                selected.push(record);
+            }
+            break;
         }
 
         if !selected.is_empty()
@@ -66,49 +68,6 @@ fn record_project_subject_id(record: &EngineRecord) -> Option<String> {
     })
 }
 
-pub(crate) fn select_records_for_repair(records: Vec<EngineRecord>) -> RepairRecordSelection {
-    let selected = records;
-    let selected_token_count = selected
-        .iter()
-        .map(record_to_summary_block)
-        .map(|text| estimate_tokens_text(text.as_str()))
-        .sum::<i64>();
-
-    RepairRecordSelection {
-        selected,
-        selected_token_count,
-    }
-}
-
-pub(crate) async fn mark_oversized_records_as_summarized(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    oversized_records: &[EngineRecord],
-    job_run_id: &str,
-    summary_id: &str,
-) -> Result<usize, String> {
-    if oversized_records.is_empty() {
-        return Ok(0);
-    }
-
-    let record_ids = oversized_records
-        .iter()
-        .map(|item| item.id.clone())
-        .collect::<Vec<_>>();
-    records::mark_claimed_records_summarized(
-        db,
-        tenant_id,
-        source_id,
-        thread_id,
-        record_ids.as_slice(),
-        job_run_id,
-        summary_id,
-    )
-    .await
-}
-
 pub(crate) async fn select_rollup_batch(
     db: &Db,
     tenant_id: &str,
@@ -118,28 +77,40 @@ pub(crate) async fn select_rollup_batch(
     count_limit: i64,
     keep_level0_count: i64,
     max_level: i64,
-) -> Result<Option<(i64, Vec<EngineSummary>, &'static str)>, String> {
+) -> Result<Option<(i64, String, Vec<EngineSummary>, &'static str)>, String> {
     for level in 0..max_level {
-        let mut candidates =
-            summaries::list_pending_summaries_by_level(db, tenant_id, source_id, thread_id, level)
-                .await?;
-        if level == 0 && keep_level0_count > 0 {
-            let keep = keep_level0_count as usize;
-            if candidates.len() > keep {
-                let rollup_len = candidates.len().saturating_sub(keep);
-                candidates.truncate(rollup_len);
-            } else {
-                candidates.clear();
+        let partition_keys = summaries::list_pending_summary_partition_keys_by_level(
+            db, tenant_id, source_id, thread_id, level,
+        )
+        .await?;
+        for project_partition_key in partition_keys {
+            let mut candidates = summaries::list_pending_summaries_by_level_and_partition(
+                db,
+                tenant_id,
+                source_id,
+                thread_id,
+                project_partition_key.as_str(),
+                level,
+            )
+            .await?;
+            if level == 0 && keep_level0_count > 0 {
+                let keep = keep_level0_count as usize;
+                if candidates.len() > keep {
+                    let rollup_len = candidates.len().saturating_sub(keep);
+                    candidates.truncate(rollup_len);
+                } else {
+                    candidates.clear();
+                }
             }
-        }
 
-        if candidates.is_empty() {
-            continue;
-        }
-        if let Some((selected, reason)) =
-            select_bounded_rollup_candidates(candidates, token_limit, count_limit)
-        {
-            return Ok(Some((level, selected, reason)));
+            if candidates.is_empty() {
+                continue;
+            }
+            if let Some((selected, reason)) =
+                select_bounded_rollup_candidates(candidates, token_limit, count_limit)
+            {
+                return Ok(Some((level, project_partition_key, selected, reason)));
+            }
         }
     }
 
@@ -283,6 +254,8 @@ mod tests {
                 subject_memory_summarized: 0,
                 subject_memory_summarized_at: None,
                 metadata: None,
+                payload_schema: None,
+                structured_payload: None,
                 created_at: "2026-01-01T00:00:00Z".to_string(),
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
             })
@@ -319,6 +292,8 @@ mod tests {
                 subject_memory_summarized: 0,
                 subject_memory_summarized_at: None,
                 metadata: None,
+                payload_schema: None,
+                structured_payload: None,
                 created_at: "2026-01-01T00:00:00Z".to_string(),
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
             })

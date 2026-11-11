@@ -49,6 +49,15 @@ struct InternalServiceAuth {
 }
 
 impl MemoryEngineClient {
+    pub fn source_id(&self) -> Option<&str> {
+        match &self.auth {
+            AuthMode::Direct { source_id } if !source_id.trim().is_empty() => {
+                Some(source_id.as_str())
+            }
+            _ => None,
+        }
+    }
+
     pub fn new_platform(base_url: impl Into<String>, timeout: Duration) -> Result<Self, String> {
         let http = reqwest::Client::builder()
             .timeout(timeout)

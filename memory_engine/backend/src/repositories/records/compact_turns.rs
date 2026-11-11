@@ -138,7 +138,8 @@ async fn list_records_for_turn(
 ) -> Result<Vec<EngineRecord>, String> {
     let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
         "SELECT data FROM engine_records WHERE thread_id=$1 AND tenant_id=$2 AND source_id=$3 \
-         AND record_type=$4 AND data #>> '{metadata,conversation_turn_id}'=$5 ORDER BY created_at,id",
+         AND record_type=$4 AND data #>> '{metadata,conversation_turn_id}'=$5 \
+         AND recall_eligible ORDER BY created_at,id",
     )
     .bind(thread_id)
     .bind(tenant_id)

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-mod common;
+pub(crate) mod common;
 mod dispatch;
 mod queries;
 mod status;
 mod subject_dispatch;
+#[cfg(test)]
+mod test_support;
 mod writes;
 
 use chrono::{DateTime, Utc};
@@ -66,7 +68,8 @@ pub use dispatch::{
     claim_pending_rollup_dispatches, defer_rollup_dispatch, get_pending_rollup_dispatch,
     get_rollup_dispatch_state, mark_rollup_dispatch_consumed, mark_rollup_dispatch_failed,
     rearm_rollup_dispatch_if_eligible, recover_stale_rollup_dispatches,
-    replay_dead_lettered_rollup_dispatch, RollupDispatchOutbox,
+    replay_dead_lettered_rollup_dispatch, replay_dead_lettered_rollup_dispatch_in_tx,
+    RollupDispatchOutbox,
 };
 pub use subject_dispatch::{
     claim_pending_subject_memory_source_dispatches, defer_subject_memory_source_dispatch,
@@ -78,22 +81,23 @@ pub use subject_dispatch::{
 
 #[allow(unused_imports)]
 pub use queries::{
-    find_summary_by_source_digest, get_summary_by_id, list_latest_thread_summaries,
-    list_latest_thread_summaries_at_level, list_latest_thread_summaries_at_level_for_project,
-    list_latest_thread_summaries_by_type, list_pending_summaries_by_level,
-    list_summaries_by_thread_label, list_summaries_by_thread_label_for_subject_memory_scope,
-    list_thread_summaries, list_threads_with_pending_rollups,
+    get_summary_by_id, list_latest_thread_summaries, list_latest_thread_summaries_at_level,
+    list_latest_thread_summaries_at_level_for_project, list_latest_thread_summaries_by_type,
+    list_latest_thread_summary_frontier, list_pending_summaries_by_level_and_partition,
+    list_pending_summary_partition_keys_by_level, list_summaries_by_ids,
+    list_summaries_by_ids_in_source, list_summaries_by_thread_label,
+    list_summaries_by_thread_label_for_subject_memory_scope, list_thread_summaries,
+    list_threads_with_pending_rollups,
 };
 #[allow(unused_imports)]
 pub use status::{
     mark_summaries_rolled_up, mark_summaries_subject_memory_summarized,
     mark_summaries_subject_memory_summarized_for_scope,
 };
+#[cfg(test)]
+pub(crate) use test_support::{insert_test_summary, insert_test_thread_summary};
 #[allow(unused_imports)]
-pub use writes::{
-    create_rollup_summary, create_thread_summary, create_thread_summary_with_type,
-    delete_thread_summary, upsert_thread_summary,
-};
+pub use writes::{delete_thread_summary, delete_thread_summary_in_tx};
 
 #[cfg(test)]
 mod tests {

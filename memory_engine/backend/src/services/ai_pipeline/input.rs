@@ -2,11 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub(crate) fn build_ai_input(
-    summary_prompt: Option<&str>,
+    managed_prompt: Option<&str>,
     directive: &str,
     items: &[String],
 ) -> String {
-    let custom_prefix = summary_prompt
+    let custom_prefix = managed_prompt
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| format!("{value}\n\n"))

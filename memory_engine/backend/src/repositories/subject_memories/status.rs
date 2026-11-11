@@ -22,7 +22,7 @@ pub async fn mark_subject_memories_rolled_up(
     let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
         "SELECT data FROM engine_subject_memories WHERE tenant_id=$1 AND source_id=$2 \
          AND subject_id=$3 AND id = ANY($4) AND rollup_status='pending' AND status='active' \
-         FOR UPDATE",
+         AND recall_eligible FOR UPDATE",
     )
     .bind(tenant_id)
     .bind(source_id)
@@ -41,7 +41,8 @@ pub async fn mark_subject_memories_rolled_up(
         memory.updated_at = now.clone();
         marked += sqlx::query(
             "UPDATE engine_subject_memories SET rollup_status='done',updated_at=$4,data=$5 \
-             WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND rollup_status='pending'",
+             WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND rollup_status='pending' \
+             AND recall_eligible",
         )
         .bind(&memory.tenant_id)
         .bind(&memory.source_id)

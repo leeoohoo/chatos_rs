@@ -19,8 +19,25 @@ struct ArtifactWorkerOperations {
         let destinationPath = try components(requiredString(arguments, "destination_path"))
         let expectedBytes = try expectedByteCount(arguments)
         let expectedSHA256 = try expectedDigest(arguments)
+        let destinationRoot: URL
+        let destinationIdentity: CodeReadWorkerFileIdentity
+        if operation == "artifact_stage_v2" || operation == "artifact_restore_v2" {
+            let path = try requiredString(arguments, "destination_root_path")
+            let raw = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+            guard path.hasPrefix("/"), !path.contains("\0"),
+                  raw.path == path, raw.resolvingSymlinksInPath().path == path,
+                  let device = UInt64(try requiredString(arguments, "destination_root_device")),
+                  let inode = UInt64(try requiredString(arguments, "destination_root_inode")) else {
+                throw CodeReadWorkerCoreError.invalidRequest("artifact destination identity is invalid")
+            }
+            destinationRoot = raw
+            destinationIdentity = .init(device: device, inode: inode)
+        } else {
+            destinationRoot = root
+            destinationIdentity = rootIdentity
+        }
         switch operation {
-        case "artifact_stage_v1":
+        case "artifact_stage_v1", "artifact_stage_v2":
             let token = try requiredString(arguments, "token").lowercased()
             guard let uuid = UUID(uuidString: token), uuid.uuidString.lowercased() == token,
                   destinationPath.last == "\(token).staged" else {
@@ -29,6 +46,8 @@ struct ArtifactWorkerOperations {
             try copy(
                 sourcePath: sourcePath,
                 destinationPath: destinationPath,
+                destinationRoot: destinationRoot,
+                destinationIdentity: destinationIdentity,
                 expectedBytes: expectedBytes,
                 expectedSHA256: expectedSHA256,
                 requireSingleSourceLink: true
@@ -37,10 +56,12 @@ struct ArtifactWorkerOperations {
                 "token": .string(token),
                 "relative_path": .string(destinationPath.joined(separator: "/")),
             ])
-        case "artifact_restore_v1":
+        case "artifact_restore_v1", "artifact_restore_v2":
             try copy(
                 sourcePath: sourcePath,
                 destinationPath: destinationPath,
+                destinationRoot: destinationRoot,
+                destinationIdentity: destinationIdentity,
                 expectedBytes: expectedBytes,
                 expectedSHA256: expectedSHA256,
                 requireSingleSourceLink: false
@@ -57,13 +78,17 @@ struct ArtifactWorkerOperations {
     private func copy(
         sourcePath: [String],
         destinationPath: [String],
+        destinationRoot: URL,
+        destinationIdentity: CodeReadWorkerFileIdentity,
         expectedBytes: Int64,
         expectedSHA256: String,
         requireSingleSourceLink: Bool
     ) throws {
         try checkDeadline()
-        let rootDescriptor = try openRoot()
+        let rootDescriptor = try openRoot(root, identity: rootIdentity)
         defer { _ = Darwin.close(rootDescriptor) }
+        let destinationDescriptor = try openRoot(destinationRoot, identity: destinationIdentity)
+        defer { _ = Darwin.close(destinationDescriptor) }
         let sourceParent = try openDirectoryChain(
             Array(sourcePath.dropLast()),
             from: rootDescriptor,
@@ -87,10 +112,10 @@ struct ArtifactWorkerOperations {
 
         let destinationParent = try openDirectoryChain(
             Array(destinationPath.dropLast()),
-            from: rootDescriptor,
+            from: destinationDescriptor,
             create: true
         )
-        defer { if destinationParent != rootDescriptor { _ = Darwin.close(destinationParent) } }
+        defer { if destinationParent != destinationDescriptor { _ = Darwin.close(destinationParent) } }
         try ensureCapacity(destinationParent, writeBytes: UInt64(expectedBytes))
         let leaf = destinationPath.last!
         let temporary = ".chatos-artifact-copy-\(UUID().uuidString.lowercased()).tmp"
@@ -223,15 +248,16 @@ struct ArtifactWorkerOperations {
             && hasher.finalize().map { String(format: "%02x", $0) }.joined() == expectedSHA256
     }
 
-    private func openRoot() throws -> Int32 {
+    private func openRoot(_ root: URL, identity: CodeReadWorkerFileIdentity) throws -> Int32 {
         let descriptor = root.path.withCString {
             Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         }
         guard descriptor >= 0 else { throw CodeReadWorkerCoreError.artifactWriteFailed }
         var status = stat()
         guard Darwin.fstat(descriptor, &status) == 0,
-              UInt64(status.st_dev) == rootIdentity.device,
-              UInt64(status.st_ino) == rootIdentity.inode else {
+              (status.st_mode & S_IFMT) == S_IFDIR,
+              UInt64(status.st_dev) == identity.device,
+              UInt64(status.st_ino) == identity.inode else {
             _ = Darwin.close(descriptor)
             throw CodeReadWorkerCoreError.invalidRequest("artifact root identity changed")
         }

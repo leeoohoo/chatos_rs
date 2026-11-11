@@ -277,7 +277,8 @@ private struct SuccessfulTranslationModel: AgentModelClient {
 private struct SuccessfulTranslationMemory: AgentMemoryServicing {
     func ensureThread() async throws {}
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {}
-    func compose() async throws -> AgentMemoryContext {
-        .init(blocks: [], recentRecords: [])
+    func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
+        _ = request
+        return .init(blocks: [], recentRecords: [])
     }
 }

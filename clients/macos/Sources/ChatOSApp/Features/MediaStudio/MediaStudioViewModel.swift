@@ -51,6 +51,8 @@ final class MediaStudioViewModel: ObservableObject {
     @Published private(set) var videoInputImage: ImageGenerationInputImage?
     @Published private(set) var videoReferenceAudio: VideoGenerationInputAudio?
     @Published private(set) var models: [MediaGenerationModel] = []
+    @Published private(set) var imageModels: [MediaGenerationModel] = []
+    var textModels: [MediaGenerationModel] { models.filter(\.supportsChat) }
     @Published private(set) var videoModels: [MediaGenerationModel] = []
     @Published private(set) var history: [HistoryItem] = []
     @Published private(set) var videoHistory: [VideoHistoryItem] = []
@@ -287,7 +289,7 @@ final class MediaStudioViewModel: ObservableObject {
 
     var selectedModel: MediaGenerationModel? {
         guard let selectedModelID else { return nil }
-        return models.first(where: { $0.id == selectedModelID })
+        return imageModels.first(where: { $0.id == selectedModelID })
     }
 
     var inputImage: ImageGenerationInputImage? { inputImages.first }
@@ -295,7 +297,7 @@ final class MediaStudioViewModel: ObservableObject {
     var canGenerate: Bool {
         !isGenerating && !isLoadingInputImages
             && ownerID != nil && !isLoadingHistory
-            && selectedModelID != nil
+            && selectedModel != nil
             && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -896,6 +898,7 @@ final class MediaStudioViewModel: ObservableObject {
         removeVideoInputImage()
         removeVideoReferenceAudio()
         models = []
+        imageModels = []
         videoModels = []
         history = []
         videoHistory = []
@@ -941,10 +944,11 @@ final class MediaStudioViewModel: ObservableObject {
         ) else { return }
         switch result {
         case let .success(catalog):
-            models = catalog.imageModels
+            models = catalog.allModels
+            imageModels = catalog.imageModels
             videoModels = catalog.videoModels
-            if !models.contains(where: { $0.id == selectedModelID }) {
-                selectedModelID = models.first?.id
+            if !imageModels.contains(where: { $0.id == selectedModelID }) {
+                selectedModelID = imageModels.first?.id
             }
             if !videoModels.contains(where: { $0.id == selectedVideoModelID }) {
                 selectedVideoModelID = videoModels.first?.id

@@ -6,8 +6,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use memory_engine_sdk::{MemoryEngineClient, SdkBatchSyncRecordsRequest, UpsertRecordInput};
+use memory_engine_sdk::{
+    MemoryEngineClient, RuntimeContextAssertionIssuer, SdkBatchSyncRecordsRequest,
+    UpsertRecordInput,
+};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -17,6 +21,11 @@ use crate::traits::{MemoryRecordWriter, SaveRecordInput, SaveToolRecordInput};
 use super::log_summary::summarize_record_batch;
 use super::normalized;
 use super::upsert_canonical_memory_thread;
+use super::{RuntimeContextAssertionProvider, RuntimeContextAssertionRequest};
+
+#[cfg(test)]
+#[path = "record_partition_tests.rs"]
+mod partition_tests;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRecordScope {
@@ -117,6 +126,7 @@ pub struct MemoryEngineRecordWriter {
     client: MemoryEngineClient,
     scope: MemoryRecordScope,
     source_id: Option<String>,
+    assertion_provider: Option<Arc<dyn RuntimeContextAssertionProvider>>,
     ensured_threads: Arc<Mutex<HashMap<(String, String), RecordThreadIdentity>>>,
 }
 
@@ -132,17 +142,35 @@ impl MemoryEngineRecordWriter {
             client: MemoryEngineClient::new_direct(base_url, timeout, source_id.clone())?,
             scope,
             source_id: Some(source_id),
+            assertion_provider: None,
             ensured_threads: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
     pub fn from_client(client: MemoryEngineClient, scope: MemoryRecordScope) -> Self {
+        let source_id = client.source_id().map(str::to_string);
         Self {
             client,
             scope,
-            source_id: None,
+            source_id,
+            assertion_provider: None,
             ensured_threads: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub fn with_runtime_context_assertion_issuer(
+        self,
+        assertion_issuer: RuntimeContextAssertionIssuer,
+    ) -> Self {
+        self.with_runtime_context_assertion_provider(assertion_issuer)
+    }
+
+    pub fn with_runtime_context_assertion_provider<P>(mut self, assertion_provider: P) -> Self
+    where
+        P: RuntimeContextAssertionProvider + 'static,
+    {
+        self.assertion_provider = Some(Arc::new(assertion_provider));
+        self
     }
 
     pub fn source_id(&self) -> Option<&str> {
@@ -156,10 +184,19 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
         let tenant_id = self.tenant_id_for_record(&input)?;
         let thread_id = self.thread_id_for_record(&input)?;
         let identity = self.thread_identity_for_record(&input);
+        let project_partition_key = record_project_partition_key(&input, &identity)?;
         self.ensure_thread(tenant_id.as_str(), thread_id.as_str(), &identity)
             .await?;
         let record = self.upsert_record_input(input)?;
         let records = vec![record];
+        let runtime_context_assertion = self
+            .issue_assertion(
+                tenant_id.as_str(),
+                thread_id.as_str(),
+                &identity,
+                project_partition_key.as_str(),
+            )
+            .await?;
         let summary = summarize_record_batch(records.as_slice());
         let source_id = self.source_id.as_deref().unwrap_or("");
         info!(
@@ -178,9 +215,14 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
         );
         let response = self
             .client
-            .batch_sync_records(
+            .ingest_thread_records(
                 thread_id.as_str(),
-                &SdkBatchSyncRecordsRequest { tenant_id, records },
+                &SdkBatchSyncRecordsRequest {
+                    tenant_id,
+                    project_partition_key,
+                    runtime_context_assertion,
+                    records,
+                },
             )
             .await;
         match &response {
@@ -219,22 +261,37 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
             return Ok(());
         }
 
-        let mut batches: BTreeMap<(String, String), Vec<UpsertRecordInput>> = BTreeMap::new();
+        let mut batches: BTreeMap<
+            (String, String, String),
+            (RecordThreadIdentity, Vec<UpsertRecordInput>),
+        > = BTreeMap::new();
         for input in inputs {
             let input: SaveRecordInput = input.into();
             let tenant_id = self.tenant_id_for_record(&input)?;
             let thread_id = self.thread_id_for_record(&input)?;
             let identity = self.thread_identity_for_record(&input);
+            let project_partition_key = record_project_partition_key(&input, &identity)?;
             self.ensure_thread(tenant_id.as_str(), thread_id.as_str(), &identity)
                 .await?;
             let record = self.upsert_record_input(input)?;
-            batches
-                .entry((tenant_id, thread_id))
-                .or_default()
-                .push(record);
+            let entry = batches
+                .entry((tenant_id, thread_id, project_partition_key))
+                .or_insert_with(|| (identity.clone(), Vec::new()));
+            if entry.0 != identity {
+                return Err("memory record batch contains conflicting thread identity".to_string());
+            }
+            entry.1.push(record);
         }
 
-        for ((tenant_id, thread_id), records) in batches {
+        for ((tenant_id, thread_id, project_partition_key), (identity, records)) in batches {
+            let runtime_context_assertion = self
+                .issue_assertion(
+                    tenant_id.as_str(),
+                    thread_id.as_str(),
+                    &identity,
+                    project_partition_key.as_str(),
+                )
+                .await?;
             let summary = summarize_record_batch(records.as_slice());
             let source_id = self.source_id.as_deref().unwrap_or("");
             info!(
@@ -253,10 +310,12 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
             );
             let response = self
                 .client
-                .batch_sync_records(
+                .ingest_thread_records(
                     thread_id.as_str(),
                     &SdkBatchSyncRecordsRequest {
                         tenant_id: tenant_id.clone(),
+                        project_partition_key,
+                        runtime_context_assertion,
                         records,
                     },
                 )
@@ -296,6 +355,40 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
 }
 
 impl MemoryEngineRecordWriter {
+    async fn issue_assertion(
+        &self,
+        tenant_id: &str,
+        thread_id: &str,
+        identity: &RecordThreadIdentity,
+        project_partition_key: &str,
+    ) -> Result<String, String> {
+        let provider = self.assertion_provider.as_ref().ok_or_else(|| {
+            "Memory runtime context assertion provider is not configured".to_string()
+        })?;
+        let source_id = self
+            .source_id
+            .as_deref()
+            .and_then(normalized)
+            .ok_or_else(|| "Memory record writer source_id is required".to_string())?;
+        let agent_id = identity
+            .agent_id
+            .as_deref()
+            .and_then(normalized)
+            .ok_or_else(|| "memory thread requires an explicit agent_id".to_string())?;
+        let canonical_agent_subject_id = format!("agent:{agent_id}");
+        provider
+            .issue(RuntimeContextAssertionRequest {
+                principal_id: tenant_id,
+                tenant_id,
+                source_id: source_id.as_str(),
+                canonical_agent_subject_id: canonical_agent_subject_id.as_str(),
+                thread_id,
+                project_partition_key,
+                operation: "record_ingest",
+            })
+            .await
+    }
+
     async fn ensure_thread(
         &self,
         tenant_id: &str,
@@ -400,12 +493,35 @@ impl MemoryEngineRecordWriter {
     }
 
     fn upsert_record_input(&self, input: SaveRecordInput) -> Result<UpsertRecordInput, String> {
+        let projection_event = input
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("memory_projection_mutable"))
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+        if projection_event
+            && (input.created_at.as_deref().and_then(normalized).is_none()
+                || input.message_id.as_deref().and_then(normalized).is_none())
+        {
+            return Err(
+                "Memory projection events require a durable message_id and created_at".to_string(),
+            );
+        }
+        let projection_scope = projection_event
+            .then(|| {
+                Ok::<_, String>((
+                    self.tenant_id_for_record(&input)?,
+                    self.source_id.clone(),
+                    self.thread_id_for_record(&input)?,
+                ))
+            })
+            .transpose()?;
         let role = normalized(input.role.as_str())
             .ok_or_else(|| "memory record role is required".to_string())?;
         let record_type =
             normalized(self.scope.record_type.as_str()).unwrap_or_else(|| "message".to_string());
         let metadata = input.packed_metadata();
-        Ok(UpsertRecordInput {
+        let mut record = UpsertRecordInput {
             id: input
                 .message_id
                 .unwrap_or_else(|| Uuid::new_v4().to_string()),
@@ -423,6 +539,79 @@ impl MemoryEngineRecordWriter {
             created_at: input
                 .created_at
                 .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
-        })
+        };
+        if projection_event {
+            // UI messages update in place; each published state transition is an
+            // immutable Memory event. Replaying one snapshot must keep the same ID.
+            if let Some(metadata) = record
+                .metadata
+                .as_mut()
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                metadata.remove("memory_projection_mutable");
+                metadata.insert(
+                    "ui_message_id".to_string(),
+                    serde_json::Value::String(record.id.clone()),
+                );
+                metadata.insert(
+                    "memory_projection_event".to_string(),
+                    serde_json::Value::Bool(true),
+                );
+            }
+            let mut identity = serde_json::json!([
+                projection_scope,
+                record.id,
+                record.role,
+                record.record_type,
+                record.content,
+                record.structured_payload,
+                record.metadata,
+                record.created_at
+            ]);
+            identity.sort_all_objects();
+            let identity = serde_json::to_vec(&identity).map_err(|error| {
+                format!("encode Memory projection event identity failed: {error}")
+            })?;
+            record.id = format!("projection-event:{}", hex::encode(Sha256::digest(identity)));
+        }
+        Ok(record)
     }
+}
+
+fn record_project_partition_key(
+    input: &SaveRecordInput,
+    identity: &RecordThreadIdentity,
+) -> Result<String, String> {
+    let bound_partition = canonical_project_partition(identity.project_aggregation_id.as_deref())?;
+    // Agent threads span projects. The runtime freezes the current record's project
+    // separately from the optional project that owns an entire task thread.
+    let declared = input
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("memory_project_id"));
+    let partition = match declared {
+        Some(serde_json::Value::String(value)) => canonical_project_partition(Some(value))?,
+        Some(serde_json::Value::Null) => "__none__".to_string(),
+        None => bound_partition.clone(),
+        Some(_) => {
+            return Err("memory record memory_project_id must be a string or null".to_string())
+        }
+    };
+    if bound_partition != "__none__" && bound_partition != partition {
+        return Err("memory record project does not match its task thread project".to_string());
+    }
+    Ok(partition)
+}
+
+fn canonical_project_partition(value: Option<&str>) -> Result<String, String> {
+    let Some(value) = value else {
+        return Ok("__none__".to_string());
+    };
+    let value = value.trim();
+    let project_id = value.strip_prefix("project:").unwrap_or(value);
+    if project_id.is_empty() || project_id.len() > 1_024 || project_id.chars().any(char::is_control)
+    {
+        return Err("memory record project identity is invalid".to_string());
+    }
+    Ok(format!("project:{project_id}"))
 }

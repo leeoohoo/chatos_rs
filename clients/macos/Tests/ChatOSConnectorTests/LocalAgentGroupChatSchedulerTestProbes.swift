@@ -94,7 +94,7 @@ actor CrossTeamExecutorIsolationProbe {
     }
 }
 
-actor CrossTeamExecutorIsolationModel: AgentModelClient {
+actor CrossTeamExecutorIsolationModel: MemoryCapableTestModel {
     private let probe: CrossTeamExecutorIsolationProbe
     private var acceptanceRecorded = false
 
@@ -199,7 +199,7 @@ actor CommunicationFastLaneProbe {
     }
 }
 
-actor CommunicationFastLaneModel: AgentModelClient {
+actor CommunicationFastLaneModel: MemoryCapableTestModel {
     private let probe: CommunicationFastLaneProbe
     private var managerRequestCount = 0
     private var managerInboxRead = false
@@ -257,7 +257,7 @@ actor CommunicationFastLaneModel: AgentModelClient {
     }
 }
 
-actor LaneSchedulerTestModel: AgentModelClient {
+actor LaneSchedulerTestModel: MemoryCapableTestModel {
     private let probe: SchedulerConcurrencyProbe
     private var requestCount = 0
     private var managerInboxRead = false
@@ -342,7 +342,7 @@ struct CancellationSchedulerTestServices: AgentServiceProviding {
     }
 }
 
-actor CancellationSchedulerTestModel: AgentModelClient {
+actor CancellationSchedulerTestModel: MemoryCapableTestModel {
     let store: SQLiteAgentGroupChatStore
     let agentID: String
     let todoID: String
@@ -392,7 +392,7 @@ struct ActiveCancellationSchedulerTestServices: AgentServiceProviding {
     }
 }
 
-actor ActiveCancellationSchedulerTestModel: AgentModelClient {
+actor ActiveCancellationSchedulerTestModel: MemoryCapableTestModel {
     private var requestCount = 0
     private var managerInboxRead = false
 

@@ -24,6 +24,12 @@ pub(super) fn model_config_public_value(
         "task_thinking_level": record.task_thinking_level,
         "temperature": record.temperature,
         "max_output_tokens": record.max_output_tokens,
+        "model_capability_revision": record.model_capability_revision,
+        "context_window_tokens": record.context_window_tokens,
+        "output_reserve_tokens": record.output_reserve_tokens,
+        "protocol_overhead_estimator_id": record.protocol_overhead_estimator_id,
+        "tokenizer_id": record.tokenizer_id,
+        "responses_compaction_threshold": record.responses_compaction_threshold,
         "has_api_key": record.has_api_key
             || record
                 .api_key

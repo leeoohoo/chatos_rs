@@ -283,22 +283,8 @@ enum AgentMessageRepository {
         )
     }
 
-    static func listAllUnread(
-        _ handle: OpaquePointer?,
-        ownerUserID: String,
-        agentID: String,
-        limit: Int,
-        preparedStatement: () -> Void,
-        row: (OpaquePointer) throws -> ProjectAgentMessage
-    ) throws -> [ProjectAgentMessage] {
-        preparedStatement()
-        return try AgentGroupChatDatabase.query(
-            handle,
-            """
-            SELECT msg.owner_user_id, msg.id, msg.room_id, msg.sender_kind, msg.sender_id,
-                   msg.content, msg.reply_to_message_id, msg.source_run_id,
-                   msg.causation_id, msg.root_message_id, msg.hop_count,
-                   msg.created_at_unix_ms
+    // Listing and the per-tool inbox signal must use exactly the same visibility rules.
+    private static let unreadInboxSource = """
             FROM project_agent_messages msg
             JOIN project_agent_rooms room
               ON room.owner_user_id = msg.owner_user_id AND room.id = msg.room_id
@@ -318,15 +304,73 @@ enum AgentMessageRepository {
                 OR (msg.created_at_unix_ms = cursor.message_created_at_unix_ms
                     AND msg.id > cursor.message_id)
               )
-            ORDER BY msg.created_at_unix_ms, msg.id
-            LIMIT ?
+            """
+
+    private static func inboxReadBoundary(_ readThrough: [String: String]) -> (
+        cte: String, predicate: String, values: [AgentGroupChatDatabase.Value]
+    ) {
+        guard !readThrough.isEmpty else { return ("", "", []) }
+        let entries = readThrough.sorted { $0.key < $1.key }
+        let placeholders = Array(repeating: "(?, ?)", count: entries.count).joined(separator: ",")
+        return (
+            "WITH observed(room_id, message_id) AS (VALUES \(placeholders))",
+            """
+            AND NOT EXISTS (
+                SELECT 1 FROM observed
+                JOIN project_agent_messages seen
+                  ON seen.owner_user_id = msg.owner_user_id
+                 AND seen.room_id = observed.room_id AND seen.id = observed.message_id
+                WHERE observed.room_id = msg.room_id
+                  AND (msg.created_at_unix_ms < seen.created_at_unix_ms
+                       OR (msg.created_at_unix_ms = seen.created_at_unix_ms AND msg.id <= seen.id))
+            )
             """,
-            [
-                .text(agentID), .text(agentID), .text(ownerUserID), .text(agentID),
-                .integer(Int64(limit)),
-            ],
+            entries.flatMap { [.text($0.key), .text($0.value)] }
+        )
+    }
+
+    static func listAllUnread(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        limit: Int,
+        readThrough: [String: String] = [:],
+        preparedStatement: () -> Void,
+        row: (OpaquePointer) throws -> ProjectAgentMessage
+    ) throws -> [ProjectAgentMessage] {
+        let boundary = inboxReadBoundary(readThrough)
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            \(boundary.cte)
+            SELECT msg.owner_user_id, msg.id, msg.room_id, msg.sender_kind, msg.sender_id,
+                   msg.content, msg.reply_to_message_id, msg.source_run_id,
+                   msg.causation_id, msg.root_message_id, msg.hop_count,
+                   msg.created_at_unix_ms
+            \(unreadInboxSource)
+            \(boundary.predicate)
+            ORDER BY msg.created_at_unix_ms, msg.id LIMIT ?
+            """,
+            boundary.values + [.text(agentID), .text(agentID), .text(ownerUserID), .text(agentID), .integer(Int64(limit))],
             row: row
         )
+    }
+
+    static func hasNewInboxMessages(
+        _ handle: OpaquePointer?, ownerUserID: String, agentID: String,
+        readThrough: [String: String], preparedStatement: () -> Void
+    ) throws -> Bool {
+        let boundary = inboxReadBoundary(readThrough)
+        preparedStatement()
+        return try AgentGroupChatDatabase.scalarInt64(
+            handle,
+            """
+            \(boundary.cte)
+            SELECT EXISTS(SELECT 1 \(unreadInboxSource) \(boundary.predicate) LIMIT 1)
+            """,
+            boundary.values + [.text(agentID), .text(agentID), .text(ownerUserID), .text(agentID)]
+        ) == 1
     }
 
     static func findMany(

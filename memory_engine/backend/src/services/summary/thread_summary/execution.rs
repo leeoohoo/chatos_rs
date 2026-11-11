@@ -6,19 +6,25 @@ use crate::db::Db;
 use crate::models::{
     EngineJobRun, EngineThread, FinishEngineJobRunRequest, RunThreadSummaryResponse,
 };
-use crate::repositories::{control_plane as cp_repo, records, summaries, threads};
-
-use super::super::builders::build_summary_text;
-use super::super::render::decorate_generated_text;
-use super::super::selectors::{
-    mark_oversized_records_as_summarized, select_pending_records_for_summary,
+use crate::repositories::{
+    control_plane as cp_repo, generation_commits, generation_output_commits, records,
+    thread_partitions, threads,
 };
+
+use super::super::builders::{
+    build_summary_text, THREAD_SUMMARY_GENERATION_PROFILE, THREAD_SUMMARY_PIPELINE_REVISION,
+};
+use super::super::selectors::select_pending_records_for_summary;
 use super::super::settings::load_summary_job_settings;
 use super::super::{PendingRecordSelection, SummaryJobSettings, DEFAULT_PENDING_RECORD_SCAN_LIMIT};
 use super::job::{
     create_thread_summary_job_run, done_metadata, failed_metadata, finish_thread_summary_job_run,
     noop_metadata, FrozenThreadSummarySelection, THREAD_DIRECT_TRIGGER,
 };
+
+const PARTITION_CLAIM_LEASE_SECONDS: i64 = 300;
+const GENERATION_FINALIZE_LEASE_SECONDS: i64 = 300;
+const THREAD_SUMMARY_GENERATION_STEP: &str = "thread_summary_final";
 
 #[derive(Debug, Clone)]
 pub(crate) struct ThreadSummaryExecutionContext {
@@ -38,47 +44,34 @@ async fn build_thread_summary_execution_context(
     db: &Db,
     thread: EngineThread,
     settings: SummaryJobSettings,
+    requested_partition: Option<&str>,
 ) -> Result<ThreadSummaryExecutionContext, String> {
-    let now = crate::models::now_rfc3339();
-    let summary_lock_is_active = thread.summary_status == "running"
-        && thread
-            .summary_lock_expires_at
-            .as_deref()
-            .is_some_and(|expires_at| expires_at > now.as_str());
-    if thread.summary_status == "running" && !summary_lock_is_active {
-        if let Some(stale_job_run_id) = thread.summary_job_run_id.as_deref() {
-            records::release_records_from_summary(
-                db,
-                thread.tenant_id.as_str(),
-                thread.source_id.as_str(),
-                thread.id.as_str(),
-                stale_job_run_id,
-            )
-            .await?;
-        }
-    }
     let thread_id = thread.id.clone();
     let tenant_id = thread.tenant_id.clone();
     let source_id = thread.source_id.clone();
-    let pending_before_count = records::count_records(
-        db,
-        thread_id.as_str(),
-        Some(tenant_id.as_str()),
-        Some(source_id.as_str()),
-        None,
-        None,
-        Some("pending"),
-    )
-    .await?;
-    let pending_records = records::list_pending_records(
-        db,
-        tenant_id.as_str(),
-        source_id.as_str(),
-        thread_id.as_str(),
-        DEFAULT_PENDING_RECORD_SCAN_LIMIT,
-    )
-    .await?;
-    let selection = select_pending_records_for_summary(pending_records, settings.token_limit);
+    let pending_records = if let Some(partition) = requested_partition {
+        records::list_pending_records_for_partition(
+            db,
+            tenant_id.as_str(),
+            source_id.as_str(),
+            thread_id.as_str(),
+            partition,
+            DEFAULT_PENDING_RECORD_SCAN_LIMIT,
+        )
+        .await?
+    } else {
+        records::list_pending_records(
+            db,
+            tenant_id.as_str(),
+            source_id.as_str(),
+            thread_id.as_str(),
+            DEFAULT_PENDING_RECORD_SCAN_LIMIT,
+        )
+        .await?
+    };
+    let pending_before_count = pending_records.len() as i64;
+    let selection =
+        select_pending_records_for_summary(pending_records, settings.source_batch_token_limit);
 
     Ok(ThreadSummaryExecutionContext {
         thread,
@@ -88,43 +81,28 @@ async fn build_thread_summary_execution_context(
     })
 }
 
-pub(crate) async fn load_thread_summary_execution_context_for_thread(
-    db: &Db,
-    thread: EngineThread,
-) -> Result<ThreadSummaryExecutionContext, String> {
-    let settings = load_summary_job_settings(db, "summary").await?;
-    build_thread_summary_execution_context(db, thread, settings).await
-}
-
-pub async fn run_thread_summary(
-    config: &AppConfig,
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-) -> Result<RunThreadSummaryResponse, String> {
-    let thread = threads::get_thread_by_id(db, tenant_id, source_id, thread_id)
-        .await?
-        .ok_or_else(|| "thread not found".to_string())?;
-    run_thread_summary_with_thread(config, db, thread, THREAD_DIRECT_TRIGGER).await
-}
-
-pub(crate) async fn run_thread_summary_with_thread(
+pub(crate) async fn run_thread_summary_partition_with_thread(
     config: &AppConfig,
     db: &Db,
     thread: EngineThread,
+    requested_partition: &str,
     trigger_type: &str,
 ) -> Result<RunThreadSummaryResponse, String> {
-    let tenant_id = thread.tenant_id.clone();
-    let source_id = thread.source_id.clone();
-    let thread_id = thread.id.clone();
-    let mut ctx = load_thread_summary_execution_context_for_thread(db, thread).await?;
+    let settings = load_summary_job_settings(db, "summary").await?;
+    let mut ctx =
+        build_thread_summary_execution_context(db, thread, settings, Some(requested_partition))
+            .await?;
     ctx.settings.cloud_resume_kind =
         Some(crate::services::memory_cloud_agent::THREAD_SUMMARY_JOB_RESUME_KIND.to_string());
     if !ctx.should_run() {
-        return Ok(noop_response(thread_id.as_str()));
+        return Ok(noop_response(ctx.thread.id.as_str()));
     }
-
+    if project_partition_key(&ctx.selection) != requested_partition {
+        return Err("partition summary selection changed project identity".to_string());
+    }
+    let tenant_id = ctx.thread.tenant_id.clone();
+    let source_id = ctx.thread.source_id.clone();
+    let thread_id = ctx.thread.id.clone();
     let job_run = start_thread_summary_job(
         db,
         tenant_id.as_str(),
@@ -146,16 +124,39 @@ pub(crate) async fn run_thread_summary_with_thread(
     .await
 }
 
-pub(crate) async fn load_thread_summary_execution_context(
+pub async fn run_thread_summary(
+    config: &AppConfig,
     db: &Db,
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
+    project_partition_key: &str,
+) -> Result<RunThreadSummaryResponse, String> {
+    let thread = threads::get_thread_by_id(db, tenant_id, source_id, thread_id)
+        .await?
+        .ok_or_else(|| "thread not found".to_string())?;
+    run_thread_summary_partition_with_thread(
+        config,
+        db,
+        thread,
+        project_partition_key,
+        THREAD_DIRECT_TRIGGER,
+    )
+    .await
+}
+
+pub(crate) async fn load_thread_summary_execution_context_for_partition(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    project_partition_key: &str,
 ) -> Result<ThreadSummaryExecutionContext, String> {
     let thread = threads::get_thread_by_id(db, tenant_id, source_id, thread_id)
         .await?
         .ok_or_else(|| "thread not found".to_string())?;
-    load_thread_summary_execution_context_for_thread(db, thread).await
+    let settings = load_summary_job_settings(db, "summary").await?;
+    build_thread_summary_execution_context(db, thread, settings, Some(project_partition_key)).await
 }
 
 pub(crate) async fn start_thread_summary_job(
@@ -173,15 +174,23 @@ pub(crate) async fn start_thread_summary_job(
         thread_id,
         ctx.thread.subject_id.as_str(),
         ctx.pending_before_count,
-        ctx.settings.token_limit,
+        &ctx.settings,
         trigger_type,
         &ctx.selection,
     )
     .await?;
 
-    let Some(_locked_thread) =
-        threads::try_acquire_summary_slot(db, tenant_id, source_id, thread_id, job_run.id.as_str())
-            .await?
+    let project_partition_key = project_partition_key(&ctx.selection);
+    let Some(_claim) = thread_partitions::try_claim_summary(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        project_partition_key,
+        job_run.id.as_str(),
+        PARTITION_CLAIM_LEASE_SECONDS,
+    )
+    .await?
     else {
         let _ = finish_thread_summary_job_run(
             db,
@@ -228,11 +237,12 @@ pub(crate) async fn start_thread_summary_job(
     {
         Ok(count) => count,
         Err(error) => {
-            let _ = threads::release_summary_slot(
+            let _ = thread_partitions::release_summary_claim(
                 db,
                 tenant_id,
                 source_id,
                 thread_id,
+                project_partition_key,
                 job_run.id.as_str(),
                 0,
                 0,
@@ -273,11 +283,12 @@ pub(crate) async fn start_thread_summary_job(
             job_run.id.as_str(),
         )
         .await;
-        let _ = threads::release_summary_slot(
+        let _ = thread_partitions::release_summary_claim(
             db,
             tenant_id,
             source_id,
             thread_id,
+            project_partition_key,
             job_run.id.as_str(),
             0,
             0,
@@ -324,13 +335,8 @@ pub(crate) async fn execute_existing_summary_job(
     source_id: &str,
     thread_id: &str,
     job_run_id: &str,
-    seed_ctx: Option<ThreadSummaryExecutionContext>,
+    ctx: ThreadSummaryExecutionContext,
 ) -> Result<RunThreadSummaryResponse, String> {
-    let ctx = if let Some(seed_ctx) = seed_ctx {
-        seed_ctx
-    } else {
-        load_thread_summary_execution_context(db, tenant_id, source_id, thread_id).await?
-    };
     execute_prepared_thread_summary_job(
         config, db, tenant_id, source_id, thread_id, job_run_id, ctx,
     )
@@ -344,25 +350,53 @@ pub(crate) async fn resume_cloud_summary_job(
     source_id: &str,
     thread_id: &str,
     job_run_id: &str,
-) -> Result<RunThreadSummaryResponse, String> {
+) -> Result<Option<RunThreadSummaryResponse>, String> {
     let job_run = cp_repo::get_job_run_by_id(db, job_run_id)
         .await?
         .ok_or_else(|| format!("summary job run not found: {job_run_id}"))?;
     validate_summary_job_scope(&job_run, tenant_id, source_id, thread_id)?;
     if job_run.status == "done" {
-        return Ok(completed_job_response(thread_id, &job_run));
+        return Ok(Some(completed_job_response(thread_id, &job_run)));
     }
     if job_run.status != "running" {
-        return Err(job_run
-            .error_message
-            .clone()
-            .unwrap_or_else(|| format!("summary job is not resumable: {}", job_run.status)));
+        // A durable terminal callback can arrive after stale recovery already
+        // failed the parent and released its records/partition. The terminal
+        // parent is authoritative: acknowledge the late callback without
+        // touching a newer claim or manufacturing an outbox dead letter.
+        return Ok(None);
     }
 
     let thread = threads::get_thread_by_id(db, tenant_id, source_id, thread_id)
         .await?
         .ok_or_else(|| "thread not found".to_string())?;
     let frozen = FrozenThreadSummarySelection::from_metadata(job_run.metadata.as_ref())?;
+    let project_partition_key =
+        project_partition_key_from_subject(frozen.project_subject_id.as_deref()).to_string();
+    let owns_partition = thread_partitions::refresh_summary_claim(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        project_partition_key.as_str(),
+        job_run_id,
+        i64::try_from(config.ai_request_timeout_secs)
+            .unwrap_or(i64::MAX)
+            .saturating_mul(2)
+            .saturating_add(60),
+    )
+    .await?;
+    if !owns_partition {
+        fail_cloud_summary_job(
+            db,
+            tenant_id,
+            source_id,
+            thread_id,
+            job_run_id,
+            "summary partition was superseded before terminal callback".to_string(),
+        )
+        .await?;
+        return Ok(None);
+    }
     let selected = records::list_records_by_ids(
         db,
         tenant_id,
@@ -382,8 +416,26 @@ pub(crate) async fn resume_cloud_summary_job(
     let ctx = ThreadSummaryExecutionContext {
         thread,
         settings: SummaryJobSettings {
-            token_limit: metadata_i64(job_run.metadata.as_ref(), "policy_token_limit")
-                .ok_or_else(|| "summary job metadata policy_token_limit is missing".to_string())?,
+            token_limit: metadata_i64(job_run.metadata.as_ref(), "policy_max_model_input_tokens")
+                .ok_or_else(|| {
+                "summary job metadata policy_max_model_input_tokens is missing".to_string()
+            })?,
+            source_batch_token_limit: metadata_i64(
+                job_run.metadata.as_ref(),
+                "policy_max_source_batch_tokens",
+            )
+            .ok_or_else(|| {
+                "summary job metadata policy_max_source_batch_tokens is missing".to_string()
+            })?,
+            max_leaf_tokens: metadata_i64(job_run.metadata.as_ref(), "policy_max_leaf_tokens")
+                .ok_or_else(|| {
+                    "summary job metadata policy_max_leaf_tokens is missing".to_string()
+                })?,
+            max_merge_rounds: metadata_i64(job_run.metadata.as_ref(), "policy_max_merge_rounds")
+                .ok_or_else(|| {
+                    "summary job metadata policy_max_merge_rounds is missing".to_string()
+                })?
+                .max(1) as usize,
             cloud_owner_entity_id: Some(job_run_id.to_string()),
             cloud_resume_kind: Some(
                 crate::services::memory_cloud_agent::THREAD_SUMMARY_JOB_RESUME_KIND.to_string(),
@@ -399,10 +451,100 @@ pub(crate) async fn resume_cloud_summary_job(
             project_subject_id: frozen.project_subject_id,
         },
     };
-    execute_prepared_thread_summary_job(
-        config, db, tenant_id, source_id, thread_id, job_run_id, ctx,
+    let result = execute_prepared_thread_summary_job(
+        config,
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        job_run_id,
+        ctx.clone(),
     )
-    .await
+    .await;
+    match result {
+        Ok(response) => Ok(Some(response)),
+        Err(_error) => {
+            let current = cp_repo::get_job_run_by_id(db, job_run_id)
+                .await?
+                .ok_or_else(|| format!("summary job run not found after callback: {job_run_id}"))?;
+            if current.status != "running" {
+                return Ok(None);
+            }
+            let still_owns_partition = thread_partitions::refresh_summary_claim(
+                db,
+                tenant_id,
+                source_id,
+                thread_id,
+                project_partition_key.as_str(),
+                job_run_id,
+                i64::try_from(config.ai_request_timeout_secs)
+                    .unwrap_or(i64::MAX)
+                    .saturating_mul(2)
+                    .saturating_add(60),
+            )
+            .await?;
+            if !still_owns_partition {
+                fail_cloud_summary_job(
+                    db,
+                    tenant_id,
+                    source_id,
+                    thread_id,
+                    job_run_id,
+                    "summary partition was superseded during terminal callback".to_string(),
+                )
+                .await?;
+                return Ok(None);
+            }
+            // Ownership recovery is completed inside this terminal callback.
+            // Do not require another outbox delivery: this may already be the
+            // final allowed delivery attempt after a deployment restart.
+            let retry = execute_prepared_thread_summary_job(
+                config, db, tenant_id, source_id, thread_id, job_run_id, ctx,
+            )
+            .await;
+            match retry {
+                Ok(response) => Ok(Some(response)),
+                Err(retry_error) => {
+                    let current = cp_repo::get_job_run_by_id(db, job_run_id)
+                        .await?
+                        .ok_or_else(|| {
+                            format!(
+                                "summary job run not found after ownership recovery: {job_run_id}"
+                            )
+                        })?;
+                    if current.status != "running" {
+                        return Ok(None);
+                    }
+                    let still_owns_partition = thread_partitions::refresh_summary_claim(
+                        db,
+                        tenant_id,
+                        source_id,
+                        thread_id,
+                        project_partition_key.as_str(),
+                        job_run_id,
+                        i64::try_from(config.ai_request_timeout_secs)
+                            .unwrap_or(i64::MAX)
+                            .saturating_mul(2)
+                            .saturating_add(60),
+                    )
+                    .await?;
+                    if !still_owns_partition {
+                        fail_cloud_summary_job(
+                            db,
+                            tenant_id,
+                            source_id,
+                            thread_id,
+                            job_run_id,
+                            "summary partition was superseded after ownership recovery".to_string(),
+                        )
+                        .await?;
+                        return Ok(None);
+                    }
+                    Err(retry_error)
+                }
+            }
+        }
+    }
 }
 
 pub(crate) async fn fail_cloud_summary_job(
@@ -412,13 +554,13 @@ pub(crate) async fn fail_cloud_summary_job(
     thread_id: &str,
     job_run_id: &str,
     error: String,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let Some(job_run) = cp_repo::get_job_run_by_id(db, job_run_id).await? else {
-        return Ok(());
+        return Ok(false);
     };
     validate_summary_job_scope(&job_run, tenant_id, source_id, thread_id)?;
     if job_run.status != "running" {
-        return Ok(());
+        return Ok(false);
     }
 
     let frozen = FrozenThreadSummarySelection::from_metadata(job_run.metadata.as_ref())?;
@@ -427,6 +569,7 @@ pub(crate) async fn fail_cloud_summary_job(
             (frozen.selected_record_ids.len() + frozen.oversized_record_ids.len()) as i64
         });
     let skipped_count = frozen.oversized_record_ids.len();
+    let input_count = frozen.selected_record_ids.len() + skipped_count;
     let _ = records::release_records_from_summary(db, tenant_id, source_id, thread_id, job_run_id)
         .await;
     finish_thread_summary_job_run(
@@ -434,35 +577,90 @@ pub(crate) async fn fail_cloud_summary_job(
         job_run_id,
         FinishEngineJobRunRequest {
             status: "failed".to_string(),
-            input_count: frozen.selected_record_ids.len() as i64,
+            input_count: input_count as i64,
             output_count: 0,
-            processed_count: skipped_count as i64,
-            success_count: skipped_count as i64,
-            error_count: frozen.selected_record_ids.len() as i64,
+            processed_count: 0,
+            success_count: 0,
+            error_count: input_count as i64,
             metadata: Some(failed_metadata(
                 pending_before_count,
                 Some(frozen.selected_record_ids.len()),
                 Some(frozen.selected_token_count),
                 skipped_count,
-                Some(pending_before_count.saturating_sub(skipped_count as i64)),
-                skipped_count as i64,
+                Some(pending_before_count),
+                0,
                 0,
             )),
             error_message: Some(error),
         },
     )
     .await;
-    threads::release_summary_slot(
+    thread_partitions::fail_owned_summary_claim_and_dead_letter_dispatch(
         db,
         tenant_id,
         source_id,
         thread_id,
+        project_partition_key_from_subject(frozen.project_subject_id.as_deref()),
         job_run_id,
-        skipped_count as i64,
-        frozen.oversized_token_count,
+        "cloud_summary_terminal_failure",
     )
-    .await?;
-    Ok(())
+    .await
+}
+
+pub(super) fn project_partition_key(selection: &PendingRecordSelection) -> &str {
+    project_partition_key_from_subject(selection.project_subject_id.as_deref())
+}
+
+fn project_partition_key_from_subject(project_subject_id: Option<&str>) -> &str {
+    project_subject_id.unwrap_or("__none__")
 }
 
 include!("execution_part01.rs");
+
+fn noop_response(thread_id: &str) -> RunThreadSummaryResponse {
+    RunThreadSummaryResponse {
+        thread_id: thread_id.to_string(),
+        generated: false,
+        summary_id: None,
+        source_record_count: 0,
+    }
+}
+
+fn validate_summary_job_scope(
+    job_run: &EngineJobRun,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+) -> Result<(), String> {
+    if job_run.job_type != "summary"
+        || job_run.tenant_id.as_deref() != Some(tenant_id)
+        || job_run.source_id.as_deref() != Some(source_id)
+        || job_run.thread_id.as_deref() != Some(thread_id)
+    {
+        return Err("summary job scope does not match its Cloud Agent callback".to_string());
+    }
+    Ok(())
+}
+
+fn completed_job_response(thread_id: &str, job_run: &EngineJobRun) -> RunThreadSummaryResponse {
+    let summary_id = job_run
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("generated_summary_id"))
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned);
+    RunThreadSummaryResponse {
+        thread_id: thread_id.to_string(),
+        generated: summary_id.is_some(),
+        summary_id,
+        source_record_count: metadata_i64(job_run.metadata.as_ref(), "selected_count")
+            .unwrap_or(0)
+            .max(0) as usize,
+    }
+}
+
+fn metadata_i64(metadata: Option<&serde_json::Value>, key: &str) -> Option<i64> {
+    metadata
+        .and_then(|value| value.get(key))
+        .and_then(|value| value.as_i64())
+}

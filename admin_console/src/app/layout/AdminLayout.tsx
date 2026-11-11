@@ -124,6 +124,7 @@ function buildMenuItems(superAdmin: boolean, t: ReturnType<typeof useAdminI18n>[
       ...(superAdmin ? [{ key: '/memory/sources', label: t('nav.sources') }] : []),
       ...(superAdmin ? [{ key: '/memory/policies', label: t('nav.policies') }] : []),
       { key: '/memory/runs', label: t('nav.runs') },
+      ...(superAdmin ? [{ key: '/memory/reliability', label: t('nav.memoryReliability') }] : []),
     ] },
   );
   if (superAdmin) {

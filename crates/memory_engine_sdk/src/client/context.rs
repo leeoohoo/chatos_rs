@@ -19,8 +19,12 @@ impl MemoryEngineClient {
                     tenant_id: req.tenant_id.clone(),
                     source_id: source_id.to_string(),
                     subject_id: req.subject_id.clone(),
-                    related_subject_ids: req.related_subject_ids.clone(),
+                    context_project_subject_id: req.context_project_subject_id.clone(),
                     thread_id: req.thread_id.clone(),
+                    query_text: req.query_text.clone(),
+                    current_turn_id: req.current_turn_id.clone(),
+                    model_capability_revision: req.model_capability_revision.clone(),
+                    runtime_context_assertion: req.runtime_context_assertion.clone(),
                     policy: req.policy.clone(),
                 };
                 self.send_json(Method::POST, "/context/compose", Some(&direct))

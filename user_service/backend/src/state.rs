@@ -36,6 +36,13 @@ impl AppState {
                 "migrated legacy model enabled state into task_enabled"
             );
         }
+        let repaired_model_count = store.reconcile_provider_model_catalog().await?;
+        if repaired_model_count > 0 {
+            info!(
+                repaired_model_count,
+                "reconciled provider availability and published chat budgets"
+            );
+        }
         store.ensure_default_super_admin(&config).await?;
         let wechat_mini_program = WeChatMiniProgramClient::from_config(&config)?;
         Ok(Self {

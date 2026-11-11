@@ -233,7 +233,7 @@ async fn postgres_agent_directory_groups_memory_projects_and_threads() {
             "Project shared summary",
         ),
     ] {
-        crate::repositories::subject_memories::upsert_subject_memory(
+        crate::repositories::subject_memories::insert_test_subject_memory(
             &pool,
             subject_id,
             memory_key,

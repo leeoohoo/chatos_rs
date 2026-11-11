@@ -11,6 +11,10 @@ use crate::runtime::{AiRuntime, AiRuntimeOptions, AiSingleStepOutcome, AiSingleS
 use crate::runtime::{AiRuntimeResult, AiTurnReport};
 use crate::traits::{ModelRequest, ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput};
 
+#[path = "turn_budget.rs"]
+mod budget;
+use budget::validate_complete_request_budget;
+
 pub struct ContextualTurnRunner {
     runtime: AiRuntime,
     memory_composer: Option<MemoryContextComposer>,
@@ -111,6 +115,7 @@ impl ContextualTurnRunner {
         let mut model_request = model_request;
         enable_openai_responses_protocol(&mut model_request);
         model_request.input = contextual_input;
+        validate_complete_request_budget(&model_request)?;
         self.runtime.run_turn(model_request, runtime_options).await
     }
 
@@ -150,6 +155,7 @@ impl ContextualTurnRunner {
         }
         enable_openai_responses_protocol(&mut model_request);
         model_request.input = contextual_input;
+        validate_complete_request_budget(&model_request)?;
         let single_step = AiSingleStepRequest {
             model_request,
             runtime_options,

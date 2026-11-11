@@ -41,3 +41,49 @@ groups:
         annotations:
           summary: "ChatOS container restart detected"
           description: "{{ $labels.container_label_com_docker_compose_service }} restarted {{ $value }} time(s) within the last 15 minutes."
+
+  - name: chatos-memory-reliability
+    rules:
+      - alert: MemoryReliabilityAuditUnavailable
+        expr: chatos_memory_reliability_audit_success == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Memory Engine reliability audit is unavailable"
+          description: "The Memory Engine could not evaluate coverage, lineage, queue, and runtime readiness invariants."
+
+      - alert: MemoryReliabilityInvariantBroken
+        expr: sum by (kind) (chatos_memory_reliability_findings{severity="critical"}) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Memory Engine reliability invariant is broken"
+          description: "Invariant {{ $labels.kind }} has {{ $value }} active finding(s). Follow the Memory Engine reliability runbook before resuming writes."
+
+      - alert: MemoryReliabilityDeadLetterPresent
+        expr: sum(chatos_memory_reliability_findings{kind=~"derived_event_dead_letter|partition_rebuild_failed"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memory Engine has failed durable work"
+          description: "A derived event or partition rebuild remains failed. Repair the cause and use the audited Admin rearm operation."
+
+      - alert: MemorySummaryDispatchDeadLettered
+        expr: chatos_memory_reliability_backlog{kind="summary_dispatch_dead_lettered"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memory summary dispatch is dead-lettered"
+          description: "At least one project partition summary dispatch is dead-lettered."
+
+      - alert: MemoryProviderOverflowOutputsIncreasing
+        expr: delta(chatos_memory_reliability_backlog{kind="provider_overflow_outputs"}[30m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memory generation provider overflow is increasing"
+          description: "New outputs required provider overflow recovery during the last 30 minutes; verify frozen capability budgets and estimator revision."

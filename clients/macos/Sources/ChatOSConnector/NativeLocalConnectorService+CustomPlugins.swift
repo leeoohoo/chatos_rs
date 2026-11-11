@@ -9,31 +9,52 @@ struct NativeCustomPluginRuntimeHealth: Sendable, Equatable {
 }
 
 extension NativeLocalConnectorService {
+    public func inspectCustomMCP(_ draft: LocalConnectorCustomMCPDraft) async throws -> LocalConnectorPluginInspection {
+        try await inspectCustomMCP(draft, replacingPluginID: nil)
+    }
+
+    public func installCustomMCP(_ draft: LocalConnectorCustomMCPDraft, expectedFingerprint: String) async throws {
+        _ = try await installCustomMCP(draft, expectedFingerprint: expectedFingerprint, replacingPluginID: nil)
+    }
+
+    public func inspectPluginSource(_ source: LocalConnectorPluginSourceDraft) async throws -> LocalConnectorPluginInspection {
+        try await inspectPluginSource(source, replacingPluginID: nil)
+    }
+
+    public func installPluginSource(_ source: LocalConnectorPluginSourceDraft, expectedFingerprint: String) async throws {
+        _ = try await installPluginSource(source, expectedFingerprint: expectedFingerprint, replacingPluginID: nil)
+    }
+
     public func inspectCustomMCP(
-        _ draft: LocalConnectorCustomMCPDraft
+        _ draft: LocalConnectorCustomMCPDraft,
+        replacingPluginID: String?
     ) async throws -> LocalConnectorPluginInspection {
         let prepared = try await pluginInstaller.prepareCustomMCP(draft)
         defer { pluginInstaller.discardCustomPlugin(prepared) }
-        return try await inspectPreparedCustomPlugin(prepared)
+        return try await inspectPreparedCustomPlugin(customPluginUpdate(prepared, replacing: replacingPluginID))
     }
 
-    public func installCustomMCP(
+    @discardableResult
+    func installCustomMCP(
         _ draft: LocalConnectorCustomMCPDraft,
-        expectedFingerprint: String
-    ) async throws {
+        expectedFingerprint: String,
+        replacingPluginID: String?
+    ) async throws -> NativeInstalledPluginRecord {
         let prepared = try await pluginInstaller.prepareCustomMCP(draft)
         var shouldDiscard = true
         defer {
             if shouldDiscard { pluginInstaller.discardCustomPlugin(prepared) }
         }
-        let inspection = try await inspectPreparedCustomPlugin(prepared)
+        let updated = try customPluginUpdate(prepared, replacing: replacingPluginID)
+        let inspection = try await inspectPreparedCustomPlugin(updated)
         guard inspection.fingerprint == expectedFingerprint else {
             throw NativeConnectorError.pluginInstallation(
                 "MCP package 或工具清单在确认后发生变化，请重新预检并确认"
             )
         }
-        try await commitCustomPlugin(prepared)
+        try await commitCustomPlugin(updated)
         shouldDiscard = false
+        return pluginInstaller.committedCustomPluginRecord(updated)
     }
 
     public func inspectLocalPlugin(atPath path: String) async throws -> LocalConnectorPluginInspection {
@@ -62,30 +83,35 @@ extension NativeLocalConnectorService {
     }
 
     public func inspectPluginSource(
-        _ source: LocalConnectorPluginSourceDraft
+        _ source: LocalConnectorPluginSourceDraft,
+        replacingPluginID: String?
     ) async throws -> LocalConnectorPluginInspection {
         let prepared = try await pluginInstaller.preparePluginSource(source)
         defer { pluginInstaller.discardCustomPlugin(prepared) }
-        return try await inspectPreparedCustomPlugin(prepared)
+        return try await inspectPreparedCustomPlugin(customPluginUpdate(prepared, replacing: replacingPluginID))
     }
 
-    public func installPluginSource(
+    @discardableResult
+    func installPluginSource(
         _ source: LocalConnectorPluginSourceDraft,
-        expectedFingerprint: String
-    ) async throws {
+        expectedFingerprint: String,
+        replacingPluginID: String?
+    ) async throws -> NativeInstalledPluginRecord {
         let prepared = try await pluginInstaller.preparePluginSource(source)
         var shouldDiscard = true
         defer {
             if shouldDiscard { pluginInstaller.discardCustomPlugin(prepared) }
         }
-        let inspection = try await inspectPreparedCustomPlugin(prepared)
+        let updated = try customPluginUpdate(prepared, replacing: replacingPluginID)
+        let inspection = try await inspectPreparedCustomPlugin(updated)
         guard inspection.fingerprint == expectedFingerprint else {
             throw NativeConnectorError.pluginInstallation(
                 "Plugin 来源或组件清单在确认后发生变化，请重新预检并确认"
             )
         }
-        try await commitCustomPlugin(prepared)
+        try await commitCustomPlugin(updated)
         shouldDiscard = false
+        return pluginInstaller.committedCustomPluginRecord(updated)
     }
 
     private func inspectPreparedCustomPlugin(
@@ -107,7 +133,7 @@ extension NativeLocalConnectorService {
             permissionSnapshot.insert("process.spawn")
         }
         var components: [LocalConnectorPluginInspectionComponent] = []
-        var fingerprintParts = [record.artifactSHA256, sourceSummary]
+        var fingerprintParts = [record.pluginID, record.artifactSHA256, sourceSummary]
         for componentKey in manifest.mcpServers.keys.sorted() {
             let launch = try NativePluginManifestLoader.prepare(
                 record: record,
@@ -251,7 +277,7 @@ extension NativeLocalConnectorService {
         }
         nextState.pluginHookTrustRecords = trustRecords
         nextState.installedPluginIDs.insert(record.pluginID)
-        nextState.pluginPreferences[record.pluginID] = true
+        nextState.pluginPreferences[record.pluginID] = nextState.pluginPreferences[record.pluginID] ?? true
         try customPluginStateSaver(nextState, stateStore)
         state = nextState
         do {

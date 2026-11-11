@@ -63,6 +63,9 @@ extension LocalAgentChatToolProvider {
             readThroughMessageIDsByRoom: inboxReceipt.readThrough,
             nowUnixMs: now()
         )
+        for roomID in Set(inboxReceipt.readThrough.keys).union([context.roomID]).sorted() {
+            await roomChangeHandler(roomID)
+        }
         return try Self.outcome(["status": "completed"])
     }
 

@@ -35,14 +35,14 @@ enum AgentArtifactUploadStager {
         }
         do {
             let result = try await codeReadWorker.execute(
-                operation: "artifact_stage_v1",
-                arguments: [
+                operation: "artifact_stage_v2",
+                arguments: scope.destinationArguments.merging([
                     "source_path": .string(scope.sourcePath),
                     "destination_path": .string(scope.destinationPath),
                     "token": .string(token),
                     "byte_size": .number(Double(expectedBytes)),
                     "sha256": .string(expectedSHA256.lowercased()),
-                ],
+                ]) { _, value in value },
                 projectRoot: scope.root,
                 requestCWD: nil,
                 defaultToolRoot: nil,
@@ -55,7 +55,7 @@ enum AgentArtifactUploadStager {
                   relativePath == scope.destinationPath else {
                 throw AgentArtifactUploadStagingError.stagingUnavailable
             }
-            return .init(token: token, fileURL: finalURL)
+            return .init(token: token, fileURL: scope.destinationURL)
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as CodeReadWorkerProcessClientError {
@@ -93,6 +93,20 @@ struct AgentArtifactWorkerPathScope {
     let root: URL
     let sourcePath: String
     let destinationPath: String
+    let destinationRoot: URL
+    let destinationIdentity: CodeReadWorkerFileIdentity
+
+    var destinationURL: URL {
+        destinationRoot.appendingPathComponent(destinationPath)
+    }
+
+    var destinationArguments: [String: CodeReadWorkerJSONValue] {
+        [
+            "destination_root_path": .string(destinationRoot.path),
+            "destination_root_device": .string(String(destinationIdentity.device)),
+            "destination_root_inode": .string(String(destinationIdentity.inode)),
+        ]
+    }
 
     init(source: URL, destination: URL) throws {
         let source = source.standardizedFileURL
@@ -100,25 +114,27 @@ struct AgentArtifactWorkerPathScope {
         guard source.isFileURL, destination.isFileURL else {
             throw AgentArtifactWorkerPathError.invalidScope
         }
-        let sourceComponents = source.pathComponents
-        let destinationComponents = destination.pathComponents
-        var sharedCount = 0
-        while sharedCount < min(sourceComponents.count, destinationComponents.count),
-              sourceComponents[sharedCount] == destinationComponents[sharedCount] {
-            sharedCount += 1
+        // Resolve configured directory aliases, never the file itself. Source and destination
+        // can live on different volumes; granting their common ancestor would grant all of /.
+        root = source.deletingLastPathComponent().resolvingSymlinksInPath()
+        sourcePath = source.lastPathComponent
+        var ancestor = destination.deletingLastPathComponent()
+        var pending = [destination.lastPathComponent]
+        var status = stat()
+        while ancestor.path.withCString({ Darwin.lstat($0, &status) }) != 0 {
+            guard errno == ENOENT, ancestor.path != "/" else {
+                throw AgentArtifactWorkerPathError.invalidScope
+            }
+            pending.insert(ancestor.lastPathComponent, at: 0)
+            ancestor.deleteLastPathComponent()
         }
-        guard sharedCount > 1,
-              sharedCount < sourceComponents.count,
-              sharedCount < destinationComponents.count else {
+        destinationRoot = ancestor.resolvingSymlinksInPath().standardizedFileURL
+        guard destinationRoot.path.withCString({ Darwin.lstat($0, &status) }) == 0,
+              (status.st_mode & S_IFMT) == S_IFDIR else {
             throw AgentArtifactWorkerPathError.invalidScope
         }
-        let rootPath = NSString.path(withComponents: Array(sourceComponents.prefix(sharedCount)))
-        root = URL(fileURLWithPath: rootPath, isDirectory: true)
-        sourcePath = sourceComponents.dropFirst(sharedCount).joined(separator: "/")
-        destinationPath = destinationComponents.dropFirst(sharedCount).joined(separator: "/")
-        guard !sourcePath.isEmpty, !destinationPath.isEmpty else {
-            throw AgentArtifactWorkerPathError.invalidScope
-        }
+        destinationIdentity = .init(device: UInt64(status.st_dev), inode: UInt64(status.st_ino))
+        destinationPath = pending.joined(separator: "/")
     }
 }
 

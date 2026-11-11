@@ -65,6 +65,7 @@ pub(crate) async fn prepare_subject_memory_job(
         summary_type: item.summary_type,
         level: item.level,
         summary_text: item.summary_text,
+        structured_payload: item.structured_payload,
         created_at: item.created_at,
         metadata: item.metadata,
     })
@@ -72,7 +73,7 @@ pub(crate) async fn prepare_subject_memory_job(
     let input_count = pending_summaries.len();
     let summary_selection = select_summary_batch(
         pending_summaries.as_slice(),
-        settings.token_limit,
+        settings.source_batch_token_limit,
         settings.count_limit,
     );
     let rollup_selection = select_rollup_batch(
@@ -82,7 +83,7 @@ pub(crate) async fn prepare_subject_memory_job(
         req.subject_id.as_str(),
         settings.relation_subject_id.as_str(),
         req.memory_type.as_str(),
-        settings.token_limit,
+        settings.source_batch_token_limit,
         settings.count_limit,
         settings.keep_level0_count,
         settings.max_level,

@@ -361,8 +361,31 @@ extension SQLiteAgentGroupChatStore {
         agentID: String,
         limit: Int = 200
     ) throws -> [LocalAgentUnreadConversation] {
+        try listInboxMessagesAfter(ownerUserID: ownerUserID, agentID: agentID, readThrough: [:], limit: limit)
+    }
+
+    func hasNewInboxMessages(ownerUserID: String, agentID: String, readThrough: [String: String]) throws -> Bool {
+        try validateInboxReadBoundary(ownerUserID: ownerUserID, agentID: agentID, readThrough: readThrough)
+        return try AgentMessageRepository.hasNewInboxMessages(
+            database, ownerUserID: ownerUserID, agentID: agentID, readThrough: readThrough,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
+    private func validateInboxReadBoundary(ownerUserID: String, agentID: String, readThrough: [String: String]) throws {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        guard readThrough.count <= 500 else { throw AgentGroupChatError.invalidField("readThrough") }
+        for (roomID, messageID) in readThrough {
+            try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+            try AgentGroupChatValidation.identifier(messageID, field: "messageID")
+        }
+    }
+
+    public func listInboxMessagesAfter(
+        ownerUserID: String, agentID: String, readThrough: [String: String], limit: Int = 200
+    ) throws -> [LocalAgentUnreadConversation] {
+        try validateInboxReadBoundary(ownerUserID: ownerUserID, agentID: agentID, readThrough: readThrough)
         guard (1...500).contains(limit) else {
             throw AgentGroupChatError.invalidField("limit")
         }
@@ -374,6 +397,7 @@ extension SQLiteAgentGroupChatStore {
             ownerUserID: ownerUserID,
             agentID: agentID,
             limit: limit,
+            readThrough: readThrough,
             preparedStatement: recordPreparedStatement,
             row: readMessageBase
         ), ownerUserID: ownerUserID)

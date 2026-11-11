@@ -8,10 +8,12 @@ mod attachment_tests;
 struct OwnerCheckingModelResolver;
 
 #[test]
-fn plugin_installer_main_chat_exposes_only_installer_tools() {
+fn plugin_installer_main_chat_exposes_installer_and_attachment_tools() {
     let tools = vec![
         json!({"name": "create_task"}),
         json!({"name": "agent_skill_activate"}),
+        json!({"name": "execute_command"}),
+        json!({"name": "local_attachment_read"}),
         json!({"name": "plugin_installer_search_npm"}),
         json!({"name": "plugin_installer_install_npm"}),
     ];
@@ -20,6 +22,7 @@ fn plugin_installer_main_chat_exposes_only_installer_tools() {
     assert_eq!(
         names,
         vec![
+            "local_attachment_read",
             "plugin_installer_search_npm",
             "plugin_installer_install_npm"
         ]
@@ -64,6 +67,11 @@ impl LocalModelRuntimeResolver for OwnerCheckingModelResolver {
         Ok(TransientLocalModelRuntime {
             runner: Arc::new(ContextualTurnRunner::new(AiRuntime::new(None), None)),
             model_config: ModelRuntimeConfig {
+                model_capability_revision: "test-capability-v1".to_string(),
+                context_window_tokens: 200_000,
+                output_reserve_tokens: 16_000,
+                protocol_overhead_estimator_id: "responses-json-v1".to_string(),
+                tokenizer_id: Some("o200k_base".to_string()),
                 model: "test-model".to_string(),
                 ..ModelRuntimeConfig::default()
             },

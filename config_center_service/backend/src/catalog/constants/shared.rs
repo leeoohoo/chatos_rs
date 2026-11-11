@@ -41,11 +41,20 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "memory_engine.ai.openai_model",
     "memory_engine.ai.openai_temperature",
     "memory_engine.policy.rollup.target_summary_tokens",
+    "memory_engine.policy.rollup.token_limit",
+    "memory_engine.policy.rollup.interval_seconds",
+    "memory_engine.policy.rollup.max_threads_per_tick",
     "memory_engine.policy.summary.count_limit",
     "memory_engine.policy.summary.keep_level0_count",
     "memory_engine.policy.summary.max_level",
     "memory_engine.policy.summary.target_summary_tokens",
+    "memory_engine.policy.summary.token_limit",
+    "memory_engine.policy.summary.interval_seconds",
+    "memory_engine.policy.summary.max_threads_per_tick",
     "memory_engine.policy.subject_memory.target_summary_tokens",
+    "memory_engine.policy.subject_memory.token_limit",
+    "memory_engine.policy.subject_memory.interval_seconds",
+    "memory_engine.policy.subject_memory.max_threads_per_tick",
     "memory_engine.policy.thread_repair.interval_seconds",
     "memory_engine.policy.thread_repair.max_threads_per_tick",
     "memory_engine.policy.thread_repair.count_limit",
@@ -82,7 +91,12 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "sandbox_manager.security.system_client_max_lease_ttl_seconds",
     "user_service.downstream.memory_engine_base_url",
 ];
-pub const RETIRED_CONFIG_KEY_PREFIXES: &[&str] = &["task_runner.", "chatos.", "mcp_management."];
+pub const RETIRED_CONFIG_KEY_PREFIXES: &[&str] = &[
+    "task_runner.",
+    "chatos.",
+    "mcp_management.",
+    "memory_engine.policy.thread_repair.",
+];
 pub const RETIRED_CONFIG_SERVICES: &[&str] =
     &["task-runner", "chatos-backend", "mcp-management-service"];
 pub const PLATFORM_PRESSURE_LEVEL_CONFIG_KEY: &str = "platform.pressure.level";

@@ -2,15 +2,13 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use reqwest::Method;
+use serde::Serialize;
 
 use crate::models::{
     EngineSummary, ListResponse, SdkDeleteThreadSummaryRequest, SdkListThreadSummariesRequest,
 };
 
-use super::super::transport::{append_optional_i64_query, append_optional_query};
-use super::super::{
-    optional_direct_source_id, require_direct_source_id, AuthMode, MemoryEngineClient,
-};
+use super::super::{require_direct_source_id, AuthMode, MemoryEngineClient};
 
 impl MemoryEngineClient {
     pub async fn list_thread_summaries(
@@ -20,42 +18,21 @@ impl MemoryEngineClient {
     ) -> Result<Vec<EngineSummary>, String> {
         match &self.auth {
             AuthMode::Direct { source_id } => {
-                let mut query = String::new();
-                append_optional_query(&mut query, "tenant_id", Some(req.tenant_id.as_str()));
-                append_optional_query(
-                    &mut query,
-                    "source_id",
-                    optional_direct_source_id(source_id),
-                );
-                append_optional_query(&mut query, "project_id", req.project_id.as_deref());
-                if req.project_id_missing {
-                    append_optional_query(&mut query, "project_id_missing", Some("true"));
+                let source_id = require_direct_source_id(source_id, "list_thread_summaries")?;
+                #[derive(Serialize)]
+                struct DirectListThreadSummariesRequest<'a> {
+                    source_id: &'a str,
+                    #[serde(flatten)]
+                    request: &'a SdkListThreadSummariesRequest,
                 }
-                append_optional_query(&mut query, "summary_type", req.summary_type.as_deref());
-                append_optional_query(&mut query, "status", req.status.as_deref());
-                append_optional_i64_query(&mut query, "level", req.level);
-                append_optional_i64_query(&mut query, "after_level", req.after_level);
-                append_optional_query(
-                    &mut query,
-                    "after_created_at",
-                    req.after_created_at.as_deref(),
-                );
-                append_optional_query(&mut query, "after_id", req.after_id.as_deref());
-                append_optional_i64_query(&mut query, "limit", req.limit);
-                append_optional_i64_query(&mut query, "offset", req.offset);
-                let suffix = if query.is_empty() {
-                    String::new()
-                } else {
-                    format!("?{query}")
-                };
                 let resp: ListResponse<EngineSummary> = self
                     .send_json(
-                        Method::GET,
-                        &format!(
-                            "/threads/{}/summaries{suffix}",
-                            urlencoding::encode(thread_id)
-                        ),
-                        Option::<&()>::None,
+                        Method::POST,
+                        &format!("/threads/{}/summaries", urlencoding::encode(thread_id)),
+                        Some(&DirectListThreadSummariesRequest {
+                            source_id,
+                            request: req,
+                        }),
                     )
                     .await?;
                 Ok(resp.items)
@@ -78,6 +55,8 @@ impl MemoryEngineClient {
         thread_id: &str,
         summary_id: &str,
         tenant_id: &str,
+        project_partition_key: &str,
+        runtime_context_assertion: &str,
     ) -> Result<usize, String> {
         match &self.auth {
             AuthMode::Direct { source_id } => {
@@ -86,17 +65,27 @@ impl MemoryEngineClient {
                 struct DeleteSummaryResponse {
                     reset_records: usize,
                 }
+                #[derive(Serialize)]
+                struct DirectDeleteThreadSummaryRequest<'a> {
+                    tenant_id: &'a str,
+                    source_id: &'a str,
+                    project_partition_key: &'a str,
+                    runtime_context_assertion: &'a str,
+                }
                 let resp: DeleteSummaryResponse = self
                     .send_json(
                         Method::DELETE,
                         &format!(
-                            "/threads/{}/summaries/{}?tenant_id={}&source_id={}",
+                            "/threads/{}/summaries/{}",
                             urlencoding::encode(thread_id),
-                            urlencoding::encode(summary_id),
-                            urlencoding::encode(tenant_id),
-                            urlencoding::encode(source_id)
+                            urlencoding::encode(summary_id)
                         ),
-                        Option::<&()>::None,
+                        Some(&DirectDeleteThreadSummaryRequest {
+                            tenant_id,
+                            source_id,
+                            project_partition_key,
+                            runtime_context_assertion,
+                        }),
                     )
                     .await?;
                 Ok(resp.reset_records)
@@ -116,6 +105,8 @@ impl MemoryEngineClient {
                         ),
                         Some(&SdkDeleteThreadSummaryRequest {
                             tenant_id: tenant_id.to_string(),
+                            project_partition_key: project_partition_key.to_string(),
+                            runtime_context_assertion: runtime_context_assertion.to_string(),
                         }),
                     )
                     .await?;

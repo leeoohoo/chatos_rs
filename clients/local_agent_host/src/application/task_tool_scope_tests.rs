@@ -60,6 +60,7 @@ async fn add_project_conversation(
                 owner_user_id: "user-1".to_string(),
                 conversation_id: conversation_id.to_string(),
                 expected_conversation_version: 1,
+                conversation_if_missing: None,
                 turn_id: turn_id.to_string(),
                 message_id: format!("message-{turn_id}"),
                 run_id: run_id.to_string(),

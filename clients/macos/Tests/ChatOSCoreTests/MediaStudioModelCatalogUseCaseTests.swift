@@ -4,10 +4,12 @@ import Testing
 
 @Suite("Media Studio model catalog application boundary")
 struct MediaStudioModelCatalogUseCaseTests {
-    @Test("catalog keeps the image list and applies the existing video admission rule")
+    @Test("catalog separates chat, image generation, and supported video operations")
     func loadsAndPartitionsCatalog() async throws {
         let models = [
+            Self.model(id: "chat", modelName: "gpt-6.1-sol"),
             Self.model(id: "image", modelName: "gpt-image-1"),
+            Self.model(id: "image2", modelName: "gpt-image-2"),
             Self.model(id: "h3", modelName: "  minimax-h3  "),
             Self.model(id: "h3-max", modelName: "MiniMax-H3-Max"),
         ]
@@ -16,7 +18,9 @@ struct MediaStudioModelCatalogUseCaseTests {
         let catalog = try await MediaStudioModelCatalogUseCase(provider: provider).load()
 
         #expect(await provider.fetchCount == 1)
-        #expect(catalog.imageModels.map(\.id) == ["image", "h3", "h3-max"])
+        #expect(catalog.allModels.map(\.id) == ["chat", "image", "image2", "h3", "h3-max"])
+        #expect(catalog.textModels.map(\.id) == ["chat"])
+        #expect(catalog.imageModels.map(\.id) == ["image", "image2"])
         #expect(catalog.videoModels.map(\.id) == ["h3"])
     }
 

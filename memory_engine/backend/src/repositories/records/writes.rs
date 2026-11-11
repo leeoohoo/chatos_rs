@@ -73,16 +73,30 @@ async fn batch_sync_records_inner(
     thread_id: &str,
     req: &BatchSyncRecordsRequest,
 ) -> Result<usize, String> {
+    let project_partition_key = batch_project_partition(req)?;
     let mut tx = db.begin().await.map_err(|e| e.to_string())?;
+    crate::repositories::thread_partitions::lock_or_create(
+        &mut tx,
+        &req.tenant_id,
+        &req.source_id,
+        thread_id,
+        project_partition_key.as_str(),
+    )
+    .await?;
     let mut inserted = 0usize;
+    let mut inserted_terminal = false;
     let mut delta = SummaryQueueDelta::default();
     let mut keys = HashSet::new();
     let mut project_identities = HashMap::<String, Option<String>>::new();
     for input in &req.records {
-        let previous=sqlx::query_scalar::<_,Json<serde_json::Value>>(
-            "SELECT data FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND id=$4 FOR UPDATE"
+        let previous=sqlx::query_as::<_,(Json<serde_json::Value>,Option<String>)>(
+            "SELECT data,project_partition_key FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND id=$4 FOR UPDATE"
         ).bind(&req.tenant_id).bind(&req.source_id).bind(thread_id).bind(&input.id)
-          .fetch_optional(&mut *tx).await.map_err(|e|e.to_string())?.map(decode::<EngineRecord>).transpose()?;
+          .fetch_optional(&mut *tx).await.map_err(|e|e.to_string())?;
+        let (previous, previous_partition) = match previous {
+            Some((data, partition)) => (Some(decode::<EngineRecord>(data)?), partition),
+            None => (None, None),
+        };
         let mut record = make_record(thread_id, &req.tenant_id, &req.source_id, input.clone());
         if let Some(previous) = previous.as_ref() {
             // A durable client may replay a committed batch after losing the HTTP response.
@@ -91,6 +105,12 @@ async fn batch_sync_records_inner(
             record.summary_id = previous.summary_id.clone();
             record.summarized_at = previous.summarized_at.clone();
         }
+        ensure_idempotent_record_replay(
+            previous.as_ref(),
+            previous_partition.as_deref(),
+            &record,
+            project_partition_key.as_str(),
+        )?;
         if let Some((project_subject_id, project_name)) = record_project_identity(&record)? {
             let stored_name = project_identities.entry(project_subject_id).or_default();
             if project_name.is_some() {
@@ -98,6 +118,7 @@ async fn batch_sync_records_inner(
             }
         }
         inserted += usize::from(previous.is_none());
+        inserted_terminal |= previous.is_none() && terminal_summary_requested(input);
         merge_delta(&mut delta, previous.as_ref(), &record);
         if let Some(key) = CompactTurnKey::from_record(&record) {
             keys.insert(key);
@@ -105,7 +126,30 @@ async fn batch_sync_records_inner(
         if let Some(key) = previous.as_ref().and_then(CompactTurnKey::from_record) {
             keys.insert(key);
         }
-        upsert_record_row(&mut tx, &record).await?;
+        upsert_record_row_with_partition(&mut tx, &record, Some(project_partition_key.as_str()))
+            .await?;
+    }
+    let partition_dispatch_version = crate::repositories::thread_partitions::apply_ingest_delta(
+        &mut tx,
+        &req.tenant_id,
+        &req.source_id,
+        thread_id,
+        project_partition_key.as_str(),
+        delta.count,
+        delta.tokens,
+        inserted_terminal,
+    )
+    .await?;
+    if let Some(version) = partition_dispatch_version {
+        crate::repositories::derived_events::enqueue_thread_summary_request(
+            &mut tx,
+            &req.tenant_id,
+            &req.source_id,
+            thread_id,
+            project_partition_key.as_str(),
+            version,
+        )
+        .await?;
     }
     tx.commit().await.map_err(|e| e.to_string())?;
     for (project_subject_id, project_name) in project_identities {
@@ -143,22 +187,71 @@ async fn batch_sync_records_inner(
         )
         .await?;
     }
-    if delta.count != 0 || delta.tokens != 0 {
-        threads::apply_summary_queue_state_delta(
-            db,
-            &req.tenant_id,
-            &req.source_id,
-            thread_id,
-            delta.count,
-            delta.tokens,
-        )
-        .await?;
-    }
-    if req.records.iter().any(terminal_summary_requested) {
-        threads::request_forced_summary_dispatch(db, &req.tenant_id, &req.source_id, thread_id)
-            .await?;
-    }
     Ok(inserted)
+}
+
+fn batch_project_partition(req: &BatchSyncRecordsRequest) -> Result<String, String> {
+    let partition = normalize_project_partition(req.project_partition_key.as_str())?;
+    for record in &req.records {
+        if let Some(declared) = record
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("memory_project_id"))
+            .filter(|value| !value.is_null())
+        {
+            let declared = declared
+                .as_str()
+                .ok_or_else(|| "record memory_project_id must be a string".to_string())?;
+            if normalize_project_partition(declared)? != partition {
+                return Err(
+                    "record metadata project identity does not match verified partition"
+                        .to_string(),
+                );
+            }
+        }
+    }
+    Ok(partition)
+}
+
+fn normalize_project_partition(project_id: &str) -> Result<String, String> {
+    let project_id = project_id.trim();
+    if project_id == "__none__" || project_id.is_empty() {
+        return Ok("__none__".to_string());
+    }
+    let normalized = project_id.strip_prefix("project:").unwrap_or(project_id);
+    if normalized.is_empty() || normalized.chars().any(char::is_control) {
+        return Err("record memory_project_id is invalid".to_string());
+    }
+    Ok(format!("project:{normalized}"))
+}
+
+fn ensure_idempotent_record_replay(
+    previous: Option<&EngineRecord>,
+    previous_partition: Option<&str>,
+    next: &EngineRecord,
+    next_partition: &str,
+) -> Result<(), String> {
+    let Some(previous) = previous else {
+        return Ok(());
+    };
+    let previous_partition = previous_partition
+        .ok_or_else(|| "committed record is missing its canonical project partition".to_string())?;
+    if previous_partition != next_partition {
+        return Err("record replay cannot change project_partition_key".to_string());
+    }
+    if previous.external_record_id != next.external_record_id
+        || previous.role != next.role
+        || previous.record_type != next.record_type
+        || previous.content != next.content
+        || previous.structured_payload != next.structured_payload
+        || previous.metadata != next.metadata
+        || previous.created_at != next.created_at
+    {
+        return Err(
+            "record replay content identity does not match the committed record".to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn terminal_summary_requested(input: &UpsertRecordInput) -> bool {
@@ -287,15 +380,26 @@ pub(crate) async fn upsert_record_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     record: &EngineRecord,
 ) -> Result<(), String> {
+    upsert_record_row_with_partition(tx, record, None).await
+}
+
+async fn upsert_record_row_with_partition(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    record: &EngineRecord,
+    project_partition_key: Option<&str>,
+) -> Result<(), String> {
     let result = sqlx::query(
-        "INSERT INTO engine_records(id,thread_id,tenant_id,source_id,external_record_id,role,record_type,summary_status,summary_id,created_at,data) \
-         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11 \
+        "INSERT INTO engine_records(id,thread_id,tenant_id,source_id,external_record_id,role,record_type,summary_status,summary_id,created_at,data,project_partition_key) \
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12 \
          WHERE EXISTS(SELECT 1 FROM engine_threads \
          WHERE id=$2 AND tenant_id=$3 AND source_id=$4) \
          ON CONFLICT(tenant_id,source_id,id) DO UPDATE SET \
          external_record_id=EXCLUDED.external_record_id,role=EXCLUDED.role,record_type=EXCLUDED.record_type, \
-         summary_status=EXCLUDED.summary_status,summary_id=EXCLUDED.summary_id,created_at=EXCLUDED.created_at,data=EXCLUDED.data \
-         WHERE engine_records.thread_id=EXCLUDED.thread_id",
+         summary_status=EXCLUDED.summary_status,summary_id=EXCLUDED.summary_id,created_at=EXCLUDED.created_at,data=EXCLUDED.data, \
+         project_partition_key=COALESCE(engine_records.project_partition_key,EXCLUDED.project_partition_key) \
+         WHERE engine_records.thread_id=EXCLUDED.thread_id AND (EXCLUDED.project_partition_key IS NULL \
+           OR engine_records.project_partition_key IS NULL \
+           OR engine_records.project_partition_key=EXCLUDED.project_partition_key)",
     )
     .bind(&record.id)
     .bind(&record.thread_id)
@@ -308,6 +412,7 @@ pub(crate) async fn upsert_record_row(
     .bind(&record.summary_id)
     .bind(timestamp(&record.created_at)?)
     .bind(json(record)?)
+    .bind(project_partition_key)
     .execute(&mut **tx)
     .await
     .map_err(|error| error.to_string())?;
@@ -381,30 +486,91 @@ pub async fn delete_records_by_thread(
     source_id: &str,
     record_type: Option<&str>,
 ) -> Result<i64, String> {
-    let mut sql = "DELETE FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3"
-        .to_string();
     let normalized = record_type.map(str::trim).filter(|v| !v.is_empty());
+    let mut sql = "SELECT data,project_partition_key FROM engine_records \
+                   WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND recall_eligible"
+        .to_string();
     if normalized.is_some() {
         sql.push_str(" AND record_type=$4");
     }
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(tenant_id)
-        .bind(source_id)
-        .bind(thread_id);
+    sql.push_str(" FOR UPDATE");
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let mut query =
+        sqlx::query_as::<_, (Json<serde_json::Value>, Option<String>)>(sqlx::AssertSqlSafe(sql))
+            .bind(tenant_id)
+            .bind(source_id)
+            .bind(thread_id);
     if let Some(value) = normalized {
         query = query.bind(value);
     }
-    let count = query
-        .execute(db)
+    let rows = query
+        .fetch_all(&mut *tx)
         .await
-        .map_err(|e| e.to_string())?
-        .rows_affected() as i64;
+        .map_err(|error| error.to_string())?;
+    let now = crate::models::now_rfc3339();
+    let mut partition_deltas = HashMap::<String, SummaryQueueDelta>::new();
+    for (data, stored_partition) in &rows {
+        let mut record = decode::<EngineRecord>(data.clone())?;
+        let partition = stored_partition.clone().ok_or_else(|| {
+            "stored record is missing its canonical project partition".to_string()
+        })?;
+        if summary_status_is_pending(Some(&record.summary_status)) {
+            let delta = partition_deltas.entry(partition).or_default();
+            delta.count -= 1;
+            delta.tokens -= estimate_pending_record_tokens(&record);
+        }
+        record.summary_status = "retired".to_string();
+        sqlx::query(
+            "UPDATE engine_records SET recall_eligible=false,retired_at=$4, \
+             retired_reason='business_delete',summary_status='retired',data=$5 \
+             WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND recall_eligible",
+        )
+        .bind(tenant_id)
+        .bind(source_id)
+        .bind(&record.id)
+        .bind(timestamp(&now)?)
+        .bind(json(&record)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+        sqlx::query(
+            "UPDATE engine_summary_record_coverage SET status='retired',retired_at=$4, \
+             retired_reason='source_record_retired' WHERE tenant_id=$1 AND source_id=$2 \
+             AND record_id=$3 AND status='active'",
+        )
+        .bind(tenant_id)
+        .bind(source_id)
+        .bind(&record.id)
+        .bind(timestamp(&now)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    for (partition, delta) in partition_deltas {
+        crate::repositories::thread_partitions::lock_or_create(
+            &mut tx,
+            tenant_id,
+            source_id,
+            thread_id,
+            partition.as_str(),
+        )
+        .await?;
+        crate::repositories::thread_partitions::apply_ingest_delta(
+            &mut tx,
+            tenant_id,
+            source_id,
+            thread_id,
+            partition.as_str(),
+            delta.count,
+            delta.tokens,
+            false,
+        )
+        .await?;
+    }
+    tx.commit().await.map_err(|error| error.to_string())?;
     compact_turns::delete_compact_turns_by_thread(db, thread_id, tenant_id, source_id, record_type)
         .await?;
-    if count > 0 {
-        threads::refresh_summary_queue_state(db, tenant_id, source_id, thread_id).await?;
-    }
-    Ok(count)
+    Ok(rows.len() as i64)
 }
 
 pub async fn delete_record_by_id(
@@ -416,24 +582,83 @@ pub async fn delete_record_by_id(
 ) -> Result<bool, String> {
     let normalized = thread_id.map(str::trim).filter(|v| !v.is_empty());
     let sql = if normalized.is_some() {
-        "DELETE FROM engine_records WHERE id=$1 AND tenant_id=$2 AND source_id=$3 AND thread_id=$4 RETURNING data"
+        "SELECT data,project_partition_key FROM engine_records WHERE id=$1 AND tenant_id=$2 \
+         AND source_id=$3 AND thread_id=$4 AND recall_eligible FOR UPDATE"
     } else {
-        "DELETE FROM engine_records WHERE id=$1 AND tenant_id=$2 AND source_id=$3 RETURNING data"
+        "SELECT data,project_partition_key FROM engine_records WHERE id=$1 AND tenant_id=$2 \
+         AND source_id=$3 AND recall_eligible FOR UPDATE"
     };
-    let mut query = sqlx::query_scalar::<_, Json<serde_json::Value>>(sql)
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let mut query = sqlx::query_as::<_, (Json<serde_json::Value>, Option<String>)>(sql)
         .bind(record_id)
         .bind(tenant_id)
         .bind(source_id);
     if let Some(value) = normalized {
         query = query.bind(value);
     }
-    let deleted = query
-        .fetch_optional(db)
+    let selected = query
+        .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| e.to_string())?
-        .map(decode::<EngineRecord>)
-        .transpose()?;
-    if let Some(record) = deleted.as_ref() {
+        .map_err(|error| error.to_string())?;
+    let Some((data, stored_partition)) = selected else {
+        tx.rollback().await.map_err(|error| error.to_string())?;
+        return Ok(false);
+    };
+    let mut record = decode::<EngineRecord>(data)?;
+    let partition = stored_partition
+        .ok_or_else(|| "stored record is missing its canonical project partition".to_string())?;
+    let was_pending = summary_status_is_pending(Some(&record.summary_status));
+    let pending_tokens = was_pending.then(|| estimate_pending_record_tokens(&record));
+    let now = crate::models::now_rfc3339();
+    record.summary_status = "retired".to_string();
+    sqlx::query(
+        "UPDATE engine_records SET recall_eligible=false,retired_at=$4, \
+         retired_reason='business_delete',summary_status='retired',data=$5 \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND recall_eligible",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(record_id)
+    .bind(timestamp(&now)?)
+    .bind(json(&record)?)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE engine_summary_record_coverage SET status='retired',retired_at=$4, \
+         retired_reason='source_record_retired' WHERE tenant_id=$1 AND source_id=$2 \
+         AND record_id=$3 AND status='active'",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(record_id)
+    .bind(timestamp(&now)?)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if let Some(pending_tokens) = pending_tokens {
+        crate::repositories::thread_partitions::lock_or_create(
+            &mut tx,
+            tenant_id,
+            source_id,
+            &record.thread_id,
+            partition.as_str(),
+        )
+        .await?;
+        crate::repositories::thread_partitions::apply_ingest_delta(
+            &mut tx,
+            tenant_id,
+            source_id,
+            &record.thread_id,
+            partition.as_str(),
+            -1,
+            -pending_tokens,
+            false,
+        )
+        .await?;
+    }
+    tx.commit().await.map_err(|error| error.to_string())?;
+    {
         compact_turns::rebuild_compact_turn_for_record(
             db,
             &record.thread_id,
@@ -443,17 +668,6 @@ pub async fn delete_record_by_id(
             record.metadata.as_ref(),
         )
         .await?;
-        if summary_status_is_pending(Some(&record.summary_status)) {
-            threads::apply_summary_queue_state_delta(
-                db,
-                &record.tenant_id,
-                &record.source_id,
-                &record.thread_id,
-                -1,
-                -estimate_pending_record_tokens(record),
-            )
-            .await?;
-        }
     }
-    Ok(deleted.is_some())
+    Ok(true)
 }

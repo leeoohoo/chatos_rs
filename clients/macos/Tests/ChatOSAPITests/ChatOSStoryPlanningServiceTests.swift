@@ -16,7 +16,7 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         XCTAssertEqual(calls[1].timeoutInterval, 42)
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(calls[1].body)) as? [String: Any])
         XCTAssertEqual(body["tool_choice"] as? String, "auto")
-        XCTAssertEqual(body["max_output_tokens"] as? Int, 2_048)
+        XCTAssertEqual(body["max_output_tokens"] as? Int, 30_000)
         XCTAssertEqual(body["model"] as? String, "chosen-text-model")
     }
 
@@ -229,6 +229,10 @@ private actor StoryPlanningTransport: HTTPTransport {
                 "enabled": true,
                 "provider": scenario == "native" ? "anthropic" : "gpt",
                 "model": "chosen-text-model",
+                "model_capability_revision": "story-test-capability-v1",
+                "context_window_tokens": 200_000,
+                "output_reserve_tokens": 30_000,
+                "protocol_overhead_estimator_id": "responses-json-v1",
                 "base_url": scenario == "official"
                     ? "https://api.openai.com/v1"
                     : "https://relay.example/prefix/v1/",

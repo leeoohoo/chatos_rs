@@ -66,6 +66,7 @@ struct ProviderVideoJob: Sendable {
 enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailure {
     case preflightFailed(String)
     case invalidModelConfiguration
+    case unsupportedImageModel(String)
     case invalidInputImage
     case invalidProviderResponse
     case responseTooLarge
@@ -93,6 +94,8 @@ enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailur
             detail
         case .invalidModelConfiguration:
             "模型缺少可用的 API 地址或密钥，请检查模型配置。"
+        case let .unsupportedImageModel(model):
+            "模型 \(model) 不支持图片生成，请选择图片生成模型。"
         case .invalidInputImage:
             "参考图无效或超过 20 MB。"
         case .invalidProviderResponse:
@@ -138,7 +141,7 @@ enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailur
 
     var requestMayHaveBeenSubmitted: Bool {
         switch self {
-        case .preflightFailed, .invalidModelConfiguration, .invalidInputImage,
+        case .preflightFailed, .invalidModelConfiguration, .unsupportedImageModel, .invalidInputImage,
              .invalidVideoOptions, .invalidMiniMaxPrompt, .invalidMiniMaxImageDimensions,
              .unsupportedLastFrameProtocol, .invalidReferenceVideo,
              .invalidReferenceAudio,

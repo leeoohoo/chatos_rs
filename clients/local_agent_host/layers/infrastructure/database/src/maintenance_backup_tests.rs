@@ -78,6 +78,46 @@ async fn verified_backup_contains_uncheckpointed_wal_and_survives_reopen() {
 }
 
 #[tokio::test]
+async fn failed_migration_retry_reuses_verified_snapshot_before_capacity_preflight() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("client.sqlite");
+    let storage = SqliteClientStorage::connect_file(&path).await.unwrap();
+    let original = maintenance::create_migration_backup(
+        &storage.pool,
+        &path,
+        migration::SCHEMA_VERSION,
+        migration::SCHEMA_VERSION + 1,
+    )
+    .await
+    .unwrap();
+    let original_bytes = std::fs::read(&original).unwrap();
+    for index in 0..7 {
+        std::fs::write(
+            directory.path().join(format!(
+                "client.sqlite.pre-migration-sentinel-{index}.backup.sqlite"
+            )),
+            b"preserve",
+        )
+        .unwrap();
+    }
+    assert_eq!(backup_files(directory.path()).len(), 8);
+
+    let reused = maintenance::create_migration_backup(
+        &storage.pool,
+        &path,
+        migration::SCHEMA_VERSION,
+        migration::SCHEMA_VERSION + 1,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(reused, original);
+    assert_eq!(backup_files(directory.path()).len(), 8);
+    assert_eq!(std::fs::read(original).unwrap(), original_bytes);
+    storage.pool.close().await;
+}
+
+#[tokio::test]
 async fn recovery_capacity_defers_migration_without_deleting_or_changing_source() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("client.sqlite");

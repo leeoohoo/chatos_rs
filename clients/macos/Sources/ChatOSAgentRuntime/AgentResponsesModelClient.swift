@@ -20,6 +20,7 @@ public actor AgentResponsesModelClient: AgentModelClient {
     ) async throws -> AgentHTTPStreamResponse
 
     public nonisolated var usesServerSideCompaction: Bool { compactionThreshold != nil }
+    public nonisolated var memoryCapabilitySnapshot: AgentModelCapabilitySnapshot? { capabilitySnapshot }
 
     private let endpoint: URL
     private let model: String
@@ -29,6 +30,7 @@ public actor AgentResponsesModelClient: AgentModelClient {
     private let temperature: Double?
     private let promptCacheKey: String
     private nonisolated let compactionThreshold: Int?
+    private nonisolated let capabilitySnapshot: AgentModelCapabilitySnapshot?
     private let transport: Transport
     private let streamTransport: StreamTransport
     private let fileTransport: FileTransport
@@ -43,6 +45,7 @@ public actor AgentResponsesModelClient: AgentModelClient {
         maximumOutputTokens: Int? = nil, temperature: Double? = nil,
         promptCacheKey: String? = nil,
         compactionThreshold: Int? = nil,
+        capabilitySnapshot: AgentModelCapabilitySnapshot? = nil,
         transport: Transport? = nil,
         streamTransport: StreamTransport? = nil
     ) throws {
@@ -69,6 +72,7 @@ public actor AgentResponsesModelClient: AgentModelClient {
         self.promptCacheKey = promptCacheKey?.trimmingCharacters(in: .whitespacesAndNewlines)
             .nonEmpty ?? "chatos-native:\(model)"
         self.compactionThreshold = compactionThreshold
+        self.capabilitySnapshot = capabilitySnapshot
         let resolvedTransport: Transport = transport ?? { request in
             let (data, response) = try await BoundedURLSessionDataLoader.load(
                 request: request,

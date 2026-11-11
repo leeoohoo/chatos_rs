@@ -74,7 +74,7 @@ public struct LocalAgentCommunicationSkillSnapshot: Codable, Sendable, Equatable
 /// Immutable product Skill used by every Agent communication run.
 public enum LocalAgentCompactCommunicationSkill {
     public static let name = "chatos-compact-communication"
-    public static let version = 2
+    public static let version = 3
 
     public static func snapshot(
         language: ChatOSLanguage,

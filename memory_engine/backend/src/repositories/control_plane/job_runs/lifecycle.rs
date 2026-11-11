@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use sqlx::types::Json;
+use sqlx::{Postgres, Transaction};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -13,6 +14,16 @@ use crate::repositories::postgres::{decode, json, optional_timestamp, timestamp}
 
 pub async fn create_job_run(
     db: &Db,
+    req: CreateEngineJobRunRequest,
+) -> Result<EngineJobRun, String> {
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let job = create_job_run_in_tx(&mut tx, req).await?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(job)
+}
+
+pub async fn create_job_run_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
     req: CreateEngineJobRunRequest,
 ) -> Result<EngineJobRun, String> {
     let job_run = EngineJobRun {
@@ -53,7 +64,7 @@ pub async fn create_job_run(
     .bind(&job_run.status)
     .bind(timestamp(&job_run.started_at)?)
     .bind(json(&job_run)?)
-    .execute(db)
+    .execute(&mut **tx)
     .await
     .map_err(|error| error.to_string())?;
     info!(job_run_id = %job_run.id, job_type = %job_run.job_type, "created Memory Engine job run");

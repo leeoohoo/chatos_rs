@@ -8,19 +8,21 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         let (scope, transport, client) = try fixture()
         let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
         try await service.ensureThread()
-        let entries = records(scope)
+        let entries = try records(scope)
         try await service.sync(entries, reconciling: false)
-        let composed = try await service.compose()
+        let composed = try await service.compose(try composeRequest())
         XCTAssertEqual(composed.recentRecords.map(\.id), entries.map(\.id))
         XCTAssertEqual(composed.recentRecords.map(\.message), entries.map(\.message))
         let calls = await transport.requests
-        XCTAssertEqual(calls.count, 3)
+        XCTAssertEqual(calls.count, 5)
         XCTAssertEqual(calls.map(\.url.path), [
             "/prefix/api/memory/threads/\(scope.threadID)",
+            "/prefix/api/local/runtime-context-assertions",
             "/prefix/api/memory/threads/\(scope.threadID)/records/batch-sync",
+            "/prefix/api/local/runtime-context-assertions",
             "/prefix/api/memory/context/compose",
         ])
-        XCTAssertEqual(calls.map(\.method), ["PUT", "PUT", "POST"])
+        XCTAssertEqual(calls.map(\.method), ["PUT", "POST", "PUT", "POST", "POST"])
         XCTAssertTrue(calls.allSatisfy { $0.headers["Authorization"] == "Bearer user-token" })
         XCTAssertFalse(calls.contains { $0.url.path.contains("/api/chatos/") || $0.url.path.contains("/sdk/") || $0.url.path.contains("/api/memory-engine/") })
         XCTAssertFalse(calls.contains { $0.headers.keys.contains { $0.lowercased().hasPrefix("x-memory-") } })
@@ -33,7 +35,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertFalse(labels.contains(try XCTUnwrap(scope.projectSubjectID)))
         let threadMetadata = try XCTUnwrap(threadBody["metadata"] as? [String: Any])
         XCTAssertEqual(threadMetadata["agent_name"] as? String, scope.agentName)
-        let body = try object(calls[1].body)
+        let body = try object(calls[2].body)
         XCTAssertEqual(body["source_id"] as? String, "chatos")
         XCTAssertEqual(body["tenant_id"] as? String, scope.tenantID)
         let records = try XCTUnwrap(body["records"] as? [[String: Any]])
@@ -51,15 +53,27 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual(firstMetadata["agent_name"] as? String, scope.agentName)
         XCTAssertEqual((firstMetadata["responses_output"] as? [[String: Any]])?.first?["type"] as? String, "compaction")
         XCTAssertEqual((firstMetadata["provider_usage"] as? [String: Any])?["cached_tokens"] as? Int, 7)
+        let toolMetadata = try XCTUnwrap(records[1]["metadata"] as? [String: Any])
+        XCTAssertEqual(toolMetadata["assistant_record_id"] as? String, scope.recordID(at: 0))
+        XCTAssertEqual(toolMetadata["tool_exchange_id"] as? String, "agent:\(scope.runID.uuidString):tool:0")
+        XCTAssertEqual(toolMetadata["tool_call_id"] as? String, "call-a")
+        XCTAssertEqual(toolMetadata["tool_result_ordinal"] as? Int, 0)
+        XCTAssertEqual(toolMetadata["tool_result_count"] as? Int, 1)
         XCTAssertNil(records[0]["summary_status"])
-        let policy = try XCTUnwrap(try object(calls[2].body)["policy"] as? [String: Any])
-        XCTAssertEqual(policy["include_subject_memory"] as? Bool, true)
-        XCTAssertEqual(try object(calls[2].body)["subject_id"] as? String, scope.subjectID)
+        let policy = try XCTUnwrap(try object(calls[4].body)["policy"] as? [String: Any])
+        XCTAssertEqual(policy["max_memory_tokens"] as? Int, 24_000)
+        XCTAssertEqual(try object(calls[4].body)["query_text"] as? String, "current query")
+        XCTAssertEqual(try object(calls[4].body)["current_turn_id"] as? String, "turn-current")
         XCTAssertEqual(
-            try object(calls[2].body)["related_subject_ids"] as? [String],
-            [try XCTUnwrap(scope.projectSubjectID)]
+            try object(calls[4].body)["model_capability_revision"] as? String,
+            "test-capability-v1"
         )
-        XCTAssertNil(policy["recent_record_limit"], "Do not silently drop unsummarized records")
+        XCTAssertEqual(try object(calls[4].body)["subject_id"] as? String, scope.subjectID)
+        XCTAssertEqual(
+            try object(calls[4].body)["context_project_subject_id"] as? String,
+            try XCTUnwrap(scope.projectSubjectID)
+        )
+        XCTAssertEqual(policy["max_recent_record_tokens"] as? Int, 12_000)
         XCTAssertFalse(calls.contains { String(decoding: $0.body ?? Data(), as: UTF8.self).contains("user-token") })
     }
 
@@ -70,9 +84,9 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         try await service.flushSummary()
 
         let requests = await transport.requests
-        XCTAssertEqual(requests.count, 1)
-        XCTAssertTrue(requests[0].url.path.hasSuffix("/active-summary/run"))
-        XCTAssertEqual(try object(requests[0].body)["trigger_reason"] as? String, "agent_run_terminal")
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests[1].url.path.hasSuffix("/active-summary/run"))
+        XCTAssertEqual(try object(requests[1].body)["trigger_reason"] as? String, "agent_run_terminal")
     }
 
     func testTaskThreadRegistersBothAgentAndProjectAggregationScopes() async throws {
@@ -103,13 +117,13 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
     func testReconciliationReadsExistingRecordsAndDoesNotResetSummaries() async throws {
         let (scope, transport, client) = try fixture()
         let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
-        let entries = records(scope)
+        let entries = try records(scope)
         try await service.sync(entries, reconciling: false)
         try await service.sync(entries, reconciling: true)
         let requests = await transport.requests
         XCTAssertEqual(requests.filter { $0.method == "PUT" }.count, 1)
         XCTAssertEqual(requests.filter { $0.method == "GET" }.count, 2)
-        XCTAssertTrue(requests.dropFirst().allSatisfy { $0.url.query?.contains("thread_id=") == true })
+        XCTAssertTrue(requests.filter { $0.method == "GET" }.allSatisfy { $0.url.query?.contains("thread_id=") == true })
     }
 
     func testStableAgentThreadCanFlushRawRecordsCreatedByAnEarlierRun() async throws {
@@ -144,11 +158,11 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         )
         let service = try await ChatOSMemoryEngineService(client: client, scope: current)
 
-        try await service.sync(records(earlier), reconciling: false)
+        try await service.sync(try records(earlier), reconciling: false)
 
         let requests = await transport.requests
-        XCTAssertEqual(requests.count, 1)
-        XCTAssertTrue(requests[0].url.path.hasSuffix("/records/batch-sync"))
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests[1].url.path.hasSuffix("/records/batch-sync"))
     }
 
     func testStableStoryAgentAcceptsRecordsFromAnEarlierRun() async throws {
@@ -162,17 +176,23 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         )
         let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
 
-        try await service.sync(records(other), reconciling: false)
+        try await service.sync(try records(other), reconciling: false)
         let requests = await transport.requests
-        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests.count, 2)
     }
 
     func testIncompleteOrChangedReconciliationDoesNotWrite() async throws {
         let (scope, transport, client) = try fixture()
         let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
-        do { try await service.sync(records(scope), reconciling: true); XCTFail("Missing records need review") } catch {}
+        do { try await service.sync(try records(scope), reconciling: true); XCTFail("Missing records need review") } catch {}
         let requests = await transport.requests
-        XCTAssertTrue(requests.allSatisfy { $0.method == "GET" })
+        XCTAssertFalse(requests.contains { $0.method == "PUT" })
+        XCTAssertEqual(requests.filter { $0.method == "POST" }.map(\.url.path), [
+            "/prefix/api/local/runtime-context-assertions",
+        ])
+        XCTAssertTrue(requests.filter { $0.method == "GET" }.allSatisfy {
+            $0.url.path.contains("/records/")
+        })
     }
 
     func testAccountChangeStopsOldServiceBeforeAnyNetworkRequest() async throws {
@@ -189,7 +209,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         let (scope, transport, client) = try fixture(refreshToken: true)
         let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
         try await service.ensureThread()
-        _ = try await service.compose()
+        _ = try await service.compose(try composeRequest())
         let calls = await transport.requests
         XCTAssertEqual(calls[1].headers["Authorization"], "Bearer refreshed-token")
     }
@@ -238,7 +258,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example/prefix")!), accessToken: "user-token", transport: transport)
         return (scope, transport, client)
     }
-    private func records(_ scope: AgentMemoryScope) -> [AgentMemoryEntry] {
+    private func records(_ scope: AgentMemoryScope) throws -> [AgentMemoryEntry] {
         let messages: [AgentMessage] = [
             .init(
                 role: .assistant, content: "", toolCalls: [.init(id: "call-a", name: "work", arguments: "{}")],
@@ -247,8 +267,37 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
             ),
             .init(role: .tool, content: "done", toolCallID: "call-a"),
         ]
-        return messages.enumerated().map { .init(id: scope.recordID(at: $0.offset), index: $0.offset, message: $0.element,
-                                                createdAt: Date(timeIntervalSince1970: 1_700_000_000 + Double($0.offset) / 1_000)) }
+        return try messages.enumerated().map {
+            .init(
+                id: scope.recordID(at: $0.offset),
+                index: $0.offset,
+                message: $0.element,
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000 + Double($0.offset) / 1_000),
+                conversationTurnID: "turn-0",
+                toolExchange: $0.element.role == .tool
+                    ? try AgentMemoryToolExchange(
+                        assistantRecordID: scope.recordID(at: 0),
+                        exchangeID: "agent:\(scope.runID.uuidString):tool:0",
+                        callID: "call-a",
+                        resultOrdinal: 0,
+                        resultCount: 1
+                    )
+                    : nil
+            )
+        }
+    }
+    private func composeRequest() throws -> AgentMemoryComposeRequest {
+        try AgentMemoryComposeRequest(
+            modelCapability: AgentModelCapabilitySnapshot(
+                revision: "test-capability-v1",
+                contextWindowTokens: 200_000,
+                outputReserveTokens: 30_000,
+                protocolOverheadEstimatorID: "responses-json-v1",
+                tokenizerID: nil
+            ),
+            queryText: "current query",
+            currentTurnID: "turn-current"
+        )
     }
     private func object(_ data: Data?) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(data)) as? [String: Any])
@@ -282,6 +331,15 @@ private actor MemoryTransport: HTTPTransport {
                 stored.append(record)
             }
             result = ["thread_id": scope.threadID, "received_count": batch.count, "upserted_count": batch.count]
+        } else if path.hasSuffix("/runtime-context-assertions") {
+            result = [
+                "runtime_context_assertion": "assertion-\(UUID().uuidString)",
+                "source_id": scope.sourceID,
+                "canonical_agent_subject_id": scope.subjectID,
+                "thread_id": scope.threadID,
+                "project_partition_key": scope.projectSubjectID ?? "__none__",
+                "runtime_identity_revision": "test-runtime-v1",
+            ]
         } else if path.hasSuffix("/context/compose") {
             result = ["thread_id": scope.threadID, "blocks": [], "recent_records": stored,
                       "meta": ["summary_count": 0, "recent_record_count": stored.count]]

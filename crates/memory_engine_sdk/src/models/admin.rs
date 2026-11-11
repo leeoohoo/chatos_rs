@@ -10,10 +10,6 @@ fn default_enabled() -> bool {
     true
 }
 
-fn default_prompt_language() -> String {
-    "zh".to_string()
-}
-
 fn default_model_request_max_retries() -> usize {
     5
 }
@@ -49,60 +45,15 @@ pub struct EngineModelProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineJobPolicy {
     pub job_type: String,
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-    pub summary_prompt: Option<String>,
-    #[serde(default)]
-    pub summary_prompt_zh: Option<String>,
-    #[serde(default)]
-    pub summary_prompt_en: Option<String>,
-    #[serde(default = "default_prompt_language")]
-    pub summary_prompt_language: String,
-    pub rollup_summary_prompt: Option<String>,
-    #[serde(default)]
-    pub rollup_summary_prompt_zh: Option<String>,
-    #[serde(default)]
-    pub rollup_summary_prompt_en: Option<String>,
-    #[serde(default = "default_prompt_language")]
-    pub rollup_summary_prompt_language: String,
-    pub token_limit: Option<i64>,
-    pub interval_seconds: Option<i64>,
-    pub max_threads_per_tick: Option<i64>,
+    pub dispatch_threshold_tokens: Option<i64>,
+    pub max_source_batch_tokens: Option<i64>,
+    pub max_model_input_tokens: Option<i64>,
+    pub max_leaf_tokens: Option<i64>,
+    pub max_merge_rounds: Option<i64>,
     pub count_limit: Option<i64>,
     pub keep_level0_count: Option<i64>,
     pub max_level: Option<i64>,
     pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpsertEngineJobPolicyRequest {
-    pub enabled: Option<bool>,
-    pub summary_prompt: Option<Option<String>>,
-    pub summary_prompt_zh: Option<Option<String>>,
-    pub summary_prompt_en: Option<Option<String>>,
-    pub summary_prompt_language: Option<String>,
-    pub rollup_summary_prompt: Option<Option<String>>,
-    pub rollup_summary_prompt_zh: Option<Option<String>>,
-    pub rollup_summary_prompt_en: Option<Option<String>>,
-    pub rollup_summary_prompt_language: Option<String>,
-    pub token_limit: Option<Option<i64>>,
-    pub interval_seconds: Option<Option<i64>>,
-    pub max_threads_per_tick: Option<Option<i64>>,
-    pub count_limit: Option<Option<i64>>,
-    pub keep_level0_count: Option<Option<i64>>,
-    pub max_level: Option<Option<i64>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GenerateJobPolicyPromptRequest {
-    pub prompt_field: String,
-    pub user_input: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GenerateJobPolicyPromptResponse {
-    pub prompt_zh: String,
-    pub prompt_en: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,14 +213,14 @@ mod tests {
     }
 
     #[test]
-    fn engine_job_policy_defaults_enabled_to_true() {
+    fn engine_job_policy_uses_explicit_pipeline_limits() {
         let policy: EngineJobPolicy = serde_json::from_value(serde_json::json!({
             "job_type": "thread_summary",
-            "summary_prompt": null,
-            "rollup_summary_prompt": null,
-            "token_limit": null,
-            "interval_seconds": null,
-            "max_threads_per_tick": null,
+            "dispatch_threshold_tokens": 4000,
+            "max_source_batch_tokens": 12000,
+            "max_model_input_tokens": 32000,
+            "max_leaf_tokens": 6000,
+            "max_merge_rounds": 8,
             "count_limit": null,
             "keep_level0_count": null,
             "max_level": null,
@@ -277,7 +228,7 @@ mod tests {
         }))
         .expect("policy");
 
-        assert!(policy.enabled);
+        assert_eq!(policy.max_model_input_tokens, Some(32_000));
     }
 
     #[test]

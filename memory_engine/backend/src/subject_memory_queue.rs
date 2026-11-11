@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use crate::config::AppConfig;
 use crate::models::now_rfc3339;
 use crate::repositories::{control_plane, subject_memory_scopes, summaries, threads};
-use crate::services::{control_plane as cp_service, subject_memory};
+use crate::services::subject_memory;
 use crate::state::AppState;
 
 const SOURCE_AVAILABLE_EVENT: &str = "source_available";
@@ -274,12 +274,7 @@ async fn process_source_event(
         return Ok(());
     }
 
-    let policy = control_plane::get_effective_job_policy(&state.pool, "subject_memory").await?;
-    if !policy.enabled {
-        summaries::mark_subject_memory_source_dispatch_consumed(&state.pool, &event).await?;
-        return Ok(());
-    }
-
+    let _policy = control_plane::get_effective_job_policy(&state.pool, "subject_memory").await?;
     let Some(thread) = threads::get_thread_by_id(
         &state.pool,
         envelope.tenant_id.as_str(),
@@ -352,11 +347,7 @@ async fn process_scope_event(
         return Ok(());
     }
 
-    let policy = control_plane::get_effective_job_policy(&state.pool, "subject_memory").await?;
-    if !policy.enabled {
-        subject_memory_scopes::mark_subject_memory_dispatch_consumed(&state.pool, &event).await?;
-        return Ok(());
-    }
+    let _policy = control_plane::get_effective_job_policy(&state.pool, "subject_memory").await?;
     let Some(scope) = subject_memory_scopes::get_subject_memory_scope(
         &state.pool,
         envelope.tenant_id.as_str(),
@@ -412,11 +403,8 @@ async fn run_reconciler(state: Arc<AppState>) {
     let mut recovery_offset = 0_u64;
     loop {
         let scan_interval =
-            match control_plane::get_effective_job_policy(&state.pool, "subject_memory")
-                .await
-                .and_then(|policy| cp_service::managed_policy_scan_interval(&policy))
-            {
-                Ok(value) => value,
+            match control_plane::get_effective_job_policy(&state.pool, "subject_memory").await {
+                Ok(_) => state.config.subject_memory_outbox_reconcile_interval,
                 Err(error) => {
                     warn!(error, "Memory Engine subject-memory scan policy is invalid");
                     tokio::time::sleep(state.config.subject_memory_outbox_reconcile_interval).await;
@@ -470,14 +458,8 @@ async fn arm_pending_scopes(
     state: &AppState,
     recovery_offset: u64,
 ) -> Result<(usize, u64), String> {
-    let policy = control_plane::get_effective_job_policy(&state.pool, "subject_memory").await?;
-    if !policy.enabled {
-        return Ok((0, recovery_offset));
-    }
-    let scan_limit = cp_service::managed_policy_scan_limit(
-        &policy,
-        state.config.subject_memory_outbox_batch_size,
-    )?;
+    let _policy = control_plane::get_effective_job_policy(&state.pool, "subject_memory").await?;
+    let scan_limit = state.config.subject_memory_outbox_batch_size.max(1);
     let scopes = subject_memory_scopes::list_active_subject_memory_scopes_page(
         &state.pool,
         None,

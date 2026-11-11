@@ -1,163 +1,32 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use sqlx::types::Json;
-
 use crate::db::Db;
-use crate::models::{
-    now_rfc3339, EngineJobPolicy, UpsertEngineJobPolicyRequest, PROMPT_LANGUAGE_EN,
-    PROMPT_LANGUAGE_ZH,
-};
-use crate::repositories::postgres::{decode, json, timestamp};
+use crate::models::EngineJobPolicy;
 
 use super::common::{default_job_policy, default_job_types, normalize_job_policy};
 
-pub async fn list_job_policies(db: &Db) -> Result<Vec<EngineJobPolicy>, String> {
-    let mut items = sqlx::query_scalar::<_, Json<serde_json::Value>>(
-        "SELECT data FROM engine_job_policies ORDER BY job_type",
-    )
-    .fetch_all(db)
-    .await
-    .map_err(|error| error.to_string())?
-    .into_iter()
-    .map(decode)
-    .collect::<Result<Vec<EngineJobPolicy>, _>>()?;
-
-    for item in &mut items {
-        normalize_job_policy(item);
-        super::managed_memory_policy::apply_to_engine_job_policy(item).await;
-    }
-
+pub async fn list_job_policies(_db: &Db) -> Result<Vec<EngineJobPolicy>, String> {
+    let mut policies = Vec::with_capacity(default_job_types().len());
     for job_type in default_job_types() {
-        if !items.iter().any(|item| item.job_type == *job_type) {
-            let mut policy = default_job_policy(job_type);
-            super::managed_memory_policy::apply_to_engine_job_policy(&mut policy).await;
-            items.push(policy);
-        }
+        policies.push(get_effective_job_policy(_db, job_type).await?);
     }
-    items.sort_by(|a, b| a.job_type.cmp(&b.job_type));
-    Ok(items)
+    Ok(policies)
 }
 
-pub async fn count_job_policies(db: &Db) -> Result<i64, String> {
-    let stored_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM engine_job_policies")
-        .fetch_one(db)
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(stored_count.max(default_job_types().len() as i64))
+pub async fn count_job_policies(_db: &Db) -> Result<i64, String> {
+    Ok(default_job_types().len() as i64)
 }
 
-pub async fn get_job_policy(db: &Db, job_type: &str) -> Result<Option<EngineJobPolicy>, String> {
-    sqlx::query_scalar::<_, Json<serde_json::Value>>(
-        "SELECT data FROM engine_job_policies WHERE job_type=$1",
-    )
-    .bind(job_type)
-    .fetch_optional(db)
-    .await
-    .map_err(|error| error.to_string())?
-    .map(decode)
-    .transpose()
-}
-
-pub async fn get_effective_job_policy(db: &Db, job_type: &str) -> Result<EngineJobPolicy, String> {
-    if let Some(mut policy) = get_job_policy(db, job_type).await? {
-        normalize_job_policy(&mut policy);
-        super::managed_memory_policy::apply_to_engine_job_policy(&mut policy).await;
-        return Ok(policy);
+pub async fn get_effective_job_policy(
+    _db: &Db,
+    job_type: &str,
+) -> Result<EngineJobPolicy, String> {
+    if !default_job_types().contains(&job_type.trim()) {
+        return Err(format!("unsupported Memory Engine policy {job_type}"));
     }
     let mut policy = default_job_policy(job_type);
-    super::managed_memory_policy::apply_to_engine_job_policy(&mut policy).await;
+    super::managed_memory_policy::apply_to_engine_job_policy(&mut policy).await?;
+    normalize_job_policy(&mut policy);
     Ok(policy)
-}
-
-pub async fn upsert_job_policy(
-    db: &Db,
-    job_type: &str,
-    req: UpsertEngineJobPolicyRequest,
-) -> Result<EngineJobPolicy, String> {
-    let mut current = get_job_policy(db, job_type)
-        .await?
-        .unwrap_or_else(|| default_job_policy(job_type));
-
-    if let Some(value) = req.enabled {
-        current.enabled = value;
-    }
-    if let Some(value) = req.summary_prompt {
-        let normalized = normalize_prompt_update(value);
-        current.summary_prompt = normalized.clone();
-        current.summary_prompt_zh = normalized;
-    }
-    if let Some(value) = req.summary_prompt_zh {
-        current.summary_prompt_zh = normalize_prompt_update(value);
-    }
-    if let Some(value) = req.summary_prompt_en {
-        current.summary_prompt_en = normalize_prompt_update(value);
-    }
-    if let Some(value) = req.summary_prompt_language {
-        current.summary_prompt_language = normalize_prompt_language(value.as_str()).to_string();
-    }
-    if let Some(value) = req.rollup_summary_prompt {
-        let normalized = normalize_prompt_update(value);
-        current.rollup_summary_prompt = normalized.clone();
-        current.rollup_summary_prompt_zh = normalized;
-    }
-    if let Some(value) = req.rollup_summary_prompt_zh {
-        current.rollup_summary_prompt_zh = normalize_prompt_update(value);
-    }
-    if let Some(value) = req.rollup_summary_prompt_en {
-        current.rollup_summary_prompt_en = normalize_prompt_update(value);
-    }
-    if let Some(value) = req.rollup_summary_prompt_language {
-        current.rollup_summary_prompt_language =
-            normalize_prompt_language(value.as_str()).to_string();
-    }
-    if let Some(value) = req.token_limit {
-        current.token_limit = value.map(|v| v.max(128));
-    }
-    if let Some(value) = req.interval_seconds {
-        current.interval_seconds = value.map(|v| v.max(3));
-    }
-    if let Some(value) = req.max_threads_per_tick {
-        current.max_threads_per_tick = value.map(|v| v.max(1));
-    }
-    if let Some(value) = req.count_limit {
-        current.count_limit = value.map(|v| v.max(1));
-    }
-    if let Some(value) = req.keep_level0_count {
-        current.keep_level0_count = value.map(|v| v.max(0));
-    }
-    if let Some(value) = req.max_level {
-        current.max_level = value.map(|v| v.max(1));
-    }
-    normalize_job_policy(&mut current);
-    current.updated_at = now_rfc3339();
-
-    sqlx::query(
-        "INSERT INTO engine_job_policies(job_type,enabled,updated_at,data) VALUES($1,$2,$3,$4) \
-         ON CONFLICT(job_type) DO UPDATE SET enabled=EXCLUDED.enabled, \
-         updated_at=EXCLUDED.updated_at,data=EXCLUDED.data",
-    )
-    .bind(&current.job_type)
-    .bind(current.enabled)
-    .bind(timestamp(&current.updated_at)?)
-    .bind(json(&current)?)
-    .execute(db)
-    .await
-    .map_err(|error| error.to_string())?;
-
-    Ok(current)
-}
-
-fn normalize_prompt_update(value: Option<String>) -> Option<String> {
-    value
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-}
-
-fn normalize_prompt_language(value: &str) -> &'static str {
-    if value.trim().eq_ignore_ascii_case(PROMPT_LANGUAGE_EN) {
-        PROMPT_LANGUAGE_EN
-    } else {
-        PROMPT_LANGUAGE_ZH
-    }
 }

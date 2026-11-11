@@ -5,7 +5,6 @@ use sqlx::types::Json;
 
 use crate::db::Db;
 use crate::models::EngineSubjectMemory;
-use crate::repositories::postgres::decode;
 
 use super::common::{build_subject_memory_query, decode_many};
 
@@ -118,40 +117,6 @@ pub async fn query_subject_memories(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn find_subject_memory_by_source_digest(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    subject_id: &str,
-    relation_subject_id: &str,
-    memory_type: &str,
-    level: i64,
-    source_digest: &str,
-) -> Result<Option<EngineSubjectMemory>, String> {
-    let digest = source_digest.trim();
-    if digest.is_empty() {
-        return Ok(None);
-    }
-    sqlx::query_scalar::<_, Json<serde_json::Value>>(
-        "SELECT data FROM engine_subject_memories WHERE tenant_id=$1 AND source_id=$2 \
-         AND subject_id=$3 AND memory_type=$4 AND level=$5 AND source_digest=$6 \
-         AND relation_subject_id=$7 AND status='active' LIMIT 1",
-    )
-    .bind(tenant_id)
-    .bind(source_id)
-    .bind(subject_id)
-    .bind(memory_type)
-    .bind(level.max(0))
-    .bind(digest)
-    .bind(relation_subject_id)
-    .fetch_optional(db)
-    .await
-    .map_err(|error| error.to_string())?
-    .map(decode)
-    .transpose()
-}
-
 pub async fn list_pending_subject_memories_by_level(
     db: &Db,
     tenant_id: &str,
@@ -164,7 +129,8 @@ pub async fn list_pending_subject_memories_by_level(
     let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
         "SELECT data FROM engine_subject_memories WHERE tenant_id=$1 AND source_id=$2 \
          AND subject_id=$3 AND memory_type=$4 AND level=$5 AND status='active' \
-         AND rollup_status='pending' AND relation_subject_id=$6 ORDER BY updated_at ASC",
+         AND recall_eligible AND rollup_status='pending' AND relation_subject_id=$6 \
+         ORDER BY updated_at ASC",
     )
     .bind(tenant_id)
     .bind(source_id)
@@ -176,6 +142,42 @@ pub async fn list_pending_subject_memories_by_level(
     .await
     .map_err(|error| error.to_string())?;
     decode_many(rows)
+}
+
+pub async fn list_subject_memories_by_ids(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    subject_id: &str,
+    memory_ids: &[String],
+) -> Result<Vec<EngineSubjectMemory>, String> {
+    if memory_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_subject_memories WHERE tenant_id=$1 AND source_id=$2 \
+         AND subject_id=$3 AND id=ANY($4) AND recall_eligible",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(subject_id)
+    .bind(memory_ids)
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    let memories = decode_many(rows)?;
+    let mut by_id = memories
+        .into_iter()
+        .map(|memory| (memory.id.clone(), memory))
+        .collect::<std::collections::HashMap<_, _>>();
+    memory_ids
+        .iter()
+        .map(|id| {
+            by_id
+                .remove(id)
+                .ok_or_else(|| format!("frozen subject-memory rollup input is missing: {id}"))
+        })
+        .collect()
 }
 
 fn normalized(value: Option<&str>) -> Option<&str> {

@@ -41,79 +41,6 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
     .expect("list threads");
     assert_eq!(listed.len(), 1);
 
-    assert!(crate::repositories::threads::try_acquire_summary_slot(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "summary-job",
-    )
-    .await
-    .expect("claim summary slot")
-    .is_some());
-    assert!(!crate::repositories::threads::refresh_summary_slot(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "wrong-job",
-        300,
-    )
-    .await
-    .expect("reject wrong summary owner"));
-    crate::repositories::threads::release_summary_slot(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "summary-job",
-        0,
-        0,
-    )
-    .await
-    .expect("release summary slot")
-    .expect("owned slot");
-
-    assert!(crate::repositories::threads::try_acquire_summary_slot(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "expired-summary-job",
-    )
-    .await
-    .expect("claim expiring summary slot")
-    .is_some());
-    let expired_at = "2020-01-01T00:00:00Z";
-    sqlx::query(
-        "UPDATE engine_threads SET summary_lock_expires_at=$4, \
-         data=jsonb_set(data,'{summary_lock_expires_at}',to_jsonb($5::text),true) \
-         WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
-    )
-    .bind(&tenant)
-    .bind(&source)
-    .bind(&thread_id)
-    .bind(timestamp(expired_at).expect("expired summary time"))
-    .bind(expired_at)
-    .execute(&pool)
-    .await
-    .expect("expire summary slot");
-    assert!(
-        crate::repositories::threads::list_expired_summary_threads(&pool, 100)
-            .await
-            .expect("list expired summary slots")
-            .iter()
-            .any(|thread| thread.id == thread_id)
-    );
-    let recovered = crate::repositories::threads::release_expired_summary_slot(
-        &pool, &tenant, &source, &thread_id,
-    )
-    .await
-    .expect("release expired summary slot")
-    .expect("expired slot");
-    assert_eq!(recovered.summary_status, "idle");
-    assert!(recovered.summary_job_run_id.is_none());
-
     let record = EngineRecord {
         id: format!("record-{suffix}"),
         thread_id: thread_id.clone(),
@@ -149,7 +76,7 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
         1
     );
 
-    let summary = crate::repositories::summaries::create_thread_summary(
+    let summary = crate::repositories::summaries::insert_test_thread_summary(
         &pool,
         &tenant,
         &source,
@@ -207,7 +134,7 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
         .is_some()
     );
 
-    let memory = crate::repositories::subject_memories::upsert_subject_memory(
+    let memory = crate::repositories::subject_memories::insert_test_subject_memory(
         &pool,
         &subject_id,
         "profile:name",

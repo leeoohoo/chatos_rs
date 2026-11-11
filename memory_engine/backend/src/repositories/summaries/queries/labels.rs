@@ -80,11 +80,12 @@ async fn list_internal(
     let mut q=QueryBuilder::<Postgres>::new("SELECT s.data FROM engine_summaries s JOIN engine_threads t ON t.tenant_id=s.tenant_id AND t.source_id=s.source_id AND t.id=s.thread_id WHERE s.tenant_id=");
     q.push_bind(tenant_id)
         .push(" AND s.source_id=")
-        .push_bind(source_id);
+        .push_bind(source_id)
+        .push(" AND s.recall_eligible AND t.recall_eligible");
     if label.starts_with("project:") {
         q.push(" AND (t.data->'labels' ? ")
             .push_bind(label)
-            .push(" OR s.data->'metadata'->>'project_subject_id'=")
+            .push(" OR s.project_partition_key=")
             .push_bind(label)
             .push(")");
     } else {

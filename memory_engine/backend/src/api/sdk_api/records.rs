@@ -32,9 +32,21 @@ pub async fn batch_sync_records(
     Json(req): Json<SdkBatchSyncRecordsRequest>,
 ) -> Result<Json<BatchSyncRecordsResponse>, (StatusCode, String)> {
     auth.require_tenant(req.tenant_id.as_str())?;
+    crate::api::runtime_context::verify(
+        &state,
+        req.runtime_context_assertion.as_str(),
+        req.tenant_id.as_str(),
+        auth.source_id(),
+        thread_id.as_str(),
+        req.project_partition_key.as_str(),
+        "record_ingest",
+    )
+    .await?;
     let direct = BatchSyncRecordsRequest {
         tenant_id: req.tenant_id,
         source_id: auth.source_id().to_string(),
+        project_partition_key: req.project_partition_key,
+        runtime_context_assertion: req.runtime_context_assertion,
         records: req
             .records
             .into_iter()

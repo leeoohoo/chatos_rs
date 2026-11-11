@@ -1,4 +1,5 @@
 import Foundation
+import ChatOSModelCapabilities
 
 public struct MediaGenerationModel: Codable, Identifiable, Sendable, Equatable {
     public var id: String
@@ -34,14 +35,9 @@ public struct MediaGenerationModel: Codable, Identifiable, Sendable, Equatable {
         case hasAPIKey = "has_api_key"
     }
 
-    public var isLikelyVideoModel: Bool {
-        let value = "\(name) \(modelName)".lowercased()
-        return [
-            "video", "sora", "veo", "kling", "seedance", "hailuo",
-            "minimax", "runway", "luma", "pixverse", "vidu", "hunyuan",
-            "cogvideo", "wan2", "wan-", "wan_",
-        ].contains(where: value.contains)
-    }
+    public var supportsImageGeneration: Bool { ModelWorkload.forModel(modelName) == .image }
+    public var supportsChat: Bool { ModelWorkload.forModel(modelName) == .chat }
+    public var isLikelyVideoModel: Bool { ModelWorkload.forModel(modelName) == .video }
 
     /// NewAPI's unified `/v1/videos` contract exposes model capabilities by profile.
     public var supportsVideoLastFrame: Bool {

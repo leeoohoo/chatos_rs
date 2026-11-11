@@ -13,18 +13,17 @@ mod threads;
 
 pub use self::admin::{
     DashboardOverviewResponse, EngineJobPolicy, EngineJobRun, EngineModelProfile, EngineSource,
-    GenerateJobPolicyPromptRequest, GenerateJobPolicyPromptResponse, JobRunsBundleResponse,
-    ListJobRunsRequest, ListSourcesRequest, RotateSourceSecretResponse, SdkAuthStatusResponse,
-    UpsertEngineJobPolicyRequest, UpsertSourceRequest,
+    JobRunsBundleResponse, ListJobRunsRequest, ListSourcesRequest, RotateSourceSecretResponse,
+    SdkAuthStatusResponse, UpsertSourceRequest,
 };
-pub use self::common::{default_active, default_idle, default_pending, ListResponse};
+pub use self::common::{default_active, default_pending, ListResponse};
 pub use self::context::{
     ComposeContextBlock, ComposeContextMeta, ComposeContextPolicy, ComposeContextRequest,
-    ComposeContextResponse, SdkComposeContextRequest,
+    ComposeContextResponse, ComposeTokenBudget, SdkComposeContextRequest,
 };
 pub use self::memory_policy::{
-    managed_memory_policy_env_available, memory_policy_config_key, memory_policy_env_key,
-    ManagedMemoryPolicy, ManagedMemoryPolicyBundle, MemoryPolicyKind, MEMORY_POLICY_CONFIG_PREFIX,
+    memory_policy_config_key, ManagedMemoryPolicy, ManagedMemoryPolicyBundle, MemoryPolicyKind,
+    MEMORY_POLICY_CONFIG_PREFIX,
 };
 pub use self::records::{
     BatchSyncRecordsResponse, CompactTurnsResponse, CountThreadRecordsResponse, EngineRecord,
@@ -46,12 +45,12 @@ pub use self::subject_memories::{
 };
 pub use self::summaries::{
     EngineSummary, ListSummariesByThreadLabelRequest, RunPendingRollupsResponse,
-    RunPendingSummariesResponse, RunThreadActiveSummaryResponse, RunThreadRepairSummaryResponse,
+    RunPendingSummariesResponse, RunPendingSummaryRebuildResponse, RunThreadActiveSummaryResponse,
     RunThreadSummaryResponse, SdkDeleteThreadSummaryRequest,
     SdkGetThreadActiveSummaryStatusRequest, SdkListSummariesByThreadLabelRequest,
     SdkListThreadSummariesRequest, SdkRunPendingRollupsRequest, SdkRunPendingSummariesRequest,
-    SdkRunThreadActiveSummaryRequest, SdkRunThreadRepairSummaryRequest, SdkRunThreadSummaryRequest,
-    SystemListSummariesByThreadLabelRequest,
+    SdkRunPendingSummaryRebuildRequest, SdkRunThreadActiveSummaryRequest,
+    SdkRunThreadSummaryRequest, SystemListSummariesByThreadLabelRequest,
 };
 pub use self::threads::{
     DeleteThreadResponse, EngineThread, GetThreadResponse, SdkGetThreadRequest,
@@ -101,21 +100,25 @@ mod contract_tests {
         let snapshot = serde_json::json!({
             "tenant_id": "tenant-1",
             "subject_id": "subject-1",
-            "related_subject_ids": ["subject-2"],
+            "context_project_subject_id": "project-1",
             "thread_id": "thread-1",
+            "query_text": "current goal",
+            "current_turn_id": "turn-1",
+            "model_capability_revision": "capability-v1",
+            "runtime_context_assertion": "assertion",
             "policy": {
-                "include_recent_records": true,
-                "include_thread_summary": true,
-                "include_subject_memory": false,
-                "recent_record_limit": 20,
-                "summary_limit": 3
+                "max_memory_tokens": 20000,
+                "max_recent_record_tokens": 10000,
+                "max_thread_summary_tokens": 5000,
+                "max_project_memory_tokens": 3000,
+                "max_agent_memory_tokens": 2000
             }
         });
 
         let request: SdkComposeContextRequest =
             serde_json::from_value(snapshot.clone()).expect("decode context request");
-        let policy: &ComposeContextPolicy = request.policy.as_ref().expect("context policy");
-        assert_eq!(policy.recent_record_limit, Some(20));
+        let policy: &ComposeContextPolicy = &request.policy;
+        assert_eq!(policy.max_recent_record_tokens, 10_000);
         assert_eq!(
             serde_json::to_value(request).expect("encode context request"),
             snapshot

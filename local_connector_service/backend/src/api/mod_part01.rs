@@ -1,24 +1,3 @@
-async fn validate_device_workspace(
-    state: &AppState,
-    user: &CurrentUser,
-    device_id: &str,
-    workspace_id: &str,
-) -> Result<(), ApiError> {
-    let device = load_owned_device(state, user, device_id, true).await?;
-    let workspace = load_owned_workspace(state, user, workspace_id).await?;
-    if workspace.device_id != device.id {
-        return Err(ApiError::bad_request(
-            "Local Connector workspace is not attached to the selected device",
-        ));
-    }
-    if workspace.status == WORKSPACE_STATUS_DISABLED {
-        return Err(ApiError::bad_request(
-            "Local Connector workspace is disabled",
-        ));
-    }
-    Ok(())
-}
-
 async fn ensure_device_active_lease(
     state: &AppState,
     owner_user_id: &str,

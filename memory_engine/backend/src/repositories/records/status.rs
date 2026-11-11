@@ -2,10 +2,126 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use sqlx::types::Json;
+use sqlx::{Postgres, Transaction};
 
 use crate::db::Db;
 use crate::models::{now_rfc3339, EngineRecord};
 use crate::repositories::postgres::{decode, json, timestamp};
+
+#[derive(Debug, Clone)]
+pub struct RestorePendingResult {
+    pub changed: bool,
+    pub thread_id: String,
+    pub project_partition_key: String,
+    pub previous_status: String,
+}
+
+pub async fn restore_record_pending(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    record_id: &str,
+) -> Result<RestorePendingResult, String> {
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let restored = restore_record_pending_in_tx(&mut tx, tenant_id, source_id, record_id).await?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(restored)
+}
+
+pub async fn restore_record_pending_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: &str,
+    source_id: &str,
+    record_id: &str,
+) -> Result<RestorePendingResult, String> {
+    let row = sqlx::query_as::<_, (Json<serde_json::Value>, String, String, String, bool, Option<String>)>(
+        "SELECT data,thread_id,project_partition_key,summary_status,recall_eligible,summary_job_run_id \
+         FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND id=$3 FOR UPDATE",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(record_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| "record not found".to_string())?;
+    if !row.4 {
+        return Err("retired records cannot be restored by the pending repair operation".to_string());
+    }
+    let active_coverage = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM engine_summary_record_coverage WHERE tenant_id=$1 \
+         AND source_id=$2 AND record_id=$3 AND status='active')",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(record_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if active_coverage {
+        return Err("record still has active coverage; retire or resummarize its complete range"
+            .to_string());
+    }
+    if row.3 == "pending" {
+        return Ok(RestorePendingResult {
+            changed: false,
+            thread_id: row.1,
+            project_partition_key: row.2,
+            previous_status: row.3,
+        });
+    }
+    let mut record: EngineRecord = decode(row.0)?;
+    let pending_tokens = crate::repositories::records::estimate_pending_record_tokens(&record);
+    record.summary_status = "pending".to_string();
+    record.summary_id = None;
+    record.summarized_at = None;
+    let updated = sqlx::query(
+        "UPDATE engine_records SET summary_status='pending',summary_id=NULL,summary_job_run_id=NULL, \
+         summary_started_at=NULL,data=$4 WHERE tenant_id=$1 AND source_id=$2 AND id=$3 \
+           AND recall_eligible",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(record_id)
+    .bind(json(&record)?)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if updated.rows_affected() != 1 {
+        return Err("record changed before pending restore".to_string());
+    }
+    crate::repositories::thread_partitions::lock_or_create(
+        tx, tenant_id, source_id, &row.1, &row.2,
+    )
+    .await?;
+    if row.3 == "summarizing" {
+        if let Some(job_run_id) = row.5.as_deref() {
+            sqlx::query(
+                "UPDATE engine_thread_summary_partitions SET summary_status='pending', \
+                 summary_job_run_id=NULL,summary_locked_at=NULL,summary_lock_expires_at=NULL, \
+                 updated_at=now() WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 \
+                   AND project_partition_key=$4 AND summary_job_run_id=$5",
+            )
+            .bind(tenant_id).bind(source_id).bind(&row.1).bind(&row.2).bind(job_run_id)
+            .execute(&mut **tx).await.map_err(|error| error.to_string())?;
+        }
+    } else {
+        let version = crate::repositories::thread_partitions::apply_ingest_delta(
+            tx, tenant_id, source_id, &row.1, &row.2, 1, pending_tokens, true,
+        ).await?;
+        if let Some(version) = version {
+            crate::repositories::derived_events::enqueue_thread_summary_request(
+                tx, tenant_id, source_id, &row.1, &row.2, version,
+            ).await?;
+        }
+    }
+    Ok(RestorePendingResult {
+        changed: true,
+        thread_id: row.1,
+        project_partition_key: row.2,
+        previous_status: row.3,
+    })
+}
 
 pub async fn claim_records_for_summary(
     db: &Db,
@@ -55,6 +171,41 @@ pub async fn release_records_from_summary(
         |record, _| record.summary_status = "pending".to_string(),
     )
     .await
+}
+
+pub async fn release_records_from_terminal_summary_jobs(
+    db: &Db,
+    limit: i64,
+) -> Result<u64, String> {
+    let result = sqlx::query(
+        "WITH candidates AS ( \
+           SELECT record.tenant_id,record.source_id,record.id \
+             FROM engine_records record \
+             JOIN engine_job_runs job ON job.id=record.summary_job_run_id \
+            WHERE record.summary_status='summarizing' AND job.job_type='summary' \
+              AND job.status<>'running' AND NOT EXISTS ( \
+                  SELECT 1 FROM engine_summary_record_coverage coverage \
+                   WHERE coverage.tenant_id=record.tenant_id \
+                     AND coverage.source_id=record.source_id \
+                     AND coverage.record_id=record.id AND coverage.status='active') \
+            ORDER BY record.summary_started_at,record.id \
+            LIMIT $1 FOR UPDATE OF record SKIP LOCKED \
+         ) \
+         UPDATE engine_records record SET summary_status='pending',summary_id=NULL, \
+                summary_job_run_id=NULL,summary_started_at=NULL, \
+                data=jsonb_set(jsonb_set(jsonb_set(record.data, \
+                    '{summary_status}',to_jsonb('pending'::TEXT),true), \
+                    '{summary_id}','null'::JSONB,true), \
+                    '{summarized_at}','null'::JSONB,true) \
+           FROM candidates candidate \
+          WHERE record.tenant_id=candidate.tenant_id \
+            AND record.source_id=candidate.source_id AND record.id=candidate.id",
+    )
+    .bind(limit.clamp(1, 10_000))
+    .execute(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(result.rows_affected())
 }
 
 pub async fn mark_claimed_records_summarized(
@@ -111,35 +262,6 @@ pub async fn mark_records_summarized(
             record.summary_status = "summarized".to_string();
             record.summary_id = Some(summary_id.to_string());
             record.summarized_at = Some(now.to_string());
-        },
-    )
-    .await
-}
-
-pub async fn reset_records_summary_by_summary_id(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    summary_id: &str,
-) -> Result<usize, String> {
-    let summary_id = summary_id.trim();
-    if summary_id.is_empty() {
-        return Ok(0);
-    }
-    update_records(
-        db,
-        tenant_id,
-        source_id,
-        thread_id,
-        "summary_id=$4",
-        None,
-        None,
-        Some(summary_id),
-        |record, _| {
-            record.summary_status = "pending".to_string();
-            record.summary_id = None;
-            record.summarized_at = None;
         },
     )
     .await

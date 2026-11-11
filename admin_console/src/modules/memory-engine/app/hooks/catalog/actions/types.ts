@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type { EngineSource } from '../../../../types';
-import type { PolicyFormValues } from '../../../types';
 import type {
   CatalogActions,
   CatalogForms,
@@ -19,8 +18,6 @@ export type CatalogActionControls = Pick<
   | 'setSourceSubmitting'
   | 'setSourceModalOpen'
   | 'setEditingSource'
-  | 'setSavingPolicyJobType'
-  | 'setGeneratingPolicyJobType'
 > &
   CatalogForms;
 
@@ -36,11 +33,6 @@ export type CatalogSourceActions = Pick<
   'handleSubmitSource' | 'handleRotateSourceSecret'
 >;
 
-export type CatalogPolicyActions = Pick<
-  CatalogActions,
-  'handleSavePolicy' | 'handleGeneratePolicyPrompt'
->;
-
 export type CatalogActionsContext = {
   message: MessageApi;
   controls: CatalogActionControls;
@@ -49,7 +41,3 @@ export type CatalogActionsContext = {
 };
 
 export type OpenEditSourceModal = (source: EngineSource) => void;
-export type HandleSavePolicy = (
-  jobType: string,
-  values: PolicyFormValues,
-) => Promise<void>;

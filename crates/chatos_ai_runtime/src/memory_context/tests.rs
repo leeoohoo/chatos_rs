@@ -12,7 +12,7 @@ use std::{
 
 use memory_engine_sdk::{
     ComposeContextBlock, ComposeContextMeta, ComposeContextPolicy, ComposeContextResponse,
-    EngineRecord,
+    EngineRecord, RuntimeContextAssertionIssuer,
 };
 use serde_json::{json, Value};
 
@@ -24,13 +24,24 @@ use super::{
 use crate::tool_runtime::ToolResultModelBudgetLimits;
 use crate::{MemoryRecordWriter, SaveRecordInput};
 
+pub(super) fn test_assertion_issuer() -> RuntimeContextAssertionIssuer {
+    RuntimeContextAssertionIssuer::new(
+        "runtime-context-test-secret",
+        "runtime-context-test-key",
+        "runtime-context-test-issuer",
+        "runtime-identity-test-v1",
+        60,
+    )
+    .expect("test assertion issuer")
+}
+
 #[derive(Clone, Default)]
-struct MemoryWriteServerState {
+pub(super) struct MemoryWriteServerState {
     thread_upserts: Arc<AtomicUsize>,
     record_syncs: Arc<AtomicUsize>,
 }
 
-async fn accept_thread_upsert(
+pub(super) async fn accept_thread_upsert(
     axum::extract::State(state): axum::extract::State<MemoryWriteServerState>,
     axum::extract::Path(thread_id): axum::extract::Path<String>,
     axum::Json(request): axum::Json<Value>,
@@ -89,37 +100,40 @@ async fn accept_record_sync(
 #[test]
 fn memory_scope_builder_keeps_runtime_source_key() {
     let policy = ComposeContextPolicy {
-        include_recent_records: Some(false),
-        include_thread_summary: Some(true),
-        include_subject_memory: Some(true),
-        recent_record_limit: Some(12),
-        summary_limit: Some(3),
+        max_memory_tokens: 20_000,
+        max_recent_record_tokens: 12_000,
+        max_thread_summary_tokens: 4_000,
+        max_project_memory_tokens: 2_000,
+        max_agent_memory_tokens: 2_000,
     };
     let scope = MemoryScope::thread("tenant_1", "task_execution", "task_thread_1")
-        .with_subject_id("contact_1")
-        .with_related_subject_ids(["project_1", "agent_1"])
+        .with_subject_id("agent:agent_1")
+        .with_context_project_subject_id("project:project_1")
         .with_policy(policy);
 
     assert_eq!(scope.tenant_id, "tenant_1");
     assert_eq!(scope.source_id, "task_execution");
     assert_eq!(scope.thread_id, "task_thread_1");
-    assert_eq!(scope.subject_id.as_deref(), Some("contact_1"));
-    assert_eq!(scope.related_subject_ids, vec!["project_1", "agent_1"]);
+    assert_eq!(scope.subject_id.as_deref(), Some("agent:agent_1"));
+    assert_eq!(
+        scope.context_project_subject_id.as_deref(),
+        Some("project:project_1")
+    );
     assert_eq!(
         scope
             .policy
             .as_ref()
-            .and_then(|value| value.recent_record_limit),
-        Some(12)
+            .map(|value| value.max_recent_record_tokens),
+        Some(12_000)
     );
 }
 
 #[test]
-fn standard_compose_policy_keeps_all_unsummarized_records() {
-    let policy = standard_compose_policy().expect("standard compose policy");
+fn standard_compose_policy_has_a_bounded_raw_tail() {
+    let policy = standard_compose_policy();
 
-    assert_eq!(policy.include_recent_records, Some(true));
-    assert_eq!(policy.recent_record_limit, None);
+    assert_eq!(policy.max_memory_tokens, 24_000);
+    assert_eq!(policy.max_recent_record_tokens, 12_000);
 }
 
 #[test]
@@ -160,7 +174,8 @@ fn memory_record_writer_resolves_multi_user_tenant_from_record_metadata() {
     let writer = super::MemoryEngineRecordWriter::from_client(
         client,
         MemoryRecordScope::per_record_tenant("tenant_id"),
-    );
+    )
+    .with_runtime_context_assertion_issuer(test_assertion_issuer());
     let record = SaveRecordInput::user_message("conversation-1", "hello")
         .with_metadata(json!({"tenant_id": "user-1"}));
 
@@ -210,7 +225,8 @@ async fn memory_record_writer_creates_each_thread_before_syncing_records() {
     let writer = super::MemoryEngineRecordWriter::from_client(
         client,
         MemoryRecordScope::per_record_tenant("tenant_id"),
-    );
+    )
+    .with_runtime_context_assertion_issuer(test_assertion_issuer());
     writer
         .save_record(
             SaveRecordInput::user_message("conversation-1", "hello")
@@ -290,7 +306,7 @@ async fn composer_establishes_a_new_agent_thread_before_first_recall() {
     .expect("composer");
     let scope = MemoryScope::thread("user-1", "chatos", "conversation-1")
         .with_subject_id("agent:agent-1")
-        .with_related_subject_ids(["project:project-1"]);
+        .with_context_project_subject_id("project:project-1");
     let record =
         SaveRecordInput::user_message("conversation-1", "first message").with_metadata(json!({
             "tenant_id": "user-1",
@@ -327,14 +343,12 @@ fn direct_composer_rejects_mismatched_scope_source_key() {
     assert!(err.contains("source_id mismatch"));
 }
 
-struct TestContextCache {
-    response: Option<ComposeContextResponse>,
-}
+struct TestContextCache;
 
 #[async_trait::async_trait]
 impl MemoryContextCache for TestContextCache {
     async fn load(&self, _scope: &MemoryScope) -> Result<Option<ComposeContextResponse>, String> {
-        Ok(self.response.clone())
+        panic!("compose failures must not read stale cached context")
     }
 
     async fn store(
@@ -347,7 +361,7 @@ impl MemoryContextCache for TestContextCache {
 }
 
 #[tokio::test]
-async fn resilient_composer_uses_cache_or_empty_context_when_remote_is_offline() {
+async fn composer_fails_closed_when_remote_is_offline() {
     use axum::{http::StatusCode, Router};
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -367,42 +381,18 @@ async fn resilient_composer_uses_cache_or_empty_context_when_remote_is_offline()
         .await
         .expect("server");
     });
-    let scope = MemoryScope::thread("user-1", "local_agent", "conversation-1");
-    let cached = ComposeContextResponse {
-        thread_id: "conversation-1".to_string(),
-        blocks: vec![ComposeContextBlock {
-            block_type: "summary".to_string(),
-            text: "cached summary".to_string(),
-        }],
-        recent_records: Vec::new(),
-        meta: ComposeContextMeta {
-            summary_count: 1,
-            recent_record_count: 0,
-        },
-    };
+    let scope = MemoryScope::thread("user-1", "local_agent", "conversation-1")
+        .with_subject_id("agent:test-agent")
+        .with_compose_context(None, None, "capability-v1");
     let composer = MemoryContextComposer::new_direct(
         format!("http://{address}"),
         Duration::from_secs(1),
         "local_agent",
     )
     .expect("composer")
-    .with_resilient_cache(TestContextCache {
-        response: Some(cached),
-    });
-    let response = composer.compose(&scope).await.expect("cached fallback");
-    assert_eq!(response.blocks[0].text, "cached summary");
-
-    let composer = MemoryContextComposer::new_direct(
-        format!("http://{address}"),
-        Duration::from_secs(1),
-        "local_agent",
-    )
-    .expect("composer")
-    .with_resilient_cache(TestContextCache { response: None });
-    let response = composer.compose(&scope).await.expect("empty fallback");
-    assert_eq!(response.thread_id, "conversation-1");
-    assert!(response.blocks.is_empty());
-    assert!(response.recent_records.is_empty());
+    .with_runtime_context_assertion_issuer(test_assertion_issuer())
+    .with_resilient_cache(TestContextCache);
+    assert!(composer.compose(&scope).await.is_err());
     server.abort();
 }
 
@@ -413,6 +403,7 @@ fn compose_response_to_input_items_rebuilds_tool_exchange_in_responses_shape() {
         blocks: vec![ComposeContextBlock {
             block_type: "summary".to_string(),
             text: "recent summary".to_string(),
+            ..Default::default()
         }],
         recent_records: vec![
             EngineRecord {
@@ -462,6 +453,7 @@ fn compose_response_to_input_items_rebuilds_tool_exchange_in_responses_shape() {
         meta: ComposeContextMeta {
             summary_count: 1,
             recent_record_count: 2,
+            ..Default::default()
         },
     };
 
@@ -509,6 +501,7 @@ fn compose_response_to_input_items_skips_orphan_tool_outputs() {
         meta: ComposeContextMeta {
             summary_count: 0,
             recent_record_count: 1,
+            ..Default::default()
         },
     };
 
@@ -549,6 +542,7 @@ fn compose_response_to_input_items_skips_orphan_tool_calls() {
         meta: ComposeContextMeta {
             summary_count: 0,
             recent_record_count: 1,
+            ..Default::default()
         },
     };
 
@@ -617,6 +611,7 @@ fn compose_response_to_input_items_rejects_unpaged_overflow_without_damaged_exce
         meta: ComposeContextMeta {
             summary_count: 0,
             recent_record_count: 2,
+            ..Default::default()
         },
     };
 
@@ -705,6 +700,7 @@ fn compose_response_to_input_items_keeps_oldest_output_and_rejects_later_overflo
         meta: ComposeContextMeta {
             summary_count: 0,
             recent_record_count: 4,
+            ..Default::default()
         },
     };
 
@@ -784,6 +780,7 @@ fn compose_response_to_input_items_reads_tool_calls_from_structured_payload() {
         meta: ComposeContextMeta {
             summary_count: 0,
             recent_record_count: 2,
+            ..Default::default()
         },
     };
 

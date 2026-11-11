@@ -75,6 +75,26 @@ async fn stable_agent_context_is_isolated_by_current_project() {
         )
         .await
         .expect("insert scoped context record");
+        let partition = memory_project_id
+            .map(|value| {
+                if value.starts_with("project:") {
+                    value.to_string()
+                } else {
+                    format!("project:{value}")
+                }
+            })
+            .unwrap_or_else(|| "__none__".to_string());
+        sqlx::query(
+            "UPDATE engine_records SET project_partition_key=$4 \
+             WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+        )
+        .bind(&tenant)
+        .bind(&source)
+        .bind(format!("record-{index}-{suffix}"))
+        .bind(partition)
+        .execute(&mut *tx)
+        .await
+        .expect("set scoped record partition");
     }
     tx.commit().await.expect("commit context records");
 
@@ -83,7 +103,7 @@ async fn stable_agent_context_is_isolated_by_current_project() {
         ("summary-project-b", Some(project_b.as_str())),
         ("summary-main-chat", None),
     ] {
-        crate::repositories::summaries::create_thread_summary(
+        crate::repositories::summaries::insert_test_thread_summary(
             &pool,
             &tenant,
             &source,
@@ -138,70 +158,4 @@ async fn stable_agent_context_is_isolated_by_current_project() {
             vec![expected_summary]
         );
     }
-}
-
-#[tokio::test]
-async fn rollup_owner_can_refresh_its_own_slot_but_other_jobs_cannot_take_it() {
-    let Some(pool) = pool().await else {
-        return;
-    };
-    let suffix = Uuid::new_v4().to_string();
-    let tenant = format!("tenant-{suffix}");
-    let source = format!("source-{suffix}");
-    let thread_id = format!("thread-{suffix}");
-    let agent_subject_id = format!("agent:{suffix}");
-    crate::repositories::threads::upsert_thread(
-        &pool,
-        &thread_id,
-        UpsertThreadRequest {
-            tenant_id: tenant.clone(),
-            source_id: source.clone(),
-            subject_id: agent_subject_id.clone(),
-            thread_type: "task".to_string(),
-            external_thread_id: None,
-            title: None,
-            labels: Some(vec!["memory-schema:v2".to_string(), agent_subject_id]),
-            metadata: None,
-            status: None,
-            created_at: None,
-            updated_at: None,
-            archived_at: None,
-        },
-    )
-    .await
-    .expect("upsert rollup thread");
-
-    let first = crate::repositories::threads::try_acquire_rollup_slot(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "rollup-job-1",
-        300,
-    )
-    .await
-    .expect("acquire rollup slot");
-    assert!(first.is_some());
-    let refresh = crate::repositories::threads::try_acquire_rollup_slot(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "rollup-job-1",
-        300,
-    )
-    .await
-    .expect("refresh owned rollup slot");
-    assert!(refresh.is_some());
-    let other = crate::repositories::threads::try_acquire_rollup_slot(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "rollup-job-2",
-        300,
-    )
-    .await
-    .expect("try competing rollup slot");
-    assert!(other.is_none());
 }

@@ -234,7 +234,9 @@ struct StoryProjectForm: View {
 
     private var isValid: Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && title.count <= 120 && description.count <= 4_000
-            && [textModel, imageModel, videoModel].allSatisfy { id in mediaStudio.models.contains { $0.id == id } }
+            && mediaStudio.textModels.contains { $0.id == textModel }
+            && mediaStudio.imageModels.contains { $0.id == imageModel }
+            && mediaStudio.videoModels.contains { $0.id == videoModel }
     }
 
     var body: some View {
@@ -277,10 +279,10 @@ struct StoryProjectForm: View {
                     Button(appModel.localized("刷新", english: "Refresh")) { mediaStudio.reloadModels() }
                         .disabled(mediaStudio.isLoadingModels)
                 }
-                modelPicker(appModel.localized("文本规划", english: "Text Planning"), icon: "text.bubble", selection: $textModel)
-                modelPicker(appModel.localized("图片素材", english: "Image Assets"), icon: "photo", selection: $imageModel)
+                modelPicker(appModel.localized("文本规划", english: "Text Planning"), icon: "text.bubble", selection: $textModel, models: mediaStudio.textModels)
+                modelPicker(appModel.localized("图片素材", english: "Image Assets"), icon: "photo", selection: $imageModel, models: mediaStudio.imageModels)
                     .disabled(project?.hasUnresolvedImageJobs == true)
-                modelPicker(appModel.localized("视频生成", english: "Video Generation"), icon: "video", selection: $videoModel)
+                modelPicker(appModel.localized("视频生成", english: "Video Generation"), icon: "video", selection: $videoModel, models: mediaStudio.videoModels)
                     .disabled(project?.hasUnresolvedVideoJobs == true)
                 Label(appModel.localized("文本模型需支持工具调用；视频模型支持的时长需覆盖所选分段。", english: "The text model must support tool calling; video-model durations must cover the selected segments."),
                       systemImage: "info.circle")
@@ -315,16 +317,16 @@ struct StoryProjectForm: View {
         .interactiveDismissDisabled(viewModel.isBusy)
     }
 
-    private func modelPicker(_ label: String, icon: String, selection: Binding<String>) -> some View {
+    private func modelPicker(_ label: String, icon: String, selection: Binding<String>, models: [MediaGenerationModel]) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon).foregroundStyle(.indigo).frame(width: 22)
             Text(label).font(.callout.weight(.medium)).frame(width: 96, alignment: .leading)
             Picker("", selection: selection) {
                 Text(appModel.localized("请选择模型", english: "Choose a model")).tag("")
-                if !selection.wrappedValue.isEmpty && !mediaStudio.models.contains(where: { $0.id == selection.wrappedValue }) {
+                if !selection.wrappedValue.isEmpty && !models.contains(where: { $0.id == selection.wrappedValue }) {
                     Text(appModel.localized("原模型不可用，请重新选择", english: "Previous model unavailable — choose again")).tag(selection.wrappedValue)
                 }
-                ForEach(mediaStudio.models) { model in
+                ForEach(models) { model in
                     Text("\(model.name) / \(model.modelName)").tag(model.id)
                 }
             }

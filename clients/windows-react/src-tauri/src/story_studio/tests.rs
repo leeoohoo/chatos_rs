@@ -2270,10 +2270,12 @@ fn story_memory_contract_binds_syncs_and_composes_only_the_current_run() {
         blocks: vec![ComposeContextBlock {
             block_type: "thread_summary".into(),
             text: "summary".into(),
+            ..Default::default()
         }],
         meta: ComposeContextMeta {
             summary_count: 1,
             recent_record_count: recent_records.len(),
+            ..Default::default()
         },
         recent_records,
     };
@@ -2855,6 +2857,12 @@ fn story_models() -> Vec<GatewayModelConfig> {
         task_thinking_level: None,
         temperature: None,
         max_output_tokens: None,
+        model_capability_revision: Some("test-capability-v1".into()),
+        context_window_tokens: Some(200_000),
+        output_reserve_tokens: Some(30_000),
+        protocol_overhead_estimator_id: Some("responses-json-v1".into()),
+        tokenizer_id: Some("o200k_base".into()),
+        responses_compaction_threshold: Some(170_000),
         enabled: true,
         task_enabled: Some(false),
         has_api_key: true,

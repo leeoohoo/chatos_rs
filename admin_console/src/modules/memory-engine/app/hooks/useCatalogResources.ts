@@ -26,8 +26,6 @@ export function useCatalogResources(
       setSourceSubmitting: state.setSourceSubmitting,
       setSourceModalOpen: state.setSourceModalOpen,
       setEditingSource: state.setEditingSource,
-      setSavingPolicyJobType: state.setSavingPolicyJobType,
-      setGeneratingPolicyJobType: state.setGeneratingPolicyJobType,
     },
     loaders,
     callbacks,

@@ -2,8 +2,8 @@ import ChatOSAgentRuntime
 import Foundation
 
 public enum ChatOSAgentWorkerProtocol {
-    public static let minimumVersion = 2
-    public static let maximumVersion = 2
+    public static let minimumVersion = 3
+    public static let maximumVersion = 3
     public static let maximumInlineBytes = 64 * 1_024 * 1_024
 }
 
@@ -49,6 +49,7 @@ public struct AgentWorkerStartRequest: Codable, Equatable, Sendable {
     public let tools: [AgentToolDefinition]
     public let hasContextProvider: Bool
     public let modelUsesServerSideCompaction: Bool
+    public let modelCapabilitySnapshot: AgentModelCapabilitySnapshot?
     public let modelTransportConfiguration: AgentWorkerModelTransportConfiguration?
 
     public init(
@@ -58,6 +59,7 @@ public struct AgentWorkerStartRequest: Codable, Equatable, Sendable {
         tools: [AgentToolDefinition],
         hasContextProvider: Bool,
         modelUsesServerSideCompaction: Bool,
+        modelCapabilitySnapshot: AgentModelCapabilitySnapshot?,
         modelTransportConfiguration: AgentWorkerModelTransportConfiguration?
     ) {
         self.checkpoint = checkpoint
@@ -66,6 +68,7 @@ public struct AgentWorkerStartRequest: Codable, Equatable, Sendable {
         self.tools = tools
         self.hasContextProvider = hasContextProvider
         self.modelUsesServerSideCompaction = modelUsesServerSideCompaction
+        self.modelCapabilitySnapshot = modelCapabilitySnapshot
         self.modelTransportConfiguration = modelTransportConfiguration
     }
 }
@@ -176,6 +179,7 @@ public struct AgentWorkerContextRequest: Codable, Equatable, Sendable {
     public let checkpoint: AgentRunCheckpoint
     public let tools: [AgentToolDefinition]
     public let policy: AgentContextPolicy
+    public let modelCapability: AgentModelCapabilitySnapshot
     public let deadline: Date
     public let synchronizeOnly: Bool
 
@@ -184,11 +188,13 @@ public struct AgentWorkerContextRequest: Codable, Equatable, Sendable {
         checkpoint: AgentRunCheckpoint,
         tools: [AgentToolDefinition],
         policy: AgentContextPolicy,
+        modelCapability: AgentModelCapabilitySnapshot,
         deadline: Date,
         synchronizeOnly: Bool
     ) {
         self.id = id; self.checkpoint = checkpoint; self.tools = tools
-        self.policy = policy; self.deadline = deadline; self.synchronizeOnly = synchronizeOnly
+        self.policy = policy; self.modelCapability = modelCapability
+        self.deadline = deadline; self.synchronizeOnly = synchronizeOnly
     }
 }
 

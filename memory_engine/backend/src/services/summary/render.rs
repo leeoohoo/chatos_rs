@@ -2,25 +2,18 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::models::{EngineRecord, EngineSummary};
-use crate::services::ai_pipeline::SummaryBuildResult;
 
 pub(crate) fn record_to_summary_block(item: &EngineRecord) -> String {
-    let mut parts = vec![format!("[{}][{}]", item.created_at, item.role)];
+    let mut parts = vec![format!(
+        "[record_id={}][created_at={}][role={}]",
+        item.id, item.created_at, item.role
+    )];
 
     if !item.content.trim().is_empty() {
         parts.push(item.content.clone());
     }
 
     if let Some(metadata) = item.metadata.as_ref() {
-        if let Some(reasoning) = metadata
-            .get("reasoning")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            parts.push(format!("[reasoning]\n{}", reasoning));
-        }
-
         if let Some(tool_calls) = metadata
             .get("tool_calls")
             .or_else(|| metadata.get("toolCalls"))
@@ -48,33 +41,6 @@ pub(crate) fn record_to_summary_block(item: &EngineRecord) -> String {
     parts.join("\n")
 }
 
-pub(crate) fn decorate_generated_text(
-    build: SummaryBuildResult,
-    oversized_count: Option<usize>,
-    label: &str,
-) -> String {
-    let mut text = build.text;
-    if build.chunk_count > 1 {
-        text.push_str(&format!(
-            "\n\n[meta] This {} was merged from {} chunks.",
-            label, build.chunk_count
-        ));
-    }
-    if build.overflow_retry_count > 0 {
-        text.push_str(&format!(
-            "\n\n[meta] Context overflow retry count: {}.",
-            build.overflow_retry_count
-        ));
-    }
-    if let Some(count) = oversized_count.filter(|value| *value > 0) {
-        text.push_str(&format!(
-            "\n\n[meta] {} oversized source items were skipped or marked without merging because each one individually exceeded the token limit.",
-            count
-        ));
-    }
-    text
-}
-
 pub(crate) fn build_summary_digest(
     thread_id: &str,
     level: i64,
@@ -91,8 +57,51 @@ pub(crate) fn build_summary_digest(
 }
 
 pub(crate) fn summary_to_rollup_block(summary: &EngineSummary) -> String {
-    format!(
+    let mut rendered = format!(
         "[level={}][created_at={}][id={}]\n{}",
         summary.level, summary.created_at, summary.id, summary.summary_text
-    )
+    );
+    if let Some(payload) = summary.structured_payload.as_ref() {
+        rendered.push_str(format!("\n[structured_payload]\n{payload}").as_str());
+    }
+    rendered
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::record_to_summary_block;
+
+    #[test]
+    fn durable_summary_input_excludes_raw_reasoning_but_keeps_tool_evidence() {
+        let record = crate::models::EngineRecord {
+            id: "record-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            source_id: "source-1".to_string(),
+            external_record_id: None,
+            role: "assistant".to_string(),
+            record_type: "message".to_string(),
+            content: "public assistant response".to_string(),
+            structured_payload: None,
+            metadata: Some(json!({
+                "reasoning": "private chain of thought",
+                "tool_calls": [{"id":"call-1","name":"inspect"}],
+                "structured_result": {"call_id":"call-1","result":"verified"}
+            })),
+            summary_status: "pending".to_string(),
+            summary_id: None,
+            summarized_at: None,
+            created_at: "2026-11-09T00:00:00Z".to_string(),
+        };
+
+        let rendered = record_to_summary_block(&record);
+
+        assert!(!rendered.contains("private chain of thought"));
+        assert!(!rendered.contains("[reasoning]"));
+        assert!(rendered.contains("[tool_calls]"));
+        assert!(rendered.contains("[tool_result]"));
+        assert!(rendered.contains("verified"));
+    }
 }

@@ -14,7 +14,7 @@ final class AgentChatEmptyStateTests: XCTestCase {
         let initial = try XCTUnwrap(measurement.frame)
         XCTAssertEqual(initial.midX, 450, accuracy: 1)
         XCTAssertEqual(initial.midY, 300, accuracy: 1)
-        XCTAssertNil(findTable(in: hosting))
+        XCTAssertNil(findScrollView(in: hosting))
 
         window.setContentSize(NSSize(width: 500, height: 350))
         try await settle(hosting)
@@ -24,7 +24,7 @@ final class AgentChatEmptyStateTests: XCTestCase {
         XCTAssertEqual(resized.size, initial.size)
     }
 
-    func testFirstMessageReplacesEmptyStateWithNativeTimeline() async throws {
+    func testFirstMessageReplacesEmptyStateWithScrollableTimeline() async throws {
         let measurement = EmptyStateMeasurement()
         let hosting = NSHostingView(rootView: timeline(measurement: measurement))
         let window = mount(hosting, width: 900, height: 600)
@@ -32,11 +32,11 @@ final class AgentChatEmptyStateTests: XCTestCase {
         try await settle(hosting)
         hosting.rootView = timeline(items: [.init(id: "first")], measurement: measurement)
         try await settle(hosting)
-        XCTAssertEqual(try XCTUnwrap(findTable(in: hosting)).numberOfRows, 1)
+        XCTAssertNotNil(findScrollView(in: hosting))
 
         hosting.rootView = timeline(measurement: measurement)
         try await settle(hosting)
-        XCTAssertNil(findTable(in: hosting))
+        XCTAssertNil(findScrollView(in: hosting))
     }
 
     func testOlderHistoryActionIsNotCoveredByEmptyPlaceholder() async throws {
@@ -44,8 +44,78 @@ final class AgentChatEmptyStateTests: XCTestCase {
         let window = mount(hosting, width: 900, height: 600)
         defer { window.close() }
         try await settle(hosting)
-        // Only the load-older control is a row; no cropped empty state is hosted in the table.
-        XCTAssertEqual(try XCTUnwrap(findTable(in: hosting)).numberOfRows, 1)
+        XCTAssertNotNil(findScrollView(in: hosting))
+    }
+
+    func testRowsUseNaturalHeightsAndKeepExplicitSpacing() async throws {
+        let measurement = EmptyStateMeasurement()
+        let hosting = NSHostingView(rootView: timeline(
+            items: [
+                .init(id: "short", height: 80),
+                .init(id: "long", height: 220),
+            ],
+            measurement: measurement
+        ))
+        let window = mount(hosting, width: 900, height: 600)
+        defer { window.close() }
+        try await settle(hosting)
+
+        let short = try XCTUnwrap(measurement.rowFrames["short"])
+        let long = try XCTUnwrap(measurement.rowFrames["long"])
+        XCTAssertEqual(short.height, 80, accuracy: 1)
+        XCTAssertEqual(long.height, 220, accuracy: 1)
+        XCTAssertLessThan(short.minY, 40, "a short conversation should stay top-aligned")
+        XCTAssertGreaterThanOrEqual(long.minY - short.maxY, 15)
+    }
+
+    func testLongTimelinePositionsLatestMessageAtBottom() async throws {
+        let measurement = EmptyStateMeasurement()
+        let items = (0..<6).map { EmptyStateItem(id: "row-\($0)", height: 180) }
+        let hosting = NSHostingView(rootView: timeline(items: items, measurement: measurement))
+        let window = mount(hosting, width: 900, height: 600)
+        defer { window.close() }
+        try await settle(hosting)
+
+        let last = try XCTUnwrap(measurement.rowFrames["row-5"])
+        XCTAssertGreaterThan(last.maxY, 500)
+        XCTAssertLessThanOrEqual(last.maxY, 600)
+    }
+
+    func testLargeTimelineConstructsOnlyVisibleRowsWhileScrolling() async throws {
+        let measurement = EmptyStateMeasurement()
+        let items = (0..<1_000).map { EmptyStateItem(id: "row-\($0)", height: 100) }
+        let hosting = NSHostingView(rootView: timeline(items: items, measurement: measurement))
+        let window = mount(hosting, width: 900, height: 600)
+        defer { window.close() }
+        try await settle(hosting)
+
+        let initialCount = measurement.constructedIDs.count
+        XCTAssertGreaterThan(initialCount, 0)
+        XCTAssertLessThan(initialCount, 40)
+
+        let scrollView = try XCTUnwrap(findScrollView(in: hosting))
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: 8_000))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        try await settle(hosting)
+        XCTAssertGreaterThan(measurement.constructedIDs.count, initialCount)
+        XCTAssertLessThan(measurement.constructedIDs.count, 80)
+    }
+
+    func testRepeatedMarkdownTimelinePresentationDoesNotReenterWindowConstraints() async throws {
+        let state = TimelinePresentationState()
+        let hosting = NSHostingView(rootView: TimelinePresentationHarness(state: state))
+        let window = mount(hosting, width: 900, height: 600)
+        defer { window.close() }
+
+        for _ in 0..<6 {
+            state.showsTimeline = true
+            try await settle(hosting)
+            XCTAssertNotNil(findScrollView(in: hosting))
+
+            state.showsTimeline = false
+            try await settle(hosting)
+            XCTAssertNil(findScrollView(in: hosting))
+        }
     }
 
     private func timeline(
@@ -54,7 +124,16 @@ final class AgentChatEmptyStateTests: XCTestCase {
         AgentChatTimelineView(
             items: items, isInitialContentReady: true, hasOlderItems: hasOlder,
             isLoadingOlderItems: false, scrollToLatestRequest: 0, loadOlderItems: { nil },
-            rowContent: { Text($0.id) },
+            rowContent: { item in
+                Text(item.id)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: item.height)
+                    .onAppear { measurement.constructedIDs.insert(item.id) }
+                    .onGeometryChange(
+                        for: CGRect.self,
+                        of: { $0.frame(in: .named("viewport")) }
+                    ) { measurement.rowFrames[item.id] = $0 }
+            },
             emptyContent: {
                 Text("开始对话")
                     .frame(width: 160, height: 90)
@@ -81,17 +160,57 @@ final class AgentChatEmptyStateTests: XCTestCase {
         }
     }
 
-    private func findTable(in view: NSView) -> NSTableView? {
-        if let table = view as? NSTableView { return table }
-        return view.subviews.lazy.compactMap { self.findTable(in: $0) }.first
+    private func findScrollView(in view: NSView) -> NSScrollView? {
+        if let scrollView = view as? NSScrollView { return scrollView }
+        return view.subviews.lazy.compactMap { self.findScrollView(in: $0) }.first
+    }
+}
+
+@MainActor
+private final class TimelinePresentationState: ObservableObject {
+    @Published var showsTimeline = false
+}
+
+private struct TimelinePresentationHarness: View {
+    @ObservedObject var state: TimelinePresentationState
+
+    private let items = (0..<50).map {
+        EmptyStateItem(id: "markdown-row-\($0)", height: 0)
+    }
+
+    var body: some View {
+        if state.showsTimeline {
+            AgentChatTimelineView(
+                items: items,
+                isInitialContentReady: true,
+                hasOlderItems: false,
+                isLoadingOlderItems: false,
+                scrollToLatestRequest: 0,
+                loadOlderItems: { nil },
+                rowContent: { item in
+                    MarkdownDocumentView(
+                        markdown: "**\(item.id)** " + String(repeating: "自然高度消息内容 ", count: 40),
+                        widthBehavior: .fitContent
+                    )
+                    .padding(12)
+                },
+                emptyContent: { EmptyView() }
+            )
+        } else {
+            Text("总览")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 }
 
 private struct EmptyStateItem: Identifiable, Equatable {
     let id: String
+    var height: CGFloat = 20
 }
 
 @MainActor
 private final class EmptyStateMeasurement {
     var frame: CGRect?
+    var rowFrames: [String: CGRect] = [:]
+    var constructedIDs: Set<String> = []
 }

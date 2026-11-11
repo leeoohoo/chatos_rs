@@ -1,4 +1,5 @@
 import ChatOSAgentRuntime
+import CryptoKit
 import Foundation
 
 /// Uses the existing authenticated gateway, not a model provider URL or internal service secret.
@@ -49,7 +50,10 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
               entries.allSatisfy({ $0.index >= 0 && scope.acceptsRecord(id: $0.id, index: $0.index) }) else {
             throw AgentContextError.invalidHistory
         }
-        let records = try entries.map(record)
+        let assertion = try await runtimeAssertion(operation: "record_ingest")
+        let records = try entries.map {
+            try record($0, projectContextAssertionID: assertion.runtime_identity_revision)
+        }
         if reconciling {
             // Existing batch-sync overwrites summary_status, even for identical IDs. Never blindly
             // resend an unacknowledged batch: it could turn summarized records back into pending.
@@ -65,21 +69,37 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
             }
             return
         }
-        let body = MemorySyncRequest(tenant_id: scope.tenantID, source_id: scope.sourceID, records: records)
+        let body = MemorySyncRequest(
+            tenant_id: scope.tenantID,
+            source_id: scope.sourceID,
+            project_partition_key: assertion.project_partition_key,
+            runtime_context_assertion: assertion.runtime_context_assertion,
+            records: records
+        )
         let result: MemorySyncResponse = try await request(threadPath + "/records/batch-sync", method: "PUT", body: body)
         guard result.thread_id == scope.threadID, result.received_count == entries.count,
               result.upserted_count == entries.count else { throw ChatOSAPIError.invalidResponse }
     }
 
-    public func compose() async throws -> AgentMemoryContext {
+    public func compose(_ composeRequest: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
+        let assertion = try await runtimeAssertion(operation: "compose")
         var body: [String: JSONValue] = [
             "tenant_id": .string(scope.tenantID), "source_id": .string(scope.sourceID), "thread_id": .string(scope.threadID),
             "subject_id": .string(scope.subjectID),
-            "policy": .object(["include_thread_summary": .bool(true), "include_recent_records": .bool(true),
-                               "include_subject_memory": .bool(scope.includeSubjectMemory ?? true), "summary_limit": .number(2)]),
+            "query_text": .string(composeRequest.queryText),
+            "current_turn_id": .string(composeRequest.currentTurnID),
+            "model_capability_revision": .string(composeRequest.modelCapability.revision),
+            "runtime_context_assertion": .string(assertion.runtime_context_assertion),
+            "policy": .object([
+                "max_memory_tokens": .number(24_000),
+                "max_recent_record_tokens": .number(12_000),
+                "max_thread_summary_tokens": .number(6_000),
+                "max_project_memory_tokens": .number(4_000),
+                "max_agent_memory_tokens": .number(4_000),
+            ]),
         ]
         if let projectSubjectID = scope.projectSubjectID {
-            body["related_subject_ids"] = .array([.string(projectSubjectID)])
+            body["context_project_subject_id"] = .string(projectSubjectID)
         }
         let result: MemoryComposeDTO = try await request("/context/compose", method: "POST", body: body)
         guard result.thread_id == scope.threadID, result.meta.recent_record_count == result.recent_records.count else {
@@ -95,9 +115,12 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
     }
 
     public func flushSummary() async throws {
+        let assertion = try await runtimeAssertion(operation: "summarize")
         let body: [String: JSONValue] = [
             "tenant_id": .string(scope.tenantID),
             "source_id": .string(scope.sourceID),
+            "project_partition_key": .string(assertion.project_partition_key),
+            "runtime_context_assertion": .string(assertion.runtime_context_assertion),
             "trigger_reason": .string("agent_run_terminal"),
         ]
         let result: MemorySummaryDTO = try await request(
@@ -109,6 +132,35 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
     }
 
     private var threadPath: String { "/threads/" + encoded(scope.threadID) }
+    private func runtimeAssertion(operation: String) async throws -> MemoryRuntimeAssertionResponse {
+        let requestBody = MemoryRuntimeAssertionRequest(
+            runtime_kind: "local_agent",
+            project_id: scope.projectSubjectID.map { String($0.dropFirst("project:".count)) },
+            runtime_id: scope.threadID,
+            operation: operation,
+            source_id: scope.sourceID,
+            canonical_agent_subject_id: scope.subjectID,
+            thread_id: scope.threadID
+        )
+        let assertion: MemoryRuntimeAssertionResponse = try await client.request(
+            "/runtime-context-assertions",
+            method: "POST",
+            body: JSONEncoder().encode(requestBody),
+            timeoutInterval: 30,
+            service: .localConnector,
+            expectedAuthenticationSessionID: sessionID
+        )
+        let expectedPartition = scope.projectSubjectID ?? "__none__"
+        guard !assertion.runtime_context_assertion.isEmpty,
+              assertion.source_id == scope.sourceID,
+              assertion.canonical_agent_subject_id == scope.subjectID,
+              assertion.thread_id == scope.threadID,
+              assertion.project_partition_key == expectedPartition,
+              !assertion.runtime_identity_revision.isEmpty else {
+            throw AgentRuntimeError.scopeMismatch
+        }
+        return assertion
+    }
     private func encoded(_ value: String) -> String {
         value.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~")))!
     }
@@ -199,7 +251,18 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
         try await client.request(path, method: method, body: JSONEncoder().encode(body), timeoutInterval: 30,
                                  service: .memoryEngine, expectedAuthenticationSessionID: sessionID)
     }
-    private func record(_ entry: AgentMemoryEntry) throws -> MemoryRecordInput {
+    private func record(
+        _ entry: AgentMemoryEntry,
+        projectContextAssertionID: String
+    ) throws -> MemoryRecordInput {
+        if entry.message.role == .tool {
+            guard let exchange = entry.toolExchange,
+                  entry.message.toolCallID == exchange.callID else {
+                throw AgentContextError.invalidHistory
+            }
+        } else if entry.toolExchange != nil {
+            throw AgentContextError.invalidHistory
+        }
         let calls = entry.message.toolCalls.map { call in
             JSONValue.object(["id": .string(call.id), "type": .string("function"),
                               "function": .object(["name": .string(call.name), "arguments": .string(call.arguments)])])
@@ -209,8 +272,22 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
         if let id = entry.message.toolCallID { payload["tool_call_id"] = .string(id) }
         var metadata: [String: JSONValue] = ["client_agent_run_id": .string(scope.runID.uuidString),
                                              "client_agent_message_index": .number(Double(entry.index)),
+                                             "conversation_turn_id": .string(entry.conversationTurnID),
+                                             "project_context_assertion_id": .string(projectContextAssertionID),
                                              "agent_id": .string(String(scope.subjectID.dropFirst("agent:".count))),
                                              "thread_kind": .string(scope.threadKind ?? "client_agent")]
+        let identityEncoder = JSONEncoder()
+        identityEncoder.outputFormatting = [.sortedKeys]
+        let identity = try identityEncoder.encode(JSONValue.object([
+            "id": .string(entry.id),
+            "role": .string(entry.message.role.rawValue),
+            "record_type": .string("message"),
+            "content": .string(entry.message.content),
+            "structured_payload": payload.isEmpty ? .null : .object(payload),
+        ]))
+        metadata["content_identity_digest"] = .string(
+            "sha256:" + SHA256.hash(data: identity).map { String(format: "%02x", $0) }.joined()
+        )
         if let agentName = scope.agentName {
             metadata["agent_name"] = .string(agentName)
         }
@@ -223,6 +300,13 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
             )
         }
         if let id = entry.message.toolCallID { metadata["tool_call_id"] = .string(id) }
+        if let exchange = entry.toolExchange {
+            metadata["assistant_record_id"] = .string(exchange.assistantRecordID)
+            metadata["tool_exchange_id"] = .string(exchange.exchangeID)
+            metadata["tool_call_id"] = .string(exchange.callID)
+            metadata["tool_result_ordinal"] = .number(Double(exchange.resultOrdinal))
+            metadata["tool_result_count"] = .number(Double(exchange.resultCount))
+        }
         if let output = entry.message.responseOutputJSON {
             metadata["responses_output"] = try JSONDecoder().decode(JSONValue.self, from: output)
         }

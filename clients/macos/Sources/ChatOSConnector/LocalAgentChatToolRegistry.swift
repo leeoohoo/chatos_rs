@@ -11,7 +11,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: readAllUnreadToolName,
-            description: "读取当前 Agent 账户在全部群聊和私聊中的未读消息。Agent 每次启动和重试都先调用本工具，不把触发群聊当作运行范围。消息会在 agent_cycle_complete 成功时与通讯周期原子确认；中途崩溃或恢复会安全重读，不会丢消息。回复时只把 message_ref 传给 chat_send_message，通讯层自行定位原会话。消息不一定需要行动，请自行判断是否回复、忽略或加入 TodoList。",
+            description: "读取当前 Agent 账户在全部群聊和私聊中的未读消息。Agent 每次启动和重试都先调用本工具，不把触发群聊当作运行范围。每次工具返回后检查最新 chatos-runtime-state：inbox.has_new_messages 为 true 或状态 unavailable 时再次读取。同一轮内重复调用会继续分页，已返回消息不再重复，后到消息仍会置位。消息会在 agent_cycle_complete 成功时与通讯周期原子确认；中途崩溃或恢复会安全重读，不会丢消息。回复时只把 message_ref 传给 chat_send_message，通讯层自行定位原会话。消息不一定需要行动，请自行判断是否回复、忽略或加入 TodoList。",
             schema: Data(#"{"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}"#.utf8)
         ),
         .init(

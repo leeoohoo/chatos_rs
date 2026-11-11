@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use crate::config::AppConfig;
 use crate::db::Db;
 use crate::models::{FinishEngineJobRunRequest, RunPendingSummariesResponse};
-use crate::repositories::threads;
+use crate::repositories::{thread_partitions, threads};
 use crate::services::summary;
 
 use super::common::{create_scheduler_job_run, finish_job_run};
@@ -56,7 +56,7 @@ async fn run_pending_thread_summaries_internal(
     token_threshold: i64,
     max_threads: i64,
 ) -> Result<RunPendingSummariesResponse, String> {
-    let pending_threads = threads::list_threads_with_pending_records_by_token_threshold(
+    let pending_partitions = thread_partitions::list_pending_summary_partitions(
         db,
         tenant_id,
         source_id,
@@ -64,25 +64,45 @@ async fn run_pending_thread_summaries_internal(
         max_threads,
     )
     .await?;
-    if pending_threads.is_empty() {
+    if pending_partitions.is_empty() {
         return Ok(empty_response());
     }
 
-    let processed_threads = pending_threads.len();
+    let processed_threads = pending_partitions.len();
     let concurrency = summary_execution_concurrency(config, max_threads);
     let job_run = create_scheduler_job_run(db, "summary", tenant_id, source_id, None).await?;
     let result: Result<RunPendingSummariesResponse, String> = async {
         let db = db.clone();
         let config = config.clone();
-        let execution_results = stream::iter(pending_threads.into_iter().map(|thread| {
+        let execution_results = stream::iter(pending_partitions.into_iter().map(|partition| {
             let db = db.clone();
             let config = config.clone();
             async move {
-                let thread_id = thread.id.clone();
-                match summary::run_thread_summary_with_thread(
+                let thread_id = partition.thread_id.clone();
+                let thread = match threads::get_thread_by_id(
+                    &db,
+                    partition.tenant_id.as_str(),
+                    partition.source_id.as_str(),
+                    partition.thread_id.as_str(),
+                )
+                .await
+                {
+                    Ok(Some(thread)) => thread,
+                    Ok(None) => {
+                        return SummaryExecutionOutcome::Failed {
+                            thread_id,
+                            error: "partition thread is missing".to_string(),
+                        }
+                    }
+                    Err(error) => {
+                        return SummaryExecutionOutcome::Failed { thread_id, error }
+                    }
+                };
+                match summary::run_thread_summary_partition_with_thread(
                     &config,
                     &db,
                     thread,
+                    partition.project_partition_key.as_str(),
                     summary::SCHEDULER_TRIGGER,
                 )
                 .await {

@@ -104,6 +104,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
                 ownerUserID: "user-1",
                 credentialEnvironment: [
                     "CHATOS_LOCAL_AGENT_MODEL_TEST": "test-only-secret",
+                    "CHATOS_MEMORY_ACCESS_TOKEN": "test-memory-token",
                 ]
             )
             let restartedPID = await lifecycle.processIdentifier
@@ -144,6 +145,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
                     ownerUserID: "user-1",
                     credentialEnvironment: [
                         "CHATOS_LOCAL_AGENT_MODEL_TEST": "test-only-secret",
+                        "CHATOS_MEMORY_ACCESS_TOKEN": "test-memory-token",
                     ]
                 )
             }
@@ -236,7 +238,10 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             let credentialStore = NativeLocalAgentModelCredentialStore(rootURL: root.appendingPathComponent("credentials"))
             let modelSnapshots = ["test", "historical"].map { model in
                 LocalAgentModelConfigSnapshot(ownerUserID: "user-1", modelConfigRef: model,
-                    modelConfigRevision: "revision-1", credentialRef: "env:\(credentialStore.environmentVariable(modelConfigRef: model))",
+                    modelConfigRevision: "revision-1", modelCapabilityRevision: "capability-v1",
+                    contextWindowTokens: 200_000, outputReserveTokens: 30_000,
+                    protocolOverheadEstimatorID: "responses-json-v1",
+                    credentialRef: "env:\(credentialStore.environmentVariable(modelConfigRef: model))",
                     baseURL: "https://example.invalid/v1", model: model, provider: "test", supportsResponses: true)
             }
             for model in ["test", "historical"] {
@@ -272,7 +277,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             missingMemory.removeValue(forKey: "CHATOS_MEMORY_ACCESS_TOKEN")
             var addedModel = credentials
             addedModel["CHATOS_LOCAL_AGENT_MODEL_NEW"] = "new-test-value"
-            for changed in [rotatedModel, rotatedMemory, missingMemory, addedModel] {
+            for changed in [rotatedModel, rotatedMemory, addedModel] {
                 let previousPID = workerPID
                 try await lifecycle.refreshCredentials(
                     ownerUserID: "user-1",
@@ -286,6 +291,20 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
                 XCTAssertTrue(resources.acceptingNewWork)
                 XCTAssertEqual(resources.activeWorkItems, 0)
             }
+            let previousPID = workerPID
+            do {
+                try await lifecycle.refreshCredentials(
+                    ownerUserID: "user-1",
+                    credentialEnvironment: missingMemory
+                )
+                XCTFail("A credentialled Memory worker must reject a missing access token")
+            } catch let error as NativeLocalAgentHostError {
+                guard case .invalidConfiguration = error else {
+                    return XCTFail("Unexpected missing Memory credential error: \(error)")
+                }
+            }
+            let processAfterRejectedRefresh = await lifecycle.processIdentifier
+            XCTAssertEqual(processAfterRejectedRefresh, previousPID)
             do {
                 try await lifecycle.refreshCredentials(ownerUserID: "user-2", credentialEnvironment: credentials)
                 XCTFail("Refresh must not switch accounts")
@@ -295,7 +314,13 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             let client = NativeLocalAgentConversationClient(host: lifecycle)
             _ = try await client.list(ownerUserID: "user-1")
             await lifecycle.stop()
-            try await lifecycle.refreshCredentials(ownerUserID: "user-1", credentialEnvironment: ["CHATOS_LOCAL_AGENT_MODEL_TEST": "rotated-value"])
+            try await lifecycle.refreshCredentials(
+                ownerUserID: "user-1",
+                credentialEnvironment: [
+                    "CHATOS_LOCAL_AGENT_MODEL_TEST": "rotated-value",
+                    "CHATOS_MEMORY_ACCESS_TOKEN": "test-memory-value",
+                ]
+            )
             let nextPID = await lifecycle.processIdentifier
             XCTAssertNotNil(nextPID)
             XCTAssertNotEqual(nextPID, workerPID)
@@ -358,7 +383,10 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             memorySourceID: "test-local-agent"
         ))
 
-        try await lifecycle.start(ownerUserID: "user-1")
+        try await lifecycle.restart(
+            ownerUserID: "user-1",
+            credentialEnvironment: ["CHATOS_MEMORY_ACCESS_TOKEN": "test-memory-token"]
+        )
         var owner = await lifecycle.activeOwnerUserID
         XCTAssertEqual(owner, "user-1")
         let conversations = NativeLocalAgentConversationClient(host: lifecycle)
@@ -377,6 +405,10 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             ownerUserID: "user-1",
             modelConfigRef: "model-1",
             modelConfigRevision: "model-revision-1",
+            modelCapabilityRevision: "capability-v1",
+            contextWindowTokens: 200_000,
+            outputReserveTokens: 30_000,
+            protocolOverheadEstimatorID: "responses-json-v1",
             credentialRef: "env:CHATOS_LOCAL_AGENT_MODEL_MODEL_1",
             baseURL: "https://example.invalid/v1",
             model: "model-1",
@@ -415,7 +447,10 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         XCTAssertEqual(latestCapabilities, capabilities)
         try await lifecycle.restart(
             ownerUserID: "user-1",
-            credentialEnvironment: ["CHATOS_LOCAL_AGENT_MODEL_MODEL_1": "test-only-secret"]
+            credentialEnvironment: [
+                "CHATOS_LOCAL_AGENT_MODEL_MODEL_1": "test-only-secret",
+                "CHATOS_MEMORY_ACCESS_TOKEN": "test-memory-token",
+            ]
         )
         owner = await lifecycle.activeOwnerUserID
         XCTAssertEqual(owner, "user-1")
@@ -543,7 +578,10 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         XCTAssertFalse(isRunningAfterExit)
         XCTAssertNil(ownerAfterExit)
 
-        try await lifecycle.start(ownerUserID: "user-2")
+        try await lifecycle.restart(
+            ownerUserID: "user-2",
+            credentialEnvironment: ["CHATOS_MEMORY_ACCESS_TOKEN": "test-memory-token"]
+        )
         owner = await lifecycle.activeOwnerUserID
         XCTAssertEqual(owner, "user-2")
 
@@ -593,7 +631,10 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         XCTAssertFalse(isRunningAfterTimeout)
         XCTAssertNil(ownerAfterTimeout)
 
-        try await lifecycle.start(ownerUserID: "user-3")
+        try await lifecycle.restart(
+            ownerUserID: "user-3",
+            credentialEnvironment: ["CHATOS_MEMORY_ACCESS_TOKEN": "test-memory-token"]
+        )
         owner = await lifecycle.activeOwnerUserID
         XCTAssertEqual(owner, "user-3")
 
@@ -855,7 +896,20 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         let truncated = Pipe()
         try truncated.fileHandleForWriting.write(contentsOf: Data([0, 0, 0, 4, 1, 2]))
         try truncated.fileHandleForWriting.close()
-        XCTAssertThrowsError(try LocalAgentHostFrameCodec.read(from: truncated.fileHandleForReading))
+        XCTAssertThrowsError(
+            try LocalAgentHostFrameCodec.read(from: truncated.fileHandleForReading)
+        ) { error in
+            XCTAssertEqual(error as? NativeLocalAgentHostError, .notRunning)
+        }
+
+        let invalidLength = Pipe()
+        try invalidLength.fileHandleForWriting.write(contentsOf: Data([0, 0, 0, 0]))
+        try invalidLength.fileHandleForWriting.close()
+        XCTAssertThrowsError(
+            try LocalAgentHostFrameCodec.read(from: invalidLength.fileHandleForReading)
+        ) { error in
+            XCTAssertEqual(error as? NativeLocalAgentHostError, .invalidFrame)
+        }
     }
 
     private struct DelayedHostWrapper {

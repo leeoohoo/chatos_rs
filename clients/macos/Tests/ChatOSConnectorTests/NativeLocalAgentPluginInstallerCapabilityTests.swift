@@ -11,7 +11,7 @@ final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
         XCTAssertEqual(capability.ownerUserID, "user-1")
         XCTAssertEqual(capability.profileKey, "main_chat")
         XCTAssertEqual(toolNames(capability.tools),
-                       NativeLocalAgentPlatformToolCatalog.pluginInstallerToolNames)
+                       NativeLocalAgentPlatformToolCatalog.pluginInstallerToolNames.union(["local_attachment_read"]))
         XCTAssertTrue(capability.instructions?.contains("项目聊天和其他联系人没有这些安装工具") == true)
         XCTAssertTrue(capability.instructions?.contains("不得再问“安装还是只查看”") == true)
         XCTAssertTrue(capability.instructions?.contains("REA 或 reverse-engineer-anything 明确对应 npm 包 rea-agents") == true)
@@ -102,6 +102,41 @@ final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
         XCTAssertNotEqual(first.capabilityPolicyRevision, second.capabilityPolicyRevision)
     }
 
+    func testScreenshotContinuationsKeepPendingAuthorizationButStopAtCancellation() {
+        let request = "帮我更新 Ponytail"
+        XCTAssertEqual(
+            NativeLocalAgentPluginInstallerToolExecutor.authorizedInstallerRequest(
+                current: "看不到么", previous: [request, ""]
+            ), request
+        )
+        for interruption in ["先不要更新了", "比较一下别的插件", "怎么安装 REA？"] {
+            XCTAssertEqual(
+                NativeLocalAgentPluginInstallerToolExecutor.authorizedInstallerRequest(
+                    current: "继续", previous: [request, interruption]
+                ), "继续"
+            )
+        }
+        XCTAssertEqual(
+            NativeLocalAgentPluginInstallerToolExecutor.authorizedInstallerRequest(
+                current: "先不要安装", previous: [request]
+            ), "先不要安装"
+        )
+    }
+
+    func testInstallerCanReadScreenshotsWithoutWorkspaceAccess() throws {
+        let attachment = try XCTUnwrap(NativeLocalAgentPlatformToolCatalog.pluginInstallerTools.first {
+            Self.toolName($0) == "local_attachment_read"
+        })
+        guard case let .object(tool) = attachment,
+              case let .object(parameters)? = tool["parameters"],
+              case let .object(properties)? = parameters["properties"],
+              case let .object(delivery)? = properties["delivery"] else {
+            return XCTFail("Missing attachment delivery schema")
+        }
+        XCTAssertEqual(delivery["default"], .string("model"))
+        XCTAssertEqual(delivery["enum"], .array([.string("model"), .string("content")]))
+    }
+
     func testOnlyExactInstallerCapabilityIsAuthorizedAtExecutionTime() throws {
         let capability = try NativeLocalConnectorService.pluginInstallerCapability(
             ownerUserID: "user-1",
@@ -149,9 +184,16 @@ final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
     func testInstallIntentRequiresAnExplicitNonNegatedRequest() {
         for message in [
             "帮我安装一下 REA",
+            "帮我看一下 rea 这个插件，好像有更新了，帮我也更新一下",
+            "请升级 REA 到最新版",
+            "我把你刚才那个删掉了 重新更新",
+            "更新一下 Ponytail",
+            "把这个 MCP 更新一下",
             "直接添加这个 MCP",
             "请配置并使用这个插件",
             "Please install rea-agents for me.",
+            "Please update rea-agents for me.",
+            "Upgrade this MCP plugin.",
             "Set up this MCP plugin.",
         ] {
             XCTAssertTrue(
@@ -165,7 +207,13 @@ final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
             "怎么安装 REA？",
             "是否支持安装 Codex 插件？",
             "先不要安装，只查看工具列表",
+            "REA 好像有更新了，帮我看看",
+            "检查一下 REA 有没有更新",
+            "怎么升级 REA？",
+            "先不要更新 REA",
             "How do I install this MCP?",
+            "Is there an update for REA?",
+            "Do not upgrade this package.",
             "Do not install this package.",
         ] {
             XCTAssertFalse(

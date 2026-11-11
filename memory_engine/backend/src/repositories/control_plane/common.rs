@@ -1,117 +1,44 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::models::{
-    now_rfc3339, EngineJobPolicy, DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE,
-    DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE_EN, DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE,
-    DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE_EN, DEFAULT_ENGINE_SUBJECT_MEMORY_PROMPT_TEMPLATE,
-    DEFAULT_ENGINE_SUBJECT_MEMORY_PROMPT_TEMPLATE_EN, DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE,
-    DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE_EN, DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE,
-    DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE_EN, PROMPT_LANGUAGE_EN, PROMPT_LANGUAGE_ZH,
-};
+use crate::models::{now_rfc3339, EngineJobPolicy};
 
-pub(crate) const STALE_THREAD_REPAIR_JOB_TIMEOUT_SECS: i64 = 1800;
+pub(crate) const STALE_LEGACY_REPAIR_JOB_TIMEOUT_SECS: i64 = 1800;
 
 pub(crate) const JOB_TYPE_SUMMARY: &str = "summary";
 pub(crate) const JOB_TYPE_ROLLUP: &str = "rollup";
 pub(crate) const JOB_TYPE_SUBJECT_MEMORY: &str = "subject_memory";
-pub(crate) const JOB_TYPE_THREAD_REPAIR: &str = "thread_repair";
+pub(crate) const LEGACY_JOB_TYPE_THREAD_REPAIR: &str = "thread_repair";
 
 pub fn default_job_types() -> &'static [&'static str] {
-    &[
-        JOB_TYPE_SUMMARY,
-        JOB_TYPE_ROLLUP,
-        JOB_TYPE_SUBJECT_MEMORY,
-        JOB_TYPE_THREAD_REPAIR,
-    ]
+    &[JOB_TYPE_SUMMARY, JOB_TYPE_ROLLUP, JOB_TYPE_SUBJECT_MEMORY]
+}
+
+fn empty_policy(job_type: &str) -> EngineJobPolicy {
+    EngineJobPolicy {
+        job_type: job_type.to_string(),
+        dispatch_threshold_tokens: None,
+        max_source_batch_tokens: None,
+        max_model_input_tokens: None,
+        max_leaf_tokens: None,
+        max_merge_rounds: None,
+        count_limit: None,
+        keep_level0_count: None,
+        max_level: None,
+        updated_at: now_rfc3339(),
+    }
 }
 
 pub fn default_summary_job_policy() -> EngineJobPolicy {
-    EngineJobPolicy {
-        job_type: JOB_TYPE_SUMMARY.to_string(),
-        enabled: true,
-        summary_prompt: Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE.to_string()),
-        summary_prompt_zh: Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE.to_string()),
-        summary_prompt_en: Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE_EN.to_string()),
-        summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
-        rollup_summary_prompt: None,
-        rollup_summary_prompt_zh: None,
-        rollup_summary_prompt_en: None,
-        rollup_summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
-        token_limit: None,
-        interval_seconds: None,
-        max_threads_per_tick: None,
-        count_limit: None,
-        keep_level0_count: None,
-        max_level: None,
-        updated_at: now_rfc3339(),
-    }
+    empty_policy(JOB_TYPE_SUMMARY)
 }
 
 pub fn default_rollup_job_policy() -> EngineJobPolicy {
-    EngineJobPolicy {
-        job_type: JOB_TYPE_ROLLUP.to_string(),
-        enabled: true,
-        summary_prompt: Some(DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE.to_string()),
-        summary_prompt_zh: Some(DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE.to_string()),
-        summary_prompt_en: Some(DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE_EN.to_string()),
-        summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
-        rollup_summary_prompt: None,
-        rollup_summary_prompt_zh: None,
-        rollup_summary_prompt_en: None,
-        rollup_summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
-        token_limit: None,
-        interval_seconds: None,
-        max_threads_per_tick: None,
-        count_limit: None,
-        keep_level0_count: None,
-        max_level: None,
-        updated_at: now_rfc3339(),
-    }
+    empty_policy(JOB_TYPE_ROLLUP)
 }
 
 pub fn default_subject_memory_job_policy() -> EngineJobPolicy {
-    EngineJobPolicy {
-        job_type: JOB_TYPE_SUBJECT_MEMORY.to_string(),
-        enabled: true,
-        summary_prompt: Some(DEFAULT_ENGINE_SUBJECT_MEMORY_PROMPT_TEMPLATE.to_string()),
-        summary_prompt_zh: Some(DEFAULT_ENGINE_SUBJECT_MEMORY_PROMPT_TEMPLATE.to_string()),
-        summary_prompt_en: Some(DEFAULT_ENGINE_SUBJECT_MEMORY_PROMPT_TEMPLATE_EN.to_string()),
-        summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
-        rollup_summary_prompt: Some(DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE.to_string()),
-        rollup_summary_prompt_zh: Some(DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE.to_string()),
-        rollup_summary_prompt_en: Some(DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE_EN.to_string()),
-        rollup_summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
-        token_limit: None,
-        interval_seconds: None,
-        max_threads_per_tick: None,
-        count_limit: None,
-        keep_level0_count: None,
-        max_level: None,
-        updated_at: now_rfc3339(),
-    }
-}
-
-pub fn default_thread_repair_job_policy() -> EngineJobPolicy {
-    EngineJobPolicy {
-        job_type: JOB_TYPE_THREAD_REPAIR.to_string(),
-        enabled: true,
-        summary_prompt: Some(DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE.to_string()),
-        summary_prompt_zh: Some(DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE.to_string()),
-        summary_prompt_en: Some(DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE_EN.to_string()),
-        summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
-        rollup_summary_prompt: None,
-        rollup_summary_prompt_zh: None,
-        rollup_summary_prompt_en: None,
-        rollup_summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
-        token_limit: None,
-        interval_seconds: None,
-        max_threads_per_tick: None,
-        count_limit: None,
-        keep_level0_count: None,
-        max_level: None,
-        updated_at: now_rfc3339(),
-    }
+    empty_policy(JOB_TYPE_SUBJECT_MEMORY)
 }
 
 pub(crate) fn default_job_policy(job_type: &str) -> EngineJobPolicy {
@@ -119,218 +46,42 @@ pub(crate) fn default_job_policy(job_type: &str) -> EngineJobPolicy {
         JOB_TYPE_SUMMARY => default_summary_job_policy(),
         JOB_TYPE_ROLLUP => default_rollup_job_policy(),
         JOB_TYPE_SUBJECT_MEMORY => default_subject_memory_job_policy(),
-        JOB_TYPE_THREAD_REPAIR => default_thread_repair_job_policy(),
-        other => EngineJobPolicy {
-            job_type: other.to_string(),
-            enabled: true,
-            summary_prompt: Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE.to_string()),
-            summary_prompt_zh: Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE.to_string()),
-            summary_prompt_en: Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE_EN.to_string()),
-            summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
-            rollup_summary_prompt: None,
-            rollup_summary_prompt_zh: None,
-            rollup_summary_prompt_en: None,
-            rollup_summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
-            token_limit: None,
-            interval_seconds: None,
-            max_threads_per_tick: None,
-            count_limit: None,
-            keep_level0_count: None,
-            max_level: None,
-            updated_at: now_rfc3339(),
-        },
+        other => empty_policy(other),
     }
 }
 
 pub(crate) fn normalize_job_policy(policy: &mut EngineJobPolicy) {
-    if policy.job_type == JOB_TYPE_THREAD_REPAIR {
-        drop_legacy_summary_prompt_for_thread_repair(policy);
-    }
-    normalize_policy_prompts(policy);
-    if policy.job_type == JOB_TYPE_THREAD_REPAIR {
-        policy.token_limit = policy.token_limit.map(|value| value.max(128));
-        policy.max_threads_per_tick = None;
-    }
-}
-
-fn drop_legacy_summary_prompt_for_thread_repair(policy: &mut EngineJobPolicy) {
-    if prompt_matches_default_summary(policy.summary_prompt.as_deref()) {
-        policy.summary_prompt = None;
-    }
-    if prompt_matches_default_summary(policy.summary_prompt_zh.as_deref()) {
-        policy.summary_prompt_zh = None;
-    }
-    if prompt_matches_default_summary(policy.summary_prompt_en.as_deref()) {
-        policy.summary_prompt_en = None;
-    }
-}
-
-fn prompt_matches_default_summary(value: Option<&str>) -> bool {
-    value.map(str::trim).is_some_and(|text| {
-        text == DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE.trim()
-            || text == DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE_EN.trim()
-    })
-}
-
-fn normalize_policy_prompts(policy: &mut EngineJobPolicy) {
-    let default_policy = default_job_policy(policy.job_type.as_str());
-    let legacy_summary_prompt = DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE.trim();
-
-    normalize_prompt_group(
-        &mut policy.summary_prompt,
-        &mut policy.summary_prompt_zh,
-        &mut policy.summary_prompt_en,
-        &mut policy.summary_prompt_language,
-        default_policy.summary_prompt.as_deref(),
-        default_policy.summary_prompt_zh.as_deref(),
-        default_policy.summary_prompt_en.as_deref(),
-        legacy_summary_prompt,
-    );
-
-    normalize_prompt_group(
-        &mut policy.rollup_summary_prompt,
-        &mut policy.rollup_summary_prompt_zh,
-        &mut policy.rollup_summary_prompt_en,
-        &mut policy.rollup_summary_prompt_language,
-        default_policy.rollup_summary_prompt.as_deref(),
-        default_policy.rollup_summary_prompt_zh.as_deref(),
-        default_policy.rollup_summary_prompt_en.as_deref(),
-        legacy_summary_prompt,
-    );
-}
-
-fn normalize_prompt_group(
-    active_prompt: &mut Option<String>,
-    prompt_zh: &mut Option<String>,
-    prompt_en: &mut Option<String>,
-    prompt_language: &mut String,
-    default_active_prompt: Option<&str>,
-    default_prompt_zh: Option<&str>,
-    default_prompt_en: Option<&str>,
-    legacy_summary_prompt: &str,
-) {
-    *prompt_language = normalize_prompt_language(prompt_language.as_str()).to_string();
-
-    let legacy_active = normalize_prompt_text(active_prompt.take())
-        .filter(|value| value != legacy_summary_prompt)
-        .or_else(|| normalize_optional_str(default_active_prompt));
-    let mut normalized_zh = normalize_prompt_text(prompt_zh.take());
-    let mut normalized_en = normalize_prompt_text(prompt_en.take());
-
-    if normalized_zh.is_none() {
-        normalized_zh = legacy_active
-            .clone()
-            .or_else(|| normalize_optional_str(default_prompt_zh));
-    }
-
-    if normalized_en.is_none() {
-        normalized_en = normalize_optional_str(default_prompt_en);
-    }
-
-    if normalized_zh.is_none() && normalized_en.is_none() {
-        normalized_zh = normalize_optional_str(default_prompt_zh);
-        normalized_en = normalize_optional_str(default_prompt_en);
-    }
-
-    if *prompt_language == PROMPT_LANGUAGE_ZH && normalized_zh.is_none() && normalized_en.is_some()
-    {
-        *prompt_language = PROMPT_LANGUAGE_EN.to_string();
-    }
-
-    if *prompt_language == PROMPT_LANGUAGE_EN && normalized_en.is_none() && normalized_zh.is_some()
-    {
-        *prompt_language = PROMPT_LANGUAGE_ZH.to_string();
-    }
-
-    let effective = if *prompt_language == PROMPT_LANGUAGE_EN {
-        normalized_en.clone().or_else(|| normalized_zh.clone())
-    } else {
-        normalized_zh.clone().or_else(|| normalized_en.clone())
-    };
-
-    *prompt_zh = normalized_zh;
-    *prompt_en = normalized_en;
-    *active_prompt = effective.or_else(|| normalize_optional_str(default_active_prompt));
-}
-
-fn normalize_prompt_text(value: Option<String>) -> Option<String> {
-    value
-        .map(|text| text.trim().to_string())
-        .filter(|text| !text.is_empty())
-}
-
-fn normalize_optional_str(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn normalize_prompt_language(value: &str) -> &'static str {
-    if value.trim().eq_ignore_ascii_case(PROMPT_LANGUAGE_EN) {
-        PROMPT_LANGUAGE_EN
-    } else {
-        PROMPT_LANGUAGE_ZH
-    }
+    policy.dispatch_threshold_tokens = policy.dispatch_threshold_tokens.map(|value| value.max(1));
+    policy.max_source_batch_tokens = policy.max_source_batch_tokens.map(|value| value.max(128));
+    policy.max_model_input_tokens = policy.max_model_input_tokens.map(|value| value.max(128));
+    policy.max_leaf_tokens = policy.max_leaf_tokens.map(|value| value.max(128));
+    policy.max_merge_rounds = policy.max_merge_rounds.map(|value| value.max(1));
+    policy.count_limit = policy.count_limit.map(|value| value.max(0));
+    policy.keep_level0_count = policy.keep_level0_count.map(|value| value.max(0));
+    policy.max_level = policy.max_level.map(|value| value.max(1));
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        default_thread_repair_job_policy, normalize_job_policy,
-        DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE, DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE_EN,
-        DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE,
-        DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE_EN, JOB_TYPE_THREAD_REPAIR,
-    };
+    use super::*;
 
     #[test]
-    fn thread_repair_default_policy_has_input_limit() {
-        let policy = default_thread_repair_job_policy();
-
-        assert_eq!(policy.token_limit, None);
+    fn only_canonical_generation_policies_are_public() {
+        assert_eq!(
+            default_job_types(),
+            &[JOB_TYPE_SUMMARY, JOB_TYPE_ROLLUP, JOB_TYPE_SUBJECT_MEMORY]
+        );
     }
 
     #[test]
-    fn normalize_thread_repair_preserves_input_limit() {
-        let mut policy = default_thread_repair_job_policy();
-        policy.job_type = JOB_TYPE_THREAD_REPAIR.to_string();
-        policy.token_limit = Some(4096);
-
+    fn policy_limits_are_normalized_without_legacy_prompt_or_enable_state() {
+        let mut policy = default_summary_job_policy();
+        policy.dispatch_threshold_tokens = Some(0);
+        policy.max_model_input_tokens = Some(64);
+        policy.max_merge_rounds = Some(0);
         normalize_job_policy(&mut policy);
-
-        assert_eq!(policy.token_limit, Some(4096));
-    }
-
-    #[test]
-    fn normalize_thread_repair_preserves_missing_input_limit() {
-        let mut policy = default_thread_repair_job_policy();
-        policy.token_limit = None;
-
-        normalize_job_policy(&mut policy);
-
-        assert_eq!(policy.token_limit, None);
-    }
-
-    #[test]
-    fn normalize_thread_repair_replaces_legacy_summary_prompt() {
-        let mut policy = default_thread_repair_job_policy();
-        policy.summary_prompt = Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE.to_string());
-        policy.summary_prompt_zh = Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE.to_string());
-        policy.summary_prompt_en = Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE_EN.to_string());
-
-        normalize_job_policy(&mut policy);
-
-        assert_eq!(
-            policy.summary_prompt.as_deref(),
-            Some(DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE)
-        );
-        assert_eq!(
-            policy.summary_prompt_zh.as_deref(),
-            Some(DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE)
-        );
-        assert_eq!(
-            policy.summary_prompt_en.as_deref(),
-            Some(DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE_EN)
-        );
+        assert_eq!(policy.dispatch_threshold_tokens, Some(1));
+        assert_eq!(policy.max_model_input_tokens, Some(128));
+        assert_eq!(policy.max_merge_rounds, Some(1));
     }
 }

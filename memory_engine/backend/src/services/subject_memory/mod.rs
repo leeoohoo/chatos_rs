@@ -13,6 +13,7 @@ pub(crate) struct SubjectMemoryJobSettings {
     pub(crate) source_summary_type: String,
     pub(crate) prompt_title: String,
     pub(crate) token_limit: i64,
+    pub(crate) source_batch_token_limit: i64,
     pub(crate) count_limit: i64,
     pub(crate) keep_level0_count: i64,
     pub(crate) max_level: i64,
@@ -28,6 +29,7 @@ pub(crate) struct PendingSourceSummary {
     pub(crate) summary_type: String,
     pub(crate) level: i64,
     pub(crate) summary_text: String,
+    pub(crate) structured_payload: Option<Value>,
     pub(crate) created_at: String,
     pub(crate) metadata: Option<Value>,
 }

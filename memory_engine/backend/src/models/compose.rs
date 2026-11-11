@@ -3,5 +3,5 @@
 
 pub use memory_engine_sdk::{
     ComposeContextBlock, ComposeContextMeta, ComposeContextPolicy, ComposeContextRequest,
-    ComposeContextResponse,
+    ComposeContextResponse, ComposeTokenBudget,
 };

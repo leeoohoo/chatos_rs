@@ -6,13 +6,13 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 use super::components::{
-    PluginAgent, PluginApp, PluginAuthor, PluginCommand, PluginDependencySpec, PluginHook,
-    PluginInterfaceMetadata, PluginMcpServer, PluginPathRef, PluginPermissionRequirement,
-    PluginRuntimeContext, PluginUiContribution, component_key_from_path,
+    component_key_from_path, PluginAgent, PluginApp, PluginAuthor, PluginCommand,
+    PluginDependencySpec, PluginHook, PluginInterfaceMetadata, PluginMcpServer, PluginPathRef,
+    PluginPermissionRequirement, PluginRuntimeContext, PluginUiContribution,
 };
-use super::normalized::{PLUGIN_MANIFEST_SCHEMA_VERSION, PluginManifest};
+use super::normalized::{PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION};
 use super::paths::normalize_plugin_relative_path;
-use super::{PluginManifestError, validate_plugin_manifest};
+use super::{validate_plugin_manifest, PluginManifestError};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

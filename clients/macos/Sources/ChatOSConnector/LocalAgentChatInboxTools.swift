@@ -273,12 +273,13 @@ extension LocalAgentChatToolProvider {
     func readAllUnread(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
         let limit = try Self.optionalInteger(arguments, key: "limit").map(Int.init) ?? 200
-        let conversations = try await store.listAllUnreadMessages(
+        let receipt = await managerInboxSession.completionReceipt()
+        let conversations = try await store.listInboxMessagesAfter(
             ownerUserID: context.ownerUserID,
             agentID: context.agentID,
+            readThrough: receipt.readThrough,
             limit: limit
         )
-        await managerInboxSession.record(conversations: conversations)
         let profiles = try await store.listAgents(
             ownerUserID: context.ownerUserID,
             includeArchived: true
@@ -325,11 +326,13 @@ extension LocalAgentChatToolProvider {
                 messages: messages
             ))
         }
-        return try Self.outcome(InboxResponse(
+        let outcome = try Self.outcome(InboxResponse(
             conversations: response,
             messageCount: response.reduce(0) { $0 + $1.messages.count },
             markedRead: false
         ))
+        await managerInboxSession.record(conversations: conversations)
+        return outcome
     }
 
 }

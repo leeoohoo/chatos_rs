@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeMap;
+
 use crate::db::Db;
 use crate::models::{ComposeContextBlock, EngineSubjectMemory, EngineSummary, EngineThread};
-use crate::repositories::{subject_memories, subject_memory_scopes, summaries};
+use crate::repositories::{memory_facts, subject_memories, subject_memory_scopes, summaries};
 
 use super::policy::ResolvedComposeContextPolicy;
 
@@ -12,6 +14,9 @@ const RECENT_SUBJECT_MEMORY_LIMIT: i64 = 3;
 pub(crate) struct BuiltContextBlocks {
     pub(crate) blocks: Vec<ComposeContextBlock>,
     pub(crate) summary_count: usize,
+    pub(crate) candidate_count_by_pool: BTreeMap<String, usize>,
+    pub(crate) dropped_count_by_reason: BTreeMap<String, usize>,
+    pub(crate) deduplicated_count: usize,
 }
 
 pub(crate) async fn build_context_blocks(
@@ -22,36 +27,238 @@ pub(crate) async fn build_context_blocks(
     policy: &ResolvedComposeContextPolicy,
     subject_memory_subject_ids: &[String],
     context_project_subject_id: Option<&str>,
+    query_text: Option<&str>,
 ) -> Result<BuiltContextBlocks, String> {
     let mut blocks = Vec::new();
-    let mut summary_count = 0usize;
+    let summary_blocks = load_thread_summary_blocks(
+        db,
+        tenant_id,
+        source_id,
+        thread.id.as_str(),
+        200,
+        thread_allows_dynamic_project_recall(thread),
+        context_project_subject_id,
+    )
+    .await?;
+    let summary_count = summary_blocks.1;
+    blocks.extend(summary_blocks.0);
 
-    if policy.include_thread_summary {
-        let summary_blocks = load_thread_summary_blocks(
-            db,
-            tenant_id,
-            source_id,
-            thread.id.as_str(),
-            policy.summary_limit,
-            thread_allows_dynamic_project_recall(thread),
-            context_project_subject_id,
-        )
-        .await?;
-        summary_count = summary_blocks.1;
-        blocks.extend(summary_blocks.0);
+    blocks.extend(
+        load_subject_memory_blocks(db, tenant_id, source_id, subject_memory_subject_ids).await?,
+    );
+    let mut relevant_candidates = load_relevant_history_blocks(
+        db,
+        tenant_id,
+        source_id,
+        thread,
+        context_project_subject_id,
+        subject_memory_subject_ids,
+        query_text,
+    )
+    .await?;
+    blocks.append(&mut relevant_candidates);
+
+    let candidate_count_by_pool = count_blocks_by_pool(blocks.as_slice());
+    let candidate_count = blocks.len();
+    let (deduplicated, deduplicated_count) = deduplicate_blocks(blocks);
+    blocks = deduplicated;
+    blocks = retain_blocks_within_budgets(blocks, policy);
+    let mut dropped_count_by_reason = BTreeMap::new();
+    if deduplicated_count > 0 {
+        dropped_count_by_reason.insert("exact_duplicate".to_string(), deduplicated_count);
     }
-
-    if policy.include_subject_memory {
-        blocks.extend(
-            load_subject_memory_blocks(db, tenant_id, source_id, subject_memory_subject_ids)
-                .await?,
-        );
+    let dropped = candidate_count
+        .saturating_sub(deduplicated_count)
+        .saturating_sub(blocks.len());
+    if dropped > 0 {
+        dropped_count_by_reason.insert("pool_or_total_budget".to_string(), dropped);
     }
 
     Ok(BuiltContextBlocks {
         blocks,
         summary_count,
+        candidate_count_by_pool,
+        dropped_count_by_reason,
+        deduplicated_count,
     })
+}
+
+pub(crate) fn count_blocks_by_pool(blocks: &[ComposeContextBlock]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for block in blocks {
+        *counts.entry(block.pool.clone()).or_insert(0) += 1;
+    }
+    counts
+}
+
+pub(crate) fn block_token_count(blocks: &[ComposeContextBlock]) -> usize {
+    blocks.iter().map(|block| block.estimated_tokens).sum()
+}
+
+fn retain_blocks_within_budgets(
+    blocks: Vec<ComposeContextBlock>,
+    policy: &ResolvedComposeContextPolicy,
+) -> Vec<ComposeContextBlock> {
+    let mut total = 0usize;
+    let mut thread = 0usize;
+    let mut project = 0usize;
+    let mut agent = 0usize;
+    let mut relevant = 0usize;
+    blocks
+        .into_iter()
+        .filter(|block| {
+            let tokens = block.estimated_tokens;
+            let pool = if block.pool == "thread_continuity" {
+                &mut thread
+            } else if block.pool == "project_state" {
+                &mut project
+            } else if block.pool == "agent_stable_memory" {
+                &mut agent
+            } else {
+                &mut relevant
+            };
+            let pool_limit = if block.pool == "thread_continuity" {
+                policy.max_thread_summary_tokens
+            } else if block.pool == "project_state" {
+                policy.max_project_memory_tokens
+            } else if block.pool == "agent_stable_memory" {
+                policy.max_agent_memory_tokens
+            } else {
+                policy.max_relevant_history_tokens
+            };
+            if total.saturating_add(tokens) > policy.max_memory_tokens
+                || pool.saturating_add(tokens) > pool_limit
+            {
+                return false;
+            }
+            total = total.saturating_add(tokens);
+            *pool = pool.saturating_add(tokens);
+            true
+        })
+        .collect()
+}
+
+async fn load_relevant_history_blocks(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread: &EngineThread,
+    context_project_subject_id: Option<&str>,
+    subject_memory_subject_ids: &[String],
+    query_text: Option<&str>,
+) -> Result<Vec<ComposeContextBlock>, String> {
+    let Some(query_text) = query_text.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let partition = context_project_subject_id.unwrap_or("__none__");
+    let agent_scope_keys = subject_memory_subject_ids
+        .iter()
+        .filter(|subject| subject.starts_with("agent:"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let facts = memory_facts::search_relevant(
+        db,
+        tenant_id,
+        source_id,
+        thread.id.as_str(),
+        partition,
+        agent_scope_keys.as_slice(),
+        query_text,
+        100,
+    )
+    .await?;
+    let now = chrono::Utc::now();
+    let mut blocks = facts
+        .into_iter()
+        .map(|fact| {
+            let scope_score = match fact.scope_kind.as_str() {
+                "thread" => 1.0,
+                "project" => 0.9,
+                "agent" => 0.7,
+                _ => 0.0,
+            };
+            let age_days = now.signed_duration_since(fact.created_at).num_days().max(0) as f64;
+            let recency_score = 1.0 / (1.0 + age_days / 30.0);
+            let open_item_score = fact
+                .searchable_text
+                .starts_with("open_items ")
+                .then_some(0.25)
+                .unwrap_or(0.0);
+            let uncertainty_penalty = (fact.status == "uncertain").then_some(0.2).unwrap_or(0.0);
+            let total_score =
+                fact.lexical_score * 2.0 + scope_score + recency_score + open_item_score
+                    - uncertainty_penalty;
+            let mut score_components = BTreeMap::new();
+            score_components.insert("lexical_match".to_string(), fact.lexical_score);
+            score_components.insert("scope_match".to_string(), scope_score);
+            score_components.insert("recency".to_string(), recency_score);
+            score_components.insert("open_item".to_string(), open_item_score);
+            score_components.insert("uncertainty_penalty".to_string(), -uncertainty_penalty);
+            score_components.insert("total".to_string(), total_score);
+            let mut source_refs = fact.source_refs;
+            source_refs.push(fact.output_id.clone());
+            source_refs.push(fact.fact_id.clone());
+            source_refs.sort();
+            source_refs.dedup();
+            let project_partition_key = fact
+                .project_partition_key
+                .unwrap_or_else(|| "__none__".to_string());
+            let text = fact.searchable_text;
+            ComposeContextBlock {
+                block_id: format!(
+                    "memory-fact:{}:{}",
+                    fact.fact_key, fact.normalized_value_hash
+                ),
+                block_type: format!("relevant_{}_fact", fact.output_kind),
+                pool: "relevant_history".to_string(),
+                subject_id: (fact.scope_kind != "thread").then_some(fact.scope_key),
+                project_partition_key,
+                level: None,
+                source_refs,
+                estimated_tokens: super::estimate_tokens(text.as_str()).saturating_add(12),
+                score_components,
+                selection_reason: format!("hybrid_fact_key:{}", fact.fact_key),
+                truncated: false,
+                text,
+            }
+        })
+        .collect::<Vec<_>>();
+    blocks.sort_by(|left, right| {
+        right
+            .score_components
+            .get("total")
+            .partial_cmp(&left.score_components.get("total"))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.block_id.cmp(&right.block_id))
+    });
+    Ok(blocks)
+}
+
+fn deduplicate_blocks(blocks: Vec<ComposeContextBlock>) -> (Vec<ComposeContextBlock>, usize) {
+    let mut seen_block_ids = std::collections::BTreeSet::new();
+    let mut seen_source_frontiers = std::collections::BTreeSet::new();
+    let mut seen_content = std::collections::BTreeSet::new();
+    let mut selected = Vec::new();
+    let mut dropped = 0usize;
+    for block in blocks {
+        let mut refs = block.source_refs.clone();
+        refs.sort();
+        let normalized_content = block
+            .text
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        let duplicate = !seen_block_ids.insert(block.block_id.clone())
+            || (!refs.is_empty() && !seen_source_frontiers.insert(refs))
+            || !seen_content.insert(normalized_content);
+        if duplicate {
+            dropped += 1;
+        } else {
+            selected.push(block);
+        }
+    }
+    (selected, dropped)
 }
 
 pub(crate) fn thread_agent_subject_id(thread: &EngineThread) -> Option<String> {
@@ -108,30 +315,99 @@ pub(crate) fn build_thread_summary_level0_text(rows: &[EngineSummary]) -> String
         .join("\n\n---\n\n")
 }
 
-pub(crate) fn build_thread_summary_blocks_from_rows(
-    level0_rows: Vec<EngineSummary>,
-    top_summary: Option<EngineSummary>,
+pub(crate) fn build_thread_summary_blocks_from_frontier(
+    mut frontier: Vec<EngineSummary>,
 ) -> (Vec<ComposeContextBlock>, usize) {
     let mut blocks = Vec::new();
-    let mut summary_count = 0usize;
-
-    if let Some(top_summary) = top_summary.filter(|item| item.level > 0) {
-        summary_count += 1;
-        blocks.push(ComposeContextBlock {
-            block_type: "thread_summary_top_level".to_string(),
-            text: top_summary.summary_text,
-        });
+    let summary_count = frontier.len();
+    frontier.sort_by(|left, right| {
+        right
+            .level
+            .cmp(&left.level)
+            .then_with(|| right.created_at.cmp(&left.created_at))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    for top_summary in frontier.iter().filter(|summary| summary.level > 0) {
+        let source_ref = top_summary.id.clone();
+        blocks.push(context_block(
+            source_ref.clone(),
+            "thread_summary_top_level",
+            "thread_continuity",
+            Some(top_summary.subject_id.clone()),
+            "__none__".to_string(),
+            Some(top_summary.level),
+            vec![source_ref],
+            top_summary.summary_text.clone(),
+            "canonical_thread_frontier",
+        ));
     }
 
+    let level0_rows = frontier
+        .into_iter()
+        .filter(|summary| summary.level == 0)
+        .collect::<Vec<_>>();
     if !level0_rows.is_empty() {
-        summary_count += level0_rows.len();
-        blocks.push(ComposeContextBlock {
-            block_type: "thread_summary_level0".to_string(),
-            text: build_thread_summary_level0_text(level0_rows.as_slice()),
-        });
+        let source_refs = level0_rows
+            .iter()
+            .map(|summary| summary.id.clone())
+            .collect::<Vec<_>>();
+        let block_id = format!("thread-summary-frontier:{}", source_refs.join(":"));
+        let subject_id = level0_rows
+            .first()
+            .map(|summary| summary.subject_id.clone());
+        blocks.push(context_block(
+            block_id,
+            "thread_summary_level0",
+            "thread_continuity",
+            subject_id,
+            "__none__".to_string(),
+            Some(0),
+            source_refs,
+            build_thread_summary_level0_text(level0_rows.as_slice()),
+            "canonical_thread_frontier",
+        ));
     }
 
     (blocks, summary_count)
+}
+
+fn context_block(
+    block_id: String,
+    block_type: &str,
+    pool: &str,
+    subject_id: Option<String>,
+    project_partition_key: String,
+    level: Option<i64>,
+    source_refs: Vec<String>,
+    text: String,
+    selection_reason: &str,
+) -> ComposeContextBlock {
+    let estimated_tokens = super::estimate_tokens(text.as_str()).saturating_add(12);
+    let mut score_components = BTreeMap::new();
+    score_components.insert("scope_match".to_string(), 1.0);
+    score_components.insert(
+        if pool == "thread_continuity" {
+            "thread_continuity"
+        } else {
+            "durable_frontier"
+        }
+        .to_string(),
+        1.0,
+    );
+    ComposeContextBlock {
+        block_id,
+        block_type: block_type.to_string(),
+        pool: pool.to_string(),
+        subject_id,
+        project_partition_key,
+        level,
+        source_refs,
+        estimated_tokens,
+        score_components,
+        selection_reason: selection_reason.to_string(),
+        truncated: false,
+        text,
+    }
 }
 
 pub(crate) fn format_subject_memory(item: EngineSubjectMemory) -> String {
@@ -150,7 +426,11 @@ async fn load_thread_summary_blocks(
     isolate_dynamic_project: bool,
     context_project_subject_id: Option<&str>,
 ) -> Result<(Vec<ComposeContextBlock>, usize), String> {
-    let level0_rows = if isolate_dynamic_project {
+    // Stable Agent threads may contain several projects. Their existing rollups can combine
+    // those projects, so only project-scoped level-0 summaries are safe as Thread context.
+    // Cross-project durable knowledge is already supplied by Agent Memory, while the current
+    // project's complete rollup is supplied by Project Summary.
+    let frontier = if isolate_dynamic_project {
         summaries::list_latest_thread_summaries_at_level_for_project(
             db,
             tenant_id,
@@ -163,34 +443,23 @@ async fn load_thread_summary_blocks(
         )
         .await?
     } else {
-        summaries::list_latest_thread_summaries_at_level(
+        summaries::list_latest_thread_summary_frontier(
             db,
             tenant_id,
             source_id,
             thread_id,
             "thread_incremental",
-            0,
             summary_limit,
         )
         .await?
     };
-    // Stable Agent threads may contain several projects. Their existing rollups can combine
-    // those projects, so only project-scoped level-0 summaries are safe as Thread context.
-    // Cross-project durable knowledge is already supplied by Agent Memory, while the current
-    // project's complete rollup is supplied by Project Summary.
-    let top_summary = if isolate_dynamic_project {
-        None
-    } else {
-        summaries::list_latest_thread_summaries(db, tenant_id, source_id, thread_id, 1)
-            .await?
-            .into_iter()
-            .next()
-    };
 
-    Ok(build_thread_summary_blocks_from_rows(
-        level0_rows,
-        top_summary,
-    ))
+    let (mut blocks, count) = build_thread_summary_blocks_from_frontier(frontier);
+    let partition = context_project_subject_id.unwrap_or("__none__");
+    for block in &mut blocks {
+        block.project_partition_key = partition.to_string();
+    }
+    Ok((blocks, count))
 }
 
 async fn load_subject_memory_blocks(
@@ -235,10 +504,28 @@ async fn load_subject_memory_blocks(
         .find(|memory| memory.level > 0);
         let has_rollup = rollup.is_some();
         if let Some(memory) = rollup {
-            blocks.push(ComposeContextBlock {
-                block_type: rollup_block_type.to_string(),
-                text: format_subject_memory(memory),
-            });
+            let block_id = memory.id.clone();
+            let subject = memory.subject_id.clone();
+            let level = memory.level;
+            blocks.push(context_block(
+                block_id.clone(),
+                rollup_block_type,
+                if subject.starts_with("project:") {
+                    "project_state"
+                } else {
+                    "agent_stable_memory"
+                },
+                Some(subject.clone()),
+                if subject.starts_with("project:") {
+                    subject
+                } else {
+                    "__none__".to_string()
+                },
+                Some(level),
+                vec![block_id],
+                format_subject_memory(memory),
+                "canonical_subject_frontier",
+            ));
         }
 
         let mut recent = subject_memories::list_subject_memories_for_context(
@@ -270,14 +557,35 @@ async fn load_subject_memory_blocks(
             .await?;
         }
         if !recent.is_empty() {
-            blocks.push(ComposeContextBlock {
-                block_type: recent_block_type.to_string(),
-                text: recent
+            let source_refs = recent
+                .iter()
+                .map(|memory| memory.id.clone())
+                .collect::<Vec<_>>();
+            let level = recent.first().map(|memory| memory.level);
+            let block_id = format!("subject-memory-frontier:{}", source_refs.join(":"));
+            blocks.push(context_block(
+                block_id,
+                recent_block_type,
+                if subject_id.starts_with("project:") {
+                    "project_state"
+                } else {
+                    "agent_stable_memory"
+                },
+                Some(subject_id.clone()),
+                if subject_id.starts_with("project:") {
+                    subject_id.clone()
+                } else {
+                    "__none__".to_string()
+                },
+                level,
+                source_refs,
+                recent
                     .into_iter()
                     .map(format_subject_memory)
                     .collect::<Vec<_>>()
                     .join("\n\n---\n\n"),
-            });
+                "recent_unrolled_subject_frontier",
+            ));
         }
     }
 

@@ -9,7 +9,9 @@ use crate::state::AppState;
 
 mod admin_api;
 mod context_api;
+mod erasure_api;
 mod health_api;
+mod history_migrations_api;
 mod internal_audit;
 mod internal_auth;
 mod jobs_api;
@@ -18,6 +20,7 @@ mod operator_auth;
 mod queue_operations_api;
 mod records_api;
 mod router;
+mod runtime_context;
 mod sdk_api;
 mod source_guard;
 mod sources_api;

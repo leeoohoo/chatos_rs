@@ -43,6 +43,8 @@ pub struct UpsertRecordInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkBatchSyncRecordsRequest {
     pub tenant_id: String,
+    pub project_partition_key: String,
+    pub runtime_context_assertion: String,
     pub records: Vec<UpsertRecordInput>,
 }
 

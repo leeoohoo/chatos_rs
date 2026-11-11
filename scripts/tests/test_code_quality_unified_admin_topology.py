@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 import unittest
 
 
@@ -22,6 +23,30 @@ OLD_FRONTEND_SERVICES = (
 
 
 class UnifiedAdminTopologyTests(unittest.TestCase):
+    def test_connector_service_deploy_runs_its_migration_before_cutover(self) -> None:
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+        start = deploy.index("  selected_migration_services=()")
+        end = deploy.index('  if [[ ${#selected_migration_services[@]}', start)
+        selection = deploy[start:end]
+        script = (
+            'selected_service="$1"\n'
+            'service_is_selected() { [[ "$1" == "$selected_service" ]]; }\n'
+            + selection
+            + '\nprintf "%s\\n" "${selected_migration_services[@]}"\n'
+        )
+        for service, expected in (
+            ("local-connector-service-backend", "local-connector-migrate"),
+            ("memory-engine-backend", "memory-engine-migrate"),
+            ("configuration-center-backend", "configuration-center-migrate"),
+            ("gateway-config", ""),
+        ):
+            with self.subTest(service=service):
+                result = subprocess.run(
+                    ["bash", "-c", script, "migration-selection", service],
+                    check=True, capture_output=True, text=True,
+                )
+                self.assertEqual(result.stdout.strip(), expected)
+
     def test_old_frontend_projects_are_removed(self) -> None:
         for relative_path in OLD_FRONTEND_DIRS:
             self.assertFalse((ROOT / relative_path).exists(), relative_path)
@@ -121,6 +146,81 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn("wait_for_http_probe local-user-service-health success", deploy)
         self.assertIn("wait_for_http_probe local-connector-route route", deploy)
         self.assertIn('wait_for_http_probe "public-$url" success', deploy)
+        self.assertIn(
+            "wait_for_http_probe public-admin-session-write-route route", deploy
+        )
+        self.assertIn(
+            "https://admin.jgoool.com/api/admin/user-service/auth/admin/session",
+            deploy,
+        )
+        self.assertIn(
+            "wait_for_http_probe public-local-runtime-context-assertion-route unauthorized",
+            deploy,
+        )
+        self.assertIn(
+            "https://gateway.jgoool.com/api/local/runtime-context-assertions",
+            deploy,
+        )
+
+    def test_shared_gateway_clients_never_call_backend_local_connector_namespace(self) -> None:
+        client_source_roots = [
+            ROOT / "clients/local_agent_host/src",
+            ROOT / "clients/macos/Sources/ChatOSAPI",
+        ]
+        source_extensions = {".rs", ".swift", ".ts", ".tsx", ".js", ".jsx"}
+        offenders = []
+        for source_root in client_source_roots:
+            for path in source_root.rglob("*"):
+                if (
+                    path.suffix in source_extensions
+                    and "/api/local-connectors" in path.read_text()
+                ):
+                    offenders.append(str(path.relative_to(ROOT)))
+
+        self.assertEqual(
+            offenders,
+            [],
+            "external clients must use the public /api/local namespace",
+        )
+
+    def test_dedicated_connector_host_keeps_its_public_protocol_paths(self) -> None:
+        runtime_configuration = (
+            ROOT / "clients/macos/Sources/ChatOSApp/Infrastructure/RuntimeConfiguration.swift"
+        ).read_text()
+        gateway = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorGateway.swift"
+        ).read_text()
+        connection = (
+            ROOT
+            / "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+GatewayConnection.swift"
+        ).read_text()
+
+        self.assertIn('connectorBaseURL: URL(string: "https://connector.jgoool.com")!', runtime_configuration)
+        self.assertIn('"/api/local-connectors/devices"', gateway)
+        self.assertIn('"/api/local-connectors/workspaces"', gateway)
+        self.assertIn('"/api/local-connectors/config/runtime"', gateway)
+        self.assertIn('let path = "/api/local-connectors/devices/\\(deviceID)/connect"', connection)
+
+    def test_every_release_restores_canonical_public_ingress(self) -> None:
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+        backup = 'nginx_backup="$deploy_root/backups/chatos-nginx-$release_tag.conf"'
+        install = (
+            'install -m 0644 "$release_dir/docker/nginx/jgoool-https.conf" '
+            '"$nginx_target"'
+        )
+
+        self.assertIn(backup, deploy)
+        self.assertIn(install, deploy)
+        self.assertNotIn(
+            "if (( deploy_all == 1 || deploy_gateway_config == 1 )); then\n"
+            f"  {backup}",
+            deploy,
+        )
+        self.assertNotIn(
+            "if (( deploy_all == 1 || deploy_gateway_config == 1 )); then\n"
+            f"  {install}",
+            deploy,
+        )
 
     def test_full_cloud_deploy_starts_postgres_before_import_verification(self) -> None:
         deploy = (ROOT / "scripts/deploy-production.sh").read_text()
@@ -129,6 +229,36 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         fast_start = deploy.index("./docker/deploy.sh fast", start)
         self.assertLess(helper_call, fast_start)
         self.assertIn("PostgreSQL is $health before production import verification", deploy)
+
+    def test_selected_memory_deploy_restores_worker_before_success(self) -> None:
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+        restore_call = deploy.index("restore_memory_worker_runtime_state\n\n")
+        healthy_status = deploy.index(
+            'write_deploy_status complete healthy "Production release is healthy"'
+        )
+
+        self.assertIn(
+            'write_deploy_status running worker "Starting and verifying the Memory Engine worker"',
+            deploy,
+        )
+        self.assertIn("memory_worker_was_running == 0", deploy)
+        self.assertIn("docker start chatos-rs-memory-engine-worker-1", deploy)
+        self.assertIn("Memory Engine worker did not remain running", deploy)
+        self.assertLess(restore_call, healthy_status)
+
+    def test_release_fetches_are_bounded_and_retried(self) -> None:
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+
+        self.assertEqual(deploy.count("fetch_release_branch_with_retries()"), 2)
+        self.assertEqual(deploy.count("http.lowSpeedTime=20"), 2)
+        self.assertEqual(deploy.count("GIT_TERMINAL_PROMPT=0 git"), 2)
+        self.assertIn(
+            'fetch_release_branch_with_retries "$ROOT_DIR" "$DEPLOY_BRANCH"', deploy
+        )
+        self.assertIn(
+            'fetch_release_branch_with_retries "$source_repo" "$deploy_branch"', deploy
+        )
+        self.assertNotIn('git fetch --quiet origin "$DEPLOY_BRANCH"', deploy)
 
 
 if __name__ == "__main__":

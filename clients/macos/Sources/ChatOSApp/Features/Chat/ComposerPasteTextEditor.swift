@@ -116,10 +116,11 @@ private struct NativeComposerTextEditor: NSViewRepresentable {
         context.coordinator.parent = self
         textView.placeholder = placeholder
         configureTransparentBackground(scrollView: scrollView, textView: textView)
-        configure(textView, coordinator: context.coordinator)
+        let fontChanged = configure(textView, coordinator: context.coordinator)
 
         // Never replace AppKit's storage while an input method owns a marked
         // range. Doing so removes the live Pinyin preedit before it can render.
+        var textChanged = false
         if !textView.hasMarkedText(), textView.string != text {
             let selection = textView.selectedRange()
             textView.string = text
@@ -130,8 +131,11 @@ private struct NativeComposerTextEditor: NSViewRepresentable {
                 )
             )
             textView.needsDisplay = true
+            textChanged = true
         }
-        context.coordinator.scheduleHeightMeasurement()
+        if fontChanged || textChanged {
+            context.coordinator.scheduleHeightMeasurement()
+        }
     }
 
     private func configureTransparentBackground(
@@ -149,9 +153,11 @@ private struct NativeComposerTextEditor: NSViewRepresentable {
         textView.backgroundColor = .clear
     }
 
-    private func configure(_ textView: ComposerNativeTextView, coordinator: Coordinator) {
+    @discardableResult
+    private func configure(_ textView: ComposerNativeTextView, coordinator: Coordinator) -> Bool {
         let font = NSFont.systemFont(ofSize: fontSize)
-        if textView.font != font {
+        let fontChanged = textView.font != font
+        if fontChanged {
             textView.font = font
             textView.needsDisplay = true
         }
@@ -181,6 +187,7 @@ private struct NativeComposerTextEditor: NSViewRepresentable {
         textView.onLayoutChanged = {
             coordinator.scheduleHeightMeasurement()
         }
+        return fontChanged
     }
 
     @MainActor
@@ -234,15 +241,19 @@ private struct NativeComposerTextEditor: NSViewRepresentable {
             if abs(parent.measuredHeight - desiredHeight) > 0.5 {
                 parent.measuredHeight = desiredHeight
             }
-            scrollView?.hasVerticalScroller = desiredHeight >= parent.maximumHeight
-            textView.needsDisplay = true
+            let needsVerticalScroller = desiredHeight >= parent.maximumHeight
+            if scrollView?.hasVerticalScroller != needsVerticalScroller {
+                scrollView?.hasVerticalScroller = needsVerticalScroller
+            }
         }
     }
 }
 
 private final class ComposerNativeTextView: NSTextView {
     var placeholder = "" {
-        didSet { needsDisplay = true }
+        didSet {
+            if placeholder != oldValue { needsDisplay = true }
+        }
     }
     var onSubmit: (() -> Void)?
     var onPaste: ((NSPasteboard) -> Bool)?
@@ -302,7 +313,6 @@ private final class ComposerNativeTextView: NSTextView {
     override func didChangeText() {
         super.didChangeText()
         needsDisplay = true
-        onLayoutChanged?()
     }
 
     override func setFrameSize(_ newSize: NSSize) {
