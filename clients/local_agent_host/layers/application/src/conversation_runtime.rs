@@ -2310,6 +2310,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn profile_failure_reaches_conversation_history_with_the_specific_error() {
+        let storage = Arc::new(SqliteClientStorage::connect_memory().await.unwrap());
+        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+        runtime.initialize("user-1").await.unwrap();
+        runtime
+            .try_handle(request(
+                "create-error-conversation",
+                HostCommand::CreateConversation(create_conversation()),
+            ))
+            .await
+            .unwrap();
+        runtime
+            .try_handle(request(
+                "start-error-turn",
+                HostCommand::StartConversationTurn(start_turn(1)),
+            ))
+            .await
+            .unwrap();
+        let claimed = runtime
+            .try_handle(request(
+                "claim-error-turn",
+                HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".into(),
+                    worker_id: "worker".into(),
+                    lease_duration_ms: 10_000,
+                }),
+            ))
+            .await
+            .unwrap();
+        let HostResult::Claim { claim: Some(claim) } = claimed else {
+            panic!("missing claim")
+        };
+        let error = "complete model request exceeds frozen context budget: estimated_input_tokens=621861, output_reserve_tokens=30000, context_window_tokens=200000";
+        let committed = runtime
+            .try_handle(request(
+                "commit-error-turn",
+                HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".into(),
+                    run_id: claim.run.run_id,
+                    claim_token: claim.claim_token,
+                    expected_version: claim.run.version,
+                    outcome: LocalAgentStepOutcome::NeedsReview {
+                        reason: "Local Agent profile step failed".into(),
+                        detail: json!({"error":error}),
+                    },
+                }),
+            ))
+            .await
+            .unwrap();
+        let HostResult::Run { run } = committed else {
+            panic!("missing Run")
+        };
+        assert_eq!(run.terminal_outcome.as_ref().unwrap()["error"], error);
+        let result = runtime
+            .try_handle(request(
+                "read-error-history",
+                HostCommand::GetConversation(GetConversationCommand {
+                    owner_user_id: "user-1".into(),
+                    conversation_id: "conversation-1".into(),
+                }),
+            ))
+            .await
+            .unwrap();
+        let HostResult::Conversation {
+            conversation: detail,
+        } = result
+        else {
+            panic!("missing conversation")
+        };
+        assert_eq!(detail.turns[0].status, LocalConversationTurnStatus::Failed);
+        let last = detail.messages.last().unwrap();
+        assert_eq!(last.role, LocalConversationMessageRole::Assistant);
+        assert_eq!(last.content["error"], error);
+        assert_eq!(last.content["status"], "needs_review");
+    }
+
+    #[tokio::test]
     async fn host_routes_guidance_into_the_next_local_model_claim() {
         let storage = Arc::new(
             SqliteClientStorage::connect_memory()

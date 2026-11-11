@@ -112,14 +112,29 @@ pub(super) fn transition_for_outcome(
                 "run_paused",
                 json!({"reason": reason}),
             ),
-            LocalAgentStepOutcome::NeedsReview { reason, detail } => (
-                LocalAgentRunStatus::NeedsReview,
-                None,
-                None,
-                None,
-                "run_needs_review",
-                json!({"reason": reason, "detail": detail}),
-            ),
+            LocalAgentStepOutcome::NeedsReview { reason, detail } => {
+                let error = detail
+                    .get("error")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|error| !error.is_empty())
+                    .unwrap_or(&reason);
+                let terminal = json!({
+                    "status": "needs_review",
+                    "reason_code": "step_requires_review",
+                    "error": error,
+                    "reason": reason,
+                    "detail": detail,
+                });
+                (
+                    LocalAgentRunStatus::NeedsReview,
+                    None,
+                    None,
+                    Some(terminal),
+                    "run_needs_review",
+                    json!({"reason": reason, "detail": detail}),
+                )
+            }
             LocalAgentStepOutcome::Succeed { output } => (
                 LocalAgentRunStatus::Succeeded,
                 None,

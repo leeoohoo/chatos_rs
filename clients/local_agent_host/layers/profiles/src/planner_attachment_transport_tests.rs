@@ -41,6 +41,9 @@ impl LocalModelRuntimeResolver for LoopbackModel {
 // provider, credentials, private image, or business Task is used.
 #[tokio::test]
 async fn attachment_pixels_reach_actual_http_for_both_profiles_and_legacy_protocol_flags() {
+    // Match the reported 1.77 MB image part; tiny fixtures cannot catch base64
+    // being counted as text tokens before the HTTP request is dispatched.
+    let image_url = format!("data:image/png;base64,{}", "A".repeat(1_770_568));
     for responses in [false, true] {
         for task in [false, true] {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -116,7 +119,10 @@ async fn attachment_pixels_reach_actual_http_for_both_profiles_and_legacy_protoc
             } else {
                 ControlPlaneLocalAiStepPlanner::main_chat(resolver, OwnerCheckingCapabilityResolver)
             };
-            let prepared = planner.prepare_ai_step(&image_claim(task)).await.unwrap();
+            let mut claim = image_claim(task);
+            claim.run.continuation_input.as_mut().unwrap()["invocations"][0]["result"]
+                ["_model_input"][0]["image_url"] = json!(image_url);
+            let prepared = planner.prepare_ai_step(&claim).await.unwrap();
             prepared
                 .runner
                 .execute_once(prepared.request, 2, prepared.reason, 1)
@@ -135,8 +141,7 @@ async fn attachment_pixels_reach_actual_http_for_both_profiles_and_legacy_protoc
                     .filter_map(|item| item["content"].as_array())
                     .flatten()
                     .any(|part| {
-                        part["type"] == "input_image"
-                            && part["image_url"] == "data:image/png;base64,iVBORw0KGgo="
+                        part["type"] == "input_image" && part["image_url"] == image_url
                     }),
                 "attachment must be a real image part in the HTTP body"
             );
