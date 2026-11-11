@@ -2010,6 +2010,17 @@ fn lease_tree_handles(root: &Path) -> Result<Vec<LeaseTreeHandle>, String> {
         children.sort_by_key(std::fs::DirEntry::file_name);
         for child in children {
             let path = child.path();
+            // A reparse point below an otherwise regular workspace is not part of the
+            // workspace ACL lease.  Do not follow it or grant the AppContainer SID access to
+            // the link target; ignoring the entry lets ordinary Git/workspace operations keep
+            // working when repositories contain package-manager junctions (for example
+            // node_modules links).  A reparse workspace root is still rejected above, and a
+            // reparse race between this metadata check and opening the handle fails closed.
+            let metadata = std::fs::symlink_metadata(&path)
+                .map_err(|error| format!("Reading the workspace ACL tree failed: {error}"))?;
+            if is_reparse_point(&metadata) {
+                continue;
+            }
             let entry = open_acl_handle(&path)?;
             let final_path = final_path_from_handle(&entry.file)?;
             if !final_path.starts_with(&root_final_path) || final_path == root_final_path {
@@ -3173,7 +3184,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_tree_rejects_reparse_points_before_publishing_a_journal() {
+    fn workspace_tree_skips_reparse_points_without_granting_link_targets() {
         let app_data = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
@@ -3183,11 +3194,16 @@ mod tests {
         if std::os::windows::fs::symlink_file(&target, &link).is_err() {
             return;
         }
+        let inside = workspace.path().join("inside.txt");
+        std::fs::write(&inside, b"inside").unwrap();
         let manager = WorkspaceLeaseManager::open(app_data.path()).unwrap();
         let profile = AppContainerProfile::create("ChatOS.AppContainer.Probe").unwrap();
-        assert!(manager
+        let lease = manager
             .grant(workspace.path(), profile.sid, WorkspaceAccess::ReadOnly,)
-            .is_err());
+            .expect("a reparse child must not poison the workspace lease");
+        assert_eq!(read_file_exit_code(&profile, &inside).unwrap(), 0);
+        assert_ne!(read_file_exit_code(&profile, &target).unwrap(), 0);
+        lease.restore().unwrap();
         assert_eq!(manager.journal_count(), 0);
     }
 
