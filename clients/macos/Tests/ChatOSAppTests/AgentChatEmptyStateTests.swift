@@ -64,7 +64,41 @@ final class AgentChatEmptyStateTests: XCTestCase {
         let long = try XCTUnwrap(measurement.rowFrames["long"])
         XCTAssertEqual(short.height, 80, accuracy: 1)
         XCTAssertEqual(long.height, 220, accuracy: 1)
+        XCTAssertLessThan(short.minY, 40, "a short conversation should stay top-aligned")
         XCTAssertGreaterThanOrEqual(long.minY - short.maxY, 15)
+    }
+
+    func testLongTimelinePositionsLatestMessageAtBottom() async throws {
+        let measurement = EmptyStateMeasurement()
+        let items = (0..<6).map { EmptyStateItem(id: "row-\($0)", height: 180) }
+        let hosting = NSHostingView(rootView: timeline(items: items, measurement: measurement))
+        let window = mount(hosting, width: 900, height: 600)
+        defer { window.close() }
+        try await settle(hosting)
+
+        let last = try XCTUnwrap(measurement.rowFrames["row-5"])
+        XCTAssertGreaterThan(last.maxY, 500)
+        XCTAssertLessThanOrEqual(last.maxY, 600)
+    }
+
+    func testLargeTimelineConstructsOnlyVisibleRowsWhileScrolling() async throws {
+        let measurement = EmptyStateMeasurement()
+        let items = (0..<1_000).map { EmptyStateItem(id: "row-\($0)", height: 100) }
+        let hosting = NSHostingView(rootView: timeline(items: items, measurement: measurement))
+        let window = mount(hosting, width: 900, height: 600)
+        defer { window.close() }
+        try await settle(hosting)
+
+        let initialCount = measurement.constructedIDs.count
+        XCTAssertGreaterThan(initialCount, 0)
+        XCTAssertLessThan(initialCount, 40)
+
+        let scrollView = try XCTUnwrap(findScrollView(in: hosting))
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: 8_000))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        try await settle(hosting)
+        XCTAssertGreaterThan(measurement.constructedIDs.count, initialCount)
+        XCTAssertLessThan(measurement.constructedIDs.count, 80)
     }
 
     private func timeline(
@@ -77,6 +111,7 @@ final class AgentChatEmptyStateTests: XCTestCase {
                 Text(item.id)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(height: item.height)
+                    .onAppear { measurement.constructedIDs.insert(item.id) }
                     .onGeometryChange(
                         for: CGRect.self,
                         of: { $0.frame(in: .named("viewport")) }
@@ -123,4 +158,5 @@ private struct EmptyStateItem: Identifiable, Equatable {
 private final class EmptyStateMeasurement {
     var frame: CGRect?
     var rowFrames: [String: CGRect] = [:]
+    var constructedIDs: Set<String> = []
 }

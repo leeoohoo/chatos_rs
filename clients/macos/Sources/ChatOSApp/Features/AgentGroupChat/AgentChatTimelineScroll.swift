@@ -23,30 +23,9 @@ struct AgentChatTimelineRowState: Equatable {
     var actionIDs: Set<String> = []
 }
 
-enum AgentChatTimelineScrollMetrics {
-    static func shouldScrollToBottomInitially(
-        markerMaxY: CGFloat,
-        viewportHeight: CGFloat
-    ) -> Bool {
-        guard markerMaxY.isFinite, markerMaxY < CGFloat.greatestFiniteMagnitude / 2,
-              viewportHeight > 0 else { return false }
-        return markerMaxY > viewportHeight
-    }
-
-    static func isAtBottom(
-        markerMaxY: CGFloat,
-        viewportHeight: CGFloat,
-        tolerance: CGFloat = 32
-    ) -> Bool {
-        guard markerMaxY.isFinite, markerMaxY < CGFloat.greatestFiniteMagnitude / 2,
-              viewportHeight > 0 else { return false }
-        return markerMaxY <= viewportHeight + tolerance
-    }
-}
-
 /// The shared timeline for team rooms and direct conversations. The loaded page is intentionally
-/// bounded, so a regular VStack is both cheap and deterministic: every message gets its natural
-/// height without estimated rows or layout-time geometry feedback.
+/// bounded. LazyVStack is the system virtualization layer: it gives every visible message its
+/// natural height without estimated AppKit rows or layout-time geometry feedback.
 struct AgentChatTimelineView<Item: Identifiable & Equatable, RowContent: View, EmptyContent: View>: View
 where Item.ID == String {
     let items: [Item]
@@ -80,7 +59,7 @@ where Item.ID == String {
     private var timeline: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: AgentChatTimelineViewConstants.rowSpacing) {
+                LazyVStack(alignment: .leading, spacing: AgentChatTimelineViewConstants.rowSpacing) {
                     if hasOlderItems {
                         loadOlderButton(proxy: proxy)
                     }
@@ -96,7 +75,6 @@ where Item.ID == String {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(18)
             }
-            .defaultScrollAnchor(.bottom)
             .scrollPosition(id: $visibleTargetID, anchor: .bottom)
             .onAppear {
                 positionInitially(proxy)
@@ -105,7 +83,10 @@ where Item.ID == String {
                 positionInitially(proxy)
             }
             .onChange(of: visibleTargetID) { _, targetID in
-                followsLatest = targetID == AgentChatTimelineViewConstants.bottomID
+                let nextValue = targetID == AgentChatTimelineViewConstants.bottomID
+                if followsLatest != nextValue {
+                    followsLatest = nextValue
+                }
             }
             .onChange(of: items.last?.id) {
                 guard hasPositionedInitially else {
@@ -154,6 +135,7 @@ where Item.ID == String {
               !items.isEmpty else { return }
         isPositioningInitially = true
         Task { @MainActor in
+            await Task.yield()
             await Task.yield()
             followsLatest = true
             proxy.scrollTo(AgentChatTimelineViewConstants.bottomID, anchor: .bottom)
