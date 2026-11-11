@@ -303,7 +303,7 @@ extension MediaStudioView {
         VStack(alignment: .leading, spacing: 8) {
             fieldLabel(appModel.localized("模型", english: "Model"))
 
-            if viewModel.isLoadingModels && viewModel.models.isEmpty {
+            if viewModel.isLoadingModels && viewModel.imageModels.isEmpty {
                 HStack(spacing: 9) {
                     ProgressView().controlSize(.small)
                     Text(appModel.localized("正在读取模型…", english: "Loading models…"))
@@ -313,13 +313,13 @@ extension MediaStudioView {
                 .padding(.horizontal, 12)
                 .frame(height: 48)
                 .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-            } else if viewModel.models.isEmpty {
+            } else if viewModel.imageModels.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(appModel.localized("没有可用模型", english: "No usable models"))
                         .font(.system(size: 12.5, weight: .semibold))
                     Text(appModel.localized(
-                        "请先配置一个全局启用且具有 API 密钥的模型。",
-                        english: "Configure a globally enabled model with an API key first."
+                        "请先配置一个启用且具有 API 密钥的图片生成模型。",
+                        english: "Configure an enabled image generation model with an API key first."
                     ))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
@@ -329,7 +329,7 @@ extension MediaStudioView {
                 .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
             } else {
                 Menu {
-                    ForEach(viewModel.models) { item in
+                    ForEach(viewModel.imageModels) { item in
                         Button {
                             viewModel.selectedModelID = item.id
                         } label: {

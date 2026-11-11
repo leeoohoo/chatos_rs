@@ -165,6 +165,11 @@ pub async fn get_user_model_runtime_config(
                 "model config is not backed by an active model provider",
             ));
         }
+        if chatos_service_runtime::model_workload::ModelWorkload::for_model(&model_config.model)
+            != chatos_service_runtime::model_workload::ModelWorkload::Chat
+        {
+            return Err(bad_request("model does not support chat operations"));
+        }
         if !model_config.enabled {
             return Err(bad_request("model config is disabled"));
         }
@@ -284,7 +289,9 @@ pub async fn list_user_model_runtime_configs(
             .map_err(internal_error)?;
         let mut items = Vec::new();
         for model_config in configs {
-            if !model_config.enabled
+            if chatos_service_runtime::model_workload::ModelWorkload::for_model(&model_config.model)
+                != chatos_service_runtime::model_workload::ModelWorkload::Chat
+                || !model_config.enabled
                 || model_config.model.trim().is_empty()
                 || !is_supported_provider(model_config.provider.as_str())
                 || !model_config_has_backing_provider(&model_config, providers.as_slice())
@@ -372,8 +379,12 @@ fn has_complete_model_capability(model: &crate::models::UserModelConfigRecord) -
         .model_capability_revision
         .as_deref()
         .is_some_and(|value| !value.trim().is_empty())
-        && model.context_window_tokens.is_some_and(|value| value >= 2_048)
-        && model.output_reserve_tokens.is_some_and(|value| value >= 256)
+        && model
+            .context_window_tokens
+            .is_some_and(|value| value >= 2_048)
+        && model
+            .output_reserve_tokens
+            .is_some_and(|value| value >= 256)
         && model
             .context_window_tokens
             .zip(model.output_reserve_tokens)

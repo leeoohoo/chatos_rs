@@ -81,7 +81,7 @@ let package = Package(
         ),
         .target(
             name: "ChatOSAPI",
-            dependencies: ["ChatOSCore", "ChatOSAgentRuntime", "ChatOSNetworking"]
+            dependencies: ["ChatOSCore", "ChatOSAgentRuntime", "ChatOSNetworking", "ChatOSModelCapabilities"]
         ),
         .target(
             name: "ChatOSConnector",

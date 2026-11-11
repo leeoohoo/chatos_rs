@@ -80,25 +80,13 @@ pub(in crate::api) async fn create_model_config(
     let task_usage_scenario = normalize_optional_string(input.task_usage_scenario);
     let temperature = validate_temperature(input.temperature)?;
     let max_output_tokens = validate_max_output_tokens(input.max_output_tokens)?;
-    let model_capability_revision = normalize_optional_string(input.model_capability_revision)
-        .ok_or_else(|| bad_request("model_capability_revision is required"))?;
-    let context_window_tokens = input
-        .context_window_tokens
-        .ok_or_else(|| bad_request("context_window_tokens is required"))?;
-    let output_reserve_tokens = input
-        .output_reserve_tokens
-        .ok_or_else(|| bad_request("output_reserve_tokens is required"))?;
+    let model_capability_revision = normalize_optional_string(input.model_capability_revision);
+    let context_window_tokens = input.context_window_tokens;
+    let output_reserve_tokens = input.output_reserve_tokens;
     let protocol_overhead_estimator_id =
-        normalize_optional_string(input.protocol_overhead_estimator_id)
-            .ok_or_else(|| bad_request("protocol_overhead_estimator_id is required"))?;
+        normalize_optional_string(input.protocol_overhead_estimator_id);
     let tokenizer_id = normalize_optional_string(input.tokenizer_id);
     let responses_compaction_threshold = input.responses_compaction_threshold;
-    validate_model_capability(
-        context_window_tokens,
-        output_reserve_tokens,
-        max_output_tokens,
-        responses_compaction_threshold,
-    )?;
     let now = now_rfc3339();
     let Some(model) = normalize_optional_string(input.model) else {
         return Err(bad_request(
@@ -118,7 +106,7 @@ pub(in crate::api) async fn create_model_config(
         .find_user_model_config_by_id(id.as_str())
         .await
         .map_err(internal_error)?;
-    let record = UserModelConfigRecord {
+    let mut record = UserModelConfigRecord {
         id,
         owner_user_id: owner_user_id.clone(),
         source_provider_id: existing
@@ -145,12 +133,33 @@ pub(in crate::api) async fn create_model_config(
         temperature: temperature.or_else(|| existing.as_ref().and_then(|item| item.temperature)),
         max_output_tokens: max_output_tokens
             .or_else(|| existing.as_ref().and_then(|item| item.max_output_tokens)),
-        model_capability_revision: Some(model_capability_revision),
-        context_window_tokens: Some(context_window_tokens),
-        output_reserve_tokens: Some(output_reserve_tokens),
-        protocol_overhead_estimator_id: Some(protocol_overhead_estimator_id),
-        tokenizer_id,
-        responses_compaction_threshold,
+        model_capability_revision: model_capability_revision.or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|item| item.model_capability_revision.clone())
+        }),
+        context_window_tokens: context_window_tokens.or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|item| item.context_window_tokens)
+        }),
+        output_reserve_tokens: output_reserve_tokens.or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|item| item.output_reserve_tokens)
+        }),
+        protocol_overhead_estimator_id: protocol_overhead_estimator_id.or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|item| item.protocol_overhead_estimator_id.clone())
+        }),
+        tokenizer_id: tokenizer_id
+            .or_else(|| existing.as_ref().and_then(|item| item.tokenizer_id.clone())),
+        responses_compaction_threshold: responses_compaction_threshold.or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|item| item.responses_compaction_threshold)
+        }),
         api_key: api_key.or_else(|| existing.as_ref().and_then(|item| item.api_key.clone())),
         has_api_key: input.has_api_key.unwrap_or_else(|| {
             api_key_present || existing.as_ref().is_some_and(|item| item.has_api_key)
@@ -170,12 +179,8 @@ pub(in crate::api) async fn create_model_config(
             .unwrap_or_else(|| now.clone()),
         updated_at: now,
     };
-    validate_model_capability(
-        context_window_tokens,
-        output_reserve_tokens,
-        record.max_output_tokens,
-        record.responses_compaction_threshold,
-    )?;
+    crate::model_policy::publish_missing_chat_budget(&mut record);
+    validate_record_model_capability(&record)?;
 
     let saved = state
         .store
@@ -343,6 +348,34 @@ pub(in crate::api) async fn update_model_config(
     } else if let Some(value) = input.responses_compaction_threshold {
         record.responses_compaction_threshold = Some(value);
     }
+    crate::model_policy::publish_missing_chat_budget(&mut record);
+    validate_record_model_capability(&record)?;
+    record.updated_at = now_rfc3339();
+
+    let saved = state
+        .store
+        .save_user_model_config(&record)
+        .await
+        .map_err(internal_error)?;
+    let warnings = if saved.model.trim().is_empty() {
+        vec!["model is empty; refresh provider models before it can be used".to_string()]
+    } else {
+        Vec::new()
+    };
+    Ok(Json(model_config_public_value(
+        saved,
+        false,
+        Some(warnings),
+    )))
+}
+
+fn validate_record_model_capability(
+    record: &UserModelConfigRecord,
+) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
+    use chatos_service_runtime::model_workload::ModelWorkload;
+    if ModelWorkload::for_model(&record.model) != ModelWorkload::Chat {
+        return Ok(());
+    }
     let context_window_tokens = record
         .context_window_tokens
         .ok_or_else(|| bad_request("context_window_tokens is required"))?;
@@ -362,31 +395,16 @@ pub(in crate::api) async fn update_model_config(
             .filter(|value| !value.is_empty())
             .is_none()
     {
-        return Err(bad_request("complete model capability metadata is required"));
+        return Err(bad_request(
+            "complete model capability metadata is required",
+        ));
     }
     validate_model_capability(
         context_window_tokens,
         output_reserve_tokens,
         record.max_output_tokens,
         record.responses_compaction_threshold,
-    )?;
-    record.updated_at = now_rfc3339();
-
-    let saved = state
-        .store
-        .save_user_model_config(&record)
-        .await
-        .map_err(internal_error)?;
-    let warnings = if saved.model.trim().is_empty() {
-        vec!["model is empty; refresh provider models before it can be used".to_string()]
-    } else {
-        Vec::new()
-    };
-    Ok(Json(model_config_public_value(
-        saved,
-        false,
-        Some(warnings),
-    )))
+    )
 }
 
 fn validate_temperature(

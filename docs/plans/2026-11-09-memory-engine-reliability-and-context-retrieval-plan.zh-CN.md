@@ -1238,6 +1238,14 @@ responses_compaction_threshold?
 - Memory Engine 只接受已发布的 capability revision，并把请求预算再限制到服务端策略上限；
 - 缺失或未知 revision 时硬预算 fail closed，不允许退回无完整预算预检的旧行为。
 
+模型目录与运行预算必须遵守以下边界：
+
+- 供应商启用状态决定导入模型的全局 `enabled`；`task_enabled` 只决定任务创建候选，不能用于隐藏 Agent、图片或视频的模型目录。
+- 聊天、图片生成、视频生成按共享操作模型目录分开选择和校验；支持图片输入不代表支持图片生成。
+- 新导入且尚未配置聊天预算的聊天模型，由 User Service 发布共享目录中明确声明的默认请求预算；已有显式预算保持原值。默认预算与 Configuration Center 发布给 Memory Engine 的版本使用同一份源数据，Runtime 继续冻结并严格校验 revision，不在运行时推测或补齐。
+- 图片和视频生成不依赖聊天 token 预算字段。缺少聊天预算不能禁用图片、视频模型，也不能阻止保存它们的任务候选设置。
+- 修复既有错误禁用状态时，按供应商归属统一处理全部账户，保留模型 ID、任务候选设置和显式预算，不按项目补数据。
+
 需要同步修改：User Service 模型 DTO/存储与管理页、Local Agent Host interface/database migration/control-plane mapping、`crates/chatos_ai_runtime` model/runtime request、macOS connector runtime DTO、Windows Runtime 对应模型快照和测试。
 
 ### 11.2 Memory Budget

@@ -181,6 +181,54 @@ fn imported_model_enabled(
     provider_enabled
 }
 
+fn imported_model_record(
+    provider_record: &UserModelProviderRecord,
+    model: &str,
+    existing: Option<&UserModelConfigRecord>,
+    target_id: String,
+    now: &str,
+) -> UserModelConfigRecord {
+    let mut record = UserModelConfigRecord {
+        id: target_id,
+        owner_user_id: provider_record.owner_user_id.clone(),
+        source_provider_id: Some(provider_record.id.clone()),
+        name: imported_model_name(provider_record, model),
+        provider: provider_record.provider.clone(),
+        prompt_vendor: provider_record.prompt_vendor.clone(),
+        model: model.to_string(),
+        thinking_level: existing.and_then(|item| item.thinking_level.clone()),
+        task_usage_scenario: existing.and_then(|item| item.task_usage_scenario.clone()),
+        task_thinking_level: existing.and_then(|item| item.task_thinking_level.clone()),
+        temperature: existing.and_then(|item| item.temperature),
+        max_output_tokens: existing.and_then(|item| item.max_output_tokens),
+        model_capability_revision: existing.and_then(|item| item.model_capability_revision.clone()),
+        context_window_tokens: existing.and_then(|item| item.context_window_tokens),
+        output_reserve_tokens: existing.and_then(|item| item.output_reserve_tokens),
+        protocol_overhead_estimator_id: existing
+            .and_then(|item| item.protocol_overhead_estimator_id.clone()),
+        tokenizer_id: existing.and_then(|item| item.tokenizer_id.clone()),
+        responses_compaction_threshold: existing
+            .and_then(|item| item.responses_compaction_threshold),
+        api_key: provider_record.api_key.clone(),
+        has_api_key: true,
+        base_url: provider_record.base_url.clone(),
+        enabled: imported_model_enabled(existing, provider_record.enabled),
+        task_enabled: existing
+            .and_then(|item| item.task_enabled)
+            .or_else(|| existing.map(|item| item.enabled))
+            .or(Some(true)),
+        supports_images: provider_record.supports_images,
+        supports_reasoning: provider_record.supports_reasoning,
+        supports_responses: provider_record.supports_responses,
+        created_at: existing
+            .map(|item| item.created_at.clone())
+            .unwrap_or_else(|| now.to_string()),
+        updated_at: now.to_string(),
+    };
+    crate::model_policy::publish_missing_chat_budget(&mut record);
+    record
+}
+
 pub(super) async fn refresh_provider_models_from_record(
     state: &AppState,
     mut provider_record: UserModelProviderRecord,
@@ -308,50 +356,8 @@ pub(super) async fn refresh_provider_models_from_record(
                 model.as_str(),
             )
         });
-        let record = UserModelConfigRecord {
-            id: target_id.clone(),
-            owner_user_id: provider_record.owner_user_id.clone(),
-            source_provider_id: Some(provider_record.id.clone()),
-            name: imported_model_name(&provider_record, model.as_str()),
-            provider: provider_record.provider.clone(),
-            prompt_vendor: provider_record.prompt_vendor.clone(),
-            model: model.clone(),
-            thinking_level: existing.and_then(|item| item.thinking_level.clone()),
-            task_usage_scenario: existing.and_then(|item| item.task_usage_scenario.clone()),
-            task_thinking_level: existing.and_then(|item| item.task_thinking_level.clone()),
-            temperature: existing.and_then(|item| item.temperature),
-            max_output_tokens: existing.and_then(|item| item.max_output_tokens),
-            model_capability_revision: existing
-                .and_then(|item| item.model_capability_revision.clone()),
-            context_window_tokens: existing.and_then(|item| item.context_window_tokens),
-            output_reserve_tokens: existing.and_then(|item| item.output_reserve_tokens),
-            protocol_overhead_estimator_id: existing
-                .and_then(|item| item.protocol_overhead_estimator_id.clone()),
-            tokenizer_id: existing.and_then(|item| item.tokenizer_id.clone()),
-            responses_compaction_threshold: existing
-                .and_then(|item| item.responses_compaction_threshold),
-            api_key: provider_record.api_key.clone(),
-            has_api_key: true,
-            base_url: provider_record.base_url.clone(),
-            enabled: existing.is_some_and(|item| {
-                imported_model_enabled(Some(item), provider_record.enabled)
-                    && item.model_capability_revision.is_some()
-                    && item.context_window_tokens.is_some()
-                    && item.output_reserve_tokens.is_some()
-                    && item.protocol_overhead_estimator_id.is_some()
-            }),
-            task_enabled: existing
-                .and_then(|item| item.task_enabled)
-                .or_else(|| existing.map(|item| item.enabled))
-                .or(Some(true)),
-            supports_images: provider_record.supports_images,
-            supports_reasoning: provider_record.supports_reasoning,
-            supports_responses: provider_record.supports_responses,
-            created_at: existing
-                .map(|item| item.created_at.clone())
-                .unwrap_or_else(|| now.clone()),
-            updated_at: now.clone(),
-        };
+        let record =
+            imported_model_record(&provider_record, model, existing, target_id.clone(), &now);
         state
             .store
             .save_user_model_config(&record)
@@ -398,7 +404,10 @@ pub(super) async fn refresh_provider_models_from_record(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_provider_managed_fields, canonical_existing_model, imported_model_enabled};
+    use super::{
+        apply_provider_managed_fields, canonical_existing_model, imported_model_enabled,
+        imported_model_record,
+    };
     use crate::models::{UserModelConfigRecord, UserModelProviderRecord};
 
     fn model(enabled: bool) -> UserModelConfigRecord {
@@ -455,6 +464,68 @@ mod tests {
             created_at: "created".to_string(),
             updated_at: "updated".to_string(),
         }
+    }
+
+    #[test]
+    fn importer_enables_chat_image_and_video_without_requiring_prior_chat_metadata() {
+        for name in ["gpt-6-luna", "gpt-image-2", "MiniMax-H3"] {
+            let record =
+                imported_model_record(&provider(true), name, None, "stable-id".into(), "now");
+            assert!(record.enabled, "{name}");
+            assert_eq!(record.id, "stable-id");
+            assert_eq!(record.task_enabled, Some(true));
+            assert_eq!(
+                record.model_capability_revision.is_some(),
+                name == "gpt-6-luna"
+            );
+            assert!(record.context_window_tokens.is_some() == (name == "gpt-6-luna"));
+            let disabled =
+                imported_model_record(&provider(false), name, None, "stable-id".into(), "now");
+            assert!(!disabled.enabled);
+        }
+    }
+
+    #[test]
+    fn refresh_repairs_disabled_models_and_keeps_task_preferences_and_explicit_budgets() {
+        let mut existing = model(false);
+        existing.model_capability_revision = None;
+        existing.context_window_tokens = None;
+        existing.output_reserve_tokens = None;
+        existing.protocol_overhead_estimator_id = None;
+        let repaired = imported_model_record(
+            &provider(true),
+            "gpt-6-luna",
+            Some(&existing),
+            existing.id.clone(),
+            "now",
+        );
+        assert!(repaired.enabled);
+        assert_eq!(repaired.task_enabled, Some(false));
+        assert_eq!(
+            repaired.model_capability_revision.as_deref(),
+            Some(
+                chatos_service_runtime::model_workload::default_chat_budget()
+                    .revision
+                    .as_str()
+            )
+        );
+        assert_eq!(repaired.created_at, existing.created_at);
+        let configured = model(true);
+        let refreshed = imported_model_record(
+            &provider(true),
+            "gpt-6.1-sol",
+            Some(&configured),
+            configured.id.clone(),
+            "now",
+        );
+        assert_eq!(
+            refreshed.model_capability_revision,
+            configured.model_capability_revision
+        );
+        assert_eq!(
+            refreshed.context_window_tokens,
+            configured.context_window_tokens
+        );
     }
 
     #[test]

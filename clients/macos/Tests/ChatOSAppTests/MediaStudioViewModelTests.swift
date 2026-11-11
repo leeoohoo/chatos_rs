@@ -5,6 +5,30 @@ import XCTest
 
 @MainActor
 final class MediaStudioViewModelTests: XCTestCase {
+    func testCatalogSeparatesImageSelectionFromChatAndVideoAndRefreshesInvalidSelection() async throws {
+        let viewModel = MediaStudioViewModel(service: MediaStudioWorkloadCatalogService())
+        viewModel.bindAccount(userID: "workload-catalog-test")
+        viewModel.reloadModels()
+        try await waitUntil { !viewModel.isLoadingModels }
+        XCTAssertEqual(viewModel.models.count, 4)
+        XCTAssertEqual(viewModel.imageModels.map(\.id), ["image1", "image2"])
+        XCTAssertEqual(viewModel.textModels.map(\.id), ["chat"])
+        XCTAssertEqual(viewModel.videoModels.map(\.id), ["video"])
+        XCTAssertEqual(viewModel.selectedModelID, "image1")
+        viewModel.selectedModelID = "image2"
+        viewModel.reloadModels()
+        try await waitUntil { !viewModel.isLoadingModels }
+        XCTAssertEqual(viewModel.selectedModelID, "image2")
+        viewModel.selectedModelID = "chat"
+        viewModel.prompt = "a scene"
+        XCTAssertFalse(viewModel.canGenerate)
+        viewModel.reloadModels()
+        try await waitUntil { !viewModel.isLoadingModels }
+        XCTAssertEqual(viewModel.selectedModelID, "image1")
+        viewModel.resetForSignedOut()
+        XCTAssertTrue(viewModel.imageModels.isEmpty)
+    }
+
     func testAccountBindingDefersCatalogHistoryAndStoryActivation() async throws {
         let service = DelayedMediaStudioModelService()
         let viewModel = MediaStudioViewModel(service: service)
@@ -302,7 +326,7 @@ private actor DelayedMediaStudioModelService: MediaGenerationServicing {
             id: id,
             name: id,
             provider: "gpt",
-            modelName: id,
+            modelName: "gpt-image-2",
             enabled: true,
             taskEnabled: false,
             hasAPIKey: true
@@ -327,5 +351,22 @@ private struct MediaStudioFailureService: MediaGenerationServicing {
         progress: @escaping @Sendable (VideoGenerationProgress) async -> Void
     ) async throws -> VideoGenerationResult {
         throw URLError(.badServerResponse)
+    }
+}
+
+private struct MediaStudioWorkloadCatalogService: MediaGenerationServicing {
+    func fetchModels() async throws -> [MediaGenerationModel] {
+        [("chat", "gpt-6.1-sol"), ("image1", "gpt-image-1.5"),
+         ("image2", "gpt-image-2"), ("video", "MiniMax-H3")].map { id, name in
+            .init(id: id, name: name, provider: "gpt", modelName: name,
+                  enabled: true, taskEnabled: false, hasAPIKey: true)
+        }
+    }
+    func generateImage(_ request: ImageGenerationRequest) async throws -> ImageGenerationResult {
+        throw URLError(.unsupportedURL)
+    }
+    func generateVideo(_ request: VideoGenerationRequest,
+        progress: @escaping @Sendable (VideoGenerationProgress) async -> Void) async throws -> VideoGenerationResult {
+        throw URLError(.unsupportedURL)
     }
 }

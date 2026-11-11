@@ -1,13 +1,17 @@
 import Foundation
 
 public struct MediaStudioModelCatalog: Equatable, Sendable {
+    public var allModels: [MediaGenerationModel]
     public var imageModels: [MediaGenerationModel]
     public var videoModels: [MediaGenerationModel]
+    public var textModels: [MediaGenerationModel] { allModels.filter(\.supportsChat) }
 
     public init(
+        allModels: [MediaGenerationModel],
         imageModels: [MediaGenerationModel],
         videoModels: [MediaGenerationModel]
     ) {
+        self.allModels = allModels
         self.imageModels = imageModels
         self.videoModels = videoModels
     }
@@ -21,10 +25,11 @@ public struct MediaStudioModelCatalogUseCase: Sendable {
     }
 
     public func load() async throws -> MediaStudioModelCatalog {
-        let models = try await provider.fetchModels()
+        let models = try await provider.fetchModels().filter { $0.enabled && $0.hasAPIKey }
         try Task.checkCancellation()
         return MediaStudioModelCatalog(
-            imageModels: models,
+            allModels: models,
+            imageModels: models.filter(\.supportsImageGeneration),
             videoModels: models.filter(Self.isSupportedVideoModel)
         )
     }

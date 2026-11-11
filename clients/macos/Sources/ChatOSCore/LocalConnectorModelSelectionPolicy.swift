@@ -1,3 +1,5 @@
+import ChatOSModelCapabilities
+
 /// `taskEnabled` is a create_task candidate-list preference, not a global model switch.
 public enum LocalConnectorModelSelectionScope: Sendable {
     case general
@@ -20,7 +22,8 @@ public enum LocalConnectorModelSelectionPolicy {
         from models: [LocalConnectorModelConfig], scope: LocalConnectorModelSelectionScope
     ) -> [LocalConnectorModelConfig] {
         models.filter {
-            permits(enabled: $0.enabled, hasAPIKey: $0.hasAPIKey,
+            ModelWorkload.forModel($0.modelName) == .chat
+                && permits(enabled: $0.enabled, hasAPIKey: $0.hasAPIKey,
                     taskEnabled: $0.taskEnabled, scope: scope)
         }
     }

@@ -88,14 +88,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("memory-engine"),
             "json",
-            json!({
-                "model-capability-200k-v1": {
-                    "context_window_tokens": 200000,
-                    "output_reserve_tokens": 30000,
-                    "protocol_overhead_estimator_id": "responses-json-v1",
-                    "tokenizer_id": "o200k_base"
-                }
-            }),
+            chatos_service_runtime::model_workload::published_chat_budget_catalog(),
             None,
             None,
             &[],

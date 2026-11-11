@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSModelCapabilities
 import ChatOSAgentRuntime
 import Foundation
 
@@ -32,7 +33,7 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
             id: configID,
             expectedAuthenticationSessionID: session
         )
-        guard config.enabled, let key = config.apiKey, !key.isEmpty,
+        guard config.enabled, ModelWorkload.forModel(config.model) == .chat, let key = config.apiKey, !key.isEmpty,
               let raw = config.baseURL,
               let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             throw AgentRuntimeError.modelConfigurationUnavailable
@@ -98,7 +99,7 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
 
     public func plan(_ request: StoryPlanningRequest) async throws -> Data {
         let config = try await loadModelConfig(id: request.modelConfigID)
-        guard config.enabled, let key = config.apiKey, !key.isEmpty,
+        guard config.enabled, ModelWorkload.forModel(config.model) == .chat, let key = config.apiKey, !key.isEmpty,
               let raw = config.baseURL, let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
               ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil,
               url.user == nil, url.password == nil else {
