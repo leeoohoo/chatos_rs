@@ -36,12 +36,29 @@ extension LocalAgentGroupChatScheduler {
         deliveryID: String
     ) async throws -> DeliveryAttemptReceipt {
         // Manual recovery is an interactive execution lane. Capacity must be acquired before
-        // in-process ownership or any durable read/write so a queued resume cannot look active,
+        // in-process ownership or durable mutation so a queued resume cannot look active,
         // age a lease, or bypass the process-wide Agent limit.
+        let store = try await service.store()
+        guard let delivery = try await store.delivery(
+            ownerUserID: ownerUserID, deliveryID: deliveryID
+        ) else { throw AgentGroupChatError.notFound }
         let executionPermit = try await acquireExecutionPermit(priority: .interactive)
-        guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else {
+        switch await activeDeliveryRegistry.acquire(
+            deliveryID: deliveryID, ownerUserID: ownerUserID,
+            agentID: delivery.targetAgentID, lane: delivery.lane
+        ) {
+        case .acquired:
+            break
+        case .deliveryActive:
             await executionPermit.releaseAndWait()
             throw AgentGroupChatError.conflict
+        case .managerActive:
+            await executionPermit.releaseAndWait()
+            return .init(
+                deliveryID: deliveryID, agentID: delivery.targetAgentID,
+                outcome: .suspended,
+                detail: "该 Agent 的沟通层正在处理其他记录，请等待当前运行结束；新消息仍会进入收件箱。"
+            )
         }
         do {
             let result = try await resumeRegisteredDelivery(
@@ -146,10 +163,27 @@ extension LocalAgentGroupChatScheduler {
         // Obtain capacity before clearing the uncertain-call marker or reactivating the Todo.
         // Otherwise a saturated client can expose a durable "running" retry that is only waiting
         // behind unrelated work and can also exceed the normal Agent Worker process limit.
+        let store = try await service.store()
+        guard let delivery = try await store.delivery(
+            ownerUserID: ownerUserID, deliveryID: deliveryID
+        ) else { throw AgentGroupChatError.notFound }
         let executionPermit = try await acquireExecutionPermit(priority: .interactive)
-        guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else {
+        switch await activeDeliveryRegistry.acquire(
+            deliveryID: deliveryID, ownerUserID: ownerUserID,
+            agentID: delivery.targetAgentID, lane: delivery.lane
+        ) {
+        case .acquired:
+            break
+        case .deliveryActive:
             await executionPermit.releaseAndWait()
             throw AgentGroupChatError.conflict
+        case .managerActive:
+            await executionPermit.releaseAndWait()
+            return .init(
+                deliveryID: deliveryID, agentID: delivery.targetAgentID,
+                outcome: .suspended,
+                detail: "该 Agent 的沟通层正在处理其他记录，请等待当前运行结束；新消息仍会进入收件箱。"
+            )
         }
         do {
             let result = try await retryRegisteredInterruptedDelivery(

@@ -158,7 +158,7 @@ extension LocalAgentGroupChatSchedulerTests {
         }
     }
 
-    func testSchedulerRunsOneAgentAcrossIndependentRoomsConcurrently() async throws {
+    func testSchedulerSerializesOneAgentsManagerAcrossRooms() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-cross-room-scheduler-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -230,7 +230,7 @@ extension LocalAgentGroupChatSchedulerTests {
         XCTAssertEqual(Set(results.map(\.deliveryID)), expectedDeliveryIDs)
         XCTAssertTrue(results.allSatisfy { $0.outcome == .completed })
         let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
-        XCTAssertGreaterThanOrEqual(maximumConcurrentCalls, 2)
+        XCTAssertEqual(maximumConcurrentCalls, 1)
     }
 
     func testRecoveryRefillsCapacityBeforeSlowIndependentRunFinishes() async throws {

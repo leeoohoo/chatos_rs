@@ -164,6 +164,27 @@ extension SQLiteAgentGroupChatStore {
         }
     }
 
+    /// A completed manager may still be releasing its in-process ownership while another drain
+    /// claims the next wake. Return only an unstarted claim to the queue; never rewrite a Run.
+    func deferUnstartedManagerDelivery(ownerUserID: String, deliveryID: String) throws {
+        try transaction {
+            try execute(
+                """
+                UPDATE project_agent_deliveries
+                SET status = 'pending', claimed_at_unix_ms = NULL
+                WHERE owner_user_id = ? AND id = ? AND status = 'running'
+                  AND trigger_kind != 'todo'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM local_agent_group_chat_runs run
+                    WHERE run.owner_user_id = project_agent_deliveries.owner_user_id
+                      AND run.delivery_id = project_agent_deliveries.id
+                  )
+                """,
+                [.text(ownerUserID), .text(deliveryID)]
+            )
+        }
+    }
+
     public func delivery(
         ownerUserID: String,
         deliveryID: String
