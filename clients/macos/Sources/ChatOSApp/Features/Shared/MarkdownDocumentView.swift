@@ -435,7 +435,7 @@ final class MarkdownLayoutTextView: NSTextView {
         imageLoadTask?.cancel()
         source = nextSource
         textStorage?.setAttributedString(MarkdownAttributedRenderer.render(blocks))
-        invalidateMeasurements()
+        invalidateMeasurements(notifyContainer: false)
 
         let imageBlocks = MarkdownRemoteImageLoader.requests(from: blocks)
         guard !imageBlocks.isEmpty else { return }
@@ -525,15 +525,22 @@ final class MarkdownLayoutTextView: NSTextView {
             textStorage.replaceCharacters(in: range, with: replacement)
         }
         textStorage.endEditing()
-        invalidateMeasurements()
+        invalidateMeasurements(notifyContainer: true)
         enclosingScrollView?.needsLayout = true
     }
 
-    private func invalidateMeasurements() {
+    private func invalidateMeasurements(notifyContainer: Bool) {
         measuredHeights.removeAll(keepingCapacity: true)
         measuredWidths.removeAll(keepingCapacity: true)
-        invalidateIntrinsicContentSize()
         needsDisplay = true
+        guard notifyContainer else { return }
+        // `updateNSView` runs inside SwiftUI's constraint pass. Invalidating intrinsic size from
+        // there recursively asks the top-level NSHostingView to update constraints and AppKit
+        // eventually aborts the process. Only asynchronous image replacement needs a new size
+        // pass, and that notification belongs on the next run-loop turn.
+        DispatchQueue.main.async { [weak self] in
+            self?.invalidateIntrinsicContentSize()
+        }
     }
 }
 

@@ -101,6 +101,23 @@ final class AgentChatEmptyStateTests: XCTestCase {
         XCTAssertLessThan(measurement.constructedIDs.count, 80)
     }
 
+    func testRepeatedMarkdownTimelinePresentationDoesNotReenterWindowConstraints() async throws {
+        let state = TimelinePresentationState()
+        let hosting = NSHostingView(rootView: TimelinePresentationHarness(state: state))
+        let window = mount(hosting, width: 900, height: 600)
+        defer { window.close() }
+
+        for _ in 0..<6 {
+            state.showsTimeline = true
+            try await settle(hosting)
+            XCTAssertNotNil(findScrollView(in: hosting))
+
+            state.showsTimeline = false
+            try await settle(hosting)
+            XCTAssertNil(findScrollView(in: hosting))
+        }
+    }
+
     private func timeline(
         items: [EmptyStateItem] = [], hasOlder: Bool = false, measurement: EmptyStateMeasurement
     ) -> some View {
@@ -146,6 +163,43 @@ final class AgentChatEmptyStateTests: XCTestCase {
     private func findScrollView(in view: NSView) -> NSScrollView? {
         if let scrollView = view as? NSScrollView { return scrollView }
         return view.subviews.lazy.compactMap { self.findScrollView(in: $0) }.first
+    }
+}
+
+@MainActor
+private final class TimelinePresentationState: ObservableObject {
+    @Published var showsTimeline = false
+}
+
+private struct TimelinePresentationHarness: View {
+    @ObservedObject var state: TimelinePresentationState
+
+    private let items = (0..<50).map {
+        EmptyStateItem(id: "markdown-row-\($0)", height: 0)
+    }
+
+    var body: some View {
+        if state.showsTimeline {
+            AgentChatTimelineView(
+                items: items,
+                isInitialContentReady: true,
+                hasOlderItems: false,
+                isLoadingOlderItems: false,
+                scrollToLatestRequest: 0,
+                loadOlderItems: { nil },
+                rowContent: { item in
+                    MarkdownDocumentView(
+                        markdown: "**\(item.id)** " + String(repeating: "自然高度消息内容 ", count: 40),
+                        widthBehavior: .fitContent
+                    )
+                    .padding(12)
+                },
+                emptyContent: { EmptyView() }
+            )
+        } else {
+            Text("总览")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 }
 

@@ -40,7 +40,6 @@ where Item.ID == String {
 
     @State private var hasPositionedInitially = false
     @State private var isPositioningInitially = false
-    @State private var visibleTargetID: String?
     @State private var followsLatest = true
 
     var body: some View {
@@ -75,18 +74,12 @@ where Item.ID == String {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(18)
             }
-            .scrollPosition(id: $visibleTargetID, anchor: .bottom)
+            .agentChatTracksLatest($followsLatest)
             .onAppear {
                 positionInitially(proxy)
             }
             .onChange(of: isInitialContentReady) {
                 positionInitially(proxy)
-            }
-            .onChange(of: visibleTargetID) { _, targetID in
-                let nextValue = targetID == AgentChatTimelineViewConstants.bottomID
-                if followsLatest != nextValue {
-                    followsLatest = nextValue
-                }
             }
             .onChange(of: items.last?.id) {
                 guard hasPositionedInitially else {
@@ -141,6 +134,27 @@ where Item.ID == String {
             proxy.scrollTo(AgentChatTimelineViewConstants.bottomID, anchor: .bottom)
             hasPositionedInitially = true
             isPositioningInitially = false
+        }
+    }
+}
+
+private extension View {
+    /// `scrollPosition` writes its binding while SwiftUI is resolving a lazy stack. On macOS that
+    /// can invalidate the window's constraints from inside the same layout transaction. Use the
+    /// system scroll-geometry callback instead: it reports a stable, equatable "at bottom" value
+    /// after scrolling without making the selected row part of layout state.
+    @ViewBuilder
+    func agentChatTracksLatest(_ followsLatest: Binding<Bool>) -> some View {
+        if #available(macOS 15.0, *) {
+            onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.visibleRect.maxY >= geometry.contentSize.height - 24
+            } action: { _, isAtBottom in
+                if followsLatest.wrappedValue != isAtBottom {
+                    followsLatest.wrappedValue = isAtBottom
+                }
+            }
+        } else {
+            self
         }
     }
 }
