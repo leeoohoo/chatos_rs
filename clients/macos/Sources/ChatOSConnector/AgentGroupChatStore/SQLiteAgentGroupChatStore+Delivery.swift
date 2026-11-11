@@ -361,6 +361,12 @@ extension SQLiteAgentGroupChatStore {
                     ownerUserID: ownerUserID,
                     deliveryID: deliveryID
                   ) else { throw AgentGroupChatError.conflict }
+            // Only wakes actually covered by this run's inbox read can be folded into its cycle.
+            // Later arrivals and every existing checkpoint remain independently recoverable.
+            try AgentDeliveryRepository.completeObservedManagerWakes(
+                database, ownerUserID: ownerUserID, agentID: agentID, cursors: cursors,
+                nowUnixMs: nowUnixMs, preparedStatement: recordPreparedStatement
+            )
             return updated
         }
     }

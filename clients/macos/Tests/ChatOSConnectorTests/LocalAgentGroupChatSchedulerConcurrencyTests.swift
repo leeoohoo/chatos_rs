@@ -227,7 +227,12 @@ extension LocalAgentGroupChatSchedulerTests {
         )
 
         let expectedDeliveryIDs = Set((teamPost.deliveries + directPost.deliveries).map(\.id))
-        XCTAssertEqual(Set(results.map(\.deliveryID)), expectedDeliveryIDs)
+        XCTAssertEqual(results.count, 1)
+        XCTAssertTrue(Set(results.map(\.deliveryID)).isSubset(of: expectedDeliveryIDs))
+        for id in expectedDeliveryIDs {
+            let covered = try await store.delivery(ownerUserID: "alice", deliveryID: id)
+            XCTAssertEqual(covered?.status, .completed)
+        }
         XCTAssertTrue(results.allSatisfy { $0.outcome == .completed })
         let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
         XCTAssertEqual(maximumConcurrentCalls, 1)
@@ -1038,8 +1043,8 @@ extension LocalAgentGroupChatSchedulerTests {
         }
         let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
 
-        XCTAssertEqual(allResults.count, 2)
-        XCTAssertEqual(Set(allResults.map(\.deliveryID)).count, 2)
+        XCTAssertEqual(allResults.count, 1)
+        XCTAssertEqual(Set(allResults.map(\.deliveryID)).count, 1)
         XCTAssertEqual(maximumConcurrentCalls, 1)
     }
 

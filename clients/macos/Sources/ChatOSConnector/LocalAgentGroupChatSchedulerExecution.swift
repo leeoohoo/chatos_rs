@@ -317,7 +317,7 @@ extension LocalAgentGroupChatScheduler {
             }
         }
 
-        var memoryProvider: AgentMemoryContextProvider?
+        var memoryProvider: (any AgentContextProviding)?
         do {
             let memoryScope: AgentMemoryScope
             if let boundScope = checkpoint.memory?.scope {
@@ -397,6 +397,11 @@ extension LocalAgentGroupChatScheduler {
                 : [],
             productSkillSession: productSkillSession
         )
+        if context.lane == .manager, let base = memoryProvider {
+            memoryProvider = LocalAgentManagerContextProvider(
+                base: base, store: store, context: context, inboxSession: chatProvider.managerInboxSession
+            )
+        }
         let extraProviders = try await additionalToolProviders(
             profile,
             member,

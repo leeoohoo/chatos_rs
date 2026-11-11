@@ -7,7 +7,8 @@ description: Read the current Agent's global unread messages, attachments, and a
 
 Begin from Agent-level facts:
 
-- `chat_read_all_unread` reads unread messages across every group and direct conversation for the current Agent and advances the returned cursors.
+- `chat_read_all_unread` reads unread messages across every group and direct conversation for the current Agent. Repeated calls page past messages already returned in this Run; durable cursors advance only when `agent_cycle_complete` succeeds.
+- After any tool, read again if the latest `chatos-runtime-state` system snapshot says `inbox.has_new_messages` is true or `inbox.status` is unavailable.
 - `agent_workspace_snapshot` supplies current-run team, Agent, and explicit project-manager references for proactive routing and task planning.
 - Use `chat_read_attachment` only with message and attachment references returned in this Run.
 

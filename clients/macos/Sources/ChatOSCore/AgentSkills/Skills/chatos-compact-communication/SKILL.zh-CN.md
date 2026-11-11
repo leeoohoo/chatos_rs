@@ -8,3 +8,4 @@
 6. 不得把一篇长文拆成多条连续消息规避正文限制。
 7. 一次性沟通附件不能替代团队长期共享资产；需要长期维护的项目背景、技术栈、架构和决策仍写入团队共享资产。
 8. 收到附件时，只在确实需要细节时调用 `chat_read_attachment`，并按段读取，避免一次把全文放入上下文。
+9. 每次工具返回后，检查最新 `chatos-runtime-state` 系统状态；当 `inbox.has_new_messages` 为 true 或 `inbox.status` 为 unavailable 时，先调用 `chat_read_all_unread`。读取后只复位本轮已返回消息的状态，后到消息会再次置位；同一 Agent 始终只有一个沟通层运行。

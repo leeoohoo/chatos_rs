@@ -210,6 +210,39 @@ enum AgentDeliveryRepository {
         }.first
     }
 
+    static func completeObservedManagerWakes(
+        _ handle: OpaquePointer?, ownerUserID: String, agentID: String,
+        cursors: [ProjectAgentReadCursor], nowUnixMs: Int64, preparedStatement: () -> Void
+    ) throws {
+        guard !cursors.isEmpty else { return }
+        let placeholders = Array(repeating: "(?, ?, ?)", count: cursors.count).joined(separator: ",")
+        let values = cursors.flatMap { cursor in
+            [AgentGroupChatDatabase.Value.text(cursor.roomID), .integer(cursor.messageCreatedAtUnixMs), .text(cursor.messageID)]
+        }
+        preparedStatement()
+        try AgentGroupChatDatabase.execute(handle, """
+            WITH read_through(room_id, created_at, message_id) AS (VALUES \(placeholders))
+            UPDATE project_agent_deliveries
+            SET status = 'completed', completed_at_unix_ms = ?
+            WHERE owner_user_id = ? AND target_agent_id = ?
+              AND status = 'pending' AND trigger_kind IN ('mention', 'default_agent', 'agent_mention')
+              AND NOT EXISTS (
+                SELECT 1 FROM local_agent_group_chat_runs run
+                WHERE run.owner_user_id = project_agent_deliveries.owner_user_id
+                  AND run.delivery_id = project_agent_deliveries.id
+              )
+              AND EXISTS (
+                SELECT 1 FROM read_through boundary
+                JOIN project_agent_messages source
+                  ON source.owner_user_id = project_agent_deliveries.owner_user_id
+                 AND source.room_id = boundary.room_id
+                 AND source.id = project_agent_deliveries.message_id
+                WHERE source.created_at_unix_ms < boundary.created_at
+                   OR (source.created_at_unix_ms = boundary.created_at AND source.id <= boundary.message_id)
+              )
+            """, values + [.integer(nowUnixMs), .text(ownerUserID), .text(agentID)])
+    }
+
     static func outstandingCount(
         _ handle: OpaquePointer?,
         ownerUserID: String,

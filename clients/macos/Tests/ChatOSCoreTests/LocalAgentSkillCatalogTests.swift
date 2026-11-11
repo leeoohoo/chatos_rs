@@ -179,7 +179,7 @@ final class LocalAgentSkillCatalogTests: XCTestCase {
         )
 
         XCTAssertEqual(managerZH.name, "chatos-compact-communication")
-        XCTAssertEqual(managerZH.version, 2)
+        XCTAssertEqual(managerZH.version, 3)
         XCTAssertEqual(managerZH.contentSHA256.count, 64)
         XCTAssertEqual(
             managerZH.contentSHA256,

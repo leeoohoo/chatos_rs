@@ -8,3 +8,4 @@
 6. Never split one long document into several consecutive messages to evade the body limit.
 7. A one-time attachment does not replace a durable team asset. Keep long-lived project context, technology, architecture, and decisions in team assets.
 8. Read an attachment with `chat_read_attachment` only when its detail is needed, and read it in chunks instead of loading the whole document into context.
+9. After every tool, check the latest `chatos-runtime-state` system snapshot. If `inbox.has_new_messages` is true or `inbox.status` is unavailable, call `chat_read_all_unread` first. Reading resets the signal only for messages returned in this Run; later arrivals set it again. Only one communication layer runs per Agent.

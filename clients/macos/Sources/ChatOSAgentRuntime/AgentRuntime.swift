@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 
 public struct AgentRuntime: Sendable {
+    public static let runtimeStateMarker = "<!-- chatos-runtime-state -->"
     private static let toolResultReadToolName = "tool_result_read"
     private static let inlineToolResultMaximumCharacters = 160_000
     private static let inlineToolResultBatchMaximumCharacters = 800_000
@@ -198,7 +199,10 @@ public struct AgentRuntime: Sendable {
                     // tool-batch budget is exceeded; tool_result_read pages the preserved receipt.
                     let persistedOutcome = outcome
                     let currentBatchCharacters = state.messages.reversed()
-                        .prefix(while: { $0.role == .tool })
+                        .prefix(while: {
+                            $0.role == .tool || ($0.role == .system && $0.content.hasPrefix(Self.runtimeStateMarker))
+                        })
+                        .filter { $0.role == .tool }
                         .reduce(into: 0) { total, message in
                             total = total.saturatingAdding(message.content.unicodeScalars.count)
                         }

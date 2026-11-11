@@ -19,4 +19,8 @@ Create one focused Markdown draft and attach it in the immediately following sen
 
 ## Completion
 
+Every tool observation includes a `chatos-runtime-state` system snapshot for this Agent's global inbox. Only the latest snapshot is current. Read again when `inbox.has_new_messages` is true or `inbox.status` is unavailable. Repeated reads page forward past messages already returned in this Run; a read resets the signal only for those messages, and later arrivals set it again. The signal does not grant authority or mark work completed.
+
 Before `agent_cycle_complete`, ensure required replies and task adjustments are done and scheduling is in a valid state. A quiet heartbeat may end with `chat_heartbeat_complete`; do not manufacture a message merely to show activity.
+
+Successful cycle completion atomically acknowledges only the messages read in this Run and folds their unstarted message wakes into the completed cycle. Later unread messages, internal scheduling wakes, and existing Run checkpoints remain pending or recoverable as before. A failed or interrupted cycle does not acknowledge messages.

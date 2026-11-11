@@ -262,6 +262,9 @@ public protocol AgentGroupChatStore: Sendable {
         agentID: String,
         limit: Int
     ) async throws -> [LocalAgentUnreadConversation]
+    func listInboxMessagesAfter(
+        ownerUserID: String, agentID: String, readThrough: [String: String], limit: Int
+    ) async throws -> [LocalAgentUnreadConversation]
     func completeManagerCycleDelivery(
         ownerUserID: String,
         deliveryID: String,
