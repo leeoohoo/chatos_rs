@@ -166,20 +166,31 @@ async fn spawn_sandboxed_process(
         "-Command".to_owned(),
         command.clone(),
     ];
-    let mut child = sandbox
-        .spawn_workspace_command(
-            &cwd,
-            &executable,
-            &arguments,
+    let spawn_cwd = cwd.clone();
+    let spawn_executable = executable.clone();
+    let spawn_arguments = arguments.clone();
+    let spawn_environment = restricted_runtime_environment();
+    let mut child = tokio::task::spawn_blocking(move || {
+        sandbox.spawn_workspace_command(
+            &spawn_cwd,
+            &spawn_executable,
+            &spawn_arguments,
             WorkspaceAccess::ReadWrite,
             "disabled",
-            &restricted_runtime_environment(),
+            &spawn_environment,
         )
-        .map_err(|error| {
-            TerminalRuntimeError::pre_effect(format!(
-                "The sandboxed terminal command could not be started: {error}"
-            ))
-        })?;
+    })
+    .await
+    .map_err(|_| {
+        TerminalRuntimeError::pre_effect(
+            "The sandboxed terminal launcher exited before it could start the command.",
+        )
+    })?
+    .map_err(|error| {
+        TerminalRuntimeError::pre_effect(format!(
+            "The sandboxed terminal command could not be started: {error}"
+        ))
+    })?;
     let stdin = child
         .take_stdin()
         .map(|file| ManagedStdin::Sandbox(Arc::new(StdMutex::new(file))));
