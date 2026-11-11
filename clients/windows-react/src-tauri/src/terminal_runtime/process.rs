@@ -522,23 +522,15 @@ async fn wait_for_sandboxed_child(
     process: Arc<ManagedProcess>,
     child: Arc<std::sync::Mutex<Option<SandboxedChild>>>,
 ) {
-    let exit_code = tokio::task::spawn_blocking(move || loop {
+    let completed = tokio::task::spawn_blocking(move || loop {
         let finished = child
             .lock()
             .ok()
             .and_then(|guard| guard.as_ref().map(SandboxedChild::try_wait));
         match finished {
             Some(Ok(Some(code))) => {
-                let restored = child
-                    .lock()
-                    .ok()
-                    .and_then(|mut guard| guard.take())
-                    .map(SandboxedChild::restore)
-                    .transpose();
-                return match restored {
-                    Ok(Some(())) | Ok(None) => Some(code),
-                    Err(_) => None,
-                };
+                let child = child.lock().ok().and_then(|mut guard| guard.take());
+                return Some((code, child));
             }
             Some(Ok(None)) => std::thread::sleep(std::time::Duration::from_millis(50)),
             Some(Err(_)) | None => return None,
@@ -547,9 +539,17 @@ async fn wait_for_sandboxed_child(
     .await
     .ok()
     .flatten();
+    let (exit_code, child) = completed
+        .map(|(code, child)| (Some(code), child))
+        .unwrap_or((None, None));
+    // Mark the OS process as exited before restoring a potentially large workspace ACL tree.
+    // Otherwise a normal command can be reported as a timeout while cleanup is still running.
     process.finish(exit_code).await;
     sleep(Duration::from_secs(1)).await;
     let _ = process.termination.terminate(true);
+    if let Some(child) = child {
+        let _ = tokio::task::spawn_blocking(move || child.restore()).await;
+    }
 }
 
 enum ManagedStdin {
