@@ -299,12 +299,22 @@ async fn refresh_from_gateway(
     let mut snapshots = Vec::new();
     let mut model_options = Vec::new();
     let mut task_enabled_refs = Vec::new();
+    let mut skipped_invalid_models = 0usize;
     for (item, resolved) in selectable.into_iter().zip(resolved) {
         if item.id != resolved.id {
             return Err("模型目录刷新顺序不一致。".into());
         }
+        let (snapshot, credential, variable) = match resolved_snapshot(resolved.clone(), owner_user_id) {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                // macOS treats one incomplete model configuration as an unusable catalog item
+                // and continues with other complete models. Keep the same behavior on Windows;
+                // capability fields are safety-critical and must never be guessed or defaulted.
+                skipped_invalid_models += 1;
+                continue;
+            }
+        };
         let mut option = model_option_from_gateway(&resolved);
-        let (snapshot, credential, variable) = resolved_snapshot(resolved, owner_user_id)?;
         option.model_config_revision = snapshot.model_config_revision.clone();
         if !refreshed_variables.insert(variable.clone()) {
             return Err("模型标识产生了重复的凭据环境变量。".into());
@@ -323,7 +333,11 @@ async fn refresh_from_gateway(
         model_options.push(option);
     }
     if snapshots.is_empty() {
-        return Err("账号没有可用于本地会话的模型。".into());
+        return Err(if skipped_invalid_models > 0 {
+            "账号没有可用于本地会话的完整模型配置。".into()
+        } else {
+            "账号没有可用于本地会话的模型。".into()
+        });
     }
     publish_capabilities(
         host,
@@ -817,6 +831,36 @@ mod tests {
             option.thinking_levels,
             ["low", "medium", "high", "xhigh", "max"]
         );
+    }
+
+    #[test]
+    fn incomplete_model_capability_is_rejected_without_guessing_defaults() {
+        let model = GatewayModelConfig {
+            id: "model-1".into(),
+            owner_user_id: "owner-1".into(),
+            name: "Incomplete".into(),
+            provider: "openai".into(),
+            model: "gpt-6.1-sol".into(),
+            api_key: Some("secret".into()),
+            base_url: Some("https://example.invalid/v1".into()),
+            task_thinking_level: None,
+            temperature: None,
+            max_output_tokens: None,
+            model_capability_revision: None,
+            context_window_tokens: Some(128_000),
+            output_reserve_tokens: Some(4_096),
+            protocol_overhead_estimator_id: Some("json-v1".into()),
+            tokenizer_id: None,
+            responses_compaction_threshold: None,
+            enabled: true,
+            task_enabled: Some(true),
+            has_api_key: true,
+            supports_images: false,
+            supports_reasoning: true,
+            supports_responses: true,
+        };
+        let error = resolved_snapshot(model, "owner-1").expect_err("missing revision must fail closed");
+        assert!(error.contains("capability revision"));
     }
 
     #[test]
