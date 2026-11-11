@@ -33,6 +33,39 @@ fn should_retry_connect_error(error: &reqwest::Error, completed_retries: usize) 
 }
 
 impl MemoryEngineClient {
+    /// Calls a sibling service on the same origin using this client's user
+    /// session, including its shared token rotation and single-flight refresh.
+    /// System keys and internal Memory credentials are never sent to it.
+    pub async fn post_with_user_auth<T, B>(&self, endpoint: &str, body: &B) -> Result<T, String>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        if !matches!(self.auth, AuthMode::Direct { .. })
+            || self.internal_service_auth.is_some()
+            || self.current_access_token().is_none()
+        {
+            return Err("Sibling service requests require a user bearer session".to_string());
+        }
+        let base = reqwest::Url::parse(&self.base_url)
+            .map_err(|_| "Memory base URL is invalid".to_string())?;
+        let url = reqwest::Url::parse(endpoint)
+            .map_err(|_| "Sibling service URL is invalid".to_string())?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.origin() != base.origin()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(
+                "Sibling service URL must use the Memory origin without credentials or fragment"
+                    .to_string(),
+            );
+        }
+        self.send_json_to_url(Method::POST, url.as_str(), url.path(), Some(body))
+            .await
+    }
+
     pub(super) async fn send_json<T, B>(
         &self,
         method: Method,
@@ -44,13 +77,27 @@ impl MemoryEngineClient {
         B: Serialize + ?Sized,
     {
         let url = format!("{}{}", self.base_url, path);
+        self.send_json_to_url(method, &url, path, body).await
+    }
+
+    async fn send_json_to_url<T, B>(
+        &self,
+        method: Method,
+        url: &str,
+        path: &str,
+        body: Option<&B>,
+    ) -> Result<T, String>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
         let method_label = method.as_str().to_string();
         let mut completed_auth_retries = 0usize;
         let resp = loop {
             let request_access_token = self.current_access_token();
             let mut connect_retry_index = 0usize;
             let resp = loop {
-                let req = self.http.request(method.clone(), url.clone());
+                let req = self.http.request(method.clone(), url);
                 let req = self.apply_auth(req, path, request_access_token.as_deref())?;
                 let req = if let Some(body) = body {
                     req.json(body)
@@ -68,7 +115,7 @@ impl MemoryEngineClient {
                         return Err(format_reqwest_error(
                             "send",
                             method_label.as_str(),
-                            url.as_str(),
+                            url,
                             err,
                         ));
                     }
@@ -98,9 +145,9 @@ impl MemoryEngineClient {
                 truncate_detail(body.as_str(), 4096)
             ));
         }
-        resp.json::<T>().await.map_err(|err| {
-            format_reqwest_error("decode_json", method_label.as_str(), url.as_str(), err)
-        })
+        resp.json::<T>()
+            .await
+            .map_err(|err| format_reqwest_error("decode_json", method_label.as_str(), url, err))
     }
 
     pub(super) async fn delete_with_query(
@@ -347,6 +394,10 @@ pub(super) fn append_optional_bool_query(query: &mut String, key: &str, value: O
         append_optional_query(query, key, Some(if value { "true" } else { "false" }));
     }
 }
+
+#[cfg(test)]
+#[path = "transport_user_auth_tests.rs"]
+mod user_auth_tests;
 
 #[cfg(test)]
 mod tests {

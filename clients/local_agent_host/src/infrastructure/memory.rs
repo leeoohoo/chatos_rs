@@ -30,9 +30,8 @@ pub struct LocalMemoryRuntimeServices {
 
 #[derive(Clone)]
 struct LocalConnectorRuntimeContextAssertionProvider {
-    http: reqwest::Client,
+    client: MemoryEngineClient,
     endpoint: String,
-    access_token: String,
 }
 
 #[derive(Serialize)]
@@ -57,16 +56,8 @@ struct LocalRuntimeContextAssertionResponse {
 }
 
 impl LocalConnectorRuntimeContextAssertionProvider {
-    fn new(endpoint: String, access_token: String, timeout: Duration) -> Result<Self, String> {
-        let http = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .map_err(|error| format!("build Memory assertion issuer client failed: {error}"))?;
-        Ok(Self {
-            http,
-            endpoint,
-            access_token,
-        })
+    fn new(endpoint: String, client: MemoryEngineClient) -> Self {
+        Self { client, endpoint }
     }
 }
 
@@ -81,32 +72,22 @@ impl RuntimeContextAssertionProvider for LocalConnectorRuntimeContextAssertionPr
                     .ok_or_else(|| "Memory project partition is not canonical".to_string())?,
             ),
         };
-        let response = self
-            .http
-            .post(self.endpoint.as_str())
-            .bearer_auth(self.access_token.as_str())
-            .json(&LocalRuntimeContextAssertionRequest {
-                runtime_kind: "local_agent",
-                project_id,
-                runtime_id: request.thread_id,
-                operation: request.operation,
-                source_id: request.source_id,
-                canonical_agent_subject_id: request.canonical_agent_subject_id,
-                thread_id: request.thread_id,
-            })
-            .send()
+        let response: LocalRuntimeContextAssertionResponse = self
+            .client
+            .post_with_user_auth(
+                self.endpoint.as_str(),
+                &LocalRuntimeContextAssertionRequest {
+                    runtime_kind: "local_agent",
+                    project_id,
+                    runtime_id: request.thread_id,
+                    operation: request.operation,
+                    source_id: request.source_id,
+                    canonical_agent_subject_id: request.canonical_agent_subject_id,
+                    thread_id: request.thread_id,
+                },
+            )
             .await
             .map_err(|error| format!("issue Memory runtime context assertion failed: {error}"))?;
-        if !response.status().is_success() {
-            return Err(format!(
-                "Memory runtime context assertion issuer returned {}",
-                response.status()
-            ));
-        }
-        let response = response
-            .json::<LocalRuntimeContextAssertionResponse>()
-            .await
-            .map_err(|error| format!("decode Memory runtime context assertion failed: {error}"))?;
         if response.runtime_context_assertion.trim().is_empty()
             || response.source_id != request.source_id
             || response.canonical_agent_subject_id != request.canonical_agent_subject_id
@@ -285,15 +266,14 @@ impl LocalMemoryRuntimeConfig {
         S: LocalMemoryOutboxStore + 'static,
     {
         let source_id = required("Memory source_id", &self.source_id)?;
-        let access_token = self.access_token.clone().ok_or_else(|| {
+        self.access_token.as_ref().ok_or_else(|| {
             "Memory access token is required for runtime context assertion issuance".to_string()
         })?;
         let client = self.build_client()?;
         let assertion_provider = LocalConnectorRuntimeContextAssertionProvider::new(
             runtime_context_assertion_endpoint(&self.base_url)?,
-            access_token,
-            self.timeout,
-        )?;
+            client.clone(),
+        );
         let composer = MemoryContextComposer::from_client(client.clone())
             .with_runtime_context_assertion_provider(assertion_provider.clone());
         let remote_writer: Arc<dyn MemoryRecordWriter> = Arc::new(
@@ -387,6 +367,10 @@ fn normalized(value: Option<String>) -> Option<String> {
         (!value.is_empty()).then_some(value)
     })
 }
+
+#[cfg(test)]
+#[path = "memory_auth_tests.rs"]
+mod auth_tests;
 
 #[cfg(test)]
 mod tests {
