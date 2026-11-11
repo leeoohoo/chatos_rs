@@ -5,10 +5,38 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AgentChatComposerState: ObservableObject {
-    @Published var draftMessage = ""
+    private var storedDraftMessage = ""
+
+    var draftMessage: String {
+        get { storedDraftMessage }
+        set {
+            guard newValue != storedDraftMessage else { return }
+            let shouldRefreshPresentation = Self.shouldRefreshPresentation(
+                from: storedDraftMessage,
+                to: newValue
+            )
+            if shouldRefreshPresentation {
+                objectWillChange.send()
+            }
+            storedDraftMessage = newValue
+        }
+    }
+
     @Published var attachments: [ConversationAttachmentDraft] = []
     @Published var attachmentError: String?
     @Published var selectedMentionAgentIDs: Set<String> = []
+
+    private static func shouldRefreshPresentation(from oldValue: String, to newValue: String) -> Bool {
+        let oldCanSend = !oldValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let newCanSend = !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if oldCanSend != newCanSend { return true }
+
+        // Mention suggestions are the only draft-dependent UI that must follow
+        // every keystroke. Ordinary text remains owned by NSTextView and does
+        // not need to invalidate the surrounding SwiftUI composer.
+        return AgentChatMentionSyntax.trailingQuery(in: oldValue) != nil
+            || AgentChatMentionSyntax.trailingQuery(in: newValue) != nil
+    }
 }
 
 struct AgentChatComposerView<LeadingControl: View>: View {
