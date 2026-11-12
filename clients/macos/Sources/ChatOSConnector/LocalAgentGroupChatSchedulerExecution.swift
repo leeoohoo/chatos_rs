@@ -10,7 +10,8 @@ extension LocalAgentGroupChatScheduler {
         room: ProjectAgentRoom,
         member: ProjectAgentRoomMember,
         delivery: ProjectAgentDelivery,
-        savedRun: LocalAgentGroupChatRun? = nil
+        savedRun: LocalAgentGroupChatRun? = nil,
+        resumeNativeRun: Bool = false
     ) async throws -> DeliveryAttemptReceipt {
         guard room.ownerUserID == ownerUserID,
               room.projectID == projectID,
@@ -240,6 +241,8 @@ extension LocalAgentGroupChatScheduler {
         }
 
         if let todo = executionTodo, let nativeExecutor {
+            checkpoint.status = .running
+            checkpoint.stopReason = nil
             try await session.record(
                 checkpoint: checkpoint,
                 event: .init(
@@ -256,7 +259,8 @@ extension LocalAgentGroupChatScheduler {
                     member: member,
                     delivery: delivery,
                     todo: todo,
-                    groupRun: run
+                    groupRun: run,
+                    resumeRequested: resumeNativeRun
                 )
             } catch NativeLocalAgentConversationServiceError.notConfigured {
                 checkpoint.status = .paused
@@ -281,8 +285,8 @@ extension LocalAgentGroupChatScheduler {
                     outcome: .completed,
                     detail: outcome.detail
                 )
-            case .suspended:
-                checkpoint.status = .paused
+            case .suspended, .needsReview:
+                checkpoint.status = outcome.state == .needsReview ? .needsReview : .paused
                 checkpoint.stopReason = outcome.detail ?? "Rust Local Agent Host Run 已暂停。"
                 _ = try await session.finish(checkpoint: checkpoint)
                 return .init(

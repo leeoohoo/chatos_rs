@@ -64,7 +64,8 @@ extension LocalAgentGroupChatScheduler {
             let result = try await resumeRegisteredDelivery(
                 ownerUserID: ownerUserID,
                 projectID: projectID,
-                deliveryID: deliveryID
+                deliveryID: deliveryID,
+                resumeNativeRun: true
             )
             await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
             await executionPermit.releaseAndWait()
@@ -82,7 +83,8 @@ extension LocalAgentGroupChatScheduler {
     func resumeRegisteredDelivery(
         ownerUserID: String,
         projectID: String,
-        deliveryID: String
+        deliveryID: String,
+        resumeNativeRun: Bool = false
     ) async throws -> DeliveryAttemptReceipt {
         let store = try await service.store()
         guard let delivery = try await store.delivery(
@@ -112,7 +114,8 @@ extension LocalAgentGroupChatScheduler {
                 room: room,
                 member: member,
                 delivery: delivery,
-                savedRun: savedRun
+                savedRun: savedRun,
+                resumeNativeRun: resumeNativeRun
             )
         } catch {
             var paused = savedRun
@@ -217,11 +220,15 @@ extension LocalAgentGroupChatScheduler {
            var savedRun = try await store.run(
             ownerUserID: ownerUserID,
             deliveryID: deliveryID
-           ), savedRun.checkpoint.status == .needsReview,
-           let inFlightCallID = savedRun.checkpoint.inFlightCallID,
-           savedRun.checkpoint.pendingCalls.contains(where: { $0.id == inFlightCallID }) else {
+           ), savedRun.checkpoint.status == .needsReview else {
             throw AgentGroupChatError.conflict
         }
+
+        let nativeReview = delivery.lane == .executor && nativeExecutor != nil
+        let inFlightCallID = savedRun.checkpoint.inFlightCallID
+        guard nativeReview || (inFlightCallID != nil && savedRun.checkpoint.pendingCalls.contains(
+            where: { $0.id == inFlightCallID }
+        )) else { throw AgentGroupChatError.conflict }
 
         if delivery.status == .failed, delivery.lane == .manager {
             delivery = try await store.reactivateManagerDeliveryForReview(
@@ -242,7 +249,7 @@ extension LocalAgentGroupChatScheduler {
         savedRun.checkpoint.elapsedSeconds = 0
         savedRun.events.append(.init(
             kind: "retry_authorized",
-            detail: "Human 已明确重试中断步骤：\(inFlightCallID)",
+            detail: "Human 已明确重试中断步骤：\(inFlightCallID ?? "Rust Host 当前步骤")",
             modelCalls: savedRun.checkpoint.modelCalls
         ))
         if delivery.triggerKind == .todo,
@@ -288,7 +295,8 @@ extension LocalAgentGroupChatScheduler {
         return try await resumeRegisteredDelivery(
             ownerUserID: ownerUserID,
             projectID: projectID,
-            deliveryID: deliveryID
+            deliveryID: deliveryID,
+            resumeNativeRun: true
         )
     }
 

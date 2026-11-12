@@ -58,7 +58,7 @@ pub(super) async fn resume_conversation_turn(
             .map_err(|_| ClientStorageError::InvalidState("run version exceeds i64".to_string()))?;
         let updated = sqlx::query(
             "UPDATE local_agent_runs SET status = 'continuation_ready', version = version + 1, \
-             continuation_input_json = ?, updated_at_unix_ms = ? \
+             terminal_outcome_json = NULL, continuation_input_json = ?, updated_at_unix_ms = ? \
              WHERE run_id = ? AND status = ? AND version = ?",
         )
         .bind(serde_json::to_string(continuation_input)?)
@@ -75,6 +75,18 @@ pub(super) async fn resume_conversation_turn(
                 current.run_id
             )));
         }
+        // needs_review closes the visible Turn as failed. Reopen it in this same
+        // transaction so the resumed Run can finish and publish its new result.
+        sqlx::query(
+            "UPDATE local_conversation_turns SET status = 'running', updated_at_unix_ms = ? \
+             WHERE turn_id = ? AND run_id = ?",
+        )
+        .bind(now_unix_ms)
+        .bind(&turn.turn_id)
+        .bind(&current.run_id)
+        .execute(&mut *connection)
+        .await
+        .db()?;
         insert_user_message_on(
             &mut connection,
             &turn.conversation_id,

@@ -785,3 +785,62 @@ fn compose_response_to_input_items_reads_tool_calls_from_structured_payload() {
             && item.get("call_id").and_then(|value| value.as_str()) == Some("call_1")
     }));
 }
+
+fn summary_status(
+    running: bool,
+    failed: bool,
+) -> memory_engine_sdk::RunThreadActiveSummaryResponse {
+    serde_json::from_value(json!({
+        "thread_id": "thread-1", "accepted": true, "running": running,
+        "completed": !running, "failed": failed, "job_run_id": "summary-job-1",
+        "generated": !running && !failed, "source_record_count": 9
+    }))
+    .unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn summary_wait_survives_multiple_minutes_until_the_service_completes_the_same_job() {
+    let started = tokio::time::Instant::now();
+    let mut polls = 0;
+    let result = super::wait_for_summary_job(
+        summary_status(true, false),
+        Duration::from_secs(60),
+        |job| {
+            assert_eq!(job.as_deref(), Some("summary-job-1"));
+            polls += 1;
+            std::future::ready(Ok(summary_status(polls < 5, false)))
+        },
+    )
+    .await
+    .unwrap();
+    assert!(result.completed && result.generated);
+    assert_eq!(polls, 5);
+    assert_eq!(started.elapsed(), Duration::from_secs(300));
+}
+
+#[tokio::test(start_paused = true)]
+async fn summary_wait_propagates_service_failure_and_can_be_cancelled_while_running() {
+    let status =
+        super::wait_for_summary_job(summary_status(true, false), Duration::from_secs(1), |_| {
+            std::future::ready(Ok(summary_status(false, true)))
+        })
+        .await
+        .unwrap();
+    assert!(status.failed);
+    let error =
+        super::wait_for_summary_job(summary_status(true, false), Duration::from_secs(1), |_| {
+            std::future::ready(Err("summary service unavailable".to_string()))
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error, "summary service unavailable");
+    let wait =
+        super::wait_for_summary_job(summary_status(true, false), Duration::from_secs(10), |_| {
+            std::future::ready(Ok(summary_status(true, false)))
+        });
+    tokio::pin!(wait);
+    tokio::select! {
+        _ = &mut wait => panic!("a running job must keep waiting"),
+        _ = tokio::time::sleep(Duration::from_secs(200)) => {}
+    }
+}

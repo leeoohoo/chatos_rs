@@ -3076,7 +3076,10 @@ mod tests {
             panic!("expected repeat block commit")
         };
         assert_eq!(second.status, LocalAgentRunStatus::NeedsReview);
-        assert!(second.terminal_outcome.is_none());
+        assert_eq!(
+            second.terminal_outcome.as_ref().expect("review diagnostic")["error"],
+            "trusted plugin Hook repeatedly blocked successful completion"
+        );
         assert_eq!(runner.events(), vec!["Stop", "Stop"]);
     }
 

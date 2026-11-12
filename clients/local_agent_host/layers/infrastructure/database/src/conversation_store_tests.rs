@@ -975,3 +975,135 @@ async fn guidance_interrupts_an_active_claim_and_is_delivered_once() {
         "also inspect the tests"
     );
 }
+
+#[tokio::test]
+async fn reviewed_turn_resumes_and_can_fail_again_then_finish_without_stale_terminal_state() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    create(&storage, "conversation-recover").await;
+    storage
+        .configure_memory_projection("user-1", "chatos", 1_500)
+        .await
+        .unwrap();
+    let initial = turn("conversation-recover", 1, "recover");
+    let mut record = run(&initial, 2_000);
+    record.input["agent_id"] = json!("agent-1");
+    storage
+        .start_conversation_turn(
+            &idempotency("recover-start"),
+            &initial,
+            &record,
+            "recover-started",
+            2_000,
+        )
+        .await
+        .unwrap();
+    for attempt in 0..3 {
+        let now = 3_000 + attempt * 10_000;
+        let claim = storage
+            .claim_next_run(
+                &idempotency(&format!("recover-claim-{attempt}")),
+                "user-1",
+                "worker-1",
+                &format!("recover-token-{attempt}"),
+                now,
+                now + 10_000,
+                &format!("recover-claimed-{attempt}"),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(claim.run.run_id, initial.run_id);
+        let succeeded = attempt == 2;
+        let result = storage
+            .apply_transition(
+                &idempotency(&format!("recover-commit-{attempt}")),
+                &RunTransition {
+                    run_id: claim.run.run_id,
+                    claim_token: claim.claim_token,
+                    expected_version: claim.run.version,
+                    expected_status: LocalAgentRunStatus::ModelRunning,
+                    next_status: if succeeded {
+                        LocalAgentRunStatus::Succeeded
+                    } else {
+                        LocalAgentRunStatus::NeedsReview
+                    },
+                    next_model_attempt: 1,
+                    next_attempt_at_unix_ms: None,
+                    pending_tool_batch: None,
+                    tool_batch: None,
+                    checkpoint: Some(json!({"saved_progress": attempt})),
+                    clear_continuation_input: true,
+                    terminal_outcome: Some(if succeeded {
+                        json!({"content":"recovered result"})
+                    } else {
+                        json!({"error":"summary wait interrupted"})
+                    }),
+                    event_id: format!("recover-result-{attempt}"),
+                    event_type: "run_result".into(),
+                    event_payload: json!({"attempt":attempt}),
+                    occurred_at_unix_ms: now + 1,
+                },
+            )
+            .await
+            .unwrap();
+        let detail = storage
+            .get_conversation("user-1", "conversation-recover")
+            .await
+            .unwrap()
+            .unwrap();
+        if succeeded {
+            assert_eq!(
+                detail.turns[0].status,
+                LocalConversationTurnStatus::Succeeded
+            );
+            let outputs: Vec<_> = detail
+                .messages
+                .iter()
+                .filter(|m| m.message_id == format!("assistant:{}", initial.run_id))
+                .collect();
+            assert_eq!(outputs.len(), 1);
+            assert_eq!(outputs[0].content["content"], "recovered result");
+            break;
+        }
+        assert_eq!(detail.turns[0].status, LocalConversationTurnStatus::Failed);
+        let command = ResumeConversationTurnCommand {
+            owner_user_id: "user-1".into(),
+            conversation_id: "conversation-recover".into(),
+            expected_conversation_version: detail.conversation.version,
+            turn_id: initial.turn_id.clone(),
+            expected_run_version: result.version,
+            expected_run_status: LocalAgentRunStatus::NeedsReview,
+            message_id: format!("recover-message-{attempt}"),
+            message: "continue".into(),
+            message_metadata: json!({}),
+            attachments: vec![],
+            reason: "Human retry".into(),
+        };
+        let receipt = idempotency(&format!("recover-resume-{attempt}"));
+        let resumed = storage
+            .resume_conversation_turn(
+                &receipt,
+                &command,
+                &json!({"type":"resume"}),
+                &format!("recover-resumed-{attempt}"),
+                now + 2,
+            )
+            .await
+            .unwrap();
+        assert_eq!(resumed.turn.status, LocalConversationTurnStatus::Running);
+        assert_eq!(resumed.run.status, LocalAgentRunStatus::ContinuationReady);
+        assert!(resumed.run.terminal_outcome.is_none());
+        assert_eq!(resumed.run.checkpoint, json!({"saved_progress":attempt}));
+        let replay = storage
+            .resume_conversation_turn(
+                &receipt,
+                &command,
+                &json!({"type":"resume"}),
+                "unused",
+                now + 3,
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay, resumed);
+    }
+}
