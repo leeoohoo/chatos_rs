@@ -366,21 +366,25 @@ extension AppModel {
         guard let askUserPromptService else {
             throw PetActivityActionError.promptUnavailable
         }
-        _ = try await askUserPromptService.submit(
+        let resolvedPrompt = try await askUserPromptService.submit(
             promptID: prompt.id,
             sessionID: prompt.sessionID,
             submission: submission
         )
+        conversationCache[prompt.sessionID]?
+            .applyExternalAskUserPromptResolution(resolvedPrompt)
     }
 
     func cancelPetAskUserPrompt(_ prompt: AskUserPrompt) async throws {
         guard let askUserPromptService else {
             throw PetActivityActionError.promptUnavailable
         }
-        _ = try await askUserPromptService.cancel(
+        let resolvedPrompt = try await askUserPromptService.cancel(
             promptID: prompt.id,
             sessionID: prompt.sessionID
         )
+        conversationCache[prompt.sessionID]?
+            .applyExternalAskUserPromptResolution(resolvedPrompt)
     }
 
     func applyPetActivityDisposition(
