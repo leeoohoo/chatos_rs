@@ -4,6 +4,7 @@
 import { ReloadOutlined } from '@ant-design/icons';
 import { Button, Card, Descriptions, Empty, Space, Tabs, Tag, Typography } from 'antd';
 import type { TabsProps } from 'antd';
+import { Link } from 'react-router-dom';
 
 import type { EngineJobPolicy } from '../../types';
 import type { PolicyViewKey } from '../types';
@@ -66,6 +67,9 @@ export function PoliciesSection(props: PoliciesSectionProps) {
           <Text type="secondary">
             摘要、聚合和主题记忆统一使用该容量，发送请求时扣除提示词、工具及协议开销。模型选择只决定实际调用谁执行任务；查看策略无需选择执行模型。
           </Text>
+          <Link to="/config/definitions?area=platform-shared&search=shared.ai.">
+            查看并修改配置中心的统一容量
+          </Link>
         </Space>
       </Card>
       {policies.length === 0 ? (
