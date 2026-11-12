@@ -192,18 +192,17 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertEqual(recordedDelays, [.seconds(1)])
     }
 
-    func testSettingsPersistAndValidateOverridesAndWindowBudget() throws {
+    func testSettingsPersistAndValidateOverrides() throws {
         let name = "AgentSettingsTests.\(UUID())"
         defer { UserDefaults(suiteName: name)?.removePersistentDomain(forName: name) }
         let store = AgentSettingsStore(suiteName: name)
         var preferences = AgentRuntimePreferences()
         preferences.approvalMaximumCalls = 77; preferences.storyMaximumCalls = 800
-        preferences.global.context = .init()
         try store.save(preferences)
         let restored = try store.load()
         XCTAssertEqual(restored.effective(.approval).maximumModelCalls, 77)
         XCTAssertEqual(restored.effective(.story).maximumModelCalls, 800)
-        preferences.global.context!.outputReserveTokens = preferences.global.context!.windowTokens
+        preferences.global.maximumModelCalls = 0
         XCTAssertThrowsError(try store.save(preferences))
         XCTAssertEqual(try store.load(), restored, "Invalid changes do not overwrite saved settings")
     }

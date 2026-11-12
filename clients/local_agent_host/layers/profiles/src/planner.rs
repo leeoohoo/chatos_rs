@@ -755,11 +755,11 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 .context_window_tokens
                 .saturating_sub(transient.model_config.output_reserve_tokens);
             memory.scope.policy = Some(ComposeContextPolicy {
-                max_memory_tokens: available.min(24_000),
-                max_recent_record_tokens: available.min(12_000),
-                max_thread_summary_tokens: available.min(6_000),
-                max_project_memory_tokens: available.min(4_000),
-                max_agent_memory_tokens: available.min(4_000),
+                max_memory_tokens: available,
+                max_recent_record_tokens: available,
+                max_thread_summary_tokens: available,
+                max_project_memory_tokens: available,
+                max_agent_memory_tokens: available,
             });
         }
         let caller_model = transient.model_config.model.clone();

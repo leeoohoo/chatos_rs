@@ -12,7 +12,6 @@ struct AgentRuntimeSettingsView: View {
 
     private enum Field: String, CaseIterable {
         case calls, approval, story, retries, requestTimeout, runTimeout, noProgress
-        case window, reserve
         var title: (String, String) {
             switch self {
             case .calls: ("全局模型调用上限", "Global model call limit")
@@ -22,8 +21,6 @@ struct AgentRuntimeSettingsView: View {
             case .requestTimeout: ("流式静默超时（秒）", "Stream inactivity timeout (seconds)")
             case .runTimeout: ("整次运行时限（秒）", "Run timeout (seconds)")
             case .noProgress: ("连续无进展暂停阈值", "No-progress round limit")
-            case .window: ("模型窗口预算", "Model context window budget")
-            case .reserve: ("输出预留 tokens", "Reserved output tokens")
             }
         }
         var range: String {
@@ -33,8 +30,6 @@ struct AgentRuntimeSettingsView: View {
             case .requestTimeout: "5–1800"
             case .runTimeout: "10–86400"
             case .noProgress: "1–100"
-            case .window: "2048–2000000"
-            case .reserve: "≥ 256"
             }
         }
     }
@@ -53,23 +48,11 @@ struct AgentRuntimeSettingsView: View {
                     }
                 }
             }
-            LocalConnectorCard(model.localized("上下文窗口", english: "Context Window"),
-                subtitle: model.localized("本轮开始或恢复时从 Memory Engine 读取已总结内容和未总结记录。所有文本模型统一通过 OpenAI Responses 协议调用，并在轮内使用 200k server-side compaction。", english: "At the start or resume boundary, summarized context and unsummarized records are read from Memory Engine. Every text model uses the OpenAI Responses protocol with 200k server-side compaction during the run."),
+            LocalConnectorCard(model.localized("模型输入能力", english: "Model Input Capacity"),
+                subtitle: model.localized("上下文窗口和输出预留由所选模型已发布的能力配置决定，运行开始时冻结。缺少配置时会明确报错。", english: "The selected model's published capability determines its context window and output reserve, frozen at the start of each run. Missing configuration is reported explicitly."),
                 systemImage: "text.alignleft") {
-                VStack(spacing: 12) {
-                    ForEach([Field.window, .reserve], id: \.self) { field in row(field) }
-                    Divider()
-                    if hasSavedPreferences {
-                        let context = saved.global.context ?? AgentContextPolicy()
-                        Text(model.localized("当前已保存生效值：窗口 \(context.windowTokens) · 预留 \(context.outputReserveTokens)", english: "Current saved values: window \(context.windowTokens) · reserve \(context.outputReserveTokens)"))
-                            .appFont(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    Text(model.localized("审批和剧情规划使用同一套本机循环，并持续把记录同步到各自 Agent 的 Memory。每次开始或恢复时 compose 一次；普通 Agent 按累积阈值摘要，独立 Task/Todo 另有结束与空闲兜底。", english: "Approval and story planning use the same native loop and continuously sync records to each Agent's Memory. Context is composed once per start or resume; regular Agents summarize at the accumulation threshold, while independent Tasks and Todos also have terminal and idle fallbacks."))
-                        .appFont(.caption).foregroundStyle(.secondary)
-                    Text(model.localized("模型请求会发送 context_management.compaction，并把完整 response.output 追加到下一次 input，使用无状态 Responses 链继续运行；Memory Engine 仍完整记录用户、助手、工具调用和工具结果，但不再处理轮内溢出。", english: "Model requests send context_management.compaction and append the complete response.output to the next input for stateless Responses chaining. Memory Engine still records every user message, assistant message, tool call, and tool result, but no longer handles in-run overflow."))
-                        .appFont(.caption).foregroundStyle(.secondary)
-                }
+                Text(model.localized("开始或恢复运行时从 Memory Engine 读取上下文；轮内压缩阈值按当前模型能力计算。", english: "Context is read from Memory Engine at the start or resume boundary; in-run compaction uses the current model's capability."))
+                    .appFont(.caption).foregroundStyle(.secondary)
             }
             HStack {
                 Button(model.localized("恢复默认草稿", english: "Reset Draft to Defaults")) { populate(.init()); error = false; didSave = false }
@@ -100,11 +83,10 @@ struct AgentRuntimeSettingsView: View {
     }
     private func populate(_ preferences: AgentRuntimePreferences) {
         let policy = preferences.global
-        let context = policy.context ?? .init()
         values = [.calls: "\(policy.maximumModelCalls)", .approval: preferences.approvalMaximumCalls.map(String.init) ?? "",
                   .story: preferences.storyMaximumCalls.map(String.init) ?? "", .retries: "\(policy.maximumRequestRetries)",
                   .requestTimeout: "\(policy.requestTimeoutSeconds)", .runTimeout: "\(policy.runTimeoutSeconds)",
-                  .noProgress: "\(policy.maximumNoProgressRounds)", .window: "\(context.windowTokens)", .reserve: "\(context.outputReserveTokens)"]
+                  .noProgress: "\(policy.maximumNoProgressRounds)"]
     }
     private func number(_ field: Field) throws -> Int {
         guard let value = Int((values[field] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) else { throw AgentRuntimeError.invalidPolicy }
@@ -123,9 +105,6 @@ struct AgentRuntimeSettingsView: View {
             preferences.global.requestTimeoutSeconds = try number(.requestTimeout)
             preferences.global.runTimeoutSeconds = try number(.runTimeout)
             preferences.global.maximumNoProgressRounds = try number(.noProgress)
-            var context = AgentContextPolicy()
-            context.windowTokens = try number(.window); context.outputReserveTokens = try number(.reserve)
-            preferences.global.context = context
             try store.save(preferences)
             saved = preferences; didSave = true; error = false
             hasSavedPreferences = true

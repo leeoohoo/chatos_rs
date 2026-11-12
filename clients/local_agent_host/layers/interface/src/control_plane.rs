@@ -103,8 +103,8 @@ impl LocalModelConfigSnapshot {
         if self.max_output_tokens.is_some_and(|value| value <= 0) {
             return Err("max_output_tokens must be greater than zero".to_string());
         }
-        if self.context_window_tokens < 2_048
-            || self.output_reserve_tokens < 256
+        if self.context_window_tokens == 0
+            || self.output_reserve_tokens == 0
             || self.output_reserve_tokens >= self.context_window_tokens
         {
             return Err(

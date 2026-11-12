@@ -91,11 +91,11 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
             "model_capability_revision": .string(composeRequest.modelCapability.revision),
             "runtime_context_assertion": .string(assertion.runtime_context_assertion),
             "policy": .object([
-                "max_memory_tokens": .number(24_000),
-                "max_recent_record_tokens": .number(12_000),
-                "max_thread_summary_tokens": .number(6_000),
-                "max_project_memory_tokens": .number(4_000),
-                "max_agent_memory_tokens": .number(4_000),
+                "max_memory_tokens": .number(Double(composeRequest.availableMemoryTokens)),
+                "max_recent_record_tokens": .number(Double(composeRequest.availableMemoryTokens)),
+                "max_thread_summary_tokens": .number(Double(composeRequest.availableMemoryTokens)),
+                "max_project_memory_tokens": .number(Double(composeRequest.availableMemoryTokens)),
+                "max_agent_memory_tokens": .number(Double(composeRequest.availableMemoryTokens)),
             ]),
         ]
         if let projectSubjectID = scope.projectSubjectID {

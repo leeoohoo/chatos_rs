@@ -1,6 +1,9 @@
 pub const USER_PREFERENCE_CONFIG_KEYS: &[&str] =
     &["shared.ui.locale", "shared.ai.internal_context_locale"];
 pub const RETIRED_CONFIG_KEYS: &[&str] = &[
+    "memory_engine.compose.model_capabilities",
+    "agent.runtime.context_window_tokens",
+    "agent.runtime.output_reserve_tokens",
     "configuration_center.downstream.mcp_management_base_url",
     "configuration_center.downstream.mcp_management_internal_api_secret",
     "local_connector.security.mcp_management_internal_api_secret",
@@ -95,7 +98,7 @@ pub const RETIRED_CONFIG_KEY_PREFIXES: &[&str] = &[
     "task_runner.",
     "chatos.",
     "mcp_management.",
-    "memory_engine.policy.thread_repair.",
+    "memory_engine.policy.",
 ];
 pub const RETIRED_CONFIG_SERVICES: &[&str] =
     &["task-runner", "chatos-backend", "mcp-management-service"];

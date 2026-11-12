@@ -27,7 +27,6 @@ public protocol AgentContextProviding: Sendable {
     func prepare(
         checkpoint initial: AgentRunCheckpoint,
         tools: [AgentToolDefinition],
-        policy: AgentContextPolicy,
         modelCapability: AgentModelCapabilitySnapshot,
         deadline: Date,
         synchronizeOnly: Bool,
@@ -72,14 +71,12 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
     }
 
     public func prepare(checkpoint initial: AgentRunCheckpoint, tools: [AgentToolDefinition],
-                        policy: AgentContextPolicy,
                         modelCapability: AgentModelCapabilitySnapshot,
                         deadline: Date, synchronizeOnly: Bool = false,
                         shouldPause: @escaping @Sendable () async -> Bool = { false },
                         record: @escaping AgentRuntime.Recorder) async throws -> AgentPreparedContext {
         var state = initial
         do {
-            try policy.validate()
             guard let bound = state.memory, bound.scope == scope, state.scope == scope.runtimeScope,
                   state.id == scope.runID, bound.syncedMessageCount >= 0,
                   bound.syncedMessageCount <= state.messages.count else { throw AgentContextError.invalidHistory }
@@ -133,10 +130,16 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
             // composed at this turn boundary, but it is never used as an
             // in-loop overflow recovery mechanism.
             let currentUserIndex = try AgentContextAssembler.currentTurnStart(in: state.messages)
+            let fixedMessages = try AgentContextAssembler.assemble(
+                checkpoint: state, memory: state.memory!, context: .init(blocks: [], recentRecords: [])
+            )
+            let fixedTokens = try AgentContextBudget.estimate(messages: fixedMessages, tools: tools)
+            let available = modelCapability.contextWindowTokens - modelCapability.outputReserveTokens - fixedTokens
             let composeRequest = try AgentMemoryComposeRequest(
                 modelCapability: modelCapability,
                 queryText: state.messages[currentUserIndex].content,
-                currentTurnID: conversationTurnID(state.messages, index: currentUserIndex)
+                currentTurnID: conversationTurnID(state.messages, index: currentUserIndex),
+                availableMemoryTokens: available
             )
             let messages = try AgentContextAssembler.assemble(
                 checkpoint: state, memory: state.memory!, context: await service.compose(composeRequest)

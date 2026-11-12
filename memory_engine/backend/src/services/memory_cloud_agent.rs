@@ -71,9 +71,11 @@ pub(crate) async fn generate_or_defer(
         pipeline: CloudSummaryPipelineState::new(
             CloudSummaryPipelineSpec {
                 managed_prompt: Some(runtime.prompt),
+                token_limit: runtime.budget.input_limit()?,
                 ..spec
             },
             payload_contract,
+            runtime.budget,
         )?,
         terminal_context,
     };
@@ -168,6 +170,7 @@ async fn prepare_generation_from_terminal_context(
         "model_provider": runtime.model_provider,
         "model_id": runtime.model_id,
         "model_config_id": runtime.model_config_id,
+        "model_budget": runtime.budget,
         "tokenizer_id": crate::services::generation_identity::TOKENIZER_ID,
         "policy_checksum": policy_checksum,
         "policy_snapshot": policy_snapshot,
@@ -497,7 +500,9 @@ pub(crate) async fn finalize_terminal(
             let job_run_id = terminal_context
                 .get("job_run_id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Memory resummarization terminal context has no job_run_id".to_string())?;
+                .ok_or_else(|| {
+                    "Memory resummarization terminal context has no job_run_id".to_string()
+                })?;
             crate::services::summary::fail_covered_range_resummarize(
                 &state.pool,
                 tenant_id,
@@ -542,7 +547,9 @@ pub(crate) async fn finalize_terminal(
             let job_run_id = terminal_context
                 .get("job_run_id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Memory resummarization terminal context has no job_run_id".to_string())?;
+                .ok_or_else(|| {
+                    "Memory resummarization terminal context has no job_run_id".to_string()
+                })?;
             let result = crate::services::summary::resume_covered_range_resummarize(
                 &state.config,
                 &state.pool,
@@ -636,11 +643,9 @@ pub(crate) async fn finalize_terminal(
                 .get("job_run_id")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "rollup terminal job_run_id is missing".to_string())?;
-            let policy =
-                crate::repositories::control_plane::get_effective_job_policy(&state.pool, "rollup")
-                    .await?;
             let settings =
-                crate::services::control_plane::build_rollup_settings_from_policy(&policy)?;
+                crate::services::control_plane::load_rollup_settings(&state.config, tenant_id)
+                    .await?;
             let descriptor = terminal_context
                 .get("generation")
                 .ok_or_else(|| "rollup terminal generation descriptor is missing".to_string())?;

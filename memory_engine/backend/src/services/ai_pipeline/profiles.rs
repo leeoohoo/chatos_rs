@@ -11,22 +11,19 @@ pub(crate) struct MemoryPipelineProfile {
     pub(crate) revision: &'static str,
     pub(crate) leaf_directive: String,
     pub(crate) merge_directive: String,
-    pub(crate) max_merge_rounds: usize,
 }
 
-pub(crate) const THREAD_SUMMARY_PIPELINE_REVISION: &str = "thread-summary-pipeline-v2";
-pub(crate) const THREAD_ROLLUP_PIPELINE_REVISION: &str = "thread-rollup-pipeline-v2";
-pub(crate) const SUBJECT_MEMORY_L0_PIPELINE_REVISION: &str =
-    "subject-memory-l0-pipeline-v2";
+pub(crate) const THREAD_SUMMARY_PIPELINE_REVISION: &str = "thread-summary-pipeline-v3";
+pub(crate) const THREAD_ROLLUP_PIPELINE_REVISION: &str = "thread-rollup-pipeline-v3";
+pub(crate) const SUBJECT_MEMORY_L0_PIPELINE_REVISION: &str = "subject-memory-l0-pipeline-v3";
 pub(crate) const SUBJECT_MEMORY_ROLLUP_PIPELINE_REVISION: &str =
-    "subject-memory-rollup-pipeline-v2";
+    "subject-memory-rollup-pipeline-v3";
 
-pub(crate) fn thread_summary(max_merge_rounds: usize) -> MemoryPipelineProfile {
+pub(crate) fn thread_summary() -> MemoryPipelineProfile {
     MemoryPipelineProfile {
         revision: THREAD_SUMMARY_PIPELINE_REVISION,
         leaf_directive: "Summarize these conversation records into a concise, high-signal continuation summary. Preserve what has already been done, what is in progress, the most likely next steps, and concrete constraints, files, commands, risks, and user requirements.".to_string(),
         merge_directive: "Merge these partial conversation summaries into one coherent continuation summary. Preserve chronology, current state, next actions, and user-grounded constraints.".to_string(),
-        max_merge_rounds,
     }
 }
 
@@ -39,7 +36,6 @@ pub(crate) fn thread_rollup(level: i64, target_level: i64) -> MemoryPipelineProf
         merge_directive: format!(
             "Merge these partial rollup summaries for level {level} to level {target_level} into one coherent higher-level summary. Preserve chronology, durable facts, current state, next actions, and constraints."
         ),
-        max_merge_rounds: 8,
     }
 }
 
@@ -77,7 +73,6 @@ pub(crate) fn subject_memory(
         },
         leaf_directive,
         merge_directive,
-        max_merge_rounds: 8,
     })
 }
 
@@ -87,11 +82,7 @@ mod tests {
 
     #[test]
     fn profiles_are_versioned_and_reject_unknown_subject_types() {
-        assert_eq!(
-            thread_summary(5).revision,
-            THREAD_SUMMARY_PIPELINE_REVISION
-        );
-        assert_eq!(thread_summary(5).max_merge_rounds, 5);
+        assert_eq!(thread_summary().revision, THREAD_SUMMARY_PIPELINE_REVISION);
         assert_eq!(
             thread_rollup(0, 1).revision,
             THREAD_ROLLUP_PIPELINE_REVISION

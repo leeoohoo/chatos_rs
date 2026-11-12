@@ -13,13 +13,7 @@ pub struct RuntimeContextAssertionVerificationKey {
     pub secret: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct PublishedModelCapability {
-    pub context_window_tokens: usize,
-    pub output_reserve_tokens: usize,
-    pub protocol_overhead_estimator_id: String,
-    pub tokenizer_id: Option<String>,
-}
+pub use chatos_service_runtime::model_capability::PublishedModelCapability;
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -204,23 +198,7 @@ impl AppConfig {
 }
 
 fn published_model_capabilities() -> Result<HashMap<String, PublishedModelCapability>, String> {
-    let raw = required_text("MEMORY_ENGINE_MODEL_CAPABILITIES_JSON")?;
-    let values: HashMap<String, PublishedModelCapability> = serde_json::from_str(raw.as_str())
-        .map_err(|error| format!("MEMORY_ENGINE_MODEL_CAPABILITIES_JSON is invalid: {error}"))?;
-    if values.is_empty() {
-        return Err("MEMORY_ENGINE_MODEL_CAPABILITIES_JSON must not be empty".to_string());
-    }
-    for (revision, capability) in &values {
-        if revision.trim().is_empty()
-            || capability.context_window_tokens < 2_048
-            || capability.output_reserve_tokens < 256
-            || capability.output_reserve_tokens >= capability.context_window_tokens
-            || capability.protocol_overhead_estimator_id.trim().is_empty()
-        {
-            return Err(format!("invalid published model capability: {revision}"));
-        }
-    }
-    Ok(values)
+    chatos_service_runtime::model_capability::catalog_from_env()
 }
 
 #[cfg(test)]
@@ -228,10 +206,12 @@ pub(crate) fn test_model_capabilities() -> HashMap<String, PublishedModelCapabil
     HashMap::from([(
         "test-model-capability-v1".to_string(),
         PublishedModelCapability {
-            context_window_tokens: 200_000,
-            output_reserve_tokens: 30_000,
+            context_window_tokens: 117_031,
+            output_reserve_tokens: 17_031,
             protocol_overhead_estimator_id: "responses-json-v1".to_string(),
             tokenizer_id: Some("o200k_base".to_string()),
+            source_urls: vec!["https://specification.example/test-model".into()],
+            excluded_models: Vec::new(),
         },
     )])
 }

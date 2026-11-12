@@ -34,7 +34,9 @@ pub(super) fn build_client_config(
     let temperature = profile.temperature.unwrap_or(0.2).clamp(0.0, 2.0);
     let disable_thinking = false;
 
+    let budget = crate::services::model_budget::MemoryModelBudget::from_profile(config, profile)?;
     Ok(AiClient {
+        budget,
         http,
         api_key,
         base_url: normalize_base_url(base_url.as_str()),

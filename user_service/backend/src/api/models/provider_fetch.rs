@@ -91,7 +91,10 @@ pub(super) async fn fetch_provider_model_names(
         );
         err.to_string()
     })?;
-    let model_names = extract_model_names(&payload);
+    let mut model_names = extract_model_names(&payload);
+    if let Some((_, capability)) = chatos_service_runtime::model_capability::active_from_env()? {
+        model_names.retain(|name| !capability.excluded_models.contains(name));
+    }
     info!(
         provider = %provider,
         base_url = %base_url,

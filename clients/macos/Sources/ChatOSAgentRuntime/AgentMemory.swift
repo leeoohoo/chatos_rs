@@ -221,8 +221,8 @@ public struct AgentModelCapabilitySnapshot: Codable, Equatable, Sendable {
                 protocolOverheadEstimatorID: String, tokenizerID: String?) throws {
         guard !revision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !protocolOverheadEstimatorID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              contextWindowTokens >= 2_048,
-              outputReserveTokens >= 256,
+              contextWindowTokens > 0,
+              outputReserveTokens > 0,
               outputReserveTokens < contextWindowTokens else {
             throw AgentRuntimeError.modelConfigurationUnavailable
         }
@@ -238,13 +238,19 @@ public struct AgentMemoryComposeRequest: Equatable, Sendable {
     public let modelCapability: AgentModelCapabilitySnapshot
     public let queryText: String
     public let currentTurnID: String
+    public let availableMemoryTokens: Int
 
     public init(modelCapability: AgentModelCapabilitySnapshot, queryText: String,
-                currentTurnID: String) throws {
+                currentTurnID: String, availableMemoryTokens: Int) throws {
         guard !queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !currentTurnID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AgentContextError.invalidHistory
         }
+        guard availableMemoryTokens > 0,
+              availableMemoryTokens <= modelCapability.contextWindowTokens - modelCapability.outputReserveTokens else {
+            throw AgentContextError.budgetExceeded
+        }
+        self.availableMemoryTokens = availableMemoryTokens
         self.modelCapability = modelCapability
         self.queryText = queryText
         self.currentTurnID = currentTurnID
@@ -307,21 +313,6 @@ public struct AgentMemoryCheckpoint: Codable, Equatable, Sendable {
         self.pinnedMessageCount = pinnedMessageCount
         self.recordEpoch = recordEpoch
         self.modelCapability = modelCapability
-    }
-}
-
-public struct AgentContextPolicy: Codable, Equatable, Sendable {
-    /// The first request in a run/resume must fit this local safety budget.
-    /// Official OpenAI Responses owns subsequent in-run compaction.
-    public var windowTokens = 200_000
-    public var outputReserveTokens = 30_000
-    public init() {}
-    public var hardInputLimit: Int { windowTokens }
-    public func validate() throws {
-        guard (2_048...2_000_000).contains(windowTokens),
-              (256..<windowTokens).contains(outputReserveTokens) else {
-            throw AgentRuntimeError.invalidPolicy
-        }
     }
 }
 

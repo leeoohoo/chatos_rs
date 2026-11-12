@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde::Deserialize;
-use serde_json::{json, Value};
 use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,17 +16,6 @@ pub enum ModelWorkload {
 struct Catalog {
     image_prefixes: Vec<String>,
     video_prefixes: Vec<String>,
-    default_chat_budget: PublishedChatBudget,
-}
-
-/// The published ChatOS request budget, not a guess at a provider's model maximum.
-#[derive(Debug, Deserialize)]
-pub struct PublishedChatBudget {
-    pub revision: String,
-    pub context_window_tokens: i64,
-    pub output_reserve_tokens: i64,
-    pub protocol_overhead_estimator_id: String,
-    pub tokenizer_id: Option<String>,
 }
 
 static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
@@ -58,20 +46,6 @@ impl ModelWorkload {
     }
 }
 
-pub fn default_chat_budget() -> &'static PublishedChatBudget {
-    &CATALOG.default_chat_budget
-}
-
-pub fn published_chat_budget_catalog() -> Value {
-    let budget = default_chat_budget();
-    json!({ budget.revision.clone(): {
-        "context_window_tokens": budget.context_window_tokens,
-        "output_reserve_tokens": budget.output_reserve_tokens,
-        "protocol_overhead_estimator_id": budget.protocol_overhead_estimator_id,
-        "tokenizer_id": budget.tokenizer_id,
-    }})
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,11 +61,6 @@ mod tests {
         assert_eq!(
             ModelWorkload::for_model(" MiniMax-H3 "),
             ModelWorkload::Video
-        );
-        let budget = default_chat_budget();
-        assert_eq!(
-            published_chat_budget_catalog()[&budget.revision]["context_window_tokens"],
-            budget.context_window_tokens
         );
     }
 }

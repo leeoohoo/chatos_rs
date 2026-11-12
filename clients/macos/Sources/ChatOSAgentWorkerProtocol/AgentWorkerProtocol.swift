@@ -178,7 +178,6 @@ public struct AgentWorkerContextRequest: Codable, Equatable, Sendable {
     public let id: UUID
     public let checkpoint: AgentRunCheckpoint
     public let tools: [AgentToolDefinition]
-    public let policy: AgentContextPolicy
     public let modelCapability: AgentModelCapabilitySnapshot
     public let deadline: Date
     public let synchronizeOnly: Bool
@@ -187,13 +186,12 @@ public struct AgentWorkerContextRequest: Codable, Equatable, Sendable {
         id: UUID,
         checkpoint: AgentRunCheckpoint,
         tools: [AgentToolDefinition],
-        policy: AgentContextPolicy,
         modelCapability: AgentModelCapabilitySnapshot,
         deadline: Date,
         synchronizeOnly: Bool
     ) {
         self.id = id; self.checkpoint = checkpoint; self.tools = tools
-        self.policy = policy; self.modelCapability = modelCapability
+        self.modelCapability = modelCapability
         self.deadline = deadline; self.synchronizeOnly = synchronizeOnly
     }
 }

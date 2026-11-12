@@ -41,7 +41,7 @@ extension LocalAgentGroupChatSchedulerTests {
             role: .system, content: "<!-- chatos-product-skill-router -->\nFrozen earlier catalog"
         ))
         checkpoint = try await provider.prepare(
-            checkpoint: checkpoint, tools: [], policy: .init(),
+            checkpoint: checkpoint, tools: [],
             modelCapability: XCTUnwrap(SchedulerTestModel().memoryCapabilitySnapshot),
             deadline: Date().addingTimeInterval(30), synchronizeOnly: true, record: { _, _ in }
         ).checkpoint

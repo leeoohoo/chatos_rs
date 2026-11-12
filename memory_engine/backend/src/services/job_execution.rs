@@ -5,7 +5,7 @@ use crate::jobs::summary_jobs;
 use crate::models::{
     RunPendingRollupsResponse, RunPendingSummariesResponse, RunSubjectMemoryScopesResponse,
 };
-use crate::services::{control_plane, subject_memory};
+use crate::services::subject_memory;
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -19,9 +19,6 @@ pub async fn run_pending_summaries(
     source_id: Option<&str>,
     max_threads: Option<i64>,
 ) -> Result<RunPendingSummariesResponse, String> {
-    let policy =
-        crate::repositories::control_plane::get_effective_job_policy(&state.pool, "summary")
-            .await?;
     let limit = max_threads
         .unwrap_or(state.config.worker_max_threads_per_tick)
         .max(1);
@@ -30,9 +27,6 @@ pub async fn run_pending_summaries(
         &state.config,
         tenant_id,
         source_id,
-        crate::services::summary::required_thread_summary_token_limit(
-            policy.max_source_batch_tokens,
-        )?,
         limit,
     )
     .await
@@ -44,20 +38,16 @@ pub async fn run_pending_rollups(
     source_id: Option<&str>,
     options: PendingRollupOptions,
 ) -> Result<RunPendingRollupsResponse, String> {
-    let policy =
-        crate::repositories::control_plane::get_effective_job_policy(&state.pool, "rollup").await?;
     let limit = options
         .max_threads
         .unwrap_or(state.config.worker_max_threads_per_tick)
         .max(1);
-    let settings = control_plane::build_rollup_settings_from_policy(&policy)?;
     summary_jobs::run_pending_thread_rollups(
         &state.pool,
         &state.config,
         tenant_id,
         source_id,
         limit,
-        &settings,
     )
     .await
 }

@@ -3,9 +3,9 @@
 
 use tracing::info;
 
-use crate::db::Db;
 use crate::models::{RunSubjectMemoryJobRequest, RunSubjectMemoryJobResponse};
 use crate::repositories::summaries;
+use crate::{config::AppConfig, db::Db};
 
 use super::super::super::selectors::{select_rollup_batch, select_summary_batch};
 use super::super::super::settings::build_settings_with_policy;
@@ -21,10 +21,11 @@ pub(crate) struct SubjectMemoryPreparation {
 }
 
 pub(crate) async fn prepare_subject_memory_job(
+    config: &AppConfig,
     db: &Db,
     req: &RunSubjectMemoryJobRequest,
 ) -> Result<SubjectMemoryPreparation, String> {
-    let settings = build_settings_with_policy(db, req).await?;
+    let settings = build_settings_with_policy(config, req).await?;
     let pending_summaries = if let Some(scope_key) = req
         .scope_key
         .as_deref()
@@ -74,7 +75,6 @@ pub(crate) async fn prepare_subject_memory_job(
     let summary_selection = select_summary_batch(
         pending_summaries.as_slice(),
         settings.source_batch_token_limit,
-        settings.count_limit,
     );
     let rollup_selection = select_rollup_batch(
         db,
@@ -84,9 +84,6 @@ pub(crate) async fn prepare_subject_memory_job(
         settings.relation_subject_id.as_str(),
         req.memory_type.as_str(),
         settings.source_batch_token_limit,
-        settings.count_limit,
-        settings.keep_level0_count,
-        settings.max_level,
     )
     .await?;
 

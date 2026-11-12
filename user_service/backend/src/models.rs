@@ -336,17 +336,17 @@ pub struct UserModelConfigRecord {
     pub task_thinking_level: Option<String>,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub model_capability_revision: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub context_window_tokens: Option<i64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub output_reserve_tokens: Option<i64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub protocol_overhead_estimator_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub tokenizer_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub responses_compaction_threshold: Option<i64>,
     pub api_key: Option<String>,
     #[serde(default)]
@@ -659,6 +659,7 @@ pub struct ResetAgentPasswordRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateUserModelConfigRequest {
     pub id: Option<String>,
     pub owner_user_id: Option<String>,
@@ -671,12 +672,6 @@ pub struct CreateUserModelConfigRequest {
     pub task_thinking_level: Option<String>,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
-    pub model_capability_revision: Option<String>,
-    pub context_window_tokens: Option<i64>,
-    pub output_reserve_tokens: Option<i64>,
-    pub protocol_overhead_estimator_id: Option<String>,
-    pub tokenizer_id: Option<String>,
-    pub responses_compaction_threshold: Option<i64>,
     pub api_key: Option<String>,
     #[serde(default)]
     pub has_api_key: Option<bool>,
@@ -706,6 +701,7 @@ pub struct CreateUserModelProviderRequest {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateUserModelConfigRequest {
     pub name: Option<String>,
     pub provider: Option<String>,
@@ -718,14 +714,6 @@ pub struct UpdateUserModelConfigRequest {
     pub clear_temperature: Option<bool>,
     pub max_output_tokens: Option<i64>,
     pub clear_max_output_tokens: Option<bool>,
-    pub model_capability_revision: Option<String>,
-    pub context_window_tokens: Option<i64>,
-    pub output_reserve_tokens: Option<i64>,
-    pub protocol_overhead_estimator_id: Option<String>,
-    pub tokenizer_id: Option<String>,
-    pub clear_tokenizer_id: Option<bool>,
-    pub responses_compaction_threshold: Option<i64>,
-    pub clear_responses_compaction_threshold: Option<bool>,
     pub api_key: Option<String>,
     pub has_api_key: Option<bool>,
     pub clear_api_key: Option<bool>,

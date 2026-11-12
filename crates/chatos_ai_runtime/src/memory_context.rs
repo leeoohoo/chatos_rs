@@ -35,8 +35,6 @@ pub use compose_items::{
 };
 pub use record_writer::{MemoryEngineRecordWriter, MemoryRecordScope};
 
-use compose_items::standard_compose_policy;
-
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeContextAssertionRequest<'a> {
     pub principal_id: &'a str,
@@ -293,7 +291,9 @@ impl MemoryContextComposer {
                 query_text: scope.query_text.clone(),
                 current_turn_id: scope.current_turn_id.clone(),
                 model_capability_revision: scope.model_capability_revision.clone(),
-                policy: scope.policy.clone().unwrap_or_else(standard_compose_policy),
+                policy: scope.policy.clone().ok_or_else(|| {
+                    "Memory compose requires an explicit model-derived request budget".to_string()
+                })?,
                 runtime_context_assertion,
             })
             .await

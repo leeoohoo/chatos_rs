@@ -4,7 +4,7 @@
 use crate::db::Db;
 use crate::models::{EngineRecord, EngineSummary};
 use crate::repositories::summaries;
-use crate::services::ai_pipeline::{estimate_tokens_text, MIN_TOKEN_LIMIT};
+use crate::services::ai_pipeline::estimate_tokens_text;
 
 use super::render::{record_to_summary_block, summary_to_rollup_block};
 use super::PendingRecordSelection;
@@ -13,7 +13,7 @@ pub(crate) fn select_pending_records_for_summary(
     records: Vec<EngineRecord>,
     token_limit: i64,
 ) -> PendingRecordSelection {
-    let effective_limit = token_limit.max(MIN_TOKEN_LIMIT);
+    let effective_limit = token_limit;
     let mut selected = Vec::new();
     let oversized = Vec::new();
     let mut selected_token_count = 0_i64;
@@ -74,17 +74,15 @@ pub(crate) async fn select_rollup_batch(
     source_id: &str,
     thread_id: &str,
     token_limit: i64,
-    count_limit: i64,
-    keep_level0_count: i64,
-    max_level: i64,
 ) -> Result<Option<(i64, String, Vec<EngineSummary>, &'static str)>, String> {
-    for level in 0..max_level {
+    for level in summaries::list_pending_summary_levels(db, tenant_id, source_id, thread_id).await?
+    {
         let partition_keys = summaries::list_pending_summary_partition_keys_by_level(
             db, tenant_id, source_id, thread_id, level,
         )
         .await?;
         for project_partition_key in partition_keys {
-            let mut candidates = summaries::list_pending_summaries_by_level_and_partition(
+            let candidates = summaries::list_pending_summaries_by_level_and_partition(
                 db,
                 tenant_id,
                 source_id,
@@ -93,21 +91,11 @@ pub(crate) async fn select_rollup_batch(
                 level,
             )
             .await?;
-            if level == 0 && keep_level0_count > 0 {
-                let keep = keep_level0_count as usize;
-                if candidates.len() > keep {
-                    let rollup_len = candidates.len().saturating_sub(keep);
-                    candidates.truncate(rollup_len);
-                } else {
-                    candidates.clear();
-                }
-            }
-
-            if candidates.is_empty() {
+            if candidates.len() < 2 {
                 continue;
             }
             if let Some((selected, reason)) =
-                select_bounded_rollup_candidates(candidates, token_limit, count_limit)
+                select_bounded_rollup_candidates(candidates, token_limit)
             {
                 return Ok(Some((level, project_partition_key, selected, reason)));
             }
@@ -120,48 +108,28 @@ pub(crate) async fn select_rollup_batch(
 fn select_bounded_rollup_candidates(
     candidates: Vec<EngineSummary>,
     token_limit: i64,
-    count_limit: i64,
 ) -> Option<(Vec<EngineSummary>, &'static str)> {
     if candidates.is_empty() {
         return None;
     }
-    let token_limit = token_limit.max(MIN_TOKEN_LIMIT);
     let token_sizes = candidates
         .iter()
         .map(summary_to_rollup_block)
         .map(|text| estimate_tokens_text(text.as_str()))
         .collect::<Vec<_>>();
-    let count_triggered = count_limit > 0 && (candidates.len() as i64) >= count_limit;
-    if !count_triggered && token_sizes.iter().sum::<i64>() < token_limit {
+    if token_sizes.iter().sum::<i64>() < token_limit {
         return None;
     }
-
-    let candidate_limit = if count_triggered {
-        count_limit as usize
-    } else {
-        candidates.len()
-    };
     let mut selected = Vec::new();
     let mut selected_tokens = 0_i64;
-    for (candidate, candidate_tokens) in candidates
-        .into_iter()
-        .zip(token_sizes)
-        .take(candidate_limit)
-    {
-        if !selected.is_empty() && selected_tokens.saturating_add(candidate_tokens) > token_limit {
+    for (candidate, candidate_tokens) in candidates.into_iter().zip(token_sizes) {
+        if selected.len() >= 2 && selected_tokens.saturating_add(candidate_tokens) > token_limit {
             break;
         }
         selected_tokens = selected_tokens.saturating_add(candidate_tokens);
         selected.push(candidate);
     }
-    Some((
-        selected,
-        if count_triggered {
-            "count_limit"
-        } else {
-            "token_limit"
-        },
-    ))
+    Some((selected, "model_input_capacity"))
 }
 
 #[cfg(test)]
@@ -232,45 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn count_limit_caps_rollup_batch_size() {
-        let candidates = (0..5)
-            .map(|idx| EngineSummary {
-                id: format!("sum-{idx}"),
-                tenant_id: "tenant".to_string(),
-                source_id: "source".to_string(),
-                thread_id: "thread".to_string(),
-                subject_id: "subject".to_string(),
-                summary_type: "thread_incremental".to_string(),
-                level: 0,
-                source_digest: None,
-                summary_text: format!("summary {idx}"),
-                source_record_start_id: None,
-                source_record_end_id: None,
-                source_record_count: 1,
-                status: "done".to_string(),
-                rollup_status: "pending".to_string(),
-                rollup_summary_id: None,
-                rolled_up_at: None,
-                subject_memory_summarized: 0,
-                subject_memory_summarized_at: None,
-                metadata: None,
-                payload_schema: None,
-                structured_payload: None,
-                created_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: "2026-01-01T00:00:00Z".to_string(),
-            })
-            .collect::<Vec<_>>();
-
-        let (batch, reason) =
-            select_bounded_rollup_candidates(candidates, 50_000, 3).expect("count trigger");
-        assert_eq!(reason, "count_limit");
-        assert_eq!(batch.len(), 3);
-        assert_eq!(batch[0].id, "sum-0");
-        assert_eq!(batch[2].id, "sum-2");
-    }
-
-    #[test]
-    fn token_limit_caps_rollup_batch_instead_of_only_triggering_it() {
+    fn rollup_selects_at_least_two_sources_and_pipeline_chunks_oversized_sources() {
         let candidates = (0..4)
             .map(|idx| EngineSummary {
                 id: format!("sum-{idx}"),
@@ -300,9 +230,9 @@ mod tests {
             .collect::<Vec<_>>();
 
         let (selected, reason) =
-            select_bounded_rollup_candidates(candidates, 1_500, 0).expect("token trigger");
-        assert_eq!(reason, "token_limit");
-        assert_eq!(selected.len(), 1);
+            select_bounded_rollup_candidates(candidates, 1_500).expect("token trigger");
+        assert_eq!(reason, "model_input_capacity");
+        assert_eq!(selected.len(), 2);
     }
 
     #[test]

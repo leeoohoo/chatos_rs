@@ -9,7 +9,6 @@ mod email;
 mod integrations;
 pub mod internal_tls;
 mod login_throttle;
-mod model_policy;
 mod models;
 pub mod retention;
 mod secrets;

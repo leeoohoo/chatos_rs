@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 use crate::config::AppConfig;
 use crate::models::now_rfc3339;
-use crate::repositories::{control_plane, subject_memory_scopes, summaries, threads};
+use crate::repositories::{subject_memory_scopes, summaries, threads};
 use crate::services::subject_memory;
 use crate::state::AppState;
 
@@ -274,7 +274,6 @@ async fn process_source_event(
         return Ok(());
     }
 
-    let _policy = control_plane::get_effective_job_policy(&state.pool, "subject_memory").await?;
     let Some(thread) = threads::get_thread_by_id(
         &state.pool,
         envelope.tenant_id.as_str(),
@@ -347,7 +346,6 @@ async fn process_scope_event(
         return Ok(());
     }
 
-    let _policy = control_plane::get_effective_job_policy(&state.pool, "subject_memory").await?;
     let Some(scope) = subject_memory_scopes::get_subject_memory_scope(
         &state.pool,
         envelope.tenant_id.as_str(),
@@ -359,14 +357,14 @@ async fn process_scope_event(
         return Ok(());
     };
     if scope.status != "active"
-        || !subject_memory::scope_has_pending_work(&state.pool, &scope).await?
+        || !subject_memory::scope_has_pending_work(&state.config, &state.pool, &scope).await?
     {
         subject_memory_scopes::mark_subject_memory_dispatch_consumed(&state.pool, &event).await?;
         return Ok(());
     }
     subject_memory::run_scope_once(&state.config, &state.pool, &scope).await?;
     subject_memory_scopes::mark_subject_memory_dispatch_consumed(&state.pool, &event).await?;
-    if subject_memory::scope_has_pending_work(&state.pool, &scope).await? {
+    if subject_memory::scope_has_pending_work(&state.config, &state.pool, &scope).await? {
         subject_memory_scopes::rearm_subject_memory_dispatch(
             &state.pool,
             scope.tenant_id.as_str(),
@@ -402,15 +400,7 @@ async fn mark_failed_and_defer(
 async fn run_reconciler(state: Arc<AppState>) {
     let mut recovery_offset = 0_u64;
     loop {
-        let scan_interval =
-            match control_plane::get_effective_job_policy(&state.pool, "subject_memory").await {
-                Ok(_) => state.config.subject_memory_outbox_reconcile_interval,
-                Err(error) => {
-                    warn!(error, "Memory Engine subject-memory scan policy is invalid");
-                    tokio::time::sleep(state.config.subject_memory_outbox_reconcile_interval).await;
-                    continue;
-                }
-            };
+        let scan_interval = state.config.subject_memory_outbox_reconcile_interval;
         let stale_before = (chrono::Utc::now()
             - chrono::Duration::seconds(SUBJECT_MEMORY_CLAIM_LEASE_SECS))
         .to_rfc3339();
@@ -458,7 +448,6 @@ async fn arm_pending_scopes(
     state: &AppState,
     recovery_offset: u64,
 ) -> Result<(usize, u64), String> {
-    let _policy = control_plane::get_effective_job_policy(&state.pool, "subject_memory").await?;
     let scan_limit = state.config.subject_memory_outbox_batch_size.max(1);
     let scopes = subject_memory_scopes::list_active_subject_memory_scopes_page(
         &state.pool,
@@ -471,7 +460,7 @@ async fn arm_pending_scopes(
     let scanned_count = scopes.len() as u64;
     let mut armed = 0usize;
     for scope in scopes {
-        if !subject_memory::scope_has_pending_work(&state.pool, &scope).await? {
+        if !subject_memory::scope_has_pending_work(&state.config, &state.pool, &scope).await? {
             continue;
         }
         if subject_memory_scopes::rearm_subject_memory_dispatch(

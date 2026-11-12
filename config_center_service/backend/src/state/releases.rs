@@ -338,6 +338,7 @@ impl AppState {
             }
         }
         validate_postgres_pool_budget(values, &mut errors);
+        validate_model_capability_config(values, &mut errors);
         validate_mtls_url(
             values,
             MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
@@ -416,6 +417,33 @@ fn validate_mtls_url(
         errors.push(format!(
             "{key} must use https:// because {service_name} internal APIs require mTLS"
         ));
+    }
+}
+
+fn validate_model_capability_config(values: &BTreeMap<String, Value>, errors: &mut Vec<String>) {
+    use chatos_service_runtime::model_capability::{
+        parse_catalog, ACTIVE_MODEL_CAPABILITY_CONFIG_KEY, MODEL_CAPABILITIES_CONFIG_KEY,
+    };
+    let Some(raw) = values.get(MODEL_CAPABILITIES_CONFIG_KEY) else {
+        return;
+    };
+    let catalog = match parse_catalog(&raw.to_string()) {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            errors.push(error);
+            return;
+        }
+    };
+    if let Some(active) = values
+        .get(ACTIVE_MODEL_CAPABILITY_CONFIG_KEY)
+        .and_then(Value::as_str)
+        .filter(|revision| !revision.is_empty())
+    {
+        if !catalog.contains_key(active) {
+            errors.push(format!(
+                "{ACTIVE_MODEL_CAPABILITY_CONFIG_KEY}: revision {active} is not published"
+            ));
+        }
     }
 }
 
@@ -585,5 +613,30 @@ mod postgres_budget_tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("connection budget requires")));
+    }
+}
+
+#[cfg(test)]
+mod model_capability_tests {
+    use super::*;
+    #[test]
+    fn publication_rejects_unpublished_or_incomplete_model_budgets() {
+        use chatos_service_runtime::model_capability::{
+            ACTIVE_MODEL_CAPABILITY_CONFIG_KEY, MODEL_CAPABILITIES_CONFIG_KEY,
+        };
+        let mut values = BTreeMap::from([
+            (MODEL_CAPABILITIES_CONFIG_KEY.into(), json!({})),
+            (ACTIVE_MODEL_CAPABILITY_CONFIG_KEY.into(), json!("missing")),
+        ]);
+        let mut errors = Vec::new();
+        validate_model_capability_config(&values, &mut errors);
+        assert_eq!(errors.len(), 1);
+        values.insert(
+            MODEL_CAPABILITIES_CONFIG_KEY.into(),
+            json!({ "missing": {} }),
+        );
+        errors.clear();
+        validate_model_capability_config(&values, &mut errors);
+        assert_eq!(errors.len(), 1);
     }
 }

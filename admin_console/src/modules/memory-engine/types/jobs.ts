@@ -3,14 +3,13 @@
 
 export interface EngineJobPolicy {
   job_type: string;
-  dispatch_threshold_tokens?: number | null;
-  max_source_batch_tokens?: number | null;
+  model_config_id?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  model_capability_revision?: string | null;
+  context_window_tokens?: number | null;
+  output_reserve_tokens?: number | null;
   max_model_input_tokens?: number | null;
-  max_leaf_tokens?: number | null;
-  max_merge_rounds?: number | null;
-  count_limit?: number | null;
-  keep_level0_count?: number | null;
-  max_level?: number | null;
   updated_at: string;
 }
 

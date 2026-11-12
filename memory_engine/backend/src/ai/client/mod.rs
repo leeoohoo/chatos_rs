@@ -23,6 +23,7 @@ pub(crate) const SUMMARY_SYSTEM_PROMPT: &str = "You summarize conversation incre
 #[derive(Clone)]
 pub struct AiClient {
     http: Client,
+    budget: crate::services::model_budget::MemoryModelBudget,
     api_key: Option<String>,
     base_url: String,
     model: String,
@@ -56,6 +57,7 @@ impl AiClient {
     pub(crate) fn for_test(base_url: String, max_transient_retries: usize) -> Self {
         Self {
             http: Client::new(),
+            budget: crate::services::model_budget::test_budget(100_000),
             api_key: Some("test-key".to_string()),
             base_url,
             model: "test-model".to_string(),
@@ -80,6 +82,26 @@ impl AiClient {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .is_some()
+    }
+
+    pub(crate) fn budget(&self) -> &crate::services::model_budget::MemoryModelBudget {
+        &self.budget
+    }
+
+    pub(crate) fn payload_source_capacity(
+        &self,
+        system: &str,
+        prompt: &str,
+        format: &serde_json::Value,
+    ) -> Result<i64, String> {
+        let overhead = request::payload_request_tokens(self, system, prompt, format)?;
+        self.budget
+            .input_limit()?
+            .checked_sub(overhead)
+            .filter(|remaining| *remaining > 0)
+            .ok_or_else(|| {
+                "model input capacity is exhausted by the Memory prompt and schema".into()
+            })
     }
 
     pub(crate) fn max_transient_retries(&self) -> usize {

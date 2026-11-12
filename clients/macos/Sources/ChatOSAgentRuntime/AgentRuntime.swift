@@ -67,11 +67,6 @@ public struct AgentRuntime: Sendable {
                 state.memory = memory
             }
         }
-        var contextPolicy = policy.context ?? AgentContextPolicy()
-        if let modelCapability {
-            contextPolicy.windowTokens = modelCapability.contextWindowTokens
-            contextPolicy.outputReserveTokens = modelCapability.outputReserveTokens
-        }
         // Memory Engine is composed once at the start of this run/resume. New
         // messages are appended locally for the rest of the model/tool loop so
         // official OpenAI Responses can keep one stable continuation and let
@@ -112,7 +107,7 @@ public struct AgentRuntime: Sendable {
                 if let contextProvider, let memory = state.memory,
                    memory.syncedMessageCount < state.messages.count {
                     let synced = try await contextProvider.prepare(
-                        checkpoint: snapshot(state), tools: modelTools, policy: contextPolicy,
+                        checkpoint: snapshot(state), tools: modelTools,
                         modelCapability: modelCapability!,
                         deadline: deadline, synchronizeOnly: true,
                         shouldPause: { false }, record: record
@@ -142,7 +137,7 @@ public struct AgentRuntime: Sendable {
                 }
                 if let completion = state.completionResult {
                     if let contextProvider {
-                        let synced = try await contextProvider.prepare(checkpoint: snapshot(state), tools: modelTools, policy: contextPolicy,
+                        let synced = try await contextProvider.prepare(checkpoint: snapshot(state), tools: modelTools,
                             modelCapability: modelCapability!,
                             deadline: deadline, synchronizeOnly: true, shouldPause: shouldPause, record: record)
                         state = synced.checkpoint
@@ -240,7 +235,7 @@ public struct AgentRuntime: Sendable {
                 if let contextProvider {
                     if activeModelMessages == nil {
                         let prepared = try await contextProvider.prepare(
-                            checkpoint: snapshot(state), tools: modelTools, policy: contextPolicy,
+                            checkpoint: snapshot(state), tools: modelTools,
                             modelCapability: modelCapability!,
                             deadline: deadline, synchronizeOnly: false,
                             shouldPause: shouldPause, record: record
@@ -253,6 +248,12 @@ public struct AgentRuntime: Sendable {
                 } else {
                     guard state.memory == nil else { throw AgentContextError.unavailable }
                     messages = state.messages
+                }
+                if let modelCapability {
+                    let inputTokens = try AgentContextBudget.estimate(messages: messages, tools: modelTools)
+                    guard inputTokens <= modelCapability.contextWindowTokens - modelCapability.outputReserveTokens else {
+                        throw AgentContextError.budgetExceeded
+                    }
                 }
                 var response: AgentMessage?
                 for attempt in 0...policy.maximumRequestRetries {

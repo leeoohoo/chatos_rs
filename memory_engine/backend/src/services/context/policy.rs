@@ -3,14 +3,7 @@
 
 use crate::models::ComposeContextPolicy;
 
-pub(crate) const CONTEXT_POLICY_REVISION: &str = "memory-compose-v2-2026-11";
-const SERVER_MAX_MEMORY_TOKENS: usize = 32_768;
-const SERVER_MAX_RECENT_RECORD_TOKENS: usize = 16_384;
-const SERVER_MAX_THREAD_SUMMARY_TOKENS: usize = 8_192;
-const SERVER_MAX_PROJECT_MEMORY_TOKENS: usize = 8_192;
-const SERVER_MAX_AGENT_MEMORY_TOKENS: usize = 8_192;
-const SERVER_MAX_RELEVANT_HISTORY_TOKENS: usize = 4_096;
-
+pub(crate) const CONTEXT_POLICY_REVISION: &str = "memory-compose-v3-model-capacity";
 pub(crate) struct ResolvedComposeContextPolicy {
     pub(crate) max_memory_tokens: usize,
     pub(crate) max_recent_record_tokens: usize,
@@ -32,25 +25,14 @@ impl ResolvedComposeContextPolicy {
         if requested.into_iter().any(|value| value == 0) {
             return Err("all compose token budgets must be greater than zero".to_string());
         }
+        let total = policy.max_memory_tokens;
         let resolved = Self {
-            max_memory_tokens: policy.max_memory_tokens.min(SERVER_MAX_MEMORY_TOKENS),
-            max_recent_record_tokens: policy
-                .max_recent_record_tokens
-                .min(SERVER_MAX_RECENT_RECORD_TOKENS),
-            max_thread_summary_tokens: policy
-                .max_thread_summary_tokens
-                .min(SERVER_MAX_THREAD_SUMMARY_TOKENS),
-            max_project_memory_tokens: policy
-                .max_project_memory_tokens
-                .min(SERVER_MAX_PROJECT_MEMORY_TOKENS),
-            max_agent_memory_tokens: policy
-                .max_agent_memory_tokens
-                .min(SERVER_MAX_AGENT_MEMORY_TOKENS),
-            max_relevant_history_tokens: policy
-                .max_memory_tokens
-                .saturating_div(4)
-                .max(1)
-                .min(SERVER_MAX_RELEVANT_HISTORY_TOKENS),
+            max_memory_tokens: total,
+            max_recent_record_tokens: policy.max_recent_record_tokens.min(total),
+            max_thread_summary_tokens: policy.max_thread_summary_tokens.min(total),
+            max_project_memory_tokens: policy.max_project_memory_tokens.min(total),
+            max_agent_memory_tokens: policy.max_agent_memory_tokens.min(total),
+            max_relevant_history_tokens: total,
         };
         if resolved
             .max_recent_record_tokens

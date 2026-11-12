@@ -112,14 +112,9 @@ describe('adminApi', () => {
     await expect(adminApi.listJobPolicies()).resolves.toEqual([
       {
         job_type: 'thread_summary',
-        dispatch_threshold_tokens: null,
-        max_source_batch_tokens: null,
         max_model_input_tokens: null,
-        max_leaf_tokens: null,
-        max_merge_rounds: null,
-        count_limit: null,
-        keep_level0_count: null,
-        max_level: null,
+        model_config_id: null, provider: null, model: null,
+        model_capability_revision: null, context_window_tokens: null, output_reserve_tokens: null,
         updated_at: '2026-05-21T00:00:00Z',
       },
     ]);

@@ -121,13 +121,13 @@ extension SQLiteAgentGroupChatStoreTests {
         // A real SQLite query failure, confined to this test's temporary database.
         try executeSQLite(url, sql: "DROP TABLE project_agent_read_cursors")
         let capability = try AgentModelCapabilitySnapshot(revision: "test", contextWindowTokens: 128_000, outputReserveTokens: 10_000, protocolOverheadEstimatorID: "responses-json-v1", tokenizerID: nil)
-        let prepared = try await provider.prepare(checkpoint: checkpoint, tools: [], policy: .init(), modelCapability: capability, deadline: Date().addingTimeInterval(10), synchronizeOnly: true, shouldPause: { false }, record: { _, _ in })
+        let prepared = try await provider.prepare(checkpoint: checkpoint, tools: [], modelCapability: capability, deadline: Date().addingTimeInterval(10), synchronizeOnly: true, shouldPause: { false }, record: { _, _ in })
         XCTAssertEqual(prepared.checkpoint.status, .running)
         XCTAssertNil(prepared.checkpoint.inFlightCallID)
         XCTAssertEqual(prepared.checkpoint.receipts[call.id], receipt)
         XCTAssertEqual(prepared.checkpoint.messages.filter { $0.role == .tool }, checkpoint.messages.filter { $0.role == .tool })
         XCTAssertTrue(prepared.checkpoint.messages.last?.content.contains(#""status":"unavailable","has_new_messages":null"#) == true)
-        let repeated = try await provider.prepare(checkpoint: prepared.checkpoint, tools: [], policy: .init(), modelCapability: capability, deadline: Date().addingTimeInterval(10), synchronizeOnly: true, shouldPause: { false }, record: { _, _ in })
+        let repeated = try await provider.prepare(checkpoint: prepared.checkpoint, tools: [], modelCapability: capability, deadline: Date().addingTimeInterval(10), synchronizeOnly: true, shouldPause: { false }, record: { _, _ in })
         XCTAssertEqual(repeated.checkpoint.messages, prepared.checkpoint.messages)
     }
 

@@ -15,9 +15,6 @@ pub(crate) fn required_thread_summary_token_limit(configured: Option<i64>) -> Re
 pub struct RollupSettings {
     pub token_limit: i64,
     pub source_batch_token_limit: i64,
-    pub count_limit: i64,
-    pub keep_level0_count: i64,
-    pub max_level: i64,
     pub(crate) cloud_owner_entity_id: Option<String>,
     pub(crate) cloud_source_id: Option<String>,
     pub(crate) cloud_thread_id: Option<String>,
@@ -52,8 +49,6 @@ pub(crate) struct PreparedThreadRollup {
 pub(crate) struct SummaryJobSettings {
     pub(crate) token_limit: i64,
     pub(crate) source_batch_token_limit: i64,
-    pub(crate) max_leaf_tokens: i64,
-    pub(crate) max_merge_rounds: usize,
     pub(crate) cloud_owner_entity_id: Option<String>,
     pub(crate) cloud_resume_kind: Option<String>,
 }

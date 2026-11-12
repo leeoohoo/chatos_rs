@@ -205,7 +205,6 @@ fn generation_descriptor(
         digest,
         serde_json::json!({
             "max_model_input_tokens": settings.token_limit,
-            "count_limit": settings.count_limit,
             "source_level": selection.level,
             "target_level": target_level,
         }),

@@ -232,7 +232,10 @@ pub async fn reliability_dashboard(
     .map(Json)
     .map_err(|error| {
         tracing::error!(error = %error, "build Memory Engine reliability dashboard failed");
-        (StatusCode::INTERNAL_SERVER_ERROR, "build reliability dashboard failed".to_string())
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "build reliability dashboard failed".to_string(),
+        )
     })
 }
 
@@ -593,6 +596,7 @@ pub async fn resummarize_covered_range(
     }
     let mut tx = state.pool.begin().await.map_err(internal_error)?;
     let prepared = crate::services::summary::prepare_covered_range_resummarize(
+        &state.config,
         &state.pool,
         &mut tx,
         request.tenant_id.trim(),
@@ -651,8 +655,12 @@ pub async fn retire_summary(
         "SELECT thread_id,project_partition_key,status,recall_eligible FROM engine_summaries \
          WHERE tenant_id=$1 AND source_id=$2 AND id=$3 FOR UPDATE",
     )
-    .bind(request.tenant_id.trim()).bind(request.source_id.trim()).bind(request.summary_id.trim())
-    .fetch_optional(&mut *tx).await.map_err(internal_error)?
+    .bind(request.tenant_id.trim())
+    .bind(request.source_id.trim())
+    .bind(request.summary_id.trim())
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(internal_error)?
     .ok_or_else(|| (StatusCode::NOT_FOUND, "summary not found".to_string()))?;
     let restored = crate::repositories::summaries::delete_thread_summary_in_tx(
         &mut tx,
@@ -676,9 +684,12 @@ pub async fn retire_summary(
         request.reason.trim(),
         json!({"status":before.2,"recall_eligible":before.3}),
         json!({"status":"retired","recall_eligible":false,"restored_records":restored}),
-    ).await?;
+    )
+    .await?;
     tx.commit().await.map_err(internal_error)?;
-    Ok(Json(json!({"operation_id":action_id,"restored_records":restored})))
+    Ok(Json(
+        json!({"operation_id":action_id,"restored_records":restored}),
+    ))
 }
 
 pub async fn restore_record_pending(
@@ -695,7 +706,9 @@ pub async fn restore_record_pending(
         request.tenant_id.trim(),
         request.source_id.trim(),
         request.record_id.trim(),
-    ).await.map_err(|error| (StatusCode::CONFLICT, error))?;
+    )
+    .await
+    .map_err(|error| (StatusCode::CONFLICT, error))?;
     let action_id = insert_operator_action(
         &mut tx,
         &auth,
@@ -708,9 +721,12 @@ pub async fn restore_record_pending(
         request.reason.trim(),
         json!({"summary_status":result.previous_status}),
         json!({"summary_status":"pending","changed":result.changed,"thread_id":result.thread_id}),
-    ).await?;
+    )
+    .await?;
     tx.commit().await.map_err(internal_error)?;
-    Ok(Json(json!({"operation_id":action_id,"changed":result.changed})))
+    Ok(Json(
+        json!({"operation_id":action_id,"changed":result.changed}),
+    ))
 }
 
 pub async fn rearm_reliability_queue(
@@ -722,7 +738,10 @@ pub async fn rearm_reliability_queue(
     auth.ensure_tenant_scope(request.tenant_id.as_str())?;
     validate_write_reason(&request.item_id, &request.reason)?;
     if request.version < 1 {
-        return Err((StatusCode::BAD_REQUEST, "version must be positive".to_string()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "version must be positive".to_string(),
+        ));
     }
     let mut tx = state.pool.begin().await.map_err(internal_error)?;
     let rearmed_id = match request.stream.as_str() {
@@ -760,9 +779,12 @@ pub async fn rearm_reliability_queue(
         request.reason.trim(),
         json!({"stream":request.stream,"version":request.version,"status":"dead_letter"}),
         json!({"rearmed_id":rearmed_id,"status":"pending"}),
-    ).await?;
+    )
+    .await?;
     tx.commit().await.map_err(internal_error)?;
-    Ok(Json(json!({"operation_id":action_id,"rearmed_id":rearmed_id})))
+    Ok(Json(
+        json!({"operation_id":action_id,"rearmed_id":rearmed_id}),
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -785,17 +807,30 @@ async fn insert_operator_action(
          id,tenant_id,source_id,operator_id,action_kind,object_kind,object_id, \
          project_partition_key,reason,before_state,after_state) \
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
-    ).bind(&action_id).bind(tenant_id).bind(source_id).bind(auth.operator_audit_id())
-        .bind(action_kind).bind(object_kind).bind(object_id).bind(project_partition_key)
-        .bind(reason).bind(SqlJson(before_state)).bind(SqlJson(after_state))
-        .execute(&mut **tx).await.map_err(internal_error)?;
+    )
+    .bind(&action_id)
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(auth.operator_audit_id())
+    .bind(action_kind)
+    .bind(object_kind)
+    .bind(object_id)
+    .bind(project_partition_key)
+    .bind(reason)
+    .bind(SqlJson(before_state))
+    .bind(SqlJson(after_state))
+    .execute(&mut **tx)
+    .await
+    .map_err(internal_error)?;
     Ok(action_id)
 }
 
 fn validate_write_reason(object_id: &str, reason: &str) -> Result<(), (StatusCode, String)> {
     if object_id.trim().is_empty() || reason.trim().len() < 8 {
-        return Err((StatusCode::BAD_REQUEST,
-            "object identity is required and reason must contain at least 8 characters".to_string()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "object identity is required and reason must contain at least 8 characters".to_string(),
+        ));
     }
     Ok(())
 }

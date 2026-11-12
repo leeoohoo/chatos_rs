@@ -210,12 +210,6 @@ export interface CreateUserModelConfigPayload {
   task_thinking_level?: string;
   temperature?: number;
   max_output_tokens?: number;
-  model_capability_revision?: string;
-  context_window_tokens?: number;
-  output_reserve_tokens?: number;
-  protocol_overhead_estimator_id?: string;
-  tokenizer_id?: string;
-  responses_compaction_threshold?: number;
   api_key?: string;
   base_url?: string;
   enabled?: boolean;
@@ -251,14 +245,6 @@ export interface UpdateUserModelConfigPayload {
   clear_temperature?: boolean;
   max_output_tokens?: number;
   clear_max_output_tokens?: boolean;
-  model_capability_revision?: string;
-  context_window_tokens?: number;
-  output_reserve_tokens?: number;
-  protocol_overhead_estimator_id?: string;
-  tokenizer_id?: string;
-  clear_tokenizer_id?: boolean;
-  responses_compaction_threshold?: number;
-  clear_responses_compaction_threshold?: boolean;
   api_key?: string;
   clear_api_key?: boolean;
   base_url?: string;

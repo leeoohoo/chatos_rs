@@ -2,9 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::db::Db;
-use sqlx::{Postgres, Transaction};
 use serde::Deserialize;
 use sqlx::FromRow;
+use sqlx::{Postgres, Transaction};
 #[derive(Debug, Clone, Deserialize, FromRow, PartialEq, Eq)]
 pub struct RollupDispatchOutbox {
     pub id: String,
@@ -86,11 +86,10 @@ pub async fn rearm_rollup_dispatch_if_eligible(
     t: &str,
     s: &str,
     thread: &str,
-    max_level: i64,
 ) -> Result<Option<RollupDispatchOutbox>, String> {
-    if let Some(value)=sqlx::query_as::<_,RollupDispatchOutbox>(sqlx::AssertSqlSafe(format!("SELECT {COLS} FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND recall_eligible AND summary_type='thread_incremental' AND status='done' AND rollup_status='pending' AND level<=$4 AND rollup_dispatch_consumed_version<rollup_dispatch_version ORDER BY created_at LIMIT 1"))).bind(t).bind(s).bind(thread).bind(max_level.max(0)).fetch_optional(db).await.map_err(|e|e.to_string())?{return Ok(Some(value));}
-    sqlx::query_as(sqlx::AssertSqlSafe(format!("UPDATE engine_summaries SET rollup_dispatch_version=rollup_dispatch_version+1,rollup_dispatch_requested_at=now(),rollup_dispatch_last_error=NULL,rollup_dispatch_pending=true WHERE (tenant_id,source_id,id)=(SELECT tenant_id,source_id,id FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND recall_eligible AND summary_type='thread_incremental' AND status='done' AND rollup_status='pending' AND level<=$4 AND rollup_dispatch_consumed_version>=rollup_dispatch_version AND COALESCE(rollup_dispatch_dead_letter_version,-1)<rollup_dispatch_version ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING {COLS}")))
-        .bind(t).bind(s).bind(thread).bind(max_level.max(0)).fetch_optional(db).await.map_err(|e|e.to_string())
+    if let Some(value)=sqlx::query_as::<_,RollupDispatchOutbox>(sqlx::AssertSqlSafe(format!("SELECT {COLS} FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND recall_eligible AND summary_type='thread_incremental' AND status='done' AND rollup_status='pending' AND rollup_dispatch_consumed_version<rollup_dispatch_version ORDER BY created_at LIMIT 1"))).bind(t).bind(s).bind(thread).fetch_optional(db).await.map_err(|e|e.to_string())?{return Ok(Some(value));}
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("UPDATE engine_summaries SET rollup_dispatch_version=rollup_dispatch_version+1,rollup_dispatch_requested_at=now(),rollup_dispatch_last_error=NULL,rollup_dispatch_pending=true WHERE (tenant_id,source_id,id)=(SELECT tenant_id,source_id,id FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND recall_eligible AND summary_type='thread_incremental' AND status='done' AND rollup_status='pending' AND rollup_dispatch_consumed_version>=rollup_dispatch_version AND COALESCE(rollup_dispatch_dead_letter_version,-1)<rollup_dispatch_version ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING {COLS}")))
+        .bind(t).bind(s).bind(thread).fetch_optional(db).await.map_err(|e|e.to_string())
 }
 pub async fn replay_dead_lettered_rollup_dispatch(
     db: &Db,

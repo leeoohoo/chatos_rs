@@ -122,10 +122,6 @@ extension NativeLocalConnectorService {
         preferences.global.requestTimeoutSeconds = managed.requestTimeoutSeconds
         preferences.global.runTimeoutSeconds = managed.runTimeoutSeconds
         preferences.global.maximumNoProgressRounds = managed.maximumNoProgressRounds
-        var context = AgentContextPolicy()
-        context.windowTokens = managed.contextWindowTokens
-        context.outputReserveTokens = managed.outputReserveTokens
-        preferences.global.context = context
         try AgentSettingsStore().saveManagedIfChanged(preferences)
         return value
     }

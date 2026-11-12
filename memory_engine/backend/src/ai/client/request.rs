@@ -52,7 +52,7 @@ async fn request_responses(
         client.model.as_str(),
         system_prompt,
         user_prompt,
-        requested_max_tokens,
+        Some(requested_max_tokens.unwrap_or(client.budget.output_reserve_tokens)),
         effective_temperature,
         false,
         true,
@@ -60,6 +60,16 @@ async fn request_responses(
         response_format,
     );
 
+    let input_tokens = estimate_request_input_tokens(&body)?;
+    if input_tokens > client.budget.input_limit()? {
+        return Err(format!("context_length_exceeded: complete Memory request requires {input_tokens} input tokens; model {} published capacity is {}", client.model, client.budget.input_limit()?));
+    }
+    if body["max_output_tokens"]
+        .as_i64()
+        .is_some_and(|output| output > client.budget.output_reserve_tokens)
+    {
+        return Err("requested output exceeds the model's frozen output reserve".into());
+    }
     send_stream_request(client, api_key, endpoint.as_str(), &body).await
 }
 
@@ -105,6 +115,31 @@ fn build_responses_body(
         body["text"] = json!({"format": response_format});
     }
     body
+}
+
+fn estimate_request_input_tokens(body: &Value) -> Result<i64, String> {
+    let encoded = serde_json::to_string(body).map_err(|e| e.to_string())?;
+    Ok(crate::services::ai_pipeline::estimate_tokens_text(&encoded))
+}
+
+pub(super) fn payload_request_tokens(
+    client: &AiClient,
+    system: &str,
+    prompt: &str,
+    format: &Value,
+) -> Result<i64, String> {
+    let body = build_responses_body(
+        &client.model,
+        system,
+        prompt,
+        Some(client.budget.output_reserve_tokens),
+        client.temperature,
+        false,
+        true,
+        false,
+        Some(format),
+    );
+    estimate_request_input_tokens(&body)
 }
 
 async fn send_stream_request(

@@ -384,7 +384,7 @@ final class StoryAgentTests: XCTestCase {
         XCTAssertTrue(result.content.contains("必须保留结局"))
         let definitions = try StoryAgentTools.definitions(stage: .outline)
         XCTAssertFalse(definitions.contains { $0.effect == .billable })
-        XCTAssertLessThan(try AgentContextBudget.estimate(messages: state.checkpoint.messages, tools: definitions), AgentContextPolicy().hardInputLimit)
+        XCTAssertLessThan(try AgentContextBudget.estimate(messages: state.checkpoint.messages, tools: definitions), try XCTUnwrap(ScriptedStoryModel(calls: []).memoryCapabilitySnapshot).contextWindowTokens)
     }
 
     func testViewModelUsesVisibleBudgetAndResumesWithMemoryByDefault() async throws {

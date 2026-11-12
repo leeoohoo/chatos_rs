@@ -77,7 +77,7 @@ async fn run_registered_subject_memory_scopes_internal(
             let source_id = scope.source_id.clone();
             let scope_key = scope.scope_key.clone();
             match run_scope_once(&config, &db, &scope).await {
-                Ok(result) => match scope_has_pending_work(&db, &scope).await {
+                Ok(result) => match scope_has_pending_work(&config, &db, &scope).await {
                     Ok(true) => match subject_memory_scopes::rearm_subject_memory_dispatch(
                         &db,
                         scope.tenant_id.as_str(),
@@ -196,10 +196,11 @@ pub(crate) async fn run_scope_once(
 }
 
 pub(crate) async fn scope_has_pending_work(
+    config: &AppConfig,
     db: &Db,
     scope: &EngineSubjectMemoryScope,
 ) -> Result<bool, String> {
-    subject_memory_job_has_work(db, &scope_job_request(scope)).await
+    subject_memory_job_has_work(config, db, &scope_job_request(scope)).await
 }
 
 pub(crate) fn scope_job_request(scope: &EngineSubjectMemoryScope) -> RunSubjectMemoryJobRequest {

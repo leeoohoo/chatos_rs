@@ -1,11 +1,14 @@
 {
-  "imagePrefixes": ["gpt-image-", "dall-e-"],
-  "videoPrefixes": ["minimax-h3", "sora", "veo", "kling", "seedance", "hailuo"],
-  "defaultChatBudget": {
-    "revision": "model-capability-200k-v1",
-    "context_window_tokens": 200000,
-    "output_reserve_tokens": 30000,
-    "protocol_overhead_estimator_id": "responses-json-v1",
-    "tokenizer_id": "o200k_base"
-  }
+  "imagePrefixes": [
+    "gpt-image-",
+    "dall-e-"
+  ],
+  "videoPrefixes": [
+    "minimax-h3",
+    "sora",
+    "veo",
+    "kling",
+    "seedance",
+    "hailuo"
+  ]
 }

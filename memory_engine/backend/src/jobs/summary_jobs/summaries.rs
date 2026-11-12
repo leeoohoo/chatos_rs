@@ -34,18 +34,9 @@ pub async fn run_pending_thread_summaries_with_limit(
     config: &AppConfig,
     tenant_id: Option<&str>,
     source_id: Option<&str>,
-    token_threshold: i64,
     max_threads: i64,
 ) -> Result<RunPendingSummariesResponse, String> {
-    run_pending_thread_summaries_internal(
-        db,
-        config,
-        tenant_id,
-        source_id,
-        token_threshold,
-        max_threads,
-    )
-    .await
+    run_pending_thread_summaries_internal(db, config, tenant_id, source_id, max_threads).await
 }
 
 async fn run_pending_thread_summaries_internal(
@@ -53,14 +44,13 @@ async fn run_pending_thread_summaries_internal(
     config: &AppConfig,
     tenant_id: Option<&str>,
     source_id: Option<&str>,
-    token_threshold: i64,
     max_threads: i64,
 ) -> Result<RunPendingSummariesResponse, String> {
     let pending_partitions = thread_partitions::list_pending_summary_partitions(
         db,
         tenant_id,
         source_id,
-        token_threshold,
+        1,
         max_threads,
     )
     .await?;
@@ -98,6 +88,18 @@ async fn run_pending_thread_summaries_internal(
                         return SummaryExecutionOutcome::Failed { thread_id, error }
                     }
                 };
+                let policy = match crate::services::control_plane::get_effective_job_policy(
+                    &config, &thread.tenant_id, "summary").await {
+                    Ok(policy) => policy,
+                    Err(error) => return SummaryExecutionOutcome::Failed { thread_id, error },
+                };
+                if match crate::repositories::thread_partitions::get_summary_partition_state(&db, &partition.tenant_id, &partition.source_id, &partition.thread_id, &partition.project_partition_key).await {
+                    Ok(Some(state)) => state.pending_summary_tokens < policy.max_model_input_tokens,
+                    Ok(None) => true,
+                    Err(error) => return SummaryExecutionOutcome::Failed { thread_id, error },
+                } {
+                    return SummaryExecutionOutcome::Noop { thread_id };
+                }
                 match summary::run_thread_summary_partition_with_thread(
                     &config,
                     &db,

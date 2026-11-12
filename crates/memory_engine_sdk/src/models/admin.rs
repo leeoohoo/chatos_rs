@@ -30,6 +30,11 @@ pub struct EngineModelProfile {
     pub supports_reasoning: bool,
     #[serde(default)]
     pub supports_responses: bool,
+    pub model_capability_revision: String,
+    pub context_window_tokens: i64,
+    pub output_reserve_tokens: i64,
+    pub protocol_overhead_estimator_id: String,
+    pub tokenizer_id: Option<String>,
     pub temperature: Option<f64>,
     pub thinking_level: Option<String>,
     #[serde(default = "default_model_request_max_retries")]
@@ -45,14 +50,13 @@ pub struct EngineModelProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineJobPolicy {
     pub job_type: String,
-    pub dispatch_threshold_tokens: Option<i64>,
-    pub max_source_batch_tokens: Option<i64>,
-    pub max_model_input_tokens: Option<i64>,
-    pub max_leaf_tokens: Option<i64>,
-    pub max_merge_rounds: Option<i64>,
-    pub count_limit: Option<i64>,
-    pub keep_level0_count: Option<i64>,
-    pub max_level: Option<i64>,
+    pub model_config_id: String,
+    pub provider: String,
+    pub model: String,
+    pub model_capability_revision: String,
+    pub context_window_tokens: i64,
+    pub output_reserve_tokens: i64,
+    pub max_model_input_tokens: i64,
     pub updated_at: String,
 }
 
@@ -175,6 +179,7 @@ mod tests {
             "model": "gpt-test",
             "base_url": null,
             "api_key": null,
+            "model_capability_revision":"test-published", "context_window_tokens":100000, "output_reserve_tokens":10000, "protocol_overhead_estimator_id":"responses-json-v1",
             "supports_images": true,
             "supports_reasoning": true,
             "supports_responses": true,
@@ -199,6 +204,7 @@ mod tests {
             "model": "gpt-test",
             "base_url": null,
             "api_key": null,
+            "model_capability_revision":"test-published", "context_window_tokens":100000, "output_reserve_tokens":10000, "protocol_overhead_estimator_id":"responses-json-v1",
             "supports_images": false,
             "supports_reasoning": false,
             "supports_responses": false,
@@ -216,19 +222,14 @@ mod tests {
     fn engine_job_policy_uses_explicit_pipeline_limits() {
         let policy: EngineJobPolicy = serde_json::from_value(serde_json::json!({
             "job_type": "thread_summary",
-            "dispatch_threshold_tokens": 4000,
-            "max_source_batch_tokens": 12000,
-            "max_model_input_tokens": 32000,
-            "max_leaf_tokens": 6000,
-            "max_merge_rounds": 8,
-            "count_limit": null,
-            "keep_level0_count": null,
-            "max_level": null,
+            "model_config_id": "selected-model", "model": "vendor-model", "provider": "vendor",
+            "model_capability_revision": "published-fixture", "context_window_tokens": 100000,
+            "output_reserve_tokens": 10000, "max_model_input_tokens": 90000,
             "updated_at": "2026-05-20T00:00:00Z"
         }))
         .expect("policy");
 
-        assert_eq!(policy.max_model_input_tokens, Some(32_000));
+        assert_eq!(policy.max_model_input_tokens, 90_000);
     }
 
     #[test]

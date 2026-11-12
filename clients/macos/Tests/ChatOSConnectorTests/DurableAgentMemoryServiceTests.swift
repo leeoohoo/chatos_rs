@@ -137,7 +137,7 @@ private func composeRequest() throws -> AgentMemoryComposeRequest {
             tokenizerID: nil
         ),
         queryText: "current query",
-        currentTurnID: "turn-current"
+        currentTurnID: "turn-current", availableMemoryTokens: 43_219
     )
 }
 

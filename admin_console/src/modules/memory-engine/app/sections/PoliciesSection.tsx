@@ -32,7 +32,7 @@ export function PoliciesSection(props: PoliciesSectionProps) {
       label: (
         <Space size={8}>
           <span>{policy.job_type}</span>
-          <Tag color="blue">已发布</Tag>
+          <Tag color="blue">随模型计算</Tag>
         </Space>
       ),
       children: (
@@ -40,15 +40,12 @@ export function PoliciesSection(props: PoliciesSectionProps) {
           bordered
           column={2}
           items={[
-            { key: 'dispatch', label: '派发阈值', children: policy.dispatch_threshold_tokens ?? '-' },
-            { key: 'source', label: '源批次硬上限', children: policy.max_source_batch_tokens ?? '-' },
-            { key: 'model', label: '模型输入硬上限', children: policy.max_model_input_tokens ?? '-' },
-            { key: 'leaf', label: '叶节点硬上限', children: policy.max_leaf_tokens ?? '-' },
-            { key: 'merge', label: '最大归并轮数', children: policy.max_merge_rounds ?? '-' },
-            { key: 'count', label: '归并条数', children: policy.count_limit ?? '-' },
-            { key: 'keep', label: '保留 L0', children: policy.keep_level0_count ?? '-' },
-            { key: 'level', label: '最大层级', children: policy.max_level ?? '-' },
-            { key: 'updated', label: '配置快照时间', children: policy.updated_at, span: 2 },
+            { key: 'model', label: '当前模型', children: policy.model ?? '-' },
+            { key: 'provider', label: '模型供应商', children: policy.provider ?? '-' },
+            { key: 'context', label: '模型上下文上限', children: policy.context_window_tokens ?? '-' },
+            { key: 'output', label: '模型输出预留', children: policy.output_reserve_tokens ?? '-' },
+            { key: 'input', label: '模型可用输入', children: policy.max_model_input_tokens ?? '-' },
+            { key: 'revision', label: '模型能力版本', children: policy.model_capability_revision ?? '-' },
           ]}
         />
       ),
@@ -66,16 +63,16 @@ export function PoliciesSection(props: PoliciesSectionProps) {
       >
         <Space direction="vertical" size={6}>
           <Text type="secondary">
-            当前页面展示配置中心已经发布并实际生效的 Memory Policy，不再在 Memory Engine 内单独保存。
+            本页显示当前账户选用模型的已发布能力。Memory Engine 按模型可用输入计算任务容量，发送前扣除实际提示词、协议和结构化输出定义的开销。
           </Text>
           <Text type="secondary">
-            Prompt 由 Managed Agent 版本管理；本页只读展示当前配置快照，Memory Engine 不提供本地修改或兼容入口。
+            模型能力由正式配置提供，Prompt 由 Managed Agent 版本管理。缺少模型能力时停止生成并报告原因。
           </Text>
         </Space>
       </Card>
       {policies.length === 0 ? (
         <Card>
-          <Empty description="暂无任务策略，点击右上角刷新重试" />
+          <Empty description="暂无可用模型能力配置" />
         </Card>
       ) : (
         <Space direction="vertical" size={16} style={{ width: '100%' }}>

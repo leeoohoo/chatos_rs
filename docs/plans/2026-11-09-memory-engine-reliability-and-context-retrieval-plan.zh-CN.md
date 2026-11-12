@@ -1,3 +1,5 @@
+> 2026-11-12 修订：删除全部独立 Memory 数值策略及代码默认值，生成容量仅从所选模型的正式能力配置推导；该条覆盖旧版描述。
+
 # Memory Engine 可靠性、总结与上下文召回完整优化方案
 
 > 状态：一次性全量实施定稿版；全部工作完成并通过全量验收前不得提交、推送或发布
@@ -1117,10 +1119,10 @@ Runtime Context Assertion verifier、签发端和全部调用方必须在切换�
 有效值统一计算为：
 
 ```text
-effective_limit = min(requested_limit, server_policy_limit, model_available_budget)
+effective_limit = min(requested_limit, published_model_input_capacity)
 ```
 
-- 所有预算字段必须存在，并由已发布策略给出默认构造值；服务端拒绝缺字段的旧契约请求；
+- 所有预算字段必须存在，由本次完整请求扣除提示词、工具、已有消息及输出预留后显式构造；不得提供固定默认值；服务端拒绝缺字段的请求；
 - 请求不能放大服务端上限；
 - 检索 Pipeline 由服务端已发布 revision 唯一确定，请求不能选择检索模式；
 - 旧条数限制字段从 DTO、SDK、Runtime 和客户端删除；所有候选统一进入完整预算规划；
@@ -1233,18 +1235,18 @@ responses_compaction_threshold?
 
 - `context_window_tokens` 和 `output_reserve_tokens` 来自已发布模型能力目录并随运行冻结，不能根据 model name、provider 文档或 compaction threshold 在 Runtime 内猜测；
 - `responses_compaction_threshold` 是 Provider 轮内压缩软阈值，不等于 context window，也不能替代 output reserve；
-- `max_output_tokens <= output_reserve_tokens < context_window_tokens`；无显式 `max_output_tokens` 时仍必须有服务端默认 reserve；
+- `max_output_tokens <= output_reserve_tokens < context_window_tokens`；无显式 `max_output_tokens` 时使用配置中心正式发布的 output reserve，代码不得提供数值默认值；
 - capability revision 与 model/provider/base URL 的生效 revision 一起写入 durable run snapshot；运行中配置刷新不得改变当前 run；
-- Memory Engine 只接受已发布的 capability revision，并把请求预算再限制到服务端策略上限；
+- Memory Engine 只接受已发布的 capability revision，并把请求预算限制到该正式版本的输入容量；
 - 缺失或未知 revision 时硬预算 fail closed，不允许退回无完整预算预检的旧行为。
 
 模型目录与运行预算必须遵守以下边界：
 
 - 供应商启用状态决定导入模型的全局 `enabled`；`task_enabled` 只决定任务创建候选，不能用于隐藏 Agent、图片或视频的模型目录。
 - 聊天、图片生成、视频生成按共享操作模型目录分开选择和校验；支持图片输入不代表支持图片生成。
-- 新导入且尚未配置聊天预算的聊天模型，由 User Service 发布共享目录中明确声明的默认请求预算；已有显式预算保持原值。默认预算与 Configuration Center 发布给 Memory Engine 的版本使用同一份源数据，Runtime 继续冻结并严格校验 revision，不在运行时推测或补齐。
+- 聊天预算仅由 Configuration Center 的 `shared.ai.model_capabilities` 与 `shared.ai.active_model_capability_revision` 正式发布。User Service 只返回该发布版本的能力视图，不在模型记录保存预算副本，不在导入、启动、迁移时补数值。客户端和 SDK 不内置模型预算目录。Runtime 按发布版本冻结、校验能力，配置缺失时明确报告未配置。
 - 图片和视频生成不依赖聊天 token 预算字段。缺少聊天预算不能禁用图片、视频模型，也不能阻止保存它们的任务候选设置。
-- 修复既有错误禁用状态时，按供应商归属统一处理全部账户，保留模型 ID、任务候选设置和显式预算，不按项目补数据。
+- 修复既有错误禁用状态时，按供应商归属统一处理全部账户，保留模型 ID 和任务候选设置，不按项目补数据。
 
 需要同步修改：User Service 模型 DTO/存储与管理页、Local Agent Host interface/database migration/control-plane mapping、`crates/chatos_ai_runtime` model/runtime request、macOS connector runtime DTO、Windows Runtime 对应模型快照和测试。
 
@@ -1352,33 +1354,15 @@ Managed Agent Prompt
 
 ### 13.2 Configuration Center
 
-沿用现有命名体系：
+Memory 生成不配置独立的派发 Token、批次 Token、模型输入、leaf、归并轮数、条数、保留 L0 或最大层级默认值。删除整个 `memory_engine.policy.*` 配置命名空间及其 SDK 默认值、启动补值和管理平台编辑入口。
+
+每个账户按其实际选用模型的正式能力版本计算容量：可用输入 = 模型上下文上限 − 该模型已配置的输出预留。模型字段须与配置中心发布的 capability revision 一致；完整请求发送前再扣除实际 Prompt、协议、结构化输出 schema 和输入封装。能力缺失或不一致即停止生成，禁止按模型名猜测、使用通用固定预算或补入默认阈值。切换模型后新任务使用新模型能力，已冻结任务校验自身模型身份和版本。
+
+生成归并按实际待处理项推进；轮次必须有收敛进展，不设置固定归并轮数。层级来自实际待处理数据，不设置固定深度和保留条数。
+
+其余 compose 配置仍使用：
 
 ```text
-memory_engine.policy.summary
-  dispatch_threshold_tokens
-  max_source_batch_tokens
-  max_model_input_tokens
-  max_leaf_tokens
-  max_merge_rounds
-
-memory_engine.policy.rollup
-  dispatch_threshold_tokens
-  max_source_batch_tokens
-  max_model_input_tokens
-  count_limit
-  keep_level0_count
-  max_level
-  partition_by_project = true
-
-memory_engine.policy.subject_memory
-  dispatch_threshold_tokens
-  max_source_batch_tokens
-  max_model_input_tokens
-  count_limit
-  keep_level0_count
-  max_level
-
 memory_engine.compose
   max_memory_tokens
   max_recent_record_tokens
@@ -1396,7 +1380,9 @@ Configuration Center 只发布不可变策略、Prompt、Pipeline、模型能力
 
 不恢复已退休的 `target_summary_tokens`。Runtime 的 context window、output reserve、Responses compaction threshold 和模型能力使用 11.1 补齐后的 Agent Runtime 不可变模型快照，不在 Memory Engine 下建立第二套值；当前只含 compaction threshold 的旧快照不满足 v2 硬预算前置条件。
 
-三个 token 字段不得复用语义：`dispatch_threshold_tokens` 只决定何时请求后台生成，`max_source_batch_tokens` 只限制一次冻结多少源输入，`max_model_input_tokens` 才是 Pipeline 单次模型请求硬上限。`max_model_input_tokens` 必须小于等于该 generation 冻结模型快照的输入能力上限减去协议、Prompt 和输出 reserve；配置中心不能把它提升到模型能力之外。
+正式共同预算的官方依据与适用型号见 [2026-11-12-model-capability-sources.zh-CN.md](2026-11-12-model-capability-sources.zh-CN.md)。已明确退役或缺少规格的别名由正式目录排除，不出现在可选模型中。
+
+验收必须验证不同已发布能力产生不同任务容量、切换模型后新任务更新、能力缺失时不生成、完整请求不会超过冻结模型上限，以及旧策略配置不会被默认值、迁移或已发布快照重新带回。
 
 配置要求：
 

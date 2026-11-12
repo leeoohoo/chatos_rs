@@ -70,11 +70,7 @@ pub(super) async fn create_thread_summary_job_run(
             thread_id: Some(thread_id.to_string()),
             subject_id: Some(subject_id.to_string()),
             thread_label: None,
-            metadata: Some(start_metadata(
-                pending_before_count,
-                settings,
-                selection,
-            )),
+            metadata: Some(start_metadata(pending_before_count, settings, selection)),
         },
     )
     .await
@@ -95,10 +91,8 @@ pub(super) fn start_metadata(
 ) -> serde_json::Value {
     serde_json::json!({
         "pending_before_count": pending_before_count,
-        "policy_max_source_batch_tokens": settings.source_batch_token_limit,
-        "policy_max_model_input_tokens": settings.token_limit,
-        "policy_max_leaf_tokens": settings.max_leaf_tokens,
-        "policy_max_merge_rounds": settings.max_merge_rounds,
+        "source_batch_capacity_tokens": settings.source_batch_token_limit,
+        "model_input_limit_tokens": settings.token_limit,
         "project_partition_key": super::execution::project_partition_key(selection),
         "frozen_selection": FrozenThreadSummarySelection::from_selection(selection),
     })
@@ -204,8 +198,6 @@ mod tests {
         let settings = SummaryJobSettings {
             token_limit: 12_345,
             source_batch_token_limit: 6_789,
-            max_leaf_tokens: 4_096,
-            max_merge_rounds: 7,
             cloud_owner_entity_id: None,
             cloud_resume_kind: None,
         };

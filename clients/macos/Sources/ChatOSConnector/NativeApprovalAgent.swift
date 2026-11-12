@@ -97,7 +97,10 @@ struct NativeApprovalAgent: Sendable {
         thinkingLevel: String?
     ) throws -> any AgentModelClient {
         let reserve = model.capability.outputReserveTokens
-        let maximumOutputTokens = min(max(1, model.maxOutputTokens ?? 1_200), reserve)
+        let maximumOutputTokens = model.maxOutputTokens ?? reserve
+        guard maximumOutputTokens > 0, maximumOutputTokens <= reserve else {
+            throw AgentRuntimeError.invalidPolicy
+        }
         return try AgentResponsesModelClient(
             baseURL: model.baseURL, model: model.model, apiKey: model.apiKey,
             thinking: thinkingLevel, maximumOutputTokens: maximumOutputTokens,

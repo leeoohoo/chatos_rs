@@ -167,7 +167,7 @@ final class AgentMemoryContextTests: XCTestCase {
         let memory = TestMemory(scope: scope)
         let provider = AgentMemoryContextProvider(scope: scope, service: memory)
         let model = CountingModel(finishAt: 600)
-        var policy = AgentRunPolicy(); policy.context = contextPolicy
+        let policy = AgentRunPolicy()
         let result = try await AgentRuntime().run(checkpoint: provider.bind(checkpoint), scope: checkpoint.scope,
             policy: policy, model: model, tools: tools, execute: { call in .init(call.arguments + String(repeating: "x", count: 150)) },
             contextProvider: provider)
@@ -189,7 +189,6 @@ final class AgentMemoryContextTests: XCTestCase {
         let model = CountingModel(finishAt: 2)
         var policy = AgentRunPolicy()
         policy.maximumModelCalls = 1
-        policy.context = contextPolicy
 
         let result = try await AgentRuntime().run(
             checkpoint: provider.bind(checkpoint), scope: checkpoint.scope,
@@ -401,7 +400,7 @@ final class AgentMemoryContextTests: XCTestCase {
         let memory = TestMemory(scope: scope)
         let provider = AgentMemoryContextProvider(scope: scope, service: memory)
         let model = CountingModel(finishAt: 1)
-        var policy = AgentRunPolicy(); policy.context = contextPolicy
+        let policy = AgentRunPolicy()
         let result = try await AgentRuntime().run(checkpoint: provider.bind(checkpoint), scope: checkpoint.scope,
             policy: policy, model: model, tools: tools, execute: { _ in .init("ok") }, contextProvider: provider)
         XCTAssertEqual(result.status, .completed)
@@ -449,12 +448,12 @@ final class AgentMemoryContextTests: XCTestCase {
         let memory = TestMemory(scope: scope)
         let provider = AgentMemoryContextProvider(scope: scope, service: memory)
         var checkpoint = try provider.bind(initial)
-        checkpoint = try await provider.prepare(checkpoint: checkpoint, tools: tools, policy: contextPolicy,
+        checkpoint = try await provider.prepare(checkpoint: checkpoint, tools: tools,
             modelCapability: try modelCapability(),
             deadline: Date().addingTimeInterval(60), synchronizeOnly: true, record: { _, _ in }).checkpoint
         checkpoint.messages[1].content = "mutated"
         do {
-            _ = try await provider.prepare(checkpoint: checkpoint, tools: tools, policy: contextPolicy,
+            _ = try await provider.prepare(checkpoint: checkpoint, tools: tools,
                 modelCapability: try modelCapability(),
                 deadline: Date().addingTimeInterval(60), record: { _, _ in })
             XCTFail("Should fail")
@@ -524,10 +523,6 @@ final class AgentMemoryContextTests: XCTestCase {
         }
     }
 
-    private var contextPolicy: AgentContextPolicy {
-        var policy = AgentContextPolicy(); policy.windowTokens = 2_048; policy.outputReserveTokens = 512
-        return policy
-    }
     private func modelCapability() throws -> AgentModelCapabilitySnapshot {
         try AgentModelCapabilitySnapshot(
             revision: "test-capability-v1",

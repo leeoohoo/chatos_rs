@@ -10,7 +10,7 @@ use crate::ai::{AiClient, AiGenerateTextError};
 use super::chunking::{contains_source_ref, split_chunks_by_token_limit};
 use super::input::build_ai_input;
 use super::overflow::is_context_overflow_error;
-use super::{SummaryBuildResult, MAX_OVERFLOW_RETRIES, MIN_TOKEN_LIMIT};
+use super::{SummaryBuildResult, MAX_OVERFLOW_RETRIES};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct CloudSummaryPipelineSpec {
@@ -20,9 +20,6 @@ pub(crate) struct CloudSummaryPipelineSpec {
     pub leaf_directive: String,
     pub merge_directive: String,
     pub token_limit: i64,
-    pub max_leaf_tokens: i64,
-    pub max_merge_rounds: usize,
-    pub initial_token_limit_floor: i64,
     pub split_oversized_items: bool,
     pub log_label: String,
     pub items: Vec<String>,
@@ -35,8 +32,8 @@ impl CloudSummaryPipelineSpec {
         if self.items.is_empty() {
             return Err("empty summarize items".to_string());
         }
-        if self.max_merge_rounds == 0 {
-            return Err("max_merge_rounds must be positive".to_string());
+        if self.token_limit <= 0 {
+            return Err("model source capacity must be positive".into());
         }
         for (name, value) in [
             ("pipeline_revision", self.pipeline_revision.as_str()),
@@ -65,6 +62,7 @@ pub(crate) struct CloudSummaryPipelineState {
     pub spec: CloudSummaryPipelineSpec,
     payload_contract: crate::models::structured_payload::MemoryPayloadContract,
     effective_token_limit: i64,
+    pub budget: crate::services::model_budget::MemoryModelBudget,
     overflow_retry_count: usize,
     chunk_count: usize,
     phase: PipelinePhase,
@@ -78,17 +76,16 @@ impl CloudSummaryPipelineState {
     pub(crate) fn new(
         spec: CloudSummaryPipelineSpec,
         payload_contract: crate::models::structured_payload::MemoryPayloadContract,
+        budget: crate::services::model_budget::MemoryModelBudget,
     ) -> Result<Self, String> {
         spec.validate()?;
         payload_contract.validate()?;
-        let effective_token_limit = spec
-            .token_limit
-            .max(MIN_TOKEN_LIMIT)
-            .max(spec.initial_token_limit_floor);
+        let effective_token_limit = spec.token_limit.min(budget.input_limit()?);
         let mut state = Self {
             spec,
             payload_contract,
             effective_token_limit,
+            budget,
             overflow_retry_count: 0,
             chunk_count: 0,
             phase: PipelinePhase::Leaf,
@@ -124,6 +121,29 @@ impl CloudSummaryPipelineState {
         ai: &AiClient,
         model_attempt: usize,
     ) -> Result<(AiSingleStepOutcome, Self, Option<SummaryBuildResult>), String> {
+        if ai.budget() != &self.budget {
+            return Err(
+                "Memory model identity or capability changed during the frozen generation".into(),
+            );
+        }
+        let directive = format!(
+            "{}\n\n{}",
+            match self.phase {
+                PipelinePhase::Leaf => &self.spec.leaf_directive,
+                PipelinePhase::Merge => &self.spec.merge_directive,
+            },
+            self.payload_contract.model_instruction()?
+        );
+        let empty_input = build_ai_input(self.spec.managed_prompt.as_deref(), &directive, &[]);
+        let capacity = ai.payload_source_capacity(
+            crate::ai::SUMMARY_SYSTEM_PROMPT,
+            &empty_input,
+            &self.payload_contract.response_format()?,
+        )?;
+        if capacity < self.effective_token_limit {
+            self.effective_token_limit = capacity;
+            self.repack_remaining_groups()?;
+        }
         self.normalize_progress()?;
         let Some(group) = self.groups.get(self.cursor).cloned() else {
             return Err("summary pipeline cursor escaped its active groups".to_string());
@@ -228,8 +248,8 @@ impl CloudSummaryPipelineState {
                         None,
                     ));
                 }
-                let next_limit = (self.effective_token_limit / 2).max(MIN_TOKEN_LIMIT);
-                if next_limit >= self.effective_token_limit {
+                let next_limit = self.effective_token_limit / 2;
+                if next_limit <= 0 || next_limit >= self.effective_token_limit {
                     return Ok((AiSingleStepOutcome::Failed { error }, self, None));
                 }
                 self.effective_token_limit = next_limit;
@@ -270,10 +290,14 @@ impl CloudSummaryPipelineState {
         if self.next.is_empty() {
             return Err("summary pipeline produced no output".to_string());
         }
-        if self.merge_round >= self.spec.max_merge_rounds {
+        // Every merge must reduce the number of outstanding items. Termination
+        // follows from the frozen input, without an arbitrary round ceiling.
+        if self.phase == PipelinePhase::Merge
+            && self.next.len() >= self.groups.iter().map(Vec::len).sum::<usize>()
+        {
             return Ok((
                 AiSingleStepOutcome::Failed {
-                    error: "context_length_exceeded: merge rounds exceeded".to_string(),
+                    error: "summary merge made no progress".into(),
                 },
                 self,
                 None,
@@ -282,11 +306,8 @@ impl CloudSummaryPipelineState {
 
         self.phase = PipelinePhase::Merge;
         self.merge_round = self.merge_round.saturating_add(1);
-        self.groups = split_chunks_by_token_limit(
-            self.next.as_slice(),
-            self.effective_token_limit.max(MIN_TOKEN_LIMIT),
-            false,
-        );
+        self.groups =
+            split_chunks_by_token_limit(self.next.as_slice(), self.effective_token_limit, false);
         self.cursor = 0;
         self.next.clear();
         if self.groups.iter().all(|group| group.len() <= 1) {
@@ -302,9 +323,42 @@ impl CloudSummaryPipelineState {
         Ok((continuation_outcome("summary_merge_round"), self, None))
     }
 
+    fn repack_remaining_groups(&mut self) -> Result<(), String> {
+        let pending = self.groups[self.cursor..]
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut groups = self.groups[..self.cursor].to_vec();
+        groups.extend(split_chunks_by_token_limit(
+            &pending,
+            self.effective_token_limit,
+            self.phase == PipelinePhase::Leaf && self.spec.split_oversized_items,
+        ));
+        self.groups = groups;
+        self.validate_group_capacity()?;
+        self.chunk_count = self.chunk_count.max(self.groups.len());
+        Ok(())
+    }
+
     fn normalize_progress(&mut self) -> Result<(), String> {
         if self.groups.is_empty() {
             return Err("summary pipeline has no active groups".to_string());
+        }
+        Ok(())
+    }
+
+    fn validate_group_capacity(&self) -> Result<(), String> {
+        if self.groups[self.cursor..].iter().any(|group| {
+            group
+                .iter()
+                .map(|item| super::estimate_tokens_text(item))
+                .sum::<i64>()
+                > self.effective_token_limit
+        }) {
+            return Err(
+                "model input has insufficient room for a source chunk and its envelope".into(),
+            );
         }
         Ok(())
     }
@@ -339,8 +393,7 @@ impl CloudSummaryPipelineState {
         self.phase = PipelinePhase::Leaf;
         self.groups = split_chunks_by_token_limit(
             self.spec.items.as_slice(),
-            self.effective_token_limit
-                .min(self.spec.max_leaf_tokens.max(MIN_TOKEN_LIMIT)),
+            self.effective_token_limit,
             self.spec.split_oversized_items,
         );
         if self.groups.is_empty() {
@@ -350,6 +403,7 @@ impl CloudSummaryPipelineState {
         self.cursor = 0;
         self.next.clear();
         self.merge_round = 0;
+        self.validate_group_capacity()?;
         Ok(())
     }
 }
@@ -386,6 +440,7 @@ fn final_outcome(content: String) -> AiSingleStepOutcome {
 
 #[cfg(test)]
 mod tests {
+    use super::super::CHUNK_TEST_CAPACITY;
     use std::collections::VecDeque;
     use std::sync::Arc;
 
@@ -513,9 +568,6 @@ mod tests {
             leaf_directive: "leaf".to_string(),
             merge_directive: "merge".to_string(),
             token_limit,
-            max_leaf_tokens: token_limit,
-            max_merge_rounds: 8,
-            initial_token_limit_floor: MIN_TOKEN_LIMIT,
             split_oversized_items: true,
             log_label: "test".to_string(),
             items: items
@@ -524,6 +576,17 @@ mod tests {
                 .collect(),
             resume: Value::Null,
         }
+    }
+
+    fn test_state(
+        spec: CloudSummaryPipelineSpec,
+        contract: crate::models::structured_payload::MemoryPayloadContract,
+    ) -> Result<CloudSummaryPipelineState, String> {
+        CloudSummaryPipelineState::new(
+            spec,
+            contract,
+            crate::services::model_budget::test_budget(100_000),
+        )
     }
 
     fn contract() -> crate::models::structured_payload::MemoryPayloadContract {
@@ -541,9 +604,8 @@ mod tests {
     #[tokio::test]
     async fn single_chunk_finishes_in_one_model_step() {
         let ai = test_ai(vec![success("final summary")], 2).await;
-        let state =
-            CloudSummaryPipelineState::new(spec(vec!["short input".to_string()], 512), contract())
-                .expect("pipeline state");
+        let state = test_state(spec(vec!["short input".to_string()], 512), contract())
+            .expect("pipeline state");
         let (outcome, state, result) = state.execute_one(&ai, 1).await.expect("model step");
 
         assert!(matches!(outcome, AiSingleStepOutcome::Final(_)));
@@ -566,8 +628,7 @@ mod tests {
         )
         .await;
         let items = vec!["a".repeat(1_500), "b".repeat(1_500)];
-        let mut state =
-            CloudSummaryPipelineState::new(spec(items, 512), contract()).expect("pipeline state");
+        let mut state = test_state(spec(items, 512), contract()).expect("pipeline state");
 
         for expected_reason in ["summary_pipeline_progress", "summary_merge_round"] {
             let (outcome, next, result) = state.execute_one(&ai, 1).await.expect("model step");
@@ -597,8 +658,7 @@ mod tests {
                 "conclusion": "unique conclusion"
             })
         );
-        let mut state = CloudSummaryPipelineState::new(spec(vec![oversized], 512), contract())
-            .expect("pipeline state");
+        let mut state = test_state(spec(vec![oversized], 512), contract()).expect("pipeline state");
         assert!(state.groups.len() > 1);
 
         for _ in 0..128 {
@@ -628,8 +688,7 @@ mod tests {
         )
         .await;
         let state =
-            CloudSummaryPipelineState::new(spec(vec!["input".to_string()], 512), contract())
-                .expect("pipeline state");
+            test_state(spec(vec!["input".to_string()], 512), contract()).expect("pipeline state");
         let (outcome, _, result) = state.execute_one(&ai, 1).await.expect("model step");
 
         assert!(matches!(
@@ -647,7 +706,7 @@ mod tests {
         let ai = test_ai(vec![empty_success()], 2).await;
         let mut payload_contract = contract();
         payload_contract.allow_empty_facts = true;
-        let state = CloudSummaryPipelineState::new(
+        let state = test_state(
             spec(vec!["[role=system]\ntest".to_string()], 512),
             payload_contract,
         )
@@ -668,8 +727,7 @@ mod tests {
     async fn malformed_or_forbidden_empty_payload_uses_bounded_model_retry() {
         let ai = test_ai(vec![empty_success()], 2).await;
         let state =
-            CloudSummaryPipelineState::new(spec(vec!["input".to_string()], 512), contract())
-                .expect("pipeline state");
+            test_state(spec(vec!["input".to_string()], 512), contract()).expect("pipeline state");
 
         let (outcome, _, result) = state.execute_one(&ai, 1).await.expect("model step");
 
@@ -688,8 +746,7 @@ mod tests {
     async fn malformed_payload_fails_after_validation_retry_budget_is_exhausted() {
         let ai = test_ai(vec![empty_success()], 2).await;
         let state =
-            CloudSummaryPipelineState::new(spec(vec!["input".to_string()], 512), contract())
-                .expect("pipeline state");
+            test_state(spec(vec!["input".to_string()], 512), contract()).expect("pipeline state");
 
         let (outcome, _, result) = state.execute_one(&ai, 3).await.expect("model step");
 
@@ -708,8 +765,8 @@ mod tests {
             2,
         )
         .await;
-        let state = CloudSummaryPipelineState::new(spec(vec!["x".repeat(600)], 512), contract())
-            .expect("pipeline state");
+        let state =
+            test_state(spec(vec!["x".repeat(600)], 512), contract()).expect("pipeline state");
         let (outcome, state, result) = state.execute_one(&ai, 1).await.expect("model step");
 
         assert!(
@@ -721,29 +778,29 @@ mod tests {
     }
 
     #[test]
-    fn merge_round_limit_fails_without_another_model_request() {
+    fn merge_without_progress_fails_without_another_model_request() {
         let mut state =
-            CloudSummaryPipelineState::new(spec(vec!["input".to_string()], 512), contract())
-                .expect("pipeline state");
+            test_state(spec(vec!["input".to_string()], 512), contract()).expect("pipeline state");
         state.phase = PipelinePhase::Merge;
         state.groups = vec![vec!["a".to_string(), "b".to_string()]];
         state.cursor = 1;
         state.next = vec!["a".repeat(600), "b".repeat(600)];
-        state.merge_round = state.spec.max_merge_rounds;
+        state.groups = vec![vec!["a".into()], vec!["b".into()]];
+        state.cursor = state.groups.len();
 
         let (outcome, _, result) = state
             .continue_or_finish("test")
             .expect("terminal pipeline result");
         assert!(
-            matches!(outcome, AiSingleStepOutcome::Failed { ref error } if error.contains("merge rounds exceeded"))
+            matches!(outcome, AiSingleStepOutcome::Failed { ref error } if error.contains("made no progress"))
         );
         assert!(result.is_none());
     }
 
     #[test]
     fn state_survives_serde_roundtrip() {
-        let state = CloudSummaryPipelineState::new(
-            spec(vec!["a".repeat(300), "b".repeat(300)], MIN_TOKEN_LIMIT),
+        let state = test_state(
+            spec(vec!["a".repeat(300), "b".repeat(300)], CHUNK_TEST_CAPACITY),
             contract(),
         )
         .expect("pipeline state");
@@ -755,8 +812,8 @@ mod tests {
 
     #[test]
     fn every_oversized_leaf_chunk_keeps_a_frozen_source_ref() {
-        let state = CloudSummaryPipelineState::new(
-            spec(vec!["超大工具输出".repeat(400)], MIN_TOKEN_LIMIT),
+        let state = test_state(
+            spec(vec!["超大工具输出".repeat(400)], CHUNK_TEST_CAPACITY),
             contract(),
         )
         .expect("pipeline state");

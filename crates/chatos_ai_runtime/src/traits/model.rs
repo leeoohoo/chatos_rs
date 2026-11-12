@@ -153,8 +153,8 @@ impl ModelRuntimeConfig {
     pub fn validate_model_capability(&self) -> Result<(), String> {
         if self.model_capability_revision.trim().is_empty()
             || self.protocol_overhead_estimator_id.trim().is_empty()
-            || self.context_window_tokens < 2_048
-            || self.output_reserve_tokens < 256
+            || self.context_window_tokens == 0
+            || self.output_reserve_tokens == 0
             || self.output_reserve_tokens >= self.context_window_tokens
         {
             return Err("published model capability snapshot is required".to_string());
@@ -211,7 +211,11 @@ impl ModelRuntimeConfig {
             instructions: self.instructions.clone(),
             tools,
             temperature: self.temperature,
-            max_output_tokens: self.max_output_tokens,
+            max_output_tokens: self.max_output_tokens.or_else(|| {
+                i64::try_from(self.output_reserve_tokens)
+                    .ok()
+                    .filter(|output| *output > 0)
+            }),
             thinking_level: self.thinking_level.clone(),
             prompt_cache_key: self.prompt_cache_key.clone(),
             previous_response_id: self.previous_response_id.clone(),
@@ -241,7 +245,11 @@ impl ModelRuntimeConfig {
         .with_thinking_level(self.thinking_level.clone())
         .with_temperature(self.temperature)
         .with_instructions(self.instructions.clone())
-        .with_max_output_tokens(self.max_output_tokens)
+        .with_max_output_tokens(self.max_output_tokens.or_else(|| {
+            i64::try_from(self.output_reserve_tokens)
+                .ok()
+                .filter(|output| *output > 0)
+        }))
         .with_request_body_limit_bytes(self.request_body_limit_bytes)
         .with_max_transient_retries(self.max_transient_retries)
     }

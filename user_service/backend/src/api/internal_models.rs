@@ -379,12 +379,8 @@ fn has_complete_model_capability(model: &crate::models::UserModelConfigRecord) -
         .model_capability_revision
         .as_deref()
         .is_some_and(|value| !value.trim().is_empty())
-        && model
-            .context_window_tokens
-            .is_some_and(|value| value >= 2_048)
-        && model
-            .output_reserve_tokens
-            .is_some_and(|value| value >= 256)
+        && model.context_window_tokens.is_some_and(|value| value > 0)
+        && model.output_reserve_tokens.is_some_and(|value| value > 0)
         && model
             .context_window_tokens
             .zip(model.output_reserve_tokens)

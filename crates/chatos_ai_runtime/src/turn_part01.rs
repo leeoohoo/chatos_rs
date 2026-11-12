@@ -18,13 +18,61 @@ mod tests {
         ModelRequest, ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput,
     };
 
+    fn published_test_config(mut config: ModelRuntimeConfig) -> ModelRuntimeConfig {
+        config.model_capability_revision = "test-published".into();
+        config.context_window_tokens = 117_031;
+        config.output_reserve_tokens = 17_031;
+        config.protocol_overhead_estimator_id = "responses-json-v1".into();
+        config
+    }
+
+    fn test_scope() -> MemoryScope {
+        MemoryScope::thread("tenant-1", "task_execution", "thread-1")
+            .with_subject_id("agent:test-agent")
+            .with_compose_context(None, None, "test-published")
+            .with_policy(memory_engine_sdk::ComposeContextPolicy {
+                max_memory_tokens: 100_000,
+                max_recent_record_tokens: 100_000,
+                max_thread_summary_tokens: 100_000,
+                max_project_memory_tokens: 100_000,
+                max_agent_memory_tokens: 100_000,
+            })
+    }
+
+    fn test_issuer() -> memory_engine_sdk::RuntimeContextAssertionIssuer {
+        memory_engine_sdk::RuntimeContextAssertionIssuer::new(
+            "test-assertion-secret",
+            "test-key",
+            "test-issuer",
+            "test-identity",
+            60,
+        )
+        .unwrap()
+    }
+
     async fn memory_composer_mock(
-        response: Value,
+        mut response: Value,
     ) -> (
         MemoryContextComposer,
         MemoryScope,
         tokio::task::JoinHandle<()>,
     ) {
+        for block in response["blocks"].as_array_mut().unwrap() {
+            *block = serde_json::to_value(memory_engine_sdk::ComposeContextBlock {
+                block_type: block["block_type"].as_str().unwrap().into(),
+                text: block["text"].as_str().unwrap().into(),
+                ..Default::default()
+            })
+            .unwrap();
+        }
+        response["meta"] = serde_json::to_value(memory_engine_sdk::ComposeContextMeta {
+            summary_count: response["meta"]["summary_count"].as_u64().unwrap_or(0) as usize,
+            recent_record_count: response["meta"]["recent_record_count"]
+                .as_u64()
+                .unwrap_or(0) as usize,
+            ..Default::default()
+        })
+        .unwrap();
         async fn compose(State(response): State<Value>) -> Json<Value> {
             Json(response)
         }
@@ -47,8 +95,9 @@ mod tests {
             Duration::from_secs(1),
             "task_execution",
         )
-        .expect("memory composer");
-        let scope = MemoryScope::thread("tenant-1", "task_execution", "thread-1");
+        .expect("memory composer")
+        .with_runtime_context_assertion_issuer(test_issuer());
+        let scope = test_scope();
         (composer, scope, server)
     }
 
@@ -365,9 +414,9 @@ mod tests {
             let call = calls.fetch_add(1, Ordering::SeqCst) + 1;
             Json(json!({
                 "thread_id": "thread-1",
-                "blocks": [{"block_type": "memory", "text": format!("memory-{call}")}],
+                "blocks": [memory_engine_sdk::ComposeContextBlock { block_type: "memory".into(), text: format!("memory-{call}"), ..Default::default() }],
                 "recent_records": [],
-                "meta": {"summary_count": 1, "recent_record_count": 0}
+                "meta": memory_engine_sdk::ComposeContextMeta { summary_count: 1, ..Default::default() }
             }))
         }
 
@@ -391,8 +440,9 @@ mod tests {
             Duration::from_secs(1),
             "task_execution",
         )
-        .expect("memory composer");
-        let scope = MemoryScope::thread("tenant-1", "task_execution", "thread-1");
+        .expect("memory composer")
+        .with_runtime_context_assertion_issuer(test_issuer());
+        let scope = test_scope();
 
         let first = build_contextual_input(
             Some(&composer),
@@ -463,12 +513,12 @@ mod tests {
 
     #[tokio::test]
     async fn contextual_turn_runner_report_captures_aborted_runtime() {
-        let config = ModelRuntimeConfig::openai_compatible(
+        let config = published_test_config(ModelRuntimeConfig::openai_compatible(
             "http://127.0.0.1:1/v1",
             "secret",
             "gpt-test",
             "openai",
-        );
+        ));
         let runtime_options = AiRuntimeOptions::for_conversation("task_1")
             .with_abort_checker(Some(std::sync::Arc::new(|_| true)));
         let request =

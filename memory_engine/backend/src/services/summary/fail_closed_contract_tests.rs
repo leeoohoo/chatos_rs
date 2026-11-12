@@ -132,8 +132,6 @@ async fn oversized_thread_record_uses_splitter_without_pending_decrement_on_fail
         settings: SummaryJobSettings {
             token_limit: 500,
             source_batch_token_limit: 500,
-            max_leaf_tokens: 500,
-            max_merge_rounds: 8,
             cloud_owner_entity_id: None,
             cloud_resume_kind: None,
         },
@@ -224,9 +222,6 @@ async fn oversized_thread_rollup_fails_without_marking_source_done() {
     let settings = RollupSettings {
         token_limit: 500,
         source_batch_token_limit: 500,
-        count_limit: 1,
-        keep_level0_count: 0,
-        max_level: 3,
         cloud_owner_entity_id: None,
         cloud_source_id: None,
         cloud_thread_id: None,
@@ -295,15 +290,9 @@ async fn late_success_callback_acknowledges_an_already_failed_summary_job() {
     .await
     .expect("fail summary job before callback");
 
-    let outcome = resume_cloud_summary_job(
-        &test_config(),
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        &job.id,
-    )
-    .await
-    .expect("late terminal callback is acknowledged");
+    let outcome =
+        resume_cloud_summary_job(&test_config(), &pool, &tenant, &source, &thread_id, &job.id)
+            .await
+            .expect("late terminal callback is acknowledged");
     assert!(outcome.is_none());
 }

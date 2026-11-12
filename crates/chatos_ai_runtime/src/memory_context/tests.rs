@@ -18,8 +18,7 @@ use serde_json::{json, Value};
 
 use super::{
     compose_response_to_input_items, compose_response_to_input_items_with_budget,
-    standard_compose_policy, MemoryContextCache, MemoryContextComposer, MemoryRecordScope,
-    MemoryScope,
+    MemoryContextCache, MemoryContextComposer, MemoryRecordScope, MemoryScope,
 };
 use crate::tool_runtime::ToolResultModelBudgetLimits;
 use crate::{MemoryRecordWriter, SaveRecordInput};
@@ -126,14 +125,6 @@ fn memory_scope_builder_keeps_runtime_source_key() {
             .map(|value| value.max_recent_record_tokens),
         Some(12_000)
     );
-}
-
-#[test]
-fn standard_compose_policy_has_a_bounded_raw_tail() {
-    let policy = standard_compose_policy();
-
-    assert_eq!(policy.max_memory_tokens, 24_000);
-    assert_eq!(policy.max_recent_record_tokens, 12_000);
 }
 
 #[test]

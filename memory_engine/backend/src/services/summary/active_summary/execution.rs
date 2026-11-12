@@ -52,6 +52,7 @@ pub async fn run_thread_active_summary(
     }
 
     let mut ctx = load_thread_summary_execution_context_for_partition(
+        config,
         db,
         tenant_id,
         source_id,

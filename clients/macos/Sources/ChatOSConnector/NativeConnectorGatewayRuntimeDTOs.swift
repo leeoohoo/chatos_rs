@@ -26,8 +26,6 @@ struct GatewayNativeAgentRuntimeSettingsDTO: Decodable, Sendable {
     var requestTimeoutSeconds: Int
     var runTimeoutSeconds: Int
     var maximumNoProgressRounds: Int
-    var contextWindowTokens: Int
-    var outputReserveTokens: Int
 
     enum CodingKeys: String, CodingKey {
         case maximumModelCalls = "maximum_model_calls"
@@ -35,8 +33,6 @@ struct GatewayNativeAgentRuntimeSettingsDTO: Decodable, Sendable {
         case requestTimeoutSeconds = "request_timeout_seconds"
         case runTimeoutSeconds = "run_timeout_seconds"
         case maximumNoProgressRounds = "maximum_no_progress_rounds"
-        case contextWindowTokens = "context_window_tokens"
-        case outputReserveTokens = "output_reserve_tokens"
     }
 }
 

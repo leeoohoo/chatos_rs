@@ -211,7 +211,6 @@ private struct WorkerProxyContextProvider: AgentContextProviding {
     func prepare(
         checkpoint initial: AgentRunCheckpoint,
         tools: [AgentToolDefinition],
-        policy: AgentContextPolicy,
         modelCapability: AgentModelCapabilitySnapshot,
         deadline: Date,
         synchronizeOnly: Bool,
@@ -223,7 +222,6 @@ private struct WorkerProxyContextProvider: AgentContextProviding {
             id: UUID(),
             checkpoint: initial,
             tools: tools,
-            policy: policy,
             modelCapability: modelCapability,
             deadline: deadline,
             synchronizeOnly: synchronizeOnly

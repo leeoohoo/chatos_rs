@@ -61,7 +61,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual(toolMetadata["tool_result_count"] as? Int, 1)
         XCTAssertNil(records[0]["summary_status"])
         let policy = try XCTUnwrap(try object(calls[4].body)["policy"] as? [String: Any])
-        XCTAssertEqual(policy["max_memory_tokens"] as? Int, 24_000)
+        XCTAssertEqual(policy["max_memory_tokens"] as? Int, 43_219)
         XCTAssertEqual(try object(calls[4].body)["query_text"] as? String, "current query")
         XCTAssertEqual(try object(calls[4].body)["current_turn_id"] as? String, "turn-current")
         XCTAssertEqual(
@@ -73,7 +73,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
             try object(calls[4].body)["context_project_subject_id"] as? String,
             try XCTUnwrap(scope.projectSubjectID)
         )
-        XCTAssertEqual(policy["max_recent_record_tokens"] as? Int, 12_000)
+        XCTAssertEqual(policy["max_recent_record_tokens"] as? Int, 43_219)
         XCTAssertFalse(calls.contains { String(decoding: $0.body ?? Data(), as: UTF8.self).contains("user-token") })
     }
 
@@ -296,7 +296,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
                 tokenizerID: nil
             ),
             queryText: "current query",
-            currentTurnID: "turn-current"
+            currentTurnID: "turn-current", availableMemoryTokens: 43_219
         )
     }
     private func object(_ data: Data?) throws -> [String: Any] {

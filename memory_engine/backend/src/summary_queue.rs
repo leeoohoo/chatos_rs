@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use tracing::{info, warn};
 
-use crate::repositories::{control_plane, thread_partitions, threads};
+use crate::repositories::{thread_partitions, threads};
 use crate::services::summary;
 use crate::state::AppState;
 
@@ -104,14 +104,6 @@ async fn process_partition_summary_event(
     state: &Arc<AppState>,
     event: &thread_partitions::PartitionSummaryDispatch,
 ) -> Result<(), String> {
-    let policy = control_plane::get_effective_job_policy(&state.pool, "summary").await?;
-    let token_threshold = policy
-        .dispatch_threshold_tokens
-        .ok_or_else(|| "summary dispatch_threshold_tokens is missing".to_string())?;
-    if !event.forced() && event.pending_summary_tokens < token_threshold {
-        thread_partitions::consume_summary_dispatch(&state.pool, event).await?;
-        return Ok(());
-    }
     let thread = threads::get_thread_by_id(
         &state.pool,
         event.tenant_id.as_str(),
@@ -120,6 +112,16 @@ async fn process_partition_summary_event(
     )
     .await?
     .ok_or_else(|| "partition summary thread is missing".to_string())?;
+    let policy = crate::services::control_plane::get_effective_job_policy(
+        &state.config,
+        &thread.tenant_id,
+        "summary",
+    )
+    .await?;
+    if !event.forced() && event.pending_summary_tokens < policy.max_model_input_tokens {
+        thread_partitions::consume_summary_dispatch(&state.pool, event).await?;
+        return Ok(());
+    }
     let result = summary::run_thread_summary_partition_with_thread(
         &state.config,
         &state.pool,

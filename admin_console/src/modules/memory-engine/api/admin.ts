@@ -54,14 +54,13 @@ function normalizeSource(data: Partial<EngineSource>): EngineSource {
 function normalizeJobPolicy(data: Partial<EngineJobPolicy>): EngineJobPolicy {
   return {
     job_type: data.job_type ?? '',
-    dispatch_threshold_tokens: data.dispatch_threshold_tokens ?? null,
-    max_source_batch_tokens: data.max_source_batch_tokens ?? null,
+    model_config_id: data.model_config_id ?? null,
+    provider: data.provider ?? null,
+    model: data.model ?? null,
+    model_capability_revision: data.model_capability_revision ?? null,
+    context_window_tokens: data.context_window_tokens ?? null,
+    output_reserve_tokens: data.output_reserve_tokens ?? null,
     max_model_input_tokens: data.max_model_input_tokens ?? null,
-    max_leaf_tokens: data.max_leaf_tokens ?? null,
-    max_merge_rounds: data.max_merge_rounds ?? null,
-    count_limit: data.count_limit ?? null,
-    keep_level0_count: data.keep_level0_count ?? null,
-    max_level: data.max_level ?? null,
     updated_at: data.updated_at ?? '',
   };
 }

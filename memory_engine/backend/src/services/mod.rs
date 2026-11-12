@@ -7,6 +7,7 @@ pub mod control_plane;
 pub(crate) mod generation_identity;
 pub mod job_execution;
 pub(crate) mod memory_cloud_agent;
+pub(crate) mod model_budget;
 mod model_runtime_resolver;
 pub(crate) mod runtime_context_assertion;
 pub mod subject_memory;

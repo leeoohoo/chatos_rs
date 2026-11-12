@@ -14,6 +14,14 @@ use crate::{
     ModelRuntimeConfig, RuntimeRecordOptions,
 };
 
+fn published_test_config(mut config: ModelRuntimeConfig) -> ModelRuntimeConfig {
+    config.model_capability_revision = "test-published".into();
+    config.context_window_tokens = 117_031;
+    config.output_reserve_tokens = 17_031;
+    config.protocol_overhead_estimator_id = "responses-json-v1".into();
+    config
+}
+
 #[test]
 fn task_run_spec_serializes_model_config_id_and_builds_turn_request() {
     let config = ModelRuntimeConfig::openai_compatible(
@@ -297,6 +305,12 @@ fn task_memory_runtime_config_serializes_direct_memory_settings() {
     let memory = TaskMemoryRuntimeConfig::new("http://127.0.0.1:1", "task_execution")
         .with_timeout_ms(500)
         .with_compose_context(false)
+        .with_runtime_context_assertion_issuer(
+            "test-secret",
+            "test-key",
+            "test-issuer",
+            "test-identity",
+        )
         .with_record_scope(Some(MemoryRecordScope::message_thread(
             "tenant_1", "thread_1",
         )));
@@ -361,6 +375,12 @@ async fn task_runtime_config_can_disable_mcp() {
 async fn task_runtime_config_builds_with_memory_engine_config() {
     let memory = TaskMemoryRuntimeConfig::new("http://127.0.0.1:1", "task_execution")
         .with_timeout_ms(100)
+        .with_runtime_context_assertion_issuer(
+            "test-secret",
+            "test-key",
+            "test-issuer",
+            "test-identity",
+        )
         .with_record_scope(Some(MemoryRecordScope::message_thread(
             "tenant_1", "thread_1",
         )));
@@ -376,6 +396,12 @@ async fn task_runtime_config_builds_with_memory_engine_config() {
 #[tokio::test]
 async fn task_runtime_config_builds_with_injected_memory_http_client() {
     let memory = TaskMemoryRuntimeConfig::new("https://127.0.0.1:1", "task_execution")
+        .with_runtime_context_assertion_issuer(
+            "test-secret",
+            "test-key",
+            "test-issuer",
+            "test-identity",
+        )
         .with_record_scope(Some(MemoryRecordScope::message_thread(
             "tenant_1", "thread_1",
         )));
@@ -428,12 +454,12 @@ fn task_run_execution_serializes_runtime_config_and_spec() {
 #[tokio::test]
 async fn task_run_execution_runs_with_runtime_options() {
     let runtime_config = TaskRuntimeConfig::new().with_mcp_init_mode(TaskMcpInitMode::Disabled);
-    let model_config = ModelRuntimeConfig::openai_compatible(
+    let model_config = published_test_config(ModelRuntimeConfig::openai_compatible(
         "http://127.0.0.1:1/v1",
         "secret",
         "gpt-test",
         "openai",
-    );
+    ));
     let execution =
         TaskRunExecution::for_user_text(runtime_config, "task_1", "run_1", model_config, "go");
     let options = execution
@@ -473,12 +499,12 @@ fn task_run_execution_wraps_runtime_init_failure_report() {
 
 #[tokio::test]
 async fn task_execution_report_captures_aborted_runtime() {
-    let config = ModelRuntimeConfig::openai_compatible(
+    let config = published_test_config(ModelRuntimeConfig::openai_compatible(
         "http://127.0.0.1:1/v1",
         "secret",
         "gpt-test",
         "openai",
-    );
+    ));
     let spec = TaskRunSpec::new("task_1", "run_1", config, "execute it")
         .with_model_config_id("model_cfg_1")
         .with_record_options(RuntimeRecordOptions::default());

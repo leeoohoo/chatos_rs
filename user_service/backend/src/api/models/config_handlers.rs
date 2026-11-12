@@ -46,12 +46,17 @@ pub(in crate::api) async fn list_model_configs(
     }
     .map_err(internal_error)?;
 
+    let excluded = chatos_service_runtime::model_capability::active_from_env()
+        .map_err(internal_error)?
+        .map(|(_, capability)| capability.excluded_models)
+        .unwrap_or_default();
     Ok(Json(
         items
             .into_iter()
             .filter(|item| {
                 !item.model.trim().is_empty() && is_supported_provider(item.provider.as_str())
             })
+            .filter(|item| !excluded.contains(&item.model))
             .filter(|item| model_config_has_backing_provider(item, providers.as_slice()))
             .map(|item| model_config_public_value(item, false, None))
             .collect::<Vec<_>>(),
@@ -80,13 +85,6 @@ pub(in crate::api) async fn create_model_config(
     let task_usage_scenario = normalize_optional_string(input.task_usage_scenario);
     let temperature = validate_temperature(input.temperature)?;
     let max_output_tokens = validate_max_output_tokens(input.max_output_tokens)?;
-    let model_capability_revision = normalize_optional_string(input.model_capability_revision);
-    let context_window_tokens = input.context_window_tokens;
-    let output_reserve_tokens = input.output_reserve_tokens;
-    let protocol_overhead_estimator_id =
-        normalize_optional_string(input.protocol_overhead_estimator_id);
-    let tokenizer_id = normalize_optional_string(input.tokenizer_id);
-    let responses_compaction_threshold = input.responses_compaction_threshold;
     let now = now_rfc3339();
     let Some(model) = normalize_optional_string(input.model) else {
         return Err(bad_request(
@@ -106,7 +104,7 @@ pub(in crate::api) async fn create_model_config(
         .find_user_model_config_by_id(id.as_str())
         .await
         .map_err(internal_error)?;
-    let mut record = UserModelConfigRecord {
+    let record = UserModelConfigRecord {
         id,
         owner_user_id: owner_user_id.clone(),
         source_provider_id: existing
@@ -133,33 +131,12 @@ pub(in crate::api) async fn create_model_config(
         temperature: temperature.or_else(|| existing.as_ref().and_then(|item| item.temperature)),
         max_output_tokens: max_output_tokens
             .or_else(|| existing.as_ref().and_then(|item| item.max_output_tokens)),
-        model_capability_revision: model_capability_revision.or_else(|| {
-            existing
-                .as_ref()
-                .and_then(|item| item.model_capability_revision.clone())
-        }),
-        context_window_tokens: context_window_tokens.or_else(|| {
-            existing
-                .as_ref()
-                .and_then(|item| item.context_window_tokens)
-        }),
-        output_reserve_tokens: output_reserve_tokens.or_else(|| {
-            existing
-                .as_ref()
-                .and_then(|item| item.output_reserve_tokens)
-        }),
-        protocol_overhead_estimator_id: protocol_overhead_estimator_id.or_else(|| {
-            existing
-                .as_ref()
-                .and_then(|item| item.protocol_overhead_estimator_id.clone())
-        }),
-        tokenizer_id: tokenizer_id
-            .or_else(|| existing.as_ref().and_then(|item| item.tokenizer_id.clone())),
-        responses_compaction_threshold: responses_compaction_threshold.or_else(|| {
-            existing
-                .as_ref()
-                .and_then(|item| item.responses_compaction_threshold)
-        }),
+        model_capability_revision: None,
+        context_window_tokens: None,
+        output_reserve_tokens: None,
+        protocol_overhead_estimator_id: None,
+        tokenizer_id: None,
+        responses_compaction_threshold: None,
         api_key: api_key.or_else(|| existing.as_ref().and_then(|item| item.api_key.clone())),
         has_api_key: input.has_api_key.unwrap_or_else(|| {
             api_key_present || existing.as_ref().is_some_and(|item| item.has_api_key)
@@ -179,9 +156,8 @@ pub(in crate::api) async fn create_model_config(
             .unwrap_or_else(|| now.clone()),
         updated_at: now,
     };
-    crate::model_policy::publish_missing_chat_budget(&mut record);
-    validate_record_model_capability(&record)?;
 
+    validate_model_output_budget(&record)?;
     let saved = state
         .store
         .save_user_model_config(&record)
@@ -326,32 +302,9 @@ pub(in crate::api) async fn update_model_config(
     } else if input.max_output_tokens.is_some() {
         record.max_output_tokens = validate_max_output_tokens(input.max_output_tokens)?;
     }
-    if let Some(value) = input.model_capability_revision {
-        record.model_capability_revision = normalize_optional_string(Some(value));
-    }
-    if let Some(value) = input.context_window_tokens {
-        record.context_window_tokens = Some(value);
-    }
-    if let Some(value) = input.output_reserve_tokens {
-        record.output_reserve_tokens = Some(value);
-    }
-    if let Some(value) = input.protocol_overhead_estimator_id {
-        record.protocol_overhead_estimator_id = normalize_optional_string(Some(value));
-    }
-    if input.clear_tokenizer_id.unwrap_or(false) {
-        record.tokenizer_id = None;
-    } else if let Some(value) = input.tokenizer_id {
-        record.tokenizer_id = normalize_optional_string(Some(value));
-    }
-    if input.clear_responses_compaction_threshold.unwrap_or(false) {
-        record.responses_compaction_threshold = None;
-    } else if let Some(value) = input.responses_compaction_threshold {
-        record.responses_compaction_threshold = Some(value);
-    }
-    crate::model_policy::publish_missing_chat_budget(&mut record);
-    validate_record_model_capability(&record)?;
     record.updated_at = now_rfc3339();
 
+    validate_model_output_budget(&record)?;
     let saved = state
         .store
         .save_user_model_config(&record)
@@ -367,44 +320,6 @@ pub(in crate::api) async fn update_model_config(
         false,
         Some(warnings),
     )))
-}
-
-fn validate_record_model_capability(
-    record: &UserModelConfigRecord,
-) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
-    use chatos_service_runtime::model_workload::ModelWorkload;
-    if ModelWorkload::for_model(&record.model) != ModelWorkload::Chat {
-        return Ok(());
-    }
-    let context_window_tokens = record
-        .context_window_tokens
-        .ok_or_else(|| bad_request("context_window_tokens is required"))?;
-    let output_reserve_tokens = record
-        .output_reserve_tokens
-        .ok_or_else(|| bad_request("output_reserve_tokens is required"))?;
-    if record
-        .model_capability_revision
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_none()
-        || record
-            .protocol_overhead_estimator_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_none()
-    {
-        return Err(bad_request(
-            "complete model capability metadata is required",
-        ));
-    }
-    validate_model_capability(
-        context_window_tokens,
-        output_reserve_tokens,
-        record.max_output_tokens,
-        record.responses_compaction_threshold,
-    )
 }
 
 fn validate_temperature(
@@ -427,30 +342,29 @@ fn validate_max_output_tokens(
     }
 }
 
-fn validate_model_capability(
-    context_window_tokens: i64,
-    output_reserve_tokens: i64,
-    max_output_tokens: Option<i64>,
-    responses_compaction_threshold: Option<i64>,
+fn validate_model_output_budget(
+    record: &UserModelConfigRecord,
 ) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
-    if context_window_tokens < 2_048
-        || output_reserve_tokens < 256
-        || output_reserve_tokens >= context_window_tokens
+    use chatos_service_runtime::{model_capability, model_workload::ModelWorkload};
+    if ModelWorkload::for_model(&record.model) != ModelWorkload::Chat {
+        return Ok(());
+    }
+    let Some((_, capability)) = model_capability::active_from_env().map_err(internal_error)? else {
+        return Err(bad_request(
+            "model budget has not been published in Configuration Center",
+        ));
+    };
+    if capability.excluded_models.contains(&record.model) {
+        return Err(bad_request(
+            "model has been removed from the selectable catalog",
+        ));
+    }
+    if record
+        .max_output_tokens
+        .is_some_and(|output| output as u64 > capability.output_reserve_tokens as u64)
     {
         return Err(bad_request(
-            "output_reserve_tokens must be smaller than context_window_tokens",
-        ));
-    }
-    if max_output_tokens.is_some_and(|value| value > output_reserve_tokens) {
-        return Err(bad_request(
-            "max_output_tokens must not exceed output_reserve_tokens",
-        ));
-    }
-    if responses_compaction_threshold.is_some_and(|value| {
-        value < 2_048 || value >= context_window_tokens - output_reserve_tokens
-    }) {
-        return Err(bad_request(
-            "responses_compaction_threshold must fit the frozen input budget",
+            "max_output_tokens exceeds the published model output reserve",
         ));
     }
     Ok(())
