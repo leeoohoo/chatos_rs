@@ -24,7 +24,7 @@ public struct NativeLocalAgentServiceConfigurationFactory: Sendable {
         askUserPromptService: NativeLocalAgentAskUserPromptService?,
         turnProcessService: NativeLocalAgentTurnProcessService?,
         platformToolWorker: NativeLocalAgentPlatformToolWorker?,
-        teamExecutor: NativeLocalAgentTeamExecutor? = nil
+        teamExecutor: NativeLocalAgentTeamExecutor?
     ) {
         self.localConnectorService = localConnectorService
         self.runtimeSettingsService = runtimeSettingsService
