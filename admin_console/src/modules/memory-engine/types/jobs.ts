@@ -13,6 +13,11 @@ export interface EngineJobPolicy {
   updated_at: string;
 }
 
+export interface EngineJobPolicyCatalog {
+  items: EngineJobPolicy[];
+  configuration_status: 'ready' | 'model_not_selected';
+}
+
 export interface EngineJobRun {
   id: string;
   job_type: string;

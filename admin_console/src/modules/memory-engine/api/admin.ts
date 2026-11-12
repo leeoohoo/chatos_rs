@@ -8,6 +8,7 @@ import type {
   EngineAgentConversation,
   EngineAgentProject,
   EngineJobPolicy,
+  EngineJobPolicyCatalog,
   EngineSource,
   JobRunsBundle,
   JobRunQuery,
@@ -215,11 +216,9 @@ export const adminApi = {
     };
   },
 
-  async listJobPolicies(): Promise<EngineJobPolicy[]> {
-    const { data } = await client.get('/admin/job-policies');
-    return (data.items ?? []).map((item: Partial<EngineJobPolicy>) =>
-      normalizeJobPolicy(item),
-    );
+  async listJobPolicies(): Promise<EngineJobPolicyCatalog> {
+    const { data } = await client.get<EngineJobPolicyCatalog>('/admin/job-policies');
+    return { ...data, items: data.items.map(normalizeJobPolicy) };
   },
 
   async getDashboardOverview(): Promise<DashboardOverview> {

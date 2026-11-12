@@ -4,14 +4,16 @@
 import { ReloadOutlined } from '@ant-design/icons';
 import { Button, Card, Descriptions, Empty, Space, Tabs, Tag, Typography } from 'antd';
 import type { TabsProps } from 'antd';
+import { Link } from 'react-router-dom';
 
-import type { EngineJobPolicy } from '../../types';
+import type { EngineJobPolicy, EngineJobPolicyCatalog } from '../../types';
 import type { PolicyViewKey } from '../types';
 
 const { Text } = Typography;
 
 type PoliciesSectionProps = {
   policies: EngineJobPolicy[];
+  configurationStatus: EngineJobPolicyCatalog['configuration_status'] | null;
   loading: boolean;
   selectedKey: PolicyViewKey;
   onSelect: (value: PolicyViewKey) => void;
@@ -21,6 +23,7 @@ type PoliciesSectionProps = {
 export function PoliciesSection(props: PoliciesSectionProps) {
   const {
     policies,
+    configurationStatus,
     loading,
     selectedKey,
     onSelect,
@@ -72,7 +75,13 @@ export function PoliciesSection(props: PoliciesSectionProps) {
       </Card>
       {policies.length === 0 ? (
         <Card>
-          <Empty description="暂无可用模型能力配置" />
+          <Empty description={configurationStatus === 'model_not_selected'
+            ? '当前账户尚未选择 Memory Engine 摘要模型，生成任务尚不能启动。'
+            : loading ? '正在读取模型能力配置' : '尚未加载到模型能力配置'}>
+            {configurationStatus === 'model_not_selected' && (
+              <Link to="/users/models">前往模型配置选择摘要模型</Link>
+            )}
+          </Empty>
         </Card>
       ) : (
         <Space direction="vertical" size={16} style={{ width: '100%' }}>

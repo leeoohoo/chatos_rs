@@ -50,6 +50,15 @@ pub(super) async fn resolve_memory_summary_model_runtime(
     config: &AppConfig,
     owner_user_id: &str,
 ) -> Result<EngineModelProfile, String> {
+    find_memory_summary_model_runtime(config, owner_user_id)
+        .await?
+        .ok_or_else(|| format!("memory_summary_model_not_configured: user {owner_user_id} has no Memory Engine summary model selected"))
+}
+
+pub(super) async fn find_memory_summary_model_runtime(
+    config: &AppConfig,
+    owner_user_id: &str,
+) -> Result<Option<EngineModelProfile>, String> {
     let owner_user_id = required_owner_user_id(owner_user_id)?;
     let settings: UserModelSettings = request_user_service_json(
         config,
@@ -61,22 +70,20 @@ pub(super) async fn resolve_memory_summary_model_runtime(
         .as_str(),
     )
     .await?;
-    let model_config_id = settings
+    let Some(model_config_id) = settings
         .memory_summary_model_config_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            format!(
-                "memory_summary_model_not_configured: user {owner_user_id} has no Memory Engine summary model selected"
-            )
-        })?;
+    else {
+        return Ok(None);
+    };
     let runtime = load_model_runtime(config, owner_user_id, model_config_id).await?;
-    Ok(runtime.into_profile(
+    Ok(Some(runtime.into_profile(
         settings.memory_summary_thinking_level,
         normalize_retries(settings.model_request_max_retries),
         true,
-    ))
+    )))
 }
 
 pub(super) async fn resolve_model_runtime_by_id(

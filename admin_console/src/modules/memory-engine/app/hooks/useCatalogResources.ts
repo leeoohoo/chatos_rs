@@ -14,6 +14,7 @@ export function useCatalogResources(
   const loaders = useCatalogLoaders({
     setSources: state.setSources,
     setJobPolicies: state.setJobPolicies,
+    setPolicyConfigurationStatus: state.setPolicyConfigurationStatus,
     setSourcesLoading: state.setSourcesLoading,
     setPoliciesLoading: state.setPoliciesLoading,
   });

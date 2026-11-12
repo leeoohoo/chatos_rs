@@ -11,7 +11,8 @@ use crate::services::summary::RollupSettings;
 use chatos_agent::MemoryEngineAgent;
 
 use super::model_runtime_resolver::{
-    resolve_memory_summary_model_runtime, resolve_model_runtime_by_id,
+    find_memory_summary_model_runtime, resolve_memory_summary_model_runtime,
+    resolve_model_runtime_by_id,
 };
 
 pub struct ManagedMemoryAgentRuntime {
@@ -99,7 +100,29 @@ pub async fn get_effective_job_policy(
         return Err(format!("unsupported Memory generation job {job_type}"));
     }
     let profile = get_effective_model_profile_for_job(config, job_type, owner_user_id).await?;
-    let budget = super::model_budget::MemoryModelBudget::from_profile(config, &profile)?;
+    job_policy_for_profile(config, job_type, &profile)
+}
+
+pub async fn list_effective_job_policies(
+    config: &AppConfig,
+    owner_user_id: &str,
+) -> Result<Option<Vec<EngineJobPolicy>>, String> {
+    let Some(profile) = find_memory_summary_model_runtime(config, owner_user_id).await? else {
+        return Ok(None);
+    };
+    ["summary", "rollup", "subject_memory"]
+        .into_iter()
+        .map(|job_type| job_policy_for_profile(config, job_type, &profile))
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+fn job_policy_for_profile(
+    config: &AppConfig,
+    job_type: &str,
+    profile: &EngineModelProfile,
+) -> Result<EngineJobPolicy, String> {
+    let budget = super::model_budget::MemoryModelBudget::from_profile(config, profile)?;
     Ok(EngineJobPolicy {
         job_type: job_type.into(),
         model_config_id: budget.model_config_id.clone(),
@@ -109,7 +132,7 @@ pub async fn get_effective_job_policy(
         context_window_tokens: budget.context_window_tokens,
         output_reserve_tokens: budget.output_reserve_tokens,
         max_model_input_tokens: budget.input_limit()?,
-        updated_at: profile.updated_at,
+        updated_at: profile.updated_at.clone(),
     })
 }
 
