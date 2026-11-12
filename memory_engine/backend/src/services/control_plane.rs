@@ -149,8 +149,6 @@ mod common_capacity_tests {
             output_reserve_tokens: 20_000,
             protocol_overhead_estimator_id: "responses-json-v1".into(),
             tokenizer_id: None,
-            source_urls: vec!["https://specification.example/common".into()],
-            excluded_models: Vec::new(),
         };
         let mut catalog = std::collections::HashMap::from([("common".into(), capability)]);
         for job_type in ["summary", "rollup", "subject_memory"] {

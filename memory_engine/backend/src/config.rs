@@ -219,8 +219,6 @@ pub(crate) fn test_model_capabilities() -> HashMap<String, PublishedModelCapabil
             output_reserve_tokens: 17_031,
             protocol_overhead_estimator_id: "responses-json-v1".to_string(),
             tokenizer_id: Some("o200k_base".to_string()),
-            source_urls: vec!["https://specification.example/test-model".into()],
-            excluded_models: Vec::new(),
         },
     )])
 }

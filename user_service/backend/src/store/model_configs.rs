@@ -296,6 +296,10 @@ fn clear_model_capability(model: &mut UserModelConfigRecord) {
 
 fn apply_published_capability(model: &mut UserModelConfigRecord) -> Result<(), String> {
     clear_model_capability(model);
+    if !crate::model_catalog::is_selectable_model(&model.model) {
+        model.enabled = false;
+        return Ok(());
+    }
     if chatos_service_runtime::model_workload::ModelWorkload::for_model(&model.model)
         != chatos_service_runtime::model_workload::ModelWorkload::Chat
     {
@@ -304,14 +308,6 @@ fn apply_published_capability(model: &mut UserModelConfigRecord) -> Result<(), S
     if let Some((revision, capability)) =
         chatos_service_runtime::model_capability::active_from_env()?
     {
-        if capability
-            .excluded_models
-            .iter()
-            .any(|excluded| excluded == &model.model)
-        {
-            model.enabled = false;
-            return Ok(());
-        }
         model.model_capability_revision = Some(revision);
         model.context_window_tokens = Some(
             i64::try_from(capability.context_window_tokens)

@@ -38,9 +38,6 @@ impl MemoryModelBudget {
         capability: &crate::config::PublishedModelCapability,
     ) -> Result<Self, String> {
         capability.input_limit()?;
-        if capability.excluded_models.contains(&profile.model) {
-            return Err("model has been removed from the selectable catalog".into());
-        }
         if i64::try_from(capability.context_window_tokens).ok()
             != Some(profile.context_window_tokens)
             || i64::try_from(capability.output_reserve_tokens).ok()
@@ -115,8 +112,6 @@ mod tests {
             output_reserve_tokens: profile.output_reserve_tokens as usize,
             protocol_overhead_estimator_id: profile.protocol_overhead_estimator_id.clone(),
             tokenizer_id: None,
-            source_urls: vec!["https://specification.example/model".into()],
-            excluded_models: Vec::new(),
         };
         assert_eq!(
             MemoryModelBudget::from_published_capability(&profile, &capability)
@@ -138,7 +133,5 @@ mod tests {
         );
         changed.tokenizer_id = Some("different".into());
         assert!(MemoryModelBudget::from_published_capability(&changed, &capability).is_err());
-        capability.excluded_models.push(profile.model.clone());
-        assert!(MemoryModelBudget::from_published_capability(&profile, &capability).is_err());
     }
 }

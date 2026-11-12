@@ -8,28 +8,21 @@ pub const MODEL_CAPABILITIES_CONFIG_KEY: &str = "shared.ai.model_capabilities";
 pub const ACTIVE_MODEL_CAPABILITY_CONFIG_KEY: &str = "shared.ai.active_model_capability_revision";
 
 /// An explicitly published request budget. There is no product or model-name fallback.
-/// Sources describe the vendor specifications used to select the common budget.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishedModelCapability {
     pub context_window_tokens: usize,
     pub output_reserve_tokens: usize,
     pub protocol_overhead_estimator_id: String,
     pub tokenizer_id: Option<String>,
-    pub source_urls: Vec<String>,
-    pub excluded_models: Vec<String>,
 }
 
 impl PublishedModelCapability {
     pub fn input_limit(&self) -> Result<usize, String> {
-        if self.output_reserve_tokens == 0
-            || self.protocol_overhead_estimator_id.trim().is_empty()
-            || self.source_urls.is_empty()
-            || self
-                .source_urls
-                .iter()
-                .any(|source| !source.starts_with("https://"))
+        if self.output_reserve_tokens == 0 || self.protocol_overhead_estimator_id.trim().is_empty()
         {
-            return Err("published model budget requires positive output reserve, estimator and specification sources".into());
+            return Err(
+                "published model budget requires positive output reserve and an estimator".into(),
+            );
         }
         self.context_window_tokens
             .checked_sub(self.output_reserve_tokens)
@@ -79,7 +72,7 @@ pub fn active_from_env() -> Result<Option<(String, PublishedModelCapability)>, S
 mod tests {
     use super::*;
     #[test]
-    fn catalog_requires_explicit_budgets_and_sources() {
+    fn catalog_requires_explicit_budgets_without_catalog_rules_or_documentation() {
         assert!(parse_catalog("{}").unwrap().is_empty());
         assert!(parse_catalog(r#"{"missing":{}}"#).is_err());
         let mut cap = PublishedModelCapability {
@@ -87,13 +80,17 @@ mod tests {
             output_reserve_tokens: 1137,
             protocol_overhead_estimator_id: "responses-json-v1".into(),
             tokenizer_id: None,
-            source_urls: vec!["https://specification.example/model".into()],
-            excluded_models: Vec::new(),
         };
         assert_eq!(cap.input_limit().unwrap(), 8000);
         cap.context_window_tokens = 17137;
         assert_eq!(cap.input_limit().unwrap(), 16000);
-        cap.source_urls.clear();
+        let published = serde_json::to_value(&cap).unwrap();
+        assert_eq!(published.as_object().unwrap().len(), 4);
+        assert_eq!(
+            parse_catalog(&serde_json::json!({"common": published}).to_string()).unwrap()["common"],
+            cap
+        );
+        cap.protocol_overhead_estimator_id.clear();
         assert!(cap.input_limit().is_err());
     }
 }

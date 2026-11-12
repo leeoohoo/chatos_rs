@@ -16,7 +16,6 @@ vi.mock('./api', () => ({ api: {
 const published = { 'test-common': {
   context_window_tokens: 9137, output_reserve_tokens: 1137,
   protocol_overhead_estimator_id: 'responses-json-v1',
-  source_urls: ['https://specification.example/common'],
 } };
 const definition: ConfigDefinition = {
   id: 'common', key: 'shared.ai.model_capabilities', display_name: '已发布模型请求预算',

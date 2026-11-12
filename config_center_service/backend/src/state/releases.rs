@@ -639,4 +639,26 @@ mod model_capability_tests {
         validate_model_capability_config(&values, &mut errors);
         assert_eq!(errors.len(), 1);
     }
+
+    #[test]
+    fn publication_accepts_capacity_without_model_exclusions_or_documentation_urls() {
+        use chatos_service_runtime::model_capability::{
+            ACTIVE_MODEL_CAPABILITY_CONFIG_KEY, MODEL_CAPABILITIES_CONFIG_KEY,
+        };
+        let values = BTreeMap::from([
+            (
+                MODEL_CAPABILITIES_CONFIG_KEY.into(),
+                json!({"common": {
+                    "context_window_tokens": 9137,
+                    "output_reserve_tokens": 1137,
+                    "protocol_overhead_estimator_id": "responses-json-v1",
+                    "tokenizer_id": null
+                }}),
+            ),
+            (ACTIVE_MODEL_CAPABILITY_CONFIG_KEY.into(), json!("common")),
+        ]);
+        let mut errors = Vec::new();
+        validate_model_capability_config(&values, &mut errors);
+        assert!(errors.is_empty(), "{errors:?}");
+    }
 }

@@ -46,17 +46,13 @@ pub(in crate::api) async fn list_model_configs(
     }
     .map_err(internal_error)?;
 
-    let excluded = chatos_service_runtime::model_capability::active_from_env()
-        .map_err(internal_error)?
-        .map(|(_, capability)| capability.excluded_models)
-        .unwrap_or_default();
     Ok(Json(
         items
             .into_iter()
             .filter(|item| {
                 !item.model.trim().is_empty() && is_supported_provider(item.provider.as_str())
             })
-            .filter(|item| !excluded.contains(&item.model))
+            .filter(|item| crate::model_catalog::is_selectable_model(&item.model))
             .filter(|item| model_config_has_backing_provider(item, providers.as_slice()))
             .map(|item| model_config_public_value(item, false, None))
             .collect::<Vec<_>>(),
@@ -346,6 +342,11 @@ fn validate_model_output_budget(
     record: &UserModelConfigRecord,
 ) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
     use chatos_service_runtime::{model_capability, model_workload::ModelWorkload};
+    if !crate::model_catalog::is_selectable_model(&record.model) {
+        return Err(bad_request(
+            "model has been removed from the selectable catalog",
+        ));
+    }
     if ModelWorkload::for_model(&record.model) != ModelWorkload::Chat {
         return Ok(());
     }
@@ -354,11 +355,6 @@ fn validate_model_output_budget(
             "model budget has not been published in Configuration Center",
         ));
     };
-    if capability.excluded_models.contains(&record.model) {
-        return Err(bad_request(
-            "model has been removed from the selectable catalog",
-        ));
-    }
     if record
         .max_output_tokens
         .is_some_and(|output| output as u64 > capability.output_reserve_tokens as u64)
