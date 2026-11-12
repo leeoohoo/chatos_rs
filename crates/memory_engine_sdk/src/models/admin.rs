@@ -50,14 +50,10 @@ pub struct EngineModelProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineJobPolicy {
     pub job_type: String,
-    pub model_config_id: String,
-    pub provider: String,
-    pub model: String,
     pub model_capability_revision: String,
     pub context_window_tokens: i64,
     pub output_reserve_tokens: i64,
     pub max_model_input_tokens: i64,
-    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,10 +218,8 @@ mod tests {
     fn engine_job_policy_uses_explicit_pipeline_limits() {
         let policy: EngineJobPolicy = serde_json::from_value(serde_json::json!({
             "job_type": "thread_summary",
-            "model_config_id": "selected-model", "model": "vendor-model", "provider": "vendor",
             "model_capability_revision": "published-fixture", "context_window_tokens": 100000,
-            "output_reserve_tokens": 10000, "max_model_input_tokens": 90000,
-            "updated_at": "2026-05-20T00:00:00Z"
+            "output_reserve_tokens": 10000, "max_model_input_tokens": 90000
         }))
         .expect("policy");
 

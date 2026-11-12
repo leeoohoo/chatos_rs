@@ -8,7 +8,7 @@ import type { CatalogState } from './types';
 
 type CatalogLoadingControls = Pick<
   CatalogState,
-  'setSources' | 'setJobPolicies' | 'setPolicyConfigurationStatus'
+  'setSources' | 'setJobPolicies'
 > & {
   setSourcesLoading: (value: boolean) => void;
   setPoliciesLoading: (value: boolean) => void;
@@ -41,13 +41,12 @@ export function useCatalogLoaders(controls: CatalogLoadingControls) {
     policiesRequestIdRef.current = requestId;
     controls.setPoliciesLoading(true);
     try {
-      const catalog = await api.listJobPolicies();
+      const policies = await api.listJobPolicies();
       if (policiesRequestIdRef.current !== requestId) {
         return [];
       }
-      controls.setJobPolicies(catalog.items);
-      controls.setPolicyConfigurationStatus(catalog.configuration_status);
-      return catalog.items;
+      controls.setJobPolicies(policies);
+      return policies;
     } finally {
       if (policiesRequestIdRef.current === requestId) {
         controls.setPoliciesLoading(false);

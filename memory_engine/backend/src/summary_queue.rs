@@ -112,12 +112,8 @@ async fn process_partition_summary_event(
     )
     .await?
     .ok_or_else(|| "partition summary thread is missing".to_string())?;
-    let policy = crate::services::control_plane::get_effective_job_policy(
-        &state.config,
-        &thread.tenant_id,
-        "summary",
-    )
-    .await?;
+    let policy =
+        crate::services::control_plane::get_effective_job_policy(&state.config, "summary")?;
     if !event.forced() && event.pending_summary_tokens < policy.max_model_input_tokens {
         thread_partitions::consume_summary_dispatch(&state.pool, event).await?;
         return Ok(());

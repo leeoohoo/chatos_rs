@@ -40,10 +40,8 @@ mod tests {
             "items": [
                 {
                     "job_type": "summary",
-                    "model_config_id": "selected-model", "model": "vendor-model", "provider": "vendor",
                     "model_capability_revision": "published-fixture", "context_window_tokens": 100000,
-                    "output_reserve_tokens": 10000, "max_model_input_tokens": 90000,
-                    "updated_at": "2026-05-20T00:00:00Z"
+                    "output_reserve_tokens": 10000, "max_model_input_tokens": 90000
                 }
             ]
         }))

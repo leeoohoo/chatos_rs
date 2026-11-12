@@ -17,14 +17,14 @@ pub async fn list_job_policies(
     auth: MemoryAuthContext,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     auth.require_super_admin_or_operator()?;
-    let owner = auth.runtime_owner_user_id()?;
-    let policies = control_plane::list_effective_job_policies(&state.config, &owner)
-        .await
-        .map_err(internal_error)?;
-    Ok(Json(match policies {
-        Some(items) => json!({"items": items, "configuration_status": "ready"}),
-        None => json!({"items": [], "configuration_status": "model_not_selected"}),
-    }))
+    let mut items = Vec::new();
+    for job_type in ["summary", "rollup", "subject_memory"] {
+        items.push(
+            control_plane::get_effective_job_policy(&state.config, job_type)
+                .map_err(internal_error)?,
+        );
+    }
+    Ok(Json(json!({"items": items})))
 }
 
 pub async fn get_job_policy(
@@ -33,9 +33,7 @@ pub async fn get_job_policy(
     Path(job_type): Path<String>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     auth.require_super_admin_or_operator()?;
-    let owner = auth.runtime_owner_user_id()?;
-    control_plane::get_effective_job_policy(&state.config, &owner, job_type.as_str())
-        .await
+    control_plane::get_effective_job_policy(&state.config, job_type.as_str())
         .map(|item| Json(json!(item)))
         .map_err(internal_error)
 }

@@ -180,7 +180,7 @@ async fn reconcile_thread_rollup(
     state: &AppState,
     claim: &partition_rebuilds::PartitionRebuildClaim,
 ) -> Result<RebuildOutcome, String> {
-    let settings = cp_service::load_rollup_settings(&state.config, &claim.tenant_id).await?;
+    let settings = cp_service::load_rollup_settings(&state.config)?;
     let prepared = summary::prepare_thread_rollup(
         &state.pool,
         &claim.tenant_id,

@@ -55,11 +55,7 @@ pub(crate) async fn build_settings_with_policy(
     config: &AppConfig,
     req: &RunSubjectMemoryJobRequest,
 ) -> Result<SubjectMemoryJobSettings, String> {
-    let policy = crate::services::control_plane::get_effective_job_policy(
-        config,
-        &req.tenant_id,
-        "subject_memory",
-    )
-    .await?;
+    let policy =
+        crate::services::control_plane::get_effective_job_policy(config, "subject_memory")?;
     build_settings(req, &policy)
 }

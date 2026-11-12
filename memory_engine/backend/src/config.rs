@@ -47,6 +47,7 @@ pub struct AppConfig {
     pub require_signed_internal_requests: bool,
     pub runtime_context_assertion_keys: HashMap<String, RuntimeContextAssertionVerificationKey>,
     pub model_capabilities: HashMap<String, PublishedModelCapability>,
+    pub active_model_capability_revision: String,
     pub user_service_base_url: String,
     pub user_service_internal_base_url: String,
     pub user_service_internal_http: reqwest::Client,
@@ -155,12 +156,20 @@ impl AppConfig {
             )?,
             runtime_context_assertion_keys: runtime_context_assertion_keys()?,
             model_capabilities: published_model_capabilities()?,
+            active_model_capability_revision: required_text(
+                "CHATOS_ACTIVE_MODEL_CAPABILITY_REVISION",
+            )?,
             user_service_base_url,
             user_service_internal_base_url,
             user_service_internal_http,
             user_service_request_timeout_ms,
         };
 
+        config
+            .model_capabilities
+            .get(&config.active_model_capability_revision)
+            .ok_or("active common model capability is not published in Configuration Center")?
+            .input_limit()?;
         if !config.require_signed_internal_requests {
             return Err("MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true".to_string());
         }

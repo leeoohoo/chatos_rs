@@ -82,7 +82,6 @@ describe('adminApi', () => {
       } as never)
       .mockResolvedValueOnce({
         data: {
-          configuration_status: 'ready',
           items: [
             {
               job_type: 'thread_summary',
@@ -110,24 +109,13 @@ describe('adminApi', () => {
       },
     ]);
 
-    await expect(adminApi.listJobPolicies()).resolves.toEqual({configuration_status: 'ready', items: [
+    await expect(adminApi.listJobPolicies()).resolves.toEqual([
       {
         job_type: 'thread_summary',
         max_model_input_tokens: null,
-        model_config_id: null, provider: null, model: null,
         model_capability_revision: null, context_window_tokens: null, output_reserve_tokens: null,
-        updated_at: '2026-05-21T00:00:00Z',
       },
-    ]});
-  });
-
-  it('preserves an unselected summary model as an explicit configuration state', async () => {
-    vi.mocked(client.get).mockResolvedValue({data: {
-      items: [], configuration_status: 'model_not_selected',
-    }} as never);
-    await expect(adminApi.listJobPolicies()).resolves.toEqual({
-      items: [], configuration_status: 'model_not_selected',
-    });
+    ]);
   });
 
   it('uses dedicated reliability read, dry-run, audit and rearm endpoints', async () => {

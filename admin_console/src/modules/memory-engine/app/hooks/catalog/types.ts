@@ -6,7 +6,6 @@ import type { Dispatch, SetStateAction } from 'react';
 
 import type {
   EngineJobPolicy,
-  EngineJobPolicyCatalog,
   EngineSource,
   RotateSourceSecretResponse,
 } from '../../../types';
@@ -27,7 +26,6 @@ export type CatalogState = {
   rotatedSecret: RotateSourceSecretResponse | null;
   sources: EngineSource[];
   jobPolicies: EngineJobPolicy[];
-  policyConfigurationStatus: EngineJobPolicyCatalog['configuration_status'] | null;
   selectedPolicyViewKey: PolicyViewKey;
   policyMap: PolicyMap;
   setSourcesLoading: Dispatch<SetStateAction<boolean>>;
@@ -37,7 +35,6 @@ export type CatalogState = {
   setEditingSource: Dispatch<SetStateAction<EngineSource | null>>;
   setSources: Dispatch<SetStateAction<EngineSource[]>>;
   setJobPolicies: Dispatch<SetStateAction<EngineJobPolicy[]>>;
-  setPolicyConfigurationStatus: Dispatch<SetStateAction<EngineJobPolicyCatalog['configuration_status'] | null>>;
   setSelectedPolicyViewKey: Dispatch<SetStateAction<PolicyViewKey>>;
   setRotatedSecret: Dispatch<SetStateAction<RotateSourceSecretResponse | null>>;
 };

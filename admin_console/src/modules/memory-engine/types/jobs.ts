@@ -3,19 +3,10 @@
 
 export interface EngineJobPolicy {
   job_type: string;
-  model_config_id?: string | null;
-  provider?: string | null;
-  model?: string | null;
   model_capability_revision?: string | null;
   context_window_tokens?: number | null;
   output_reserve_tokens?: number | null;
   max_model_input_tokens?: number | null;
-  updated_at: string;
-}
-
-export interface EngineJobPolicyCatalog {
-  items: EngineJobPolicy[];
-  configuration_status: 'ready' | 'model_not_selected';
 }
 
 export interface EngineJobRun {

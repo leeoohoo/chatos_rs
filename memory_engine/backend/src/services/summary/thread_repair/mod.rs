@@ -103,7 +103,7 @@ pub(crate) async fn prepare_covered_range_resummarize(
         return Err("covered range already has an active resummarization".to_string());
     }
 
-    let settings = load_summary_job_settings(config, tenant_id).await?;
+    let settings = load_summary_job_settings(config)?;
     let job = control_plane::create_job_run_in_tx(
         tx,
         CreateEngineJobRunRequest {

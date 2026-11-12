@@ -88,7 +88,7 @@ pub(crate) async fn run_thread_summary_partition_with_thread(
     requested_partition: &str,
     trigger_type: &str,
 ) -> Result<RunThreadSummaryResponse, String> {
-    let settings = load_summary_job_settings(config, &thread.tenant_id).await?;
+    let settings = load_summary_job_settings(config)?;
     let mut ctx =
         build_thread_summary_execution_context(db, thread, settings, Some(requested_partition))
             .await?;
@@ -156,7 +156,7 @@ pub(crate) async fn load_thread_summary_execution_context_for_partition(
     let thread = threads::get_thread_by_id(db, tenant_id, source_id, thread_id)
         .await?
         .ok_or_else(|| "thread not found".to_string())?;
-    let settings = load_summary_job_settings(config, &thread.tenant_id).await?;
+    let settings = load_summary_job_settings(config)?;
     build_thread_summary_execution_context(db, thread, settings, Some(project_partition_key)).await
 }
 

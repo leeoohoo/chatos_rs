@@ -21,23 +21,6 @@ describe('useCatalogLoaders', () => {
     vi.clearAllMocks();
   });
 
-  it('loads missing model selection without treating it as a request failure', async () => {
-    vi.mocked(api.listJobPolicies).mockResolvedValue({
-      items: [], configuration_status: 'model_not_selected',
-    });
-    const setJobPolicies = vi.fn();
-    const setPolicyConfigurationStatus = vi.fn();
-    const setPoliciesLoading = vi.fn();
-    const { result } = renderHook(() => useCatalogLoaders({
-      setSources: vi.fn(), setSourcesLoading: vi.fn(),
-      setJobPolicies, setPolicyConfigurationStatus, setPoliciesLoading,
-    }));
-    await act(async () => { await result.current.loadPolicies(); });
-    expect(setJobPolicies).toHaveBeenCalledWith([]);
-    expect(setPolicyConfigurationStatus).toHaveBeenCalledWith('model_not_selected');
-    expect(setPoliciesLoading).toHaveBeenLastCalledWith(false);
-  });
-
   it('ignores stale source list responses when a newer refresh finishes first', async () => {
     const listSources = vi.mocked(api.listSources);
     const setSources = vi.fn();
@@ -64,7 +47,6 @@ describe('useCatalogLoaders', () => {
       useCatalogLoaders({
         setSources,
         setJobPolicies: vi.fn(),
-        setPolicyConfigurationStatus: vi.fn(),
         setSourcesLoading,
         setPoliciesLoading: vi.fn(),
       }),

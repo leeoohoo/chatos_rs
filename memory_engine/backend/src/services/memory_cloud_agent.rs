@@ -643,9 +643,7 @@ pub(crate) async fn finalize_terminal(
                 .get("job_run_id")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "rollup terminal job_run_id is missing".to_string())?;
-            let settings =
-                crate::services::control_plane::load_rollup_settings(&state.config, tenant_id)
-                    .await?;
+            let settings = crate::services::control_plane::load_rollup_settings(&state.config)?;
             let descriptor = terminal_context
                 .get("generation")
                 .ok_or_else(|| "rollup terminal generation descriptor is missing".to_string())?;

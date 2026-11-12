@@ -4,7 +4,7 @@
 import { Form } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 
-import type { EngineJobPolicy, EngineJobPolicyCatalog, EngineSource, RotateSourceSecretResponse } from '../../../types';
+import type { EngineJobPolicy, EngineSource, RotateSourceSecretResponse } from '../../../types';
 import type {
   JobTypeKey,
   PolicyMap,
@@ -28,7 +28,6 @@ export function useCatalogState(): CatalogState & CatalogForms {
   const [rotatedSecret, setRotatedSecret] = useState<RotateSourceSecretResponse | null>(null);
   const [sources, setSources] = useState<EngineSource[]>([]);
   const [jobPolicies, setJobPolicies] = useState<EngineJobPolicy[]>([]);
-  const [policyConfigurationStatus, setPolicyConfigurationStatus] = useState<EngineJobPolicyCatalog['configuration_status'] | null>(null);
   const [selectedPolicyViewKey, setSelectedPolicyViewKey] =
     useState<PolicyViewKey>('summary');
 
@@ -72,7 +71,6 @@ export function useCatalogState(): CatalogState & CatalogForms {
     rotatedSecret,
     sources,
     jobPolicies,
-    policyConfigurationStatus,
     selectedPolicyViewKey,
     sourceForm,
     policyMap,
@@ -83,7 +81,6 @@ export function useCatalogState(): CatalogState & CatalogForms {
     setEditingSource,
     setSources,
     setJobPolicies,
-    setPolicyConfigurationStatus,
     setSelectedPolicyViewKey,
     setRotatedSecret,
   };

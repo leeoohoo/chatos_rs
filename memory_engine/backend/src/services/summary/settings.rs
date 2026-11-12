@@ -4,13 +4,8 @@
 use super::SummaryJobSettings;
 use crate::config::AppConfig;
 
-pub(crate) async fn load_summary_job_settings(
-    config: &AppConfig,
-    owner_user_id: &str,
-) -> Result<SummaryJobSettings, String> {
-    let policy =
-        crate::services::control_plane::get_effective_job_policy(config, owner_user_id, "summary")
-            .await?;
+pub(crate) fn load_summary_job_settings(config: &AppConfig) -> Result<SummaryJobSettings, String> {
+    let policy = crate::services::control_plane::get_effective_job_policy(config, "summary")?;
     Ok(SummaryJobSettings {
         token_limit: policy.max_model_input_tokens,
         source_batch_token_limit: policy.max_model_input_tokens,

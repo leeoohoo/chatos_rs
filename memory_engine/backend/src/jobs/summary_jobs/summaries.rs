@@ -89,7 +89,7 @@ async fn run_pending_thread_summaries_internal(
                     }
                 };
                 let policy = match crate::services::control_plane::get_effective_job_policy(
-                    &config, &thread.tenant_id, "summary").await {
+                    &config, "summary") {
                     Ok(policy) => policy,
                     Err(error) => return SummaryExecutionOutcome::Failed { thread_id, error },
                 };

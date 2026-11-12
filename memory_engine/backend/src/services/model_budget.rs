@@ -73,7 +73,7 @@ impl MemoryModelBudget {
             || self.context_window_tokens <= 0
             || self.output_reserve_tokens <= 0
         {
-            return Err("a complete published per-model capability is required".into());
+            return Err("a complete published common capacity snapshot is required".into());
         }
         self.context_window_tokens
             .checked_sub(self.output_reserve_tokens)

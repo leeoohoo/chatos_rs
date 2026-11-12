@@ -162,7 +162,7 @@ async fn process_rollup_event(
     }
 
     let event = envelope.as_outbox();
-    let settings = cp_service::load_rollup_settings(&state.config, &envelope.tenant_id).await?;
+    let settings = cp_service::load_rollup_settings(&state.config)?;
     let Some(prepared) = summary::prepare_thread_rollup(
         &state.pool,
         envelope.tenant_id.as_str(),
@@ -249,7 +249,7 @@ async fn arm_rollup_dispatches(state: &AppState) -> Result<usize, String> {
         summaries::list_threads_with_pending_rollups(&state.pool, None, None, scan_limit).await?;
     let mut armed = 0usize;
     for (tenant_id, source_id, thread_id) in candidates {
-        let settings = cp_service::load_rollup_settings(&state.config, &tenant_id).await?;
+        let settings = cp_service::load_rollup_settings(&state.config)?;
         if summary::prepare_thread_rollup(
             &state.pool,
             tenant_id.as_str(),

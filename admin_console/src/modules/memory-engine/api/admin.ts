@@ -8,7 +8,6 @@ import type {
   EngineAgentConversation,
   EngineAgentProject,
   EngineJobPolicy,
-  EngineJobPolicyCatalog,
   EngineSource,
   JobRunsBundle,
   JobRunQuery,
@@ -55,14 +54,10 @@ function normalizeSource(data: Partial<EngineSource>): EngineSource {
 function normalizeJobPolicy(data: Partial<EngineJobPolicy>): EngineJobPolicy {
   return {
     job_type: data.job_type ?? '',
-    model_config_id: data.model_config_id ?? null,
-    provider: data.provider ?? null,
-    model: data.model ?? null,
     model_capability_revision: data.model_capability_revision ?? null,
     context_window_tokens: data.context_window_tokens ?? null,
     output_reserve_tokens: data.output_reserve_tokens ?? null,
     max_model_input_tokens: data.max_model_input_tokens ?? null,
-    updated_at: data.updated_at ?? '',
   };
 }
 
@@ -216,9 +211,11 @@ export const adminApi = {
     };
   },
 
-  async listJobPolicies(): Promise<EngineJobPolicyCatalog> {
-    const { data } = await client.get<EngineJobPolicyCatalog>('/admin/job-policies');
-    return { ...data, items: data.items.map(normalizeJobPolicy) };
+  async listJobPolicies(): Promise<EngineJobPolicy[]> {
+    const { data } = await client.get('/admin/job-policies');
+    return (data.items ?? []).map((item: Partial<EngineJobPolicy>) =>
+      normalizeJobPolicy(item),
+    );
   },
 
   async getDashboardOverview(): Promise<DashboardOverview> {

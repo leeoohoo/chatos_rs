@@ -39,7 +39,6 @@ export function PoliciesSectionContainer(props: PoliciesSectionContainerProps) {
   return (
     <PoliciesSection
       policies={catalog.jobPolicies}
-      configurationStatus={catalog.policyConfigurationStatus}
       loading={catalog.policiesLoading}
       selectedKey={catalog.selectedPolicyViewKey}
       onSelect={catalog.setSelectedPolicyViewKey}

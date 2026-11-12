@@ -50,7 +50,7 @@ async fn run_pending_thread_rollups_internal(
         summaries::list_threads_with_pending_rollups(db, tenant_id, source_id, max_threads).await?;
     let mut pending_threads = Vec::new();
     for (tenant_id, source_id, thread_id) in candidate_threads {
-        let settings = cp_service::load_rollup_settings(config, &tenant_id).await?;
+        let settings = cp_service::load_rollup_settings(config)?;
         if summary::prepare_thread_rollup(
             db,
             tenant_id.as_str(),
@@ -79,7 +79,7 @@ async fn run_pending_thread_rollups_internal(
                 let db = db.clone();
                 let config = config.clone();
                         async move {
-                    let settings = match cp_service::load_rollup_settings(&config, &tenant_id).await {
+                    let settings = match cp_service::load_rollup_settings(&config) {
                         Ok(settings) => settings,
                         Err(error) => return RollupExecutionOutcome::Failed { thread_id, batches: 0, generated: 0, marked: 0, error },
                     };
