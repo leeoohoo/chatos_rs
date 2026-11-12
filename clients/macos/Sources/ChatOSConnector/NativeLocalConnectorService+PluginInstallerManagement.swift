@@ -2,6 +2,16 @@ import ChatOSCore
 import Foundation
 
 extension NativeLocalConnectorService {
+    public func resolveProgramRelease(repositoryURL: String, tag: String, assetName: String) async throws -> LocalConnectorProgramRelease {
+        try await pluginInstaller.repositoryClient.resolveArchive(repositoryURL: repositoryURL, tag: tag, assetName: assetName)
+    }
+    func discoverInstallerRepository(url: String, documentPath: String?, reference: String?) async throws -> LocalAgentJSONValue {
+        try await pluginInstaller.repositoryClient.discover(repositoryURL: url, documentPath: documentPath, reference: reference)
+    }
+
+    func resolveInstallerRelease(url: String, tag: String, asset: String) async throws -> LocalAgentJSONValue {
+        try await pluginInstaller.repositoryClient.resolveRelease(repositoryURL: url, tag: tag, assetName: asset)
+    }
     /// Reads local records without starting MCP servers or depending on Marketplace availability.
     func installerInstalledPlugins(query: String?) -> [LocalAgentJSONValue] {
         (state.installedPluginRecords ?? [:]).values.sorted { $0.pluginID < $1.pluginID }
@@ -138,6 +148,17 @@ enum NativePluginInstallerMetadata {
         if let value = source.exactVersion { result["exact_version"] = .string(value) }
         if let value = source.gitReference { result["git_reference"] = .string(value) }
         if let value = source.subdirectory { result["subdirectory"] = .string(value) }
+        if let program = source.program {
+            var value: [String: LocalAgentJSONValue] = [
+                "display_name": .string(program.displayName), "component_key": .string(program.componentKey),
+                "executable_path": .string(program.executablePath),
+                "arguments": .array(program.arguments.map(LocalAgentJSONValue.string)),
+                "access_profile": .string(program.accessProfile.rawValue),
+            ]
+            if let asset = program.assetName { value["asset_name"] = .string(asset) }
+            if let digest = program.archiveSHA256 { value["archive_sha256"] = .string(digest) }
+            result["program"] = .object(value)
+        }
         return .object(result)
     }
 

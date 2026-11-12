@@ -85,6 +85,7 @@ public protocol LocalConnectorControlServicing:
     func inspectPluginSource(
         _ source: LocalConnectorPluginSourceDraft
     ) async throws -> LocalConnectorPluginInspection
+    func resolveProgramRelease(repositoryURL: String, tag: String, assetName: String) async throws -> LocalConnectorProgramRelease
     func installPluginSource(
         _ source: LocalConnectorPluginSourceDraft,
         expectedFingerprint: String
@@ -97,6 +98,9 @@ public protocol LocalConnectorControlServicing:
 }
 
 public extension LocalConnectorControlServicing {
+    func resolveProgramRelease(repositoryURL: String, tag: String, assetName: String) async throws -> LocalConnectorProgramRelease {
+        throw URLError(.unsupportedURL)
+    }
     func suspendForSignedOut() async {}
     func resumeServerAccess() async throws -> LocalConnectorStatus { try await fetchStatus() }
 

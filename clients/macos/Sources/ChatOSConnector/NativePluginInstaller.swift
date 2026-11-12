@@ -15,6 +15,7 @@ struct NativePluginInstaller: Sendable {
 
     let rootURL: URL
     let npmInstall: NPMInstallOperation
+    let repositoryClient: NativePluginRepositoryClient
     let maximumFiles = 20_000
     let maximumUnpackedBytes: Int64 = 512 * 1_024 * 1_024
 
@@ -24,10 +25,12 @@ struct NativePluginInstaller: Sendable {
 
     init(
         rootURL: URL,
-        npmInstall: @escaping NPMInstallOperation
+        npmInstall: @escaping NPMInstallOperation,
+        repositoryClient: NativePluginRepositoryClient = .init()
     ) {
         self.rootURL = rootURL
         self.npmInstall = npmInstall
+        self.repositoryClient = repositoryClient
     }
 
     func install(

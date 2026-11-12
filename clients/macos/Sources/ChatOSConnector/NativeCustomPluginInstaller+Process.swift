@@ -136,7 +136,7 @@ extension NativePluginInstaller {
         guard nullInput >= 0 else {
             stdout.fileHandleForReading.readabilityHandler = nil
             stderr.fileHandleForReading.readabilityHandler = nil
-            throw NativeConnectorError.pluginInstallation("无法打开 npm 标准输入")
+            throw NativeConnectorError.pluginInstallation("无法打开\(failureLabel)标准输入")
         }
         defer { close(nullInput) }
 
@@ -164,7 +164,7 @@ extension NativePluginInstaller {
             stdout.fileHandleForReading.readabilityHandler = nil
             stderr.fileHandleForReading.readabilityHandler = nil
             throw NativeConnectorError.pluginInstallation(
-                "无法启动 npm：\(String(cString: strerror(spawnResult)))"
+                "无法启动\(failureLabel)：\(String(cString: strerror(spawnResult)))"
             )
         }
 
@@ -189,7 +189,7 @@ extension NativePluginInstaller {
             stderr.fileHandleForReading.readabilityHandler = nil
             try? stdout.fileHandleForReading.close()
             try? stderr.fileHandleForReading.close()
-            throw NativeConnectorError.pluginInstallation("npm 进程无法在终止后退出")
+            throw NativeConnectorError.pluginInstallation("\(failureLabel)进程无法在终止后退出")
         }
 
         stdout.fileHandleForReading.readabilityHandler = nil

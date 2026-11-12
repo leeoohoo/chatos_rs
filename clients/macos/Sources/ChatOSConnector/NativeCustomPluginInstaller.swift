@@ -202,6 +202,9 @@ extension NativePluginInstaller {
     func preparePluginSource(
         _ draft: LocalConnectorPluginSourceDraft
     ) async throws -> NativePreparedCustomPlugin {
+        if draft.kind == .githubRelease || draft.kind == .localExecutable {
+            return try await prepareProgramMCP(draft)
+        }
         let input = try NativePluginSourceInput(draft: draft)
         if input.kind == .localFolder, input.subdirectory == nil {
             return try prepareLocalPlugin(atPath: input.location)
@@ -213,6 +216,8 @@ extension NativePluginInstaller {
             let summary: String
             let identity: String
             switch input.kind {
+            case .githubRelease, .localExecutable:
+                throw NativeConnectorError.pluginInstallation("程序来源必须通过 MCP 程序安装通道")
             case .localFolder:
                 let local = URL(fileURLWithPath: input.location, isDirectory: true)
                     .standardizedFileURL.resolvingSymlinksInPath()
@@ -439,7 +444,7 @@ extension NativePluginInstaller {
         try? FileManager.default.removeItem(at: prepared.temporaryRootURL)
     }
 
-    private func preparedCustomPlugin(
+    func preparedCustomPlugin(
         packageRoot: URL,
         temporaryRootURL: URL,
         pluginIDSeed: String,
@@ -474,7 +479,7 @@ extension NativePluginInstaller {
         )
     }
 
-    private func makeCustomStagingRoot() throws -> URL {
+    func makeCustomStagingRoot() throws -> URL {
         let value = rootURL
             .appendingPathComponent(".custom-staging", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -644,6 +649,9 @@ private struct NativePluginSourceInput {
     var subdirectory: String?
 
     init(draft: LocalConnectorPluginSourceDraft) throws {
+        guard draft.program == nil else {
+            throw NativeConnectorError.pluginInstallation("只有发行包和本机程序来源接受程序启动配置")
+        }
         kind = draft.kind
         location = draft.location.trimmingCharacters(in: .whitespacesAndNewlines)
         exactVersion = draft.exactVersion?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -665,6 +673,8 @@ private struct NativePluginSourceInput {
         }
 
         switch kind {
+        case .githubRelease, .localExecutable:
+            throw NativeConnectorError.pluginInstallation("程序来源必须通过 MCP 程序安装通道")
         case .localFolder:
             guard location.hasPrefix("/"), exactVersion == nil, gitReference == nil else {
                 throw NativeConnectorError.pluginInstallation("本地 Plugin 来源必须是绝对目录")

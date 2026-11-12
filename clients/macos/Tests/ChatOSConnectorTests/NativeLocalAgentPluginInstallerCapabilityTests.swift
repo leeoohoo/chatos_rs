@@ -121,6 +121,16 @@ final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
                 current: "先不要安装", previous: [request]
             ), "先不要安装"
         )
+        XCTAssertEqual(
+            NativeLocalAgentPluginInstallerToolExecutor.authorizedInstallerRequest(
+                current: "重新试试呢", previous: ["帮我安装 Craft Anything", "https://github.com/storytold/craft-anything.git"]
+            ), "帮我安装 Craft Anything"
+        )
+        XCTAssertEqual(
+            NativeLocalAgentPluginInstallerToolExecutor.authorizedInstallerRequest(
+                current: "重新试试呢", previous: ["帮我安装 Craft Anything", "先不要管了"]
+            ), "重新试试呢"
+        )
     }
 
     func testInstallerCanReadScreenshotsWithoutWorkspaceAccess() throws {
