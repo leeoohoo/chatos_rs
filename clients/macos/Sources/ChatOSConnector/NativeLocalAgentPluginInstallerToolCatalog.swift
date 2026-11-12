@@ -207,7 +207,8 @@ extension NativeLocalAgentPlatformToolCatalog {
   ]
 
   private static let replacementPluginIDProperty: LocalAgentJSONValue = .object([
-    "type": .string("string"), "minLength": .number(1), "maxLength": .number(256),
-    "description": .string("For an update/reinstall, stable plugin_id from list_installed. Pass the same value to inspect and install. Required for updates; preserves identity and prevents a duplicate installation. Omit for a new plugin."),
+    "type": .array([.string("string"), .string("null")]),
+    "minLength": .number(1), "maxLength": .number(256),
+    "description": .string("New installation: omit this field or pass null, especially when list_installed returns no matching plugin. Never invent an ID or use a placeholder such as REPLACE. Update/reinstall: use the exact existing plugin_id returned by list_installed and pass the same ID to inspect and install."),
   ])
 }

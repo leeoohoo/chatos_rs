@@ -5,6 +5,56 @@ import Testing
 @testable import ChatOSConnector
 
 struct NativeCustomPluginInstallationTests {
+    @Test("unknown update IDs fail before fetching or preparing packages and explain how to correct a new install")
+    func rejectsUnknownReplacementBeforePackagePreparation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("InstallerMissingTarget-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent("state.json")
+        try Self.writeInitialState(to: stateURL, ownerUserID: "missing-target-owner")
+        let service = NativeLocalConnectorService(
+            configuration: .init(gatewayBaseURL: URL(string: "https://connector.example.test")!, stateURL: stateURL),
+            ticketProvider: CustomPluginRejectingTicketProvider(),
+            pluginInstallerFactory: {
+                NativePluginInstaller(rootURL: $0, npmInstall: { _ in
+                    Issue.record("Invalid replacement must not invoke npm")
+                    throw URLError(.cancelled)
+                }, repositoryClient: .init(fetch: { _, _ in
+                    Issue.record("Invalid replacement must not fetch a release")
+                    throw URLError(.cancelled)
+                }))
+            }
+        )
+        let source = LocalConnectorPluginSourceDraft(
+            kind: .githubRelease, location: "https://github.com/test/program", exactVersion: "v1.0.0",
+            program: .init(displayName: "fixture", componentKey: "fixture", executablePath: "fixture",
+                           arguments: ["mcp"], accessProfile: .restricted, assetName: "fixture.zip",
+                           archiveSHA256: String(repeating: "a", count: 64))
+        )
+        let npm = LocalConnectorCustomMCPDraft(
+            displayName: "fixture", componentKey: "fixture", packageName: "fixture", packageVersion: "1.0.0",
+            binaryName: "fixture", arguments: [], accessProfile: .restricted
+        )
+        for id in ["REPLACE", "deleted-plugin-id"] {
+            for action in 0..<4 {
+                do {
+                    switch action {
+                    case 0: _ = try await service.inspectPluginSource(source, replacingPluginID: id)
+                    case 1: _ = try await service.installPluginSource(source, expectedFingerprint: "unused", replacingPluginID: id)
+                    case 2: _ = try await service.inspectCustomMCP(npm, replacingPluginID: id)
+                    default: _ = try await service.installCustomMCP(npm, expectedFingerprint: "unused", replacingPluginID: id)
+                    }
+                    Issue.record("An unknown replacement target must fail")
+                } catch NativeConnectorError.pluginInstallation(let message) {
+                    #expect(message.contains("replacing_plugin_id"))
+                    #expect(message.contains("null"))
+                    #expect(message.contains("plugin_installer_list_installed"))
+                    #expect(!message.contains("原来源类型"))
+                }
+            }
+        }
+        #expect(await service.installerPluginRecords().isEmpty)
+    }
+
     @Test("installer updates a moved source in place, binds preflight to the target, and preserves disabled state")
     func installerSourceUpdateKeepsIdentity() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("InstallerUpdate-\(UUID().uuidString)")

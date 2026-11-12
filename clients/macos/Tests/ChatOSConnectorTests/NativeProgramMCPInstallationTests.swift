@@ -57,12 +57,22 @@ struct NativeProgramMCPInstallationTests {
                            arguments: ["mcp", "a b", "$(touch nope)"], accessProfile: .restricted,
                            assetName: "program-macos-universal.tgz", archiveSHA256: resolved.archiveSHA256)
         )
-        let inspected = try await service.inspectPluginSource(source)
-        try await service.installPluginSource(source, expectedFingerprint: inspected.fingerprint)
+        var request = try #require(NativePluginInstallerMetadata.source(source).objectValue)
+        request["replacing_plugin_id"] = .null
+        let newSource = try NativeLocalAgentPluginInstallerToolExecutor.pluginSource(request)
+        let replacement = try NativeLocalAgentPluginInstallerToolExecutor.replacementPluginID(request)
+        let inspected = try await service.inspectPluginSource(newSource, replacingPluginID: replacement)
+        #expect(NativeLocalAgentPluginInstallerToolExecutor.inspectionResult(
+            inspected, source: newSource, replacingID: replacement
+        ).objectValue?["replacing_plugin_id"] == .null)
+        _ = try await service.installPluginSource(newSource, expectedFingerprint: inspected.fingerprint, replacingPluginID: replacement)
         let original = try #require(await service.installerPluginRecords().values.first)
         try await service.updatePluginEnabled(id: original.pluginID, enabled: false)
         source.exactVersion = "v2.0.0"
         let update = try await service.inspectPluginSource(source, replacingPluginID: original.pluginID)
+        #expect(NativeLocalAgentPluginInstallerToolExecutor.inspectionResult(
+            update, source: source, replacingID: original.pluginID
+        ).objectValue?["replacing_plugin_id"] == .string(original.pluginID))
         try await service.installPluginSource(source, expectedFingerprint: update.fingerprint, replacingPluginID: original.pluginID)
         let record = try #require(await service.installerPluginRecord(id: original.pluginID))
         #expect(record.version == "v2.0.0")
@@ -207,10 +217,21 @@ struct NativeProgramMCPInstallationTests {
             program: .init(displayName: "Craft Anything", componentKey: "craft-anything", executablePath: entry,
                            arguments: ["mcp"], accessProfile: .developerAnalysis, assetName: asset, archiveSHA256: resolved.archiveSHA256))
         let service = try service(root, client: client)
-        let inspection = try await service.inspectPluginSource(source)
+        var request = try #require(NativePluginInstallerMetadata.source(source).objectValue)
+        request["replacing_plugin_id"] = .string("REPLACE")
+        await #expect(throws: NativeConnectorError.self) {
+            _ = try await service.inspectPluginSource(
+                NativeLocalAgentPluginInstallerToolExecutor.pluginSource(request),
+                replacingPluginID: NativeLocalAgentPluginInstallerToolExecutor.replacementPluginID(request)
+            )
+        }
+        request["replacing_plugin_id"] = .null
+        let parsedSource = try NativeLocalAgentPluginInstallerToolExecutor.pluginSource(request)
+        let replacement = try NativeLocalAgentPluginInstallerToolExecutor.replacementPluginID(request)
+        let inspection = try await service.inspectPluginSource(parsedSource, replacingPluginID: replacement)
         let names = try #require(inspection.components.first?.toolNames)
         try #require(names.contains("core_targets_list"))
-        try await service.installPluginSource(source, expectedFingerprint: inspection.fingerprint)
+        _ = try await service.installPluginSource(parsedSource, expectedFingerprint: inspection.fingerprint, replacingPluginID: replacement)
         let record = try #require(await service.installerPluginRecords().values.first)
         #expect(record.sourceDraft == source)
         #expect(NativePluginInstallationIntegrity.status(record: record) == .verified)

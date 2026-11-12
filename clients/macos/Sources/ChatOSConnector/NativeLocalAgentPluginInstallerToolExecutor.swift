@@ -38,7 +38,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             }
         }
         let arguments = try Self.object(invocation.arguments)
-        let replacingID = Self.optionalString(arguments, "replacing_plugin_id")
+        let replacingID = try Self.replacementPluginID(arguments)
         let isCustomInstall = invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallNPMToolName
             || invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallSourceToolName
         let isUpdateRequest = Self.matches(#"更新|升级|\b(?:update|upgrade)\b"#, in: authorizedUserMessage.lowercased())
@@ -461,7 +461,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         )
     }
 
-    private static func inspectionResult(
+    static func inspectionResult(
         _ inspection: LocalConnectorPluginInspection,
         draft: LocalConnectorCustomMCPDraft? = nil,
         source: LocalConnectorPluginSourceDraft? = nil,
@@ -483,7 +483,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
                 ])
             }),
         ]
-        if let replacingID { value["replacing_plugin_id"] = .string(replacingID) }
+        value["replacing_plugin_id"] = replacingID.map(LocalAgentJSONValue.string) ?? .null
         if let draft {
             value["resolved_install_request"] = NativePluginInstallerMetadata.npm(draft)
         }
@@ -528,6 +528,15 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             throw NativeLocalAgentPluginInstallerToolError.invalidField(field)
         }
         return value
+    }
+
+    static func replacementPluginID(_ arguments: [String: LocalAgentJSONValue]) throws -> String? {
+        guard let value = arguments["replacing_plugin_id"], value != .null else { return nil }
+        guard case let .string(id) = value else {
+            throw NativeLocalAgentPluginInstallerToolError.invalidField("replacing_plugin_id")
+        }
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func optionalString(

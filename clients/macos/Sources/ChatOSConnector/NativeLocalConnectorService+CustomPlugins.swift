@@ -29,6 +29,7 @@ extension NativeLocalConnectorService {
         _ draft: LocalConnectorCustomMCPDraft,
         replacingPluginID: String?
     ) async throws -> LocalConnectorPluginInspection {
+        _ = try installedCustomPluginReplacement(replacingPluginID)
         let prepared = try await pluginInstaller.prepareCustomMCP(draft)
         defer { pluginInstaller.discardCustomPlugin(prepared) }
         return try await inspectPreparedCustomPlugin(customPluginUpdate(prepared, replacing: replacingPluginID))
@@ -40,6 +41,7 @@ extension NativeLocalConnectorService {
         expectedFingerprint: String,
         replacingPluginID: String?
     ) async throws -> NativeInstalledPluginRecord {
+        _ = try installedCustomPluginReplacement(replacingPluginID)
         let prepared = try await pluginInstaller.prepareCustomMCP(draft)
         var shouldDiscard = true
         defer {
@@ -86,6 +88,7 @@ extension NativeLocalConnectorService {
         _ source: LocalConnectorPluginSourceDraft,
         replacingPluginID: String?
     ) async throws -> LocalConnectorPluginInspection {
+        _ = try installedCustomPluginReplacement(replacingPluginID)
         let prepared = try await pluginInstaller.preparePluginSource(source)
         defer { pluginInstaller.discardCustomPlugin(prepared) }
         return try await inspectPreparedCustomPlugin(customPluginUpdate(prepared, replacing: replacingPluginID))
@@ -97,6 +100,7 @@ extension NativeLocalConnectorService {
         expectedFingerprint: String,
         replacingPluginID: String?
     ) async throws -> NativeInstalledPluginRecord {
+        _ = try installedCustomPluginReplacement(replacingPluginID)
         let prepared = try await pluginInstaller.preparePluginSource(source)
         var shouldDiscard = true
         defer {

@@ -3,6 +3,40 @@ import ChatOSCore
 import XCTest
 
 final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
+    func testNewInstallationCanExplicitlyClearReplacementTarget() throws {
+        for arguments: [String: LocalAgentJSONValue] in [
+            [:], ["replacing_plugin_id": .null], ["replacing_plugin_id": .string("  ")],
+        ] {
+            XCTAssertNil(try NativeLocalAgentPluginInstallerToolExecutor.replacementPluginID(arguments))
+        }
+        XCTAssertEqual(
+            try NativeLocalAgentPluginInstallerToolExecutor.replacementPluginID([
+                "replacing_plugin_id": .string(" existing-plugin "),
+            ]), "existing-plugin"
+        )
+        XCTAssertThrowsError(try NativeLocalAgentPluginInstallerToolExecutor.replacementPluginID([
+            "replacing_plugin_id": .bool(false),
+        ]))
+
+        let tools = NativeLocalAgentPlatformToolCatalog.pluginInstallerTools.filter {
+            ["plugin_installer_inspect_source", "plugin_installer_install_source",
+             "plugin_installer_inspect_npm", "plugin_installer_install_npm"].contains(Self.toolName($0))
+        }
+        XCTAssertEqual(tools.count, 4)
+        for tool in tools {
+            guard case let .object(value) = tool,
+                  case let .object(parameters)? = value["parameters"],
+                  case let .object(properties)? = parameters["properties"],
+                  case let .object(replacement)? = properties["replacing_plugin_id"] else {
+                return XCTFail("Missing replacement schema")
+            }
+            XCTAssertEqual(replacement["type"], .array([.string("string"), .string("null")]))
+            if case let .array(required)? = parameters["required"] {
+                XCTAssertFalse(required.contains(.string("replacing_plugin_id")))
+            }
+        }
+    }
+
     func testInstallerCapabilityContainsOnlyDedicatedInstallerTools() throws {
         let capability = try NativeLocalConnectorService.pluginInstallerCapability(
             ownerUserID: "user-1",

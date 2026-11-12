@@ -115,13 +115,22 @@ extension NativeLocalConnectorService {
         )
     }
 
+    func installedCustomPluginReplacement(_ pluginID: String?) throws -> NativeInstalledPluginRecord? {
+        guard let pluginID else { return nil }
+        guard let record = state.installedPluginRecords?[pluginID] else {
+            throw NativeConnectorError.pluginInstallation(
+                "replacing_plugin_id 指向的插件尚未安装。新安装请删除 replacing_plugin_id 字段或传 null 后重新预检；不要填写 REPLACE 等占位符。更新请先调用 plugin_installer_list_installed，使用实际返回的 plugin_id。不要重复提交相同的无效参数。"
+            )
+        }
+        return record
+    }
+
     func customPluginUpdate(
         _ prepared: NativePreparedCustomPlugin,
         replacing pluginID: String?
     ) throws -> NativePreparedCustomPlugin {
-        guard let pluginID else { return prepared }
-        guard let previous = state.installedPluginRecords?[pluginID],
-              previous.source != nil, previous.source == prepared.record.source else {
+        guard let previous = try installedCustomPluginReplacement(pluginID) else { return prepared }
+        guard previous.source != nil, previous.source == prepared.record.source else {
             throw NativeConnectorError.pluginInstallation("更新必须使用已安装插件的原来源类型，不能把完整 Plugin 替换为 MCP 包装器")
         }
         let oldManifest = try NativePluginManifestLoader.loadManifest(
