@@ -68,7 +68,7 @@ struct NativeTerminalTests {
         session.emit(.output(Data("\(marker)\n".utf8)))
         try await waitUntil(timeout: .seconds(5)) {
             String(
-                decoding: terminal.terminalView.terminal.getBufferAsData(),
+                decoding: terminal.terminalView.getBufferAsData(),
                 as: UTF8.self
             )
             .replacingOccurrences(of: "\r", with: "")

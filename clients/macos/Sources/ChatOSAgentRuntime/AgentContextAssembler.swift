@@ -1,6 +1,30 @@
 import Foundation
 
 enum AgentContextAssembler {
+    /// Returns only the non-negotiable instructions and exact live turn. Historical Memory
+    /// recall is deliberately omitted so the caller can calculate (or recover from) a fully
+    /// consumed recall budget without manufacturing a one-token compose request.
+    static func assembleFixed(checkpoint: AgentRunCheckpoint,
+                              memory: AgentMemoryCheckpoint) throws -> [AgentMessage] {
+        let all = checkpoint.messages
+        let pins = memory.pinnedMessageCount
+        guard pins > 0, pins <= all.count,
+              all.prefix(pins).allSatisfy({
+                  [.system, .user].contains($0.role)
+                      && $0.toolCalls.isEmpty
+                      && $0.toolCallID == nil
+              }) else {
+            throw AgentContextError.invalidHistory
+        }
+        let currentTurn = try currentTurnStart(in: all)
+        try validateCurrentTurn(all[currentTurn...])
+
+        var messages = all.prefix(pins).filter { $0.role == .system }
+        messages.append(contentsOf: all.prefix(pins).filter { $0.role == .user })
+        messages.append(contentsOf: all.indices.filter { $0 >= pins && $0 >= currentTurn }.map { all[$0] })
+        return messages
+    }
+
     static func assemble(checkpoint: AgentRunCheckpoint, memory: AgentMemoryCheckpoint,
                          context: AgentMemoryContext) throws -> [AgentMessage] {
         let all = checkpoint.messages

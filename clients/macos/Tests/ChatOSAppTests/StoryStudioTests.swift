@@ -11,7 +11,7 @@ final class StoryStudioTests: XCTestCase {
         let (vm, store, service) = try await fixture()
         let draft = makeProject()
         let created = await vm.create(draft, availableModels: models)
-        XCTAssertTrue(created)
+        XCTAssertTrue(created, vm.errorMessage ?? "Story creation failed without an error message")
         XCTAssertEqual(vm.selectedProjectID, draft.id)
         XCTAssertEqual(vm.projects.first?.models.textModelID, draft.models.textModelID)
         XCTAssertEqual(vm.projects.first?.models.imageModelID, draft.models.imageModelID)
@@ -518,13 +518,13 @@ final class StoryStudioTests: XCTestCase {
         draft.segments = [.init(id: "one", title: "Opening", synopsis: "Opening", sourceRange: .init(start: 0, end: 1))]
         _ = await vm.create(draft, availableModels: models)
         var settings = draft
-        settings.title = "Updated"; settings.models.textModelID = "video"
+        settings.title = "Updated"; settings.models.textModelID = "text-alt"
         settings.source = "stale form must not overwrite actual story"
         let updated = await vm.updateSettings(settings, availableModels: models)
         XCTAssertTrue(updated)
         XCTAssertEqual(vm.project?.source, draft.source)
         XCTAssertEqual(vm.project?.segments, draft.segments)
-        XCTAssertEqual(vm.project?.models.textModelID, "video")
+        XCTAssertEqual(vm.project?.models.textModelID, "text-alt")
     }
 
     func testOutlineIsSeparateFromPerSegmentDetailsAndCanResumeRefinement() async throws {
@@ -1162,7 +1162,8 @@ final class StoryStudioTests: XCTestCase {
     }
 
     var models: [MediaGenerationModel] {
-        [("text", "text-model"), ("image", "image-model"), ("video", "MiniMax-H3")].map { id, model in
+        [("text", "gpt-6.1-sol"), ("text-alt", "gpt-6-luna"),
+         ("image", "gpt-image-2"), ("video", "MiniMax-H3")].map { id, model in
             .init(id: id, name: id, provider: "gpt", modelName: model, enabled: true, taskEnabled: false, hasAPIKey: true)
         }
     }

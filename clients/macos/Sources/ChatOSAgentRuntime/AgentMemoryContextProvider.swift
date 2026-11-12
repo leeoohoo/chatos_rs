@@ -130,11 +130,25 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
             // The engine owns durable records and summaries. This same compose path is used at
             // turn boundaries and when an active tool loop must shrink its recalled history.
             let currentUserIndex = try AgentContextAssembler.currentTurnStart(in: state.messages)
-            let fixedMessages = try AgentContextAssembler.assemble(
-                checkpoint: state, memory: state.memory!, context: .init(blocks: [], recentRecords: [])
+            let fixedMessages = try AgentContextAssembler.assembleFixed(
+                checkpoint: state, memory: state.memory!
             )
             let fixedTokens = try AgentContextBudget.estimate(messages: fixedMessages, tools: tools)
             let available = modelCapability.contextWindowTokens - modelCapability.outputReserveTokens - fixedTokens
+            // A live turn may itself consume the whole soft recall budget. Memory Engine rejects
+            // zero-token budgets, and asking it to summarize into one token is both invalid in
+            // practice and unnecessary. Return the exact fixed projection and let AgentRuntime
+            // decide whether Responses server-side compaction may carry it up to the hard window.
+            guard available > 0 else {
+                try await emit(
+                    state,
+                    "memory_recall_skipped",
+                    "当前活动轮次已占满 Memory 召回预算，未附加历史召回",
+                    record: record
+                )
+                try await check(deadline: deadline, shouldPause: shouldPause)
+                return .init(checkpoint: state, messages: fixedMessages)
+            }
             let composeRequest = try AgentMemoryComposeRequest(
                 modelCapability: modelCapability,
                 queryText: state.messages[currentUserIndex].content,

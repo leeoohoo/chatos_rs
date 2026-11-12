@@ -245,14 +245,15 @@ public struct AgentRuntime: Sendable {
                     messages = state.messages
                 }
                 if let modelCapability {
-                    let inputLimit = modelCapability.contextWindowTokens - modelCapability.outputReserveTokens
+                    let softLimit = modelCapability.contextWindowTokens - modelCapability.outputReserveTokens
+                    let hardLimit = modelCapability.contextWindowTokens
                     var inputTokens = try AgentContextBudget.estimate(messages: messages, tools: modelTools)
                     // The active projection is intentionally stable throughout a tool loop, but
                     // newly appended tool results can consume the headroom reserved for recalled
                     // history. Before pausing, ask Memory Engine for a smaller projection. Its
                     // compose path owns any required summary/compaction and preserves the exact
                     // live turn from the durable checkpoint.
-                    if inputTokens > inputLimit, reusedActiveContext, let contextProvider {
+                    if inputTokens > softLimit, reusedActiveContext, let contextProvider {
                         try await emit(
                             "memory_recomposing",
                             "当前运行上下文接近窗口预算，正在重新组合 Memory Engine 上下文"
@@ -272,8 +273,14 @@ public struct AgentRuntime: Sendable {
                             tools: modelTools
                         )
                     }
-                    guard inputTokens <= inputLimit else {
-                        throw AgentContextError.budgetExceeded
+                    if inputTokens > softLimit {
+                        guard model.usesServerSideCompaction, inputTokens <= hardLimit else {
+                            throw AgentContextError.budgetExceeded
+                        }
+                        try await emit(
+                            "responses_compaction_pending",
+                            "输入已超过 Memory 软预算（\(inputTokens)/\(softLimit) tokens），正在交由 Responses compaction 处理"
+                        )
                     }
                 }
                 var response: AgentMessage?

@@ -454,6 +454,31 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertEqual(result.memory?.syncedMessageCount, result.messages.count)
     }
 
+    func testFixedCurrentTurnBeyondSoftBudgetSkipsRecallAndUsesResponsesCompaction() async throws {
+        var (checkpoint, scope) = try fixture()
+        checkpoint.messages[1].content = String(repeating: "x", count: 50_000)
+        let memory = TestMemory(scope: scope)
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+        let model = FixedTurnCompactionModel()
+
+        let result = try await AgentRuntime().run(
+            checkpoint: provider.bind(checkpoint),
+            scope: checkpoint.scope,
+            policy: .init(),
+            model: model,
+            tools: tools,
+            execute: { _ in .init("done") },
+            contextProvider: provider
+        )
+
+        XCTAssertEqual(result.status, .completed, result.stopReason ?? "")
+        XCTAssertEqual(result.modelCalls, 1)
+        let composeCalls = await memory.composeCalls
+        XCTAssertEqual(composeCalls, 0, "A zero/negative recall budget must not be sent to Memory Engine")
+        let modelCalls = await model.count
+        XCTAssertEqual(modelCalls, 1)
+    }
+
     func testLostSyncAcknowledgementReconcilesInsteadOfRewriting() async throws {
         let (checkpoint, scope) = try fixture()
         let memory = TestMemory(scope: scope, loseSyncAck: true)
@@ -610,6 +635,29 @@ private actor BudgetRecoveryModel: AgentModelClient {
                 name: finish ? "finish" : "work",
                 arguments: finish ? "{}" : "{\"step\":1}"
             ),
+        ])
+    }
+}
+
+private actor FixedTurnCompactionModel: AgentModelClient {
+    nonisolated let usesServerSideCompaction = true
+    nonisolated let memoryCapabilitySnapshot = try? AgentModelCapabilitySnapshot(
+        revision: "fixed-turn-compaction-v1",
+        contextWindowTokens: 20_000,
+        outputReserveTokens: 10_000,
+        protocolOverheadEstimatorID: "responses-json-v1",
+        tokenizerID: nil
+    )
+    private(set) var count = 0
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        count += 1
+        return .init(role: .assistant, toolCalls: [
+            .init(id: "fixed-turn-finish", name: "finish", arguments: "{}"),
         ])
     }
 }

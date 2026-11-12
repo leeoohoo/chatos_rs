@@ -159,9 +159,10 @@ final class NativeRemoteTerminalViewModel: ObservableObject {
                 }
                 self.session = session
                 self.observe(session: session, token: sessionToken)
+                let dimensions = self.terminalView.terminalDimensions
                 session.start(
-                    columns: max(self.terminalView.terminal.cols, 1),
-                    rows: max(self.terminalView.terminal.rows, 1)
+                    columns: max(dimensions.cols, 1),
+                    rows: max(dimensions.rows, 1)
                 )
                 if session.isRunning {
                     self.state = .running
@@ -220,7 +221,7 @@ final class NativeRemoteTerminalViewModel: ObservableObject {
         lifecycle.reset()
         session?.close()
         session = nil
-        terminalView.terminal.resetToInitialState()
+        terminalView.resetToInitialState()
         title = connectionName
         state = .idle
         startIfNeeded()
@@ -243,7 +244,7 @@ final class NativeRemoteTerminalViewModel: ObservableObject {
     }
 
     func clear() {
-        terminalView.terminal.clearScrollback()
+        terminalView.clearScrollback()
         terminalView.feed(text: "\u{1B}[2J\u{1B}[H")
     }
 
@@ -317,7 +318,7 @@ struct NativeRemoteTerminalSurface: NSViewRepresentable {
     }
 }
 
-final class NativeByteStreamTerminalView: TerminalView, @preconcurrency TerminalViewDelegate {
+final class NativeByteStreamTerminalView: TerminalView, TerminalViewDelegate {
     var inputHandler: ((Data) -> Void)?
     var resizeHandler: ((Int, Int) -> Void)?
     var titleHandler: ((String) -> Void)?

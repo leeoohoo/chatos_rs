@@ -229,7 +229,6 @@ copy_swift_resource_bundle() {
 
 copy_swift_resource_bundle "ChatOSSwift_ChatOSCore.bundle"
 copy_swift_resource_bundle "ChatOSSwift_ChatOSModelCapabilities.bundle"
-copy_swift_resource_bundle "SwiftTerm_SwiftTerm.bundle"
 cp "$PROJECT_DIR/Support/ChatOSSwift-Info.plist" "$CONTENTS_DIR/Info.plist"
 if [[ ! -f "$APP_ICON_SOURCE" ]]; then
   echo "ChatOS application icon not found at $APP_ICON_SOURCE" >&2

@@ -139,6 +139,56 @@ final class AgentRuntimeTests: XCTestCase {
         }
     }
 
+    func testResponsesCompactionAllowsInputBetweenSoftAndHardLimits() async throws {
+        let message = AgentMessage(role: .user, content: String(repeating: "x", count: 120_000))
+        for usesServerCompaction in [false, true] {
+            let model = ContextBoundaryModel(
+                usesServerSideCompaction: usesServerCompaction,
+                contextWindowTokens: 50_000,
+                outputReserveTokens: 30_000
+            )
+            let result = try await AgentRuntime().run(
+                checkpoint: .init(scope: "soft-hard", messages: [message]),
+                scope: "soft-hard",
+                policy: .init(),
+                model: model,
+                tools: [.init(
+                    name: "finish",
+                    description: "Finish",
+                    schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8),
+                    effect: .terminal
+                )],
+                execute: { _ in .init("done") }
+            )
+
+            XCTAssertEqual(result.status, usesServerCompaction ? .completed : .paused)
+            let callCount = await model.callCount
+            XCTAssertEqual(callCount, usesServerCompaction ? 1 : 0)
+        }
+    }
+
+    func testResponsesCompactionStillRejectsInputBeyondHardLimit() async throws {
+        let model = ContextBoundaryModel(
+            usesServerSideCompaction: true,
+            contextWindowTokens: 50_000,
+            outputReserveTokens: 30_000
+        )
+        let result = try await AgentRuntime().run(
+            checkpoint: .init(scope: "hard-limit", messages: [
+                .init(role: .user, content: String(repeating: "x", count: 240_000)),
+            ]),
+            scope: "hard-limit",
+            policy: .init(),
+            model: model,
+            tools: [],
+            execute: { _ in .failure("unexpected") }
+        )
+
+        XCTAssertEqual(result.status, .paused)
+        let callCount = await model.callCount
+        XCTAssertEqual(callCount, 0)
+    }
+
     func testToollessSummaryReceivesSpecificIncompletionReminder() async throws {
         let checkpoint = AgentRunCheckpoint(
             scope: "specific-reminder",
@@ -178,6 +228,34 @@ private actor CompletionCheckModel: AgentModelClient {
     func complete(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval) async throws -> AgentMessage {
         callCount += 1
         return .init(role: .assistant)
+    }
+}
+
+private actor ContextBoundaryModel: AgentModelClient {
+    nonisolated let usesServerSideCompaction: Bool
+    nonisolated let memoryCapabilitySnapshot: AgentModelCapabilitySnapshot?
+    private(set) var callCount = 0
+
+    init(usesServerSideCompaction: Bool, contextWindowTokens: Int, outputReserveTokens: Int) {
+        self.usesServerSideCompaction = usesServerSideCompaction
+        memoryCapabilitySnapshot = try? .init(
+            revision: "context-boundary-test",
+            contextWindowTokens: contextWindowTokens,
+            outputReserveTokens: outputReserveTokens,
+            protocolOverheadEstimatorID: "responses-json-v1",
+            tokenizerID: nil
+        )
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        callCount += 1
+        return .init(role: .assistant, toolCalls: [
+            .init(id: "finish", name: "finish", arguments: "{}"),
+        ])
     }
 }
 
