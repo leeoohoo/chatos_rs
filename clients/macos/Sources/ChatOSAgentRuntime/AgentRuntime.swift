@@ -60,10 +60,11 @@ public struct AgentRuntime: Sendable {
             memory.modelCapability = modelCapability
             state.memory = memory
         }
-        // Memory Engine is composed once at the start of this run/resume. New
-        // messages are appended locally for the rest of the model/tool loop so
-        // official OpenAI Responses can keep one stable continuation and let
-        // server-side compaction own in-run context management.
+        // Keep one stable model continuation during normal tool-loop growth. If newly appended
+        // messages consume the reserved Memory headroom, the preflight path below re-composes
+        // Memory (and runs its required summary) before it pauses. Responses server compaction is
+        // still preserved when the configured provider supports it, but it is not the only
+        // overflow recovery mechanism.
         var activeModelMessages: [AgentMessage]?
         var activeCheckpointMessageCount = state.messages.count
         let deadline = started.addingTimeInterval(Double(policy.runTimeoutSeconds) - elapsedBefore)
@@ -225,6 +226,7 @@ public struct AgentRuntime: Sendable {
                     return snapshot(state)
                 }
                 var messages: [AgentMessage]
+                let reusedActiveContext = activeModelMessages != nil
                 if let contextProvider {
                     if activeModelMessages == nil {
                         let prepared = try await contextProvider.prepare(
@@ -243,8 +245,34 @@ public struct AgentRuntime: Sendable {
                     messages = state.messages
                 }
                 if let modelCapability {
-                    let inputTokens = try AgentContextBudget.estimate(messages: messages, tools: modelTools)
-                    guard inputTokens <= modelCapability.contextWindowTokens - modelCapability.outputReserveTokens else {
+                    let inputLimit = modelCapability.contextWindowTokens - modelCapability.outputReserveTokens
+                    var inputTokens = try AgentContextBudget.estimate(messages: messages, tools: modelTools)
+                    // The active projection is intentionally stable throughout a tool loop, but
+                    // newly appended tool results can consume the headroom reserved for recalled
+                    // history. Before pausing, ask Memory Engine for a smaller projection. Its
+                    // compose path owns any required summary/compaction and preserves the exact
+                    // live turn from the durable checkpoint.
+                    if inputTokens > inputLimit, reusedActiveContext, let contextProvider {
+                        try await emit(
+                            "memory_recomposing",
+                            "当前运行上下文接近窗口预算，正在重新组合 Memory Engine 上下文"
+                        )
+                        let prepared = try await contextProvider.prepare(
+                            checkpoint: snapshot(state), tools: modelTools,
+                            modelCapability: modelCapability,
+                            deadline: deadline, synchronizeOnly: false,
+                            shouldPause: shouldPause, record: record
+                        )
+                        state = prepared.checkpoint
+                        activeModelMessages = prepared.messages
+                        activeCheckpointMessageCount = state.messages.count
+                        messages = prepared.messages
+                        inputTokens = try AgentContextBudget.estimate(
+                            messages: messages,
+                            tools: modelTools
+                        )
+                    }
+                    guard inputTokens <= inputLimit else {
                         throw AgentContextError.budgetExceeded
                     }
                 }

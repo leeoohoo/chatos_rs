@@ -89,6 +89,21 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual(try object(requests[1].body)["trigger_reason"] as? String, "agent_run_terminal")
     }
 
+    func testBudgetCompactionWaitsForAUsableActiveSummary() async throws {
+        let (scope, transport, client) = try fixture()
+        let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
+
+        try await service.compactSummary()
+
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests[1].url.path.hasSuffix("/active-summary/run"))
+        XCTAssertEqual(
+            try object(requests[1].body)["trigger_reason"] as? String,
+            "compose_budget_compaction"
+        )
+    }
+
     func testTaskThreadRegistersBothAgentAndProjectAggregationScopes() async throws {
         let scope = try AgentMemoryScope(
             tenantID: "user/a?&b", todoID: "todo-1", agentID: "agent-1", projectID: "project-1",

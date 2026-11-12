@@ -275,8 +275,24 @@ public struct AgentMemoryContextRecord: Equatable, Sendable {
 public struct AgentMemoryContext: Sendable {
     public let blocks: [AgentMemoryContextBlock]
     public let recentRecords: [AgentMemoryContextRecord]
-    public init(blocks: [AgentMemoryContextBlock], recentRecords: [AgentMemoryContextRecord]) {
-        self.blocks = blocks; self.recentRecords = recentRecords
+    /// Memory Engine sets this when the requested projection cannot fit until raw records are
+    /// summarized. Callers must compact and re-compose instead of forwarding the oversized
+    /// projection to a model.
+    public let needsCompaction: Bool
+    public let budgetUsedTokens: Int?
+    public let pendingRecordCount: Int?
+    public init(
+        blocks: [AgentMemoryContextBlock],
+        recentRecords: [AgentMemoryContextRecord],
+        needsCompaction: Bool = false,
+        budgetUsedTokens: Int? = nil,
+        pendingRecordCount: Int? = nil
+    ) {
+        self.blocks = blocks
+        self.recentRecords = recentRecords
+        self.needsCompaction = needsCompaction
+        self.budgetUsedTokens = budgetUsedTokens
+        self.pendingRecordCount = pendingRecordCount
     }
 }
 
@@ -284,10 +300,14 @@ public protocol AgentMemoryServicing: Sendable {
     func ensureThread() async throws
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws
     func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext
+    /// Runs the active summary required by a compose response with `needsCompaction=true` and
+    /// returns only after that job reaches a terminal state.
+    func compactSummary() async throws
     func flushSummary() async throws
 }
 
 public extension AgentMemoryServicing {
+    func compactSummary() async throws { try await flushSummary() }
     func flushSummary() async throws {}
 }
 

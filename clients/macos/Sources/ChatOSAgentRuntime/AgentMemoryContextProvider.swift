@@ -42,6 +42,7 @@ public extension AgentContextProviding {
 
 /// No credentials or network configuration are stored in checkpoints.
 public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
+    private static let maximumRequiredCompactionRounds = 3
     public let scope: AgentMemoryScope
     private let service: any AgentMemoryServicing
 
@@ -126,9 +127,8 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
             if synchronizeOnly { return .init(checkpoint: state, messages: []) }
             try await check(deadline: deadline, shouldPause: shouldPause)
 
-            // The engine owns durable records and background summaries. It is
-            // composed at this turn boundary, but it is never used as an
-            // in-loop overflow recovery mechanism.
+            // The engine owns durable records and summaries. This same compose path is used at
+            // turn boundaries and when an active tool loop must shrink its recalled history.
             let currentUserIndex = try AgentContextAssembler.currentTurnStart(in: state.messages)
             let fixedMessages = try AgentContextAssembler.assemble(
                 checkpoint: state, memory: state.memory!, context: .init(blocks: [], recentRecords: [])
@@ -141,8 +141,32 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
                 currentTurnID: conversationTurnID(state.messages, index: currentUserIndex),
                 availableMemoryTokens: available
             )
+            var context = try await service.compose(composeRequest)
+            for round in 1...Self.maximumRequiredCompactionRounds where context.needsCompaction {
+                try await emit(
+                    state,
+                    "memory_compacting",
+                    "Memory Engine 正在压缩超出预算的历史上下文（\(round)/\(Self.maximumRequiredCompactionRounds)）",
+                    record: record
+                )
+                let beforeTokens = context.budgetUsedTokens
+                let beforePending = context.pendingRecordCount ?? context.recentRecords.count
+                try await service.compactSummary()
+                try await check(deadline: deadline, shouldPause: shouldPause)
+                let recomposed = try await service.compose(composeRequest)
+                let afterPending = recomposed.pendingRecordCount ?? recomposed.recentRecords.count
+                if recomposed.needsCompaction,
+                   afterPending >= beforePending,
+                   let beforeTokens,
+                   let afterTokens = recomposed.budgetUsedTokens,
+                   afterTokens >= beforeTokens {
+                    throw AgentContextError.budgetExceeded
+                }
+                context = recomposed
+            }
+            guard !context.needsCompaction else { throw AgentContextError.budgetExceeded }
             let messages = try AgentContextAssembler.assemble(
-                checkpoint: state, memory: state.memory!, context: await service.compose(composeRequest)
+                checkpoint: state, memory: state.memory!, context: context
             )
             try await check(deadline: deadline, shouldPause: shouldPause)
             return .init(checkpoint: state, messages: messages)

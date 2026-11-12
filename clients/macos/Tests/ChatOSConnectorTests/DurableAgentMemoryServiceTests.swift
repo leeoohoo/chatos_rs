@@ -60,8 +60,11 @@ final class DurableAgentMemoryServiceTests: XCTestCase {
         XCTAssertEqual(uploaded.map(\.id), entries.map(\.id))
         let recoveredContext = try await recovered.compose(try composeRequest())
         XCTAssertEqual(recoveredContext.recentRecords.map(\.message.content), ["系统约束", "离线消息"])
+        try await recovered.compactSummary()
         let syncCalls = await remote.syncCalls
+        let compactCalls = await remote.compactCalls
         XCTAssertEqual(syncCalls, 1)
+        XCTAssertEqual(compactCalls, 1)
     }
 
     func testCacheRejectsARecordIDWithDifferentContent() async throws {
@@ -214,6 +217,7 @@ private struct OfflineAgentMemory: AgentMemoryServicing {
 private actor RecordingAgentMemory: AgentMemoryServicing {
     var entries: [AgentMemoryEntry] = []
     var syncCalls = 0
+    var compactCalls = 0
 
     func ensureThread() async throws {}
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
@@ -227,4 +231,5 @@ private actor RecordingAgentMemory: AgentMemoryServicing {
             recentRecords: entries.map { .init(id: $0.id, message: $0.message) }
         )
     }
+    func compactSummary() async throws { compactCalls += 1 }
 }

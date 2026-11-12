@@ -162,6 +162,52 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertEqual(flushes, 1)
     }
 
+    func testComposeCompactsAndRecomposesWhenMemoryExceedsBudget() async throws {
+        let (checkpoint, scope) = try fixture()
+        let memory = TestMemory(scope: scope, requiresCompaction: true)
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+
+        let prepared = try await provider.prepare(
+            checkpoint: provider.bind(checkpoint),
+            tools: tools,
+            modelCapability: try modelCapability(),
+            deadline: Date().addingTimeInterval(60),
+            record: { _, _ in }
+        )
+
+        XCTAssertEqual(prepared.messages.map(\.content), checkpoint.messages.map(\.content))
+        let composeCalls = await memory.composeCalls
+        let flushes = await memory.flushes
+        XCTAssertEqual(composeCalls, 2)
+        XCTAssertEqual(flushes, 1)
+    }
+
+    func testRuntimeRecomposesMemoryBeforeStoppingForBudget() async throws {
+        let (checkpoint, scope) = try fixture()
+        let memory = TestMemory(scope: scope, firstComposeBlockCharacters: 10_000)
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+        let model = BudgetRecoveryModel()
+
+        let result = try await AgentRuntime().run(
+            checkpoint: provider.bind(checkpoint),
+            scope: checkpoint.scope,
+            policy: .init(),
+            model: model,
+            tools: tools,
+            execute: { call in
+                call.name == "finish"
+                    ? .init("done")
+                    : .init(String(repeating: "x", count: 6_000))
+            },
+            contextProvider: provider
+        )
+
+        XCTAssertEqual(result.status, .completed, result.stopReason ?? "")
+        XCTAssertEqual(result.modelCalls, 2)
+        let composeCalls = await memory.composeCalls
+        XCTAssertEqual(composeCalls, 2)
+    }
+
     func test600ResponsesCallsComposeMemoryOnceAndKeepAuditHistoryComplete() async throws {
         let (checkpoint, scope) = try fixture()
         let memory = TestMemory(scope: scope)
@@ -541,6 +587,33 @@ actor CountingModel: AgentModelClient {
     }
 }
 
+private actor BudgetRecoveryModel: AgentModelClient {
+    nonisolated let usesServerSideCompaction = true
+    nonisolated let memoryCapabilitySnapshot = try? AgentModelCapabilitySnapshot(
+        revision: "budget-recovery-v1",
+        contextWindowTokens: 4_096,
+        outputReserveTokens: 512,
+        protocolOverheadEstimatorID: "responses-json-v1",
+        tokenizerID: nil
+    )
+    var count = 0
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        count += 1
+        let finish = count == 2
+        return .init(role: .assistant, toolCalls: [
+            .init(
+                id: "budget-call-\(count)",
+                name: finish ? "finish" : "work",
+                arguments: finish ? "{}" : "{\"step\":1}"
+            ),
+        ])
+    }
+}
+
 private actor TestMemory: AgentMemoryServicing {
     let scope: AgentMemoryScope
     var loseSyncAck: Bool
@@ -550,8 +623,20 @@ private actor TestMemory: AgentMemoryServicing {
     var writes = 0
     var reconciliations = 0
     var flushes = 0
-    init(scope: AgentMemoryScope, loseSyncAck: Bool = false, failWriteNumber: Int? = nil) {
-        self.scope = scope; self.loseSyncAck = loseSyncAck; self.failWriteNumber = failWriteNumber
+    let requiresCompaction: Bool
+    let firstComposeBlockCharacters: Int
+    init(
+        scope: AgentMemoryScope,
+        loseSyncAck: Bool = false,
+        failWriteNumber: Int? = nil,
+        requiresCompaction: Bool = false,
+        firstComposeBlockCharacters: Int = 0
+    ) {
+        self.scope = scope
+        self.loseSyncAck = loseSyncAck
+        self.failWriteNumber = failWriteNumber
+        self.requiresCompaction = requiresCompaction
+        self.firstComposeBlockCharacters = firstComposeBlockCharacters
     }
     func ensureThread() {}
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) throws {
@@ -568,9 +653,14 @@ private actor TestMemory: AgentMemoryServicing {
     func compose(_ request: AgentMemoryComposeRequest) -> AgentMemoryContext {
         composeCalls += 1
         return .init(
-            blocks: [],
+            blocks: composeCalls == 1 && firstComposeBlockCharacters > 0
+                ? [.init(blockType: "history", text: String(repeating: "h", count: firstComposeBlockCharacters))]
+                : [],
             recentRecords: entries.filter { $0.conversationTurnID != request.currentTurnID }
-                .map { .init(id: $0.id, message: $0.message) }
+                .map { .init(id: $0.id, message: $0.message) },
+            needsCompaction: requiresCompaction && flushes == 0,
+            budgetUsedTokens: requiresCompaction && flushes == 0 ? 1_000 : 100,
+            pendingRecordCount: requiresCompaction && flushes == 0 ? 10 : 1
         )
     }
     func flushSummary() { flushes += 1 }
