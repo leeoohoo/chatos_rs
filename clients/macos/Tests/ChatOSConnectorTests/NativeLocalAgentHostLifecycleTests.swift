@@ -841,6 +841,53 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         XCTAssertTrue(probe.error is CancellationError)
     }
 
+    func testDefaultHostLaunchClassifiesEveryInstallerTool() {
+        let database = URL(fileURLWithPath: "/tmp/chatos-installer-safety-test.sqlite3")
+        let configuration = NativeLocalAgentHostConfiguration(
+            executableURL: URL(fileURLWithPath: "/tmp/chatos_local_agent_host"),
+            databaseURL: database
+        )
+        let arguments = ManagedLocalAgentHostProcess.arguments(
+            configuration: configuration,
+            database: database,
+            ownerUserID: "user-1"
+        )
+        func toolNames(after flag: String) -> Set<String> {
+            Set(zip(arguments, arguments.dropFirst()).compactMap { option, value in
+                option == flag ? value : nil
+            })
+        }
+        let readOnly = toolNames(after: "--read-only-tool")
+        let exempt = toolNames(after: "--approval-exempt-tool")
+        let expectedReads: Set<String> = [
+            "plugin_installer_search_npm", "plugin_installer_resolve_npm",
+            "plugin_installer_inspect_npm", "plugin_installer_inspect_source",
+            "plugin_installer_list_installed", "plugin_installer_search_marketplace",
+            "plugin_installer_discover_repository", "plugin_installer_resolve_release",
+        ]
+        let expectedInstalls: Set<String> = [
+            "plugin_installer_install_npm", "plugin_installer_install_source",
+            "plugin_installer_install_marketplace",
+        ]
+        XCTAssertTrue(expectedReads.isSubset(of: readOnly))
+        XCTAssertTrue(expectedReads.isDisjoint(with: exempt))
+        XCTAssertTrue(expectedInstalls.isSubset(of: exempt))
+        XCTAssertTrue(expectedInstalls.isDisjoint(with: readOnly))
+
+        // Fail when a new installer tool is exposed without a Host safety decision.
+        let catalogNames = Set(NativeLocalAgentPlatformToolCatalog.pluginInstallerTools.compactMap {
+            value -> String? in
+            guard case let .object(tool) = value,
+                  case let .string(name)? = tool["name"],
+                  name.hasPrefix("plugin_installer_") else { return nil }
+            return name
+        })
+        XCTAssertEqual(catalogNames, expectedReads.union(expectedInstalls))
+        XCTAssertEqual(catalogNames, NativeLocalAgentPlatformToolCatalog.pluginInstallerToolNames)
+        XCTAssertFalse(readOnly.contains("plugin_installer_unknown"))
+        XCTAssertFalse(exempt.contains("plugin_installer_unknown"))
+    }
+
     func testLaunchArgumentsAndEnvironmentKeepMemoryTokenOffCommandLine() throws {
         let database = URL(fileURLWithPath: "/tmp/chatos-local-agent-test.sqlite3")
         let configuration = NativeLocalAgentHostConfiguration(
