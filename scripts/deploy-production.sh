@@ -661,6 +661,12 @@ if (( deploy_all == 0 )); then
   if service_is_selected configuration-center-backend; then
     selected_migration_services+=(configuration-center-migrate)
   fi
+  if service_is_selected user-service-backend; then
+    selected_migration_services+=(user-service-migrate)
+  fi
+  if service_is_selected plugin-management-backend; then
+    selected_migration_services+=(plugin-management-migrate)
+  fi
   if service_is_selected memory-engine-backend; then
     selected_migration_services+=(memory-engine-migrate)
   fi
