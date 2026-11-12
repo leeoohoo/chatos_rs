@@ -6,6 +6,77 @@ import SQLite3
 import XCTest
 
 extension SQLiteAgentGroupChatStoreTests {
+    func testReopeningBlockedTodoReassessesEveryOldBlockAndPreservesPassedChecks() async throws {
+        for humanReview in [false, true] {
+            let url = databaseURL()
+            defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+            let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+            let agent = try await makeAgent(store, name: "恢复执行者")
+            let room = try await makeRoom(store, projectID: "reopen-acceptance")
+            _ = try await store.addMember(
+                ownerUserID: "alice", roomID: room.id, agentID: agent.id,
+                draft: .init(role: "执行者")
+            )
+            let todo = try await store.createAgentTodo(
+                ownerUserID: "alice", agentID: agent.id, requestKey: "reopen-acceptance",
+                draft: .init(
+                    title: "恢复验收", teamRoomID: room.id,
+                    executionContract: .init(
+                        objective: "完成交付", scope: "测试", expectedOutputs: ["审阅记录"],
+                        acceptanceCriteria: ["已审阅", "修正说明", "完成交接"]
+                    )
+                ), nowUnixMs: 100
+            )
+            _ = try await store.updateAgentTodo(
+                ownerUserID: "alice", agentID: agent.id, todoID: todo.id,
+                update: .init(status: .inProgress), nowUnixMs: 101
+            )
+            for position in 1...3 {
+                _ = try await store.updateAgentTodoAcceptanceCheck(
+                    ownerUserID: "alice", agentID: agent.id, todoID: todo.id,
+                    position: position, status: position == 1 ? .passed : .blocked,
+                    evidence: position == 1 ? "审阅已保存" : "先前缺少输入",
+                    blockedReason: position == 1 ? "" : "需要补齐全文",
+                    requiresHuman: position != 1, nowUnixMs: 102
+                )
+            }
+            let blocked = try await store.updateAgentTodo(
+                ownerUserID: "alice", agentID: agent.id, todoID: todo.id,
+                update: .init(status: .blocked, blockedReason: "等待全文"), nowUnixMs: 103
+            )
+            XCTAssertTrue(AgentExecutionAcceptanceGate.canFinishBlocked(blocked.acceptanceChecks.map(\.gateCheck)))
+            let update = LocalAgentTodoUpdate(status: .pending, blockedReason: "")
+            let reopened: LocalAgentTodo
+            if humanReview {
+                reopened = try await store.updateAgentTodoAfterHumanReview(
+                    ownerUserID: "alice", agentID: agent.id, todoID: todo.id,
+                    update: update, nowUnixMs: 104
+                )
+            } else {
+                reopened = try await store.updateAgentTodo(
+                    ownerUserID: "alice", agentID: agent.id, todoID: todo.id,
+                    update: update, nowUnixMs: 104
+                )
+            }
+            XCTAssertEqual(reopened.id, todo.id)
+            XCTAssertEqual(reopened.acceptanceChecks.map(\.status), [.passed, .pending, .pending])
+            XCTAssertEqual(reopened.acceptanceChecks[0], blocked.acceptanceChecks[0])
+            XCTAssertEqual(reopened.acceptanceChecks[1].evidence, "先前缺少输入")
+            XCTAssertTrue(reopened.acceptanceChecks.allSatisfy { !$0.requiresHuman && $0.blockedReason.isEmpty })
+            _ = try await store.updateAgentTodo(
+                ownerUserID: "alice", agentID: agent.id, todoID: todo.id,
+                update: .init(status: .inProgress), nowUnixMs: 105
+            )
+            let progressed = try await store.updateAgentTodoAcceptanceCheck(
+                ownerUserID: "alice", agentID: agent.id, todoID: todo.id,
+                position: 2, status: .passed, evidence: "全文已补齐并核验",
+                blockedReason: "", requiresHuman: false, nowUnixMs: 106
+            )
+            XCTAssertFalse(AgentExecutionAcceptanceGate.canFinishBlocked(progressed.acceptanceChecks.map(\.gateCheck)))
+            XCTAssertEqual(AgentExecutionAcceptanceGate.actionableChecks(progressed.acceptanceChecks.map(\.gateCheck)).map(\.criterionIndex), [2])
+        }
+    }
+
     func testAgentTodoPriorityCanChangeAfterNewMessagesAndExecutesInSourceProject() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }

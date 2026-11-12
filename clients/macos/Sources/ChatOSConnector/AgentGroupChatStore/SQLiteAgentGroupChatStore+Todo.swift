@@ -360,7 +360,23 @@ extension SQLiteAgentGroupChatStore {
             let executionContract = update.executionContract ?? existing.executionContract
             let acceptanceChecks: [LocalAgentTodoAcceptanceCheck]
             if executionContract.acceptanceCriteria == existing.executionContract.acceptanceCriteria {
-                acceptanceChecks = existing.acceptanceChecks
+                if existing.status == .blocked, status == .pending {
+                    // Reopening explicitly asks the executor to reassess the old blocks.
+                    // Otherwise a passed independent check can immediately finish the
+                    // new attempt against stale Human blocks before they are revisited.
+                    acceptanceChecks = existing.acceptanceChecks.map { check in
+                        guard check.status == .blocked else { return check }
+                        return LocalAgentTodoAcceptanceCheck(
+                            position: check.position,
+                            criterion: check.criterion,
+                            status: .pending,
+                            evidence: check.evidence,
+                            updatedAtUnixMs: nowUnixMs
+                        )
+                    }
+                } else {
+                    acceptanceChecks = existing.acceptanceChecks
+                }
             } else {
                 guard [.pending, .blocked].contains(existing.status) else {
                     throw AgentGroupChatError.conflict
