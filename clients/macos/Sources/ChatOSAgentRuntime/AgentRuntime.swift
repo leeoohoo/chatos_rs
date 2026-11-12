@@ -55,17 +55,10 @@ public struct AgentRuntime: Sendable {
             guard var memory = state.memory, let modelCapability else {
                 throw AgentRuntimeError.modelConfigurationUnavailable
             }
-            if let frozen = memory.modelCapability {
-                guard frozen == modelCapability else {
-                    throw AgentRuntimeError.modelConfigurationUnavailable
-                }
-            } else {
-                guard state.modelCalls == 0 else {
-                    throw AgentRuntimeError.modelConfigurationUnavailable
-                }
-                memory.modelCapability = modelCapability
-                state.memory = memory
-            }
+            // Capacity is live Configuration Center policy. Resume recomposes Memory
+            // against the current policy while preserving the execution checkpoint.
+            memory.modelCapability = modelCapability
+            state.memory = memory
         }
         // Memory Engine is composed once at the start of this run/resume. New
         // messages are appended locally for the rest of the model/tool loop so

@@ -464,62 +464,39 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertEqual(writes, 1)
     }
 
-    func testModelCapabilityIsFrozenAndLegacyOrChangedSnapshotsFailClosed() async throws {
-        let (initial, scope) = try fixture()
-        let memory = TestMemory(scope: scope)
-        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
-        let model = CountingModel(finishAt: 1)
-        let frozen = try XCTUnwrap(model.memoryCapabilitySnapshot)
-
-        let completed = try await AgentRuntime().run(
-            checkpoint: provider.bind(initial),
-            scope: initial.scope,
-            policy: .init(),
-            model: model,
-            tools: tools,
-            execute: { _ in .init("done") },
-            contextProvider: provider
-        )
-        XCTAssertEqual(completed.memory?.modelCapability, frozen)
-
-        var changed = try provider.bind(initial)
-        changed.memory?.modelCapability = try AgentModelCapabilitySnapshot(
-            revision: "different-capability-v1",
-            contextWindowTokens: frozen.contextWindowTokens,
-            outputReserveTokens: frozen.outputReserveTokens,
-            protocolOverheadEstimatorID: frozen.protocolOverheadEstimatorID,
-            tokenizerID: frozen.tokenizerID
-        )
-        do {
-            _ = try await AgentRuntime().run(
-                checkpoint: changed,
-                scope: changed.scope,
+    func testResumeAdoptsCurrentPublishedCapacityAndKeepsExecutionHistory() async throws {
+        for hasOldPolicy in [true, false] {
+            let (initial, scope) = try fixture()
+            let memory = TestMemory(scope: scope)
+            let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+            let model = CountingModel(finishAt: 1)
+            let current = try XCTUnwrap(model.memoryCapabilitySnapshot)
+            var checkpoint = try provider.bind(initial)
+            checkpoint.status = .paused
+            checkpoint.modelCalls = 1
+            if hasOldPolicy {
+                checkpoint.memory?.modelCapability = try AgentModelCapabilitySnapshot(
+                    revision: "retired-capacity-v1",
+                    contextWindowTokens: current.contextWindowTokens - 1000,
+                    outputReserveTokens: current.outputReserveTokens,
+                    protocolOverheadEstimatorID: current.protocolOverheadEstimatorID,
+                    tokenizerID: current.tokenizerID
+                )
+            }
+            let recovered = try await AgentRuntime().run(
+                checkpoint: checkpoint,
+                scope: checkpoint.scope,
                 policy: .init(),
                 model: model,
                 tools: tools,
-                execute: { _ in .init("not reached") },
+                execute: { _ in .init("done") },
                 contextProvider: provider
             )
-            XCTFail("Changed model capability must be rejected")
-        } catch AgentRuntimeError.modelConfigurationUnavailable {
-            // Expected.
-        }
-
-        var legacy = try provider.bind(initial)
-        legacy.modelCalls = 1
-        do {
-            _ = try await AgentRuntime().run(
-                checkpoint: legacy,
-                scope: legacy.scope,
-                policy: .init(),
-                model: model,
-                tools: tools,
-                execute: { _ in .init("not reached") },
-                contextProvider: provider
-            )
-            XCTFail("A used legacy checkpoint cannot adopt current model limits")
-        } catch AgentRuntimeError.modelConfigurationUnavailable {
-            // Expected.
+            XCTAssertEqual(recovered.id, checkpoint.id)
+            XCTAssertEqual(recovered.status, .completed, recovered.stopReason ?? "")
+            XCTAssertEqual(recovered.memory?.modelCapability, current)
+            XCTAssertGreaterThan(recovered.modelCalls, checkpoint.modelCalls)
+            XCTAssertEqual(Array(recovered.messages.prefix(checkpoint.messages.count)), checkpoint.messages)
         }
     }
 
