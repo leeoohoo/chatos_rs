@@ -5,6 +5,7 @@
 mod client;
 mod models;
 mod runtime_context;
+mod token_estimator;
 
 #[cfg(feature = "client")]
 pub use self::client::{MemoryEngineClient, RunPendingRollupsOptions};
@@ -37,4 +38,7 @@ pub use self::runtime_context::{
     verify_runtime_context_assertion, ExpectedRuntimeContext, IssueRuntimeContextAssertion,
     RuntimeContextAssertionClaims, RuntimeContextAssertionIssuer,
     MEMORY_ENGINE_RUNTIME_CONTEXT_AUDIENCE, RUNTIME_CONTEXT_MAX_TTL_SECONDS,
+};
+pub use self::token_estimator::{
+    estimate_text_tokens, estimate_utf8_bytes_tokens, CONSERVATIVE_TOKEN_ESTIMATOR_ID,
 };

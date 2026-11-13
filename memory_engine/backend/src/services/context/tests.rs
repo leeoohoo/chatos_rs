@@ -12,6 +12,11 @@ use crate::models::{EngineSubjectMemory, EngineSummary, EngineThread};
 use serde_json::json;
 use uuid::Uuid;
 
+#[test]
+fn compose_estimator_does_not_undercount_cjk() {
+    assert_eq!(super::estimate_tokens("你好世界"), 4);
+}
+
 fn summary(id: &str, level: i64, created_at: &str, text: &str) -> EngineSummary {
     EngineSummary {
         id: id.to_string(),

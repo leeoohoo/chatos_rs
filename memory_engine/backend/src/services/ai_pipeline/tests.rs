@@ -11,7 +11,7 @@ use super::{estimate_tokens_text, is_context_overflow_error, CHUNK_TEST_CAPACITY
 fn estimate_tokens_has_minimum_floor() {
     assert_eq!(estimate_tokens_text(""), 1);
     assert_eq!(estimate_tokens_text("abc"), 1);
-    assert_eq!(estimate_tokens_text("abcdefgh"), 2);
+    assert_eq!(estimate_tokens_text("abcdefgh"), 3);
 }
 
 #[test]

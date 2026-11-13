@@ -68,12 +68,12 @@ fn estimated_input_tokens(request: &ModelRequest) -> Result<usize, String> {
                 .map_or(1, Vec::len)
                 .saturating_mul(16),
         );
-    Ok(input_bytes
-        .saturating_add(tool_bytes)
-        .saturating_add(instruction_bytes)
-        .saturating_add(2)
-        / 3
-        + protocol_overhead_tokens)
+    Ok(memory_engine_sdk::estimate_utf8_bytes_tokens(
+        input_bytes
+            .saturating_add(tool_bytes)
+            .saturating_add(instruction_bytes),
+    )
+    .saturating_add(protocol_overhead_tokens))
 }
 
 pub(super) fn restrict_memory_scope(
@@ -203,6 +203,19 @@ mod tests {
         text.instructions = None;
         text.tools = vec![json!({"type":"function","description":large_text})];
         assert!(validate_complete_request_budget(&text).is_err());
+    }
+
+    #[test]
+    fn cjk_uses_the_shared_memory_estimator() {
+        let text = "你好世界";
+        assert_eq!(memory_engine_sdk::estimate_text_tokens(text), 4);
+        let request = request(json!(text));
+        let serialized = serde_json::to_vec(&TextBudgetInput(&request.input)).unwrap();
+        let tools = serde_json::to_vec(&request.tools).unwrap();
+        assert_eq!(
+            estimated_input_tokens(&request).unwrap(),
+            memory_engine_sdk::estimate_utf8_bytes_tokens(serialized.len() + tools.len()) + 272
+        );
     }
 
     #[test]

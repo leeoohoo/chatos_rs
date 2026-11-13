@@ -14,10 +14,7 @@ const SECTION_MARKERS: [&str; 4] = [
 ];
 
 pub fn estimate_tokens_text(text: &str) -> i64 {
-    let char_count = text.chars().count() as i64;
-    let byte_count = text.len() as i64;
-    let extra_bytes = byte_count.saturating_sub(char_count);
-    ((char_count * 3 + extra_bytes * 4 + 11) / 12).max(1)
+    i64::try_from(memory_engine_sdk::estimate_text_tokens(text).max(1)).unwrap_or(i64::MAX)
 }
 
 pub(crate) fn split_chunks_by_token_limit(

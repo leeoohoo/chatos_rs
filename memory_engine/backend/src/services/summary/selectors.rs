@@ -20,28 +20,47 @@ pub(crate) fn select_pending_records_for_summary(
     let oversized_token_count = 0_i64;
     let project_subject_id = records.first().and_then(record_project_subject_id);
 
+    let mut units: Vec<Vec<EngineRecord>> = Vec::new();
     for record in records {
         if record_project_subject_id(&record) != project_subject_id {
             break;
         }
-        let block = record_to_summary_block(&record);
-        let record_tokens = estimate_tokens_text(block.as_str());
-        if record_tokens > effective_limit {
+        let turn_id = record_conversation_turn_id(&record);
+        let joins_previous = turn_id.is_some()
+            && units
+                .last()
+                .and_then(|unit| unit.last())
+                .and_then(record_conversation_turn_id)
+                == turn_id;
+        if joins_previous {
+            units.last_mut().expect("record unit exists").push(record);
+        } else {
+            units.push(vec![record]);
+        }
+    }
+
+    for unit in units {
+        let unit_tokens = unit
+            .iter()
+            .map(record_to_summary_block)
+            .map(|block| estimate_tokens_text(block.as_str()))
+            .sum::<i64>();
+        if unit_tokens > effective_limit {
             if selected.is_empty() {
-                selected_token_count = record_tokens;
-                selected.push(record);
+                selected_token_count = unit_tokens;
+                selected.extend(unit);
             }
             break;
         }
 
         if !selected.is_empty()
-            && selected_token_count.saturating_add(record_tokens) > effective_limit
+            && selected_token_count.saturating_add(unit_tokens) > effective_limit
         {
             break;
         }
 
-        selected_token_count += record_tokens;
-        selected.push(record);
+        selected_token_count += unit_tokens;
+        selected.extend(unit);
     }
 
     PendingRecordSelection {
@@ -51,6 +70,16 @@ pub(crate) fn select_pending_records_for_summary(
         oversized_token_count,
         project_subject_id,
     }
+}
+
+fn record_conversation_turn_id(record: &EngineRecord) -> Option<&str> {
+    record
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("conversation_turn_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn record_project_subject_id(record: &EngineRecord) -> Option<String> {
@@ -165,20 +194,31 @@ mod tests {
         value
     }
 
+    fn turn_record(id: &str, turn_id: &str, content: &str) -> EngineRecord {
+        let mut value = record(id, content);
+        value.metadata = Some(serde_json::json!({"conversation_turn_id": turn_id}));
+        value
+    }
+
+    fn record_tokens(record: &EngineRecord) -> i64 {
+        crate::services::ai_pipeline::estimate_tokens_text(
+            super::record_to_summary_block(record).as_str(),
+        )
+    }
+
     #[test]
     fn pending_selector_caps_the_cumulative_batch_instead_of_only_each_record() {
         let content = "x".repeat(2_000);
-        let selection = select_pending_records_for_summary(
-            vec![
-                record("record-1", content.as_str()),
-                record("record-2", content.as_str()),
-                record("record-3", content.as_str()),
-            ],
-            1_100,
-        );
+        let records = vec![
+            record("record-1", content.as_str()),
+            record("record-2", content.as_str()),
+            record("record-3", content.as_str()),
+        ];
+        let token_limit = record_tokens(&records[0]) + record_tokens(&records[1]);
+        let selection = select_pending_records_for_summary(records, token_limit);
 
         assert_eq!(selection.selected.len(), 2);
-        assert!(selection.selected_token_count <= 1_100);
+        assert!(selection.selected_token_count <= token_limit);
         assert!(selection.oversized.is_empty());
     }
 
@@ -197,6 +237,41 @@ mod tests {
         assert_eq!(selection.selected.len(), 2);
         assert_eq!(selection.selected[0].id, "project-a-1");
         assert_eq!(selection.selected[1].id, "project-a-2");
+    }
+
+    #[test]
+    fn pending_selector_does_not_split_a_conversation_turn() {
+        let prior = turn_record("prior", "turn-1", "prior");
+        let call = turn_record("call", "turn-2", &"c".repeat(300));
+        let result = turn_record("result", "turn-2", &"r".repeat(300));
+        let final_output = turn_record("final", "turn-2", &"f".repeat(300));
+        let token_limit = record_tokens(&prior) + record_tokens(&call) + record_tokens(&result);
+
+        let selection = select_pending_records_for_summary(
+            vec![prior, call, result, final_output],
+            token_limit,
+        );
+
+        assert_eq!(
+            selection
+                .selected
+                .iter()
+                .map(|record| record.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["prior"]
+        );
+    }
+
+    #[test]
+    fn pending_selector_keeps_an_oversized_first_turn_atomic() {
+        let call = turn_record("call", "turn-1", &"c".repeat(300));
+        let result = turn_record("result", "turn-1", &"r".repeat(300));
+        let token_limit = record_tokens(&call);
+
+        let selection = select_pending_records_for_summary(vec![call, result], token_limit);
+
+        assert_eq!(selection.selected.len(), 2);
+        assert!(selection.selected_token_count > token_limit);
     }
 
     #[test]
