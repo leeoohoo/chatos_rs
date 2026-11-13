@@ -292,7 +292,10 @@ impl BrowserRuntime {
         let mut session = session.lock().await;
         let targets = session.backend.list_targets().await?;
         for tab in session.tabs.values_mut() {
-            if let Some(target) = targets.iter().find(|target| target.id == tab.backend_target_id) {
+            if let Some(target) = targets
+                .iter()
+                .find(|target| target.id == tab.backend_target_id)
+            {
                 tab.url = target.url.clone();
                 tab.title = target.title.clone();
             } else {
@@ -471,7 +474,12 @@ impl BrowserRuntime {
                 href: node.href,
             });
         }
-        Ok(PageSnapshot { page: raw.page, text: raw.text, text_truncated: raw.text_truncated, nodes: snapshots })
+        Ok(PageSnapshot {
+            page: raw.page,
+            text: raw.text,
+            text_truncated: raw.text_truncated,
+            nodes: snapshots,
+        })
     }
 
     pub async fn find(
@@ -511,7 +519,11 @@ impl BrowserRuntime {
             if let Some(href) = href {
                 validate_navigation_url(&href)
                     .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
-                self.session(browser_session_id).await?.lock().await.invalidate_refs();
+                self.session(browser_session_id)
+                    .await?
+                    .lock()
+                    .await
+                    .invalidate_refs();
                 let navigation = backend
                     .send_command(
                         Some(&backend_session_id),
@@ -528,21 +540,32 @@ impl BrowserRuntime {
                 loop {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     if let Ok(page) = read_page_state(backend.as_ref(), &backend_session_id).await {
-                        let changed = page.url != before.url || page.document_id != before.document_id;
+                        let changed =
+                            page.url != before.url || page.document_id != before.document_id;
                         let ready = page.ready_state == "complete";
                         after = Some(page);
-                        if (changed && ready) || Instant::now() >= deadline { break; }
-                    } else if Instant::now() >= deadline { break; }
+                        if (changed && ready) || Instant::now() >= deadline {
+                            break;
+                        }
+                    } else if Instant::now() >= deadline {
+                        break;
+                    }
                 }
                 if let Some(page) = &after {
                     let session = self.session(browser_session_id).await?;
                     let mut session = session.lock().await;
-                    if let Some(tab) = session.tabs.values_mut().find(|tab| tab.backend_session_id.0 == backend_session_id.0) {
+                    if let Some(tab) = session
+                        .tabs
+                        .values_mut()
+                        .find(|tab| tab.backend_session_id.0 == backend_session_id.0)
+                    {
                         tab.url = Some(page.url.clone());
                         tab.title = Some(page.title.clone());
                     }
                 }
-                let navigated = after.as_ref().map(|page| page.url != before.url || page.document_id != before.document_id);
+                let navigated = after
+                    .as_ref()
+                    .map(|page| page.url != before.url || page.document_id != before.document_id);
                 return Ok(json!({
                     "clicked": true,
                     "interaction": "follow_snapshot_link",
@@ -582,7 +605,11 @@ impl BrowserRuntime {
             )
             .await;
 
-        self.session(browser_session_id).await?.lock().await.invalidate_refs();
+        self.session(browser_session_id)
+            .await?
+            .lock()
+            .await
+            .invalidate_refs();
         let mut timed_out_events = Vec::new();
         let mut skipped_events = Vec::new();
         if !should_move_mouse {
@@ -592,18 +619,18 @@ impl BrowserRuntime {
             // request when no user can observe the background hover animation.
             skipped_events.push("mouseMoved:background_tab");
         } else if !dispatch_mouse_event(
-                backend.as_ref(),
-                &backend_session_id,
-                json!({
-                    "type": "mouseMoved",
-                    "x": x,
-                    "y": y,
-                    "button": "none",
-                    "buttons": 0,
-                    "pointerType": "mouse"
-                }),
-            )
-            .await?
+            backend.as_ref(),
+            &backend_session_id,
+            json!({
+                "type": "mouseMoved",
+                "x": x,
+                "y": y,
+                "button": "none",
+                "buttons": 0,
+                "pointerType": "mouse"
+            }),
+        )
+        .await?
         {
             timed_out_events.push("mouseMoved");
         }
@@ -660,27 +687,39 @@ impl BrowserRuntime {
                 let changed = page.url != before.url || page.document_id != before.document_id;
                 let ready = page.ready_state == "complete";
                 after = Some(page);
-                if (changed && ready) || Instant::now() >= deadline { break; }
-            } else if Instant::now() >= deadline { break; }
+                if (changed && ready) || Instant::now() >= deadline {
+                    break;
+                }
+            } else if Instant::now() >= deadline {
+                break;
+            }
         }
         if let Some(page) = &after {
             let session = self.session(browser_session_id).await?;
             let mut session = session.lock().await;
-            if let Some(tab) = session.tabs.values_mut().find(|tab| tab.backend_session_id.0 == backend_session_id.0) {
+            if let Some(tab) = session
+                .tabs
+                .values_mut()
+                .find(|tab| tab.backend_session_id.0 == backend_session_id.0)
+            {
                 tab.url = Some(page.url.clone());
                 tab.title = Some(page.title.clone());
             }
         }
-        let navigated = after.as_ref().map(|page| page.url != before.url || page.document_id != before.document_id);
+        let navigated = after
+            .as_ref()
+            .map(|page| page.url != before.url || page.document_id != before.document_id);
         let dispatch_response = if timed_out_events.is_empty() {
             "confirmed"
         } else {
             "timeout_recovered"
         };
-        Ok(json!({"clicked": true, "before": before, "after": after, "navigated": navigated,
+        Ok(
+            json!({"clicked": true, "before": before, "after": after, "navigated": navigated,
             "dispatch_response": dispatch_response, "timed_out_events": timed_out_events,
             "skipped_events": skipped_events,
-            "refs_invalidated": true, "next_action": "Take a fresh browser_snapshot; if the page is still loading, wait and snapshot again. Do not repeat a consequential click just because observation is pending."}))
+            "refs_invalidated": true, "next_action": "Take a fresh browser_snapshot; if the page is still loading, wait and snapshot again. Do not repeat a consequential click just because observation is pending."}),
+        )
     }
 
     async fn persist_virtual_cursor(

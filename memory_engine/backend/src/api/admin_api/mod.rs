@@ -13,7 +13,7 @@ pub use job_runs::{dashboard_overview, job_run_stats, job_runs_bundle, list_job_
 pub use policies::{get_job_policy, list_job_policies};
 pub use reliability::{
     compose_dry_run, list_migration_runs, list_operator_actions, list_rebuild_backlog,
-    list_reliability_queues, output_lineage, rearm_rebuild_backlog, record_coverage,
-    rearm_reliability_queue, resummarize_covered_range, restore_record_pending, retire_summary,
-    reliability_dashboard,
+    list_reliability_queues, output_lineage, rearm_rebuild_backlog, rearm_reliability_queue,
+    record_coverage, reliability_dashboard, restore_record_pending, resummarize_covered_range,
+    retire_summary,
 };

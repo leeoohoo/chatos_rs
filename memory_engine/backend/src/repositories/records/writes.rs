@@ -300,82 +300,6 @@ fn record_project_identity(
 }
 
 #[cfg(test)]
-mod project_identity_tests {
-    use super::{record_project_identity, terminal_summary_requested};
-    use crate::models::EngineRecord;
-    use crate::models::UpsertRecordInput;
-
-    fn record(metadata: serde_json::Value) -> EngineRecord {
-        EngineRecord {
-            id: "record-1".to_string(),
-            thread_id: "thread-1".to_string(),
-            tenant_id: "tenant-1".to_string(),
-            source_id: "chatos".to_string(),
-            external_record_id: None,
-            role: "user".to_string(),
-            record_type: "message".to_string(),
-            content: "hello".to_string(),
-            structured_payload: None,
-            metadata: Some(metadata),
-            summary_status: "pending".to_string(),
-            summary_id: None,
-            summarized_at: None,
-            created_at: "2026-11-05T00:00:00Z".to_string(),
-        }
-    }
-
-    #[test]
-    fn project_identity_keeps_the_application_display_name() {
-        let identity = record_project_identity(&record(serde_json::json!({
-            "memory_project_id": "project-1",
-            "project_name": " 红果逆向 ",
-        })))
-        .expect("valid project identity")
-        .expect("project identity");
-
-        assert_eq!(identity.0, "project:project-1");
-        assert_eq!(identity.1.as_deref(), Some("红果逆向"));
-    }
-
-    #[test]
-    fn project_identity_rejects_non_string_display_names() {
-        assert!(record_project_identity(&record(serde_json::json!({
-            "memory_project_id": "project-1",
-            "project_name": 42,
-        })))
-        .is_err());
-    }
-
-    #[test]
-    fn only_explicit_true_terminal_marker_requests_a_forced_summary() {
-        let input = |metadata| UpsertRecordInput {
-            id: "record-1".to_string(),
-            external_record_id: None,
-            role: "assistant".to_string(),
-            record_type: "message".to_string(),
-            content: "done".to_string(),
-            structured_payload: None,
-            metadata,
-            summary_status: None,
-            summary_id: None,
-            summarized_at: None,
-            created_at: "2026-11-05T00:00:00Z".to_string(),
-        };
-
-        assert!(terminal_summary_requested(&input(Some(
-            serde_json::json!({
-                "memory_terminal_summary_requested": true
-            })
-        ))));
-        assert!(!terminal_summary_requested(&input(Some(
-            serde_json::json!({
-                "memory_terminal_summary_requested": false
-            })
-        ))));
-        assert!(!terminal_summary_requested(&input(None)));
-    }
-}
-
 pub(crate) async fn upsert_record_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     record: &EngineRecord,
@@ -670,4 +594,80 @@ pub async fn delete_record_by_id(
         .await?;
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod project_identity_tests {
+    use super::{record_project_identity, terminal_summary_requested};
+    use crate::models::{EngineRecord, UpsertRecordInput};
+
+    fn record(metadata: serde_json::Value) -> EngineRecord {
+        EngineRecord {
+            id: "record-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            source_id: "chatos".to_string(),
+            external_record_id: None,
+            role: "user".to_string(),
+            record_type: "message".to_string(),
+            content: "hello".to_string(),
+            structured_payload: None,
+            metadata: Some(metadata),
+            summary_status: "pending".to_string(),
+            summary_id: None,
+            summarized_at: None,
+            created_at: "2026-11-05T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn project_identity_keeps_the_application_display_name() {
+        let identity = record_project_identity(&record(serde_json::json!({
+            "memory_project_id": "project-1",
+            "project_name": " 红果逆向 ",
+        })))
+        .expect("valid project identity")
+        .expect("project identity");
+
+        assert_eq!(identity.0, "project:project-1");
+        assert_eq!(identity.1.as_deref(), Some("红果逆向"));
+    }
+
+    #[test]
+    fn project_identity_rejects_non_string_display_names() {
+        assert!(record_project_identity(&record(serde_json::json!({
+            "memory_project_id": "project-1",
+            "project_name": 42,
+        })))
+        .is_err());
+    }
+
+    #[test]
+    fn only_explicit_true_terminal_marker_requests_a_forced_summary() {
+        let input = |metadata| UpsertRecordInput {
+            id: "record-1".to_string(),
+            external_record_id: None,
+            role: "assistant".to_string(),
+            record_type: "message".to_string(),
+            content: "done".to_string(),
+            structured_payload: None,
+            metadata,
+            summary_status: None,
+            summary_id: None,
+            summarized_at: None,
+            created_at: "2026-11-05T00:00:00Z".to_string(),
+        };
+
+        assert!(terminal_summary_requested(&input(Some(
+            serde_json::json!({
+                "memory_terminal_summary_requested": true
+            })
+        ))));
+        assert!(!terminal_summary_requested(&input(Some(
+            serde_json::json!({
+                "memory_terminal_summary_requested": false
+            })
+        ))));
+        assert!(!terminal_summary_requested(&input(None)));
+    }
 }

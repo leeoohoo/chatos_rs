@@ -193,13 +193,11 @@ pub async fn record_completed(
         claim.thread_id, claim.project_partition_key, claim.rebuild_kind
     ))
     .bind(&claim.project_partition_key)
-    .bind(Json(
-        json!({
-            "status": "running",
-            "attempt_number": claim.attempt_number,
-            "retry_count": claim.attempt_count,
-        }),
-    ))
+    .bind(Json(json!({
+        "status": "running",
+        "attempt_number": claim.attempt_number,
+        "retry_count": claim.attempt_count,
+    })))
     .bind(Json(json!({
         "status": "completed",
         "cursor": cursor,

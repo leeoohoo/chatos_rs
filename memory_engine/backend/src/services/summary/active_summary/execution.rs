@@ -83,7 +83,6 @@ pub async fn run_thread_active_summary(
     if let Some(existing_job_run_id) = partition
         .as_ref()
         .and_then(|state| state.summary_job_run_id.as_deref())
-        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
@@ -189,7 +188,6 @@ pub async fn get_thread_active_summary_status(
     } else if let Some(job_run_id) = partition
         .as_ref()
         .and_then(|state| state.summary_job_run_id.as_deref())
-        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {

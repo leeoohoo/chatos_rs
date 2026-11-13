@@ -101,24 +101,6 @@ impl MemoryAuthContext {
         }
     }
 
-    pub fn runtime_owner_user_id(&self) -> Result<String, (StatusCode, String)> {
-        match self {
-            Self::User(principal) => principal
-                .effective_owner_user_id()
-                .map(ToOwned::to_owned)
-                .ok_or_else(|| {
-                    (
-                        StatusCode::UNAUTHORIZED,
-                        "authenticated principal does not carry a user owner scope".to_string(),
-                    )
-                }),
-            Self::Operator => Err((
-                StatusCode::BAD_REQUEST,
-                "a user identity is required to resolve a User Service model".to_string(),
-            )),
-        }
-    }
-
     pub fn is_super_admin_or_operator(&self) -> bool {
         match self {
             Self::Operator => true,

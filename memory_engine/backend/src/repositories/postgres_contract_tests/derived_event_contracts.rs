@@ -308,20 +308,18 @@ async fn published_summary_dispatch_dead_letter_can_be_replayed() {
             .await
             .expect("publish derived event")
     );
-    assert!(
-        crate::repositories::thread_partitions::try_claim_summary(
-            &pool,
-            &tenant,
-            &source,
-            &thread_id,
-            "project:alpha",
-            "summary-job-1",
-            300,
-        )
-        .await
-        .expect("claim published summary dispatch")
-        .is_some()
-    );
+    assert!(crate::repositories::thread_partitions::try_claim_summary(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        "project:alpha",
+        "summary-job-1",
+        300,
+    )
+    .await
+    .expect("claim published summary dispatch")
+    .is_some());
     assert!(
         crate::repositories::thread_partitions::fail_owned_summary_claim_and_dead_letter_dispatch(
             &pool,
@@ -336,18 +334,17 @@ async fn published_summary_dispatch_dead_letter_can_be_replayed() {
         .expect("dead-letter published summary dispatch")
     );
 
-    let new_event_id =
-        crate::repositories::derived_events::rearm_dead_lettered_thread_summary(
-            &pool,
-            &tenant,
-            &source,
-            &thread_id,
-            "project:alpha",
-            1,
-        )
-        .await
-        .expect("replay summary dispatch")
-        .expect("new summary dispatch event");
+    let new_event_id = crate::repositories::derived_events::rearm_dead_lettered_thread_summary(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        "project:alpha",
+        1,
+    )
+    .await
+    .expect("replay summary dispatch")
+    .expect("new summary dispatch event");
 
     let events: Vec<(String, i64, String)> = sqlx::query_as(
         "SELECT event_id,dispatch_version,status FROM engine_derived_event_outbox \

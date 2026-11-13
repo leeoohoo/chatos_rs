@@ -11,8 +11,8 @@ use axum::{
 use serde_json::json;
 
 use crate::models::{
-    EngineSummary, GetThreadActiveSummaryStatusRequest, RunThreadActiveSummaryResponse,
-    RunPendingSummaryRebuildResponse, RunThreadSummaryResponse,
+    EngineSummary, GetThreadActiveSummaryStatusRequest, RunPendingSummaryRebuildResponse,
+    RunThreadActiveSummaryResponse, RunThreadSummaryResponse,
 };
 use crate::repositories::summaries;
 use crate::services::summary;
@@ -22,8 +22,8 @@ use super::auth::SdkAuthContext;
 use super::internal_error;
 use super::requests::{
     SdkDeleteThreadSummaryRequest, SdkGetThreadActiveSummaryStatusRequest,
-    SdkListThreadSummariesRequest, SdkRunThreadActiveSummaryRequest,
-    SdkRunPendingSummaryRebuildRequest, SdkRunThreadSummaryRequest,
+    SdkListThreadSummariesRequest, SdkRunPendingSummaryRebuildRequest,
+    SdkRunThreadActiveSummaryRequest, SdkRunThreadSummaryRequest,
 };
 
 pub async fn list_thread_summaries(

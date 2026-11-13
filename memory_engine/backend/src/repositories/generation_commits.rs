@@ -122,6 +122,7 @@ pub async fn claim_generation(
     .map_err(|error| error.to_string())
 }
 
+#[cfg(test)]
 pub async fn mark_attempt_failed(
     db: &Db,
     generation: &GenerationCommit,
@@ -282,11 +283,11 @@ fn validate_prepare_input(input: &PrepareGeneration<'_>) -> Result<(), String> {
         "tokenizer_id",
         "policy_checksum",
     ] {
-        if !input
+        if input
             .config_snapshot
             .get(key)
             .and_then(Value::as_str)
-            .is_some_and(|value| !value.trim().is_empty())
+            .is_none_or(|value| value.trim().is_empty())
         {
             return Err(format!("generation config_snapshot.{key} is required"));
         }

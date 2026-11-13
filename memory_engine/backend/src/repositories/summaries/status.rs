@@ -6,6 +6,7 @@ use crate::models::{now_rfc3339, EngineSummary};
 use crate::repositories::postgres::{decode, json, timestamp};
 use sqlx::types::Json;
 
+#[cfg(test)]
 pub async fn mark_summaries_rolled_up(
     db: &Db,
     tenant_id: &str,
@@ -54,6 +55,7 @@ pub async fn mark_summaries_subject_memory_summarized(
     )
     .await
 }
+#[cfg(test)]
 pub async fn mark_summaries_subject_memory_summarized_for_scope(
     db: &Db,
     tenant_id: &str,

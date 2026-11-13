@@ -123,8 +123,9 @@ async fn refresh_resummarization_claim(
     )
     .await?;
     if !refreshed {
-        return Err("covered-range resummarization claim was lost before Cloud Agent execution"
-            .to_string());
+        return Err(
+            "covered-range resummarization claim was lost before Cloud Agent execution".to_string(),
+        );
     }
     Ok(())
 }

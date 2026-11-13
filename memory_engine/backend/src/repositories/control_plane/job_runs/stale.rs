@@ -58,9 +58,7 @@ async fn cloud_agent_managed_job_ids(db: &Db) -> Result<HashSet<String>, String>
 
 pub async fn fail_stale_running_job_runs(db: &Db, timeout_secs: i64) -> Result<i64, String> {
     let finished_at = now_rfc3339();
-    let candidate_timeout_secs = timeout_secs
-        .max(30)
-        .min(STALE_LEGACY_REPAIR_JOB_TIMEOUT_SECS);
+    let candidate_timeout_secs = timeout_secs.clamp(30, STALE_LEGACY_REPAIR_JOB_TIMEOUT_SECS);
     let running_jobs = sqlx::query_scalar::<_, Json<serde_json::Value>>(
         "SELECT data FROM engine_job_runs \
          WHERE status='running' AND started_at < now()-($1 * interval '1 second')",

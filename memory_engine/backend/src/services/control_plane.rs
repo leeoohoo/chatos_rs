@@ -33,16 +33,6 @@ pub async fn get_effective_model_profile_for_job(
     resolve_memory_summary_model_runtime(config, owner_user_id).await
 }
 
-pub async fn build_ai_client_for_job(
-    config: &AppConfig,
-    _db: &Db,
-    job_type: &str,
-    owner_user_id: &str,
-) -> Result<AiClient, String> {
-    let profile = get_effective_model_profile_for_job(config, job_type, owner_user_id).await?;
-    AiClient::new_with_profile(config, Some(&profile))
-}
-
 pub(crate) async fn build_ai_client_for_profile_id(
     config: &AppConfig,
     _db: &Db,

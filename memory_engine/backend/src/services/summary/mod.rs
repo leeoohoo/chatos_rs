@@ -5,7 +5,8 @@ use crate::models::{EngineRecord, EngineSummary};
 
 pub(crate) const DEFAULT_PENDING_RECORD_SCAN_LIMIT: i64 = 5000;
 
-pub(crate) fn required_thread_summary_token_limit(configured: Option<i64>) -> Result<i64, String> {
+#[cfg(test)]
+fn required_thread_summary_token_limit(configured: Option<i64>) -> Result<i64, String> {
     configured
         .map(|value| value.max(128))
         .ok_or_else(|| "summary job policy token_limit is not configured".to_string())

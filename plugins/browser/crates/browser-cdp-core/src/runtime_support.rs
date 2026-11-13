@@ -288,7 +288,7 @@ pub(super) async fn read_page_state(
     serde_json::from_value(
         evaluate_read_only_with_retry(backend, session_id, PAGE_STATE_SCRIPT).await?,
     )
-        .map_err(|error| CoreError::Backend(format!("invalid page state: {error}")))
+    .map_err(|error| CoreError::Backend(format!("invalid page state: {error}")))
 }
 
 pub(super) async fn wait_until_ready(

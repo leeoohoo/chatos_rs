@@ -108,46 +108,6 @@ impl AiClient {
         self.max_transient_retries
     }
 
-    pub async fn generate_text(
-        &self,
-        system_prompt: &str,
-        user_prompt: &str,
-        max_tokens: Option<i64>,
-        input_chars: Option<usize>,
-        title_present: bool,
-    ) -> Result<String, String> {
-        self.generate_text_once(
-            system_prompt,
-            user_prompt,
-            max_tokens,
-            input_chars,
-            title_present,
-        )
-        .await
-        .map_err(|error| error.to_string())
-    }
-
-    /// Performs one provider request. Queue consumers own delayed retry and
-    /// must end the current delivery when this returns `Retryable`.
-    pub async fn generate_text_once(
-        &self,
-        system_prompt: &str,
-        user_prompt: &str,
-        max_tokens: Option<i64>,
-        input_chars: Option<usize>,
-        title_present: bool,
-    ) -> Result<String, AiGenerateTextError> {
-        self.generate_once(
-            system_prompt,
-            user_prompt,
-            max_tokens,
-            input_chars,
-            title_present,
-            None,
-        )
-        .await
-    }
-
     pub(crate) async fn generate_memory_payload_once(
         &self,
         system_prompt: &str,

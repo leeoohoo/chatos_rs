@@ -179,12 +179,12 @@ async fn load_relevant_history_blocks(
             };
             let age_days = now.signed_duration_since(fact.created_at).num_days().max(0) as f64;
             let recency_score = 1.0 / (1.0 + age_days / 30.0);
-            let open_item_score = fact
-                .searchable_text
-                .starts_with("open_items ")
-                .then_some(0.25)
-                .unwrap_or(0.0);
-            let uncertainty_penalty = (fact.status == "uncertain").then_some(0.2).unwrap_or(0.0);
+            let open_item_score = if fact.searchable_text.starts_with("open_items ") {
+                0.25
+            } else {
+                0.0
+            };
+            let uncertainty_penalty = if fact.status == "uncertain" { 0.2 } else { 0.0 };
             let total_score =
                 fact.lexical_score * 2.0 + scope_score + recency_score + open_item_score
                     - uncertainty_penalty;

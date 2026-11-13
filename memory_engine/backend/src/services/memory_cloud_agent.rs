@@ -719,71 +719,6 @@ fn is_thread_summary_resume_kind(resume_kind: &str) -> bool {
     resume_kind == THREAD_SUMMARY_JOB_RESUME_KIND
 }
 
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::{
-        collect_matching_scope_fact_ids, is_thread_summary_resume_kind,
-        THREAD_SUMMARY_JOB_RESUME_KIND,
-    };
-
-    #[test]
-    fn thread_summary_resume_route_is_not_a_scheduler_trigger() {
-        assert!(is_thread_summary_resume_kind(
-            THREAD_SUMMARY_JOB_RESUME_KIND
-        ));
-        assert!(!is_thread_summary_resume_kind("database_worker"));
-        assert!(!is_thread_summary_resume_kind("scheduler"));
-        assert!(!is_thread_summary_resume_kind("thread_direct"));
-    }
-
-    #[test]
-    fn supersession_candidates_are_restricted_to_the_output_scope() {
-        let input = json!({
-            "inputs": [{
-                "fact_id": "untrusted-recursive-id",
-                "structured_payload": {
-                    "schema_version": "memory_payload_v1",
-                    "scope": {
-                        "kind": "thread",
-                        "subject_id": "agent:test",
-                        "project_partition_key": "project:alpha"
-                    },
-                    "completed": [{"fact_id": "thread-fact"}],
-                    "decisions": [], "open_items": [], "blockers": [],
-                    "artifacts": [], "constraints": [],
-                    "stable_preferences": [], "uncertainties": []
-                }
-            }, {
-                "structured_payload": {
-                    "schema_version": "memory_payload_v1",
-                    "scope": {
-                        "kind": "project",
-                        "subject_id": "project:alpha",
-                        "project_partition_key": "project:alpha"
-                    },
-                    "completed": [],
-                    "decisions": [{"fact_id": "project-fact"}],
-                    "open_items": [], "blockers": [], "artifacts": [],
-                    "constraints": [], "stable_preferences": [], "uncertainties": []
-                }
-            }]
-        });
-        let mut candidates = Vec::new();
-
-        collect_matching_scope_fact_ids(
-            &input,
-            "project",
-            "project:alpha",
-            Some("project:alpha"),
-            &mut candidates,
-        );
-
-        assert_eq!(candidates, vec!["project-fact"]);
-    }
-}
-
 async fn settle_summary_dispatch(
     state: &Arc<AppState>,
     tenant_id: &str,
@@ -875,4 +810,69 @@ async fn release_subject_scope_slot(
         lock_owner,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{
+        collect_matching_scope_fact_ids, is_thread_summary_resume_kind,
+        THREAD_SUMMARY_JOB_RESUME_KIND,
+    };
+
+    #[test]
+    fn thread_summary_resume_route_is_not_a_scheduler_trigger() {
+        assert!(is_thread_summary_resume_kind(
+            THREAD_SUMMARY_JOB_RESUME_KIND
+        ));
+        assert!(!is_thread_summary_resume_kind("database_worker"));
+        assert!(!is_thread_summary_resume_kind("scheduler"));
+        assert!(!is_thread_summary_resume_kind("thread_direct"));
+    }
+
+    #[test]
+    fn supersession_candidates_are_restricted_to_the_output_scope() {
+        let input = json!({
+            "inputs": [{
+                "fact_id": "untrusted-recursive-id",
+                "structured_payload": {
+                    "schema_version": "memory_payload_v1",
+                    "scope": {
+                        "kind": "thread",
+                        "subject_id": "agent:test",
+                        "project_partition_key": "project:alpha"
+                    },
+                    "completed": [{"fact_id": "thread-fact"}],
+                    "decisions": [], "open_items": [], "blockers": [],
+                    "artifacts": [], "constraints": [],
+                    "stable_preferences": [], "uncertainties": []
+                }
+            }, {
+                "structured_payload": {
+                    "schema_version": "memory_payload_v1",
+                    "scope": {
+                        "kind": "project",
+                        "subject_id": "project:alpha",
+                        "project_partition_key": "project:alpha"
+                    },
+                    "completed": [],
+                    "decisions": [{"fact_id": "project-fact"}],
+                    "open_items": [], "blockers": [], "artifacts": [],
+                    "constraints": [], "stable_preferences": [], "uncertainties": []
+                }
+            }]
+        });
+        let mut candidates = Vec::new();
+
+        collect_matching_scope_fact_ids(
+            &input,
+            "project",
+            "project:alpha",
+            Some("project:alpha"),
+            &mut candidates,
+        );
+
+        assert_eq!(candidates, vec!["project-fact"]);
+    }
 }
