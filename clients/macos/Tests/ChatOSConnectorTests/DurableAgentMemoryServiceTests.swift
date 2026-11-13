@@ -67,6 +67,37 @@ final class DurableAgentMemoryServiceTests: XCTestCase {
         XCTAssertEqual(compactCalls, 1)
     }
 
+    func testCompactionFailuresAndBackoffRemainRecoverable() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scope = try AgentMemoryScope(
+            tenantID: "owner-a", agentID: "agent-a", projectID: "project-a",
+            runID: UUID(), runtimeScope: "manager-a"
+        )
+        let store = try SQLiteAgentMemoryCacheStore(
+            databaseURL: root.appendingPathComponent("memory.sqlite3")
+        )
+        let remote = FailingCompactionAgentMemory()
+        let service = DurableAgentMemoryService(
+            scope: scope,
+            store: store,
+            remoteFactory: { remote }
+        )
+
+        for _ in 0 ..< 2 {
+            do {
+                try await service.compactSummary()
+                XCTFail("Expected recoverable compaction failure")
+            } catch is AgentMemoryCompactionFailure {
+                // The provider can continue with the exact current turn.
+            }
+        }
+        let compactCalls = await remote.compactCalls
+        XCTAssertEqual(compactCalls, 1)
+    }
+
     func testCacheRejectsARecordIDWithDifferentContent() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -232,4 +263,18 @@ private actor RecordingAgentMemory: AgentMemoryServicing {
         )
     }
     func compactSummary() async throws { compactCalls += 1 }
+}
+
+private actor FailingCompactionAgentMemory: AgentMemoryServicing {
+    var compactCalls = 0
+
+    func ensureThread() async throws {}
+    func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {}
+    func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
+        .init(blocks: [], recentRecords: [])
+    }
+    func compactSummary() async throws {
+        compactCalls += 1
+        throw URLError(.networkConnectionLost)
+    }
 }

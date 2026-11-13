@@ -117,7 +117,7 @@ actor DurableAgentMemoryService: AgentMemoryServicing {
 
     func compactSummary() async throws {
         guard await store.shouldAttemptRemote() else {
-            throw AgentContextError.unavailable
+            throw AgentMemoryCompactionFailure(reason: AgentContextError.unavailable.localizedDescription)
         }
         do {
             let service = try await remoteService()
@@ -131,7 +131,8 @@ actor DurableAgentMemoryService: AgentMemoryServicing {
             await store.recordRemoteFailure()
             // Required compaction cannot fall back to a stale projection: doing so would make the
             // caller believe the budget was recovered while returning the same oversized context.
-            throw error
+            if let failure = error as? AgentMemoryCompactionFailure { throw failure }
+            throw AgentMemoryCompactionFailure(reason: error.localizedDescription)
         }
     }
 
