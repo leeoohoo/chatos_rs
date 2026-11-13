@@ -39,7 +39,16 @@ pub(super) fn transition_for_outcome(
         } => *next_model_attempt,
         _ => 1,
     };
-    let clear_continuation_input = !matches!(&outcome, LocalAgentStepOutcome::Retry { .. });
+    // A continuation is consumed only after the model produced a new durable result.
+    // Pre-request validation/provider failures and pauses do not prove that tool results
+    // reached the provider, so keep them available for a retry or human resume.
+    let clear_continuation_input = matches!(
+        &outcome,
+        LocalAgentStepOutcome::Continue { .. }
+            | LocalAgentStepOutcome::WaitForTool { .. }
+            | LocalAgentStepOutcome::WaitForUser { .. }
+            | LocalAgentStepOutcome::Succeed { .. }
+    );
     let (next_status, next_attempt, pending_tool_batch, terminal_outcome, event_type, payload) =
         match outcome {
             LocalAgentStepOutcome::Continue { checkpoint }
@@ -173,4 +182,87 @@ pub(super) fn transition_for_outcome(
         event_payload: payload,
         occurred_at_unix_ms: now,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    fn run_with_tool_results() -> LocalAgentRunRecord {
+        LocalAgentRunRecord {
+            run_id: "run-1".into(),
+            owner_user_id: "user-1".into(),
+            owner_entity_type: "conversation_turn".into(),
+            owner_entity_id: "turn-1".into(),
+            profile_key: "main_chat".into(),
+            model_config_ref: "model-1".into(),
+            model_config_revision: "revision-1".into(),
+            capability_policy_revision: "policy-1".into(),
+            input: json!({"message":"hello"}),
+            status: LocalAgentRunStatus::ModelRunning,
+            iteration: 2,
+            model_attempt: 1,
+            max_iterations: 8,
+            version: 4,
+            claim_token: Some("claim-1".into()),
+            claim_until_unix_ms: Some(20_000),
+            next_attempt_at_unix_ms: None,
+            pending_tool_batch: None,
+            checkpoint: json!({"response":{"response_output_items":[{
+                "type":"function_call", "call_id":"call-1", "name":"write_file"
+            }]}}),
+            continuation_input: Some(json!({
+                "type":"tool_results", "invocations":[{"call_id":"call-1"}]
+            })),
+            terminal_outcome: None,
+            created_at_unix_ms: 1_000,
+            updated_at_unix_ms: 2_000,
+        }
+    }
+
+    #[test]
+    fn failures_pauses_and_retries_keep_unconsumed_tool_results() {
+        let run = run_with_tool_results();
+        let outcomes = [
+            LocalAgentStepOutcome::Retry {
+                resume_at_unix_ms: 4_000,
+                next_model_attempt: 2,
+                reason: "provider busy".into(),
+            },
+            LocalAgentStepOutcome::Pause {
+                reason: "cancelled before commit".into(),
+            },
+            LocalAgentStepOutcome::NeedsReview {
+                reason: "profile step failed".into(),
+                detail: json!({"error":"request exceeds budget"}),
+            },
+            LocalAgentStepOutcome::Fail {
+                error: "No tool output found for function call call-1".into(),
+                detail: json!({"phase":"model_step"}),
+            },
+        ];
+        for outcome in outcomes {
+            let transition =
+                transition_for_outcome(&run, "claim-1".into(), run.version, outcome, 3_000)
+                    .expect("transition");
+            assert!(!transition.clear_continuation_input);
+        }
+    }
+
+    #[test]
+    fn completed_model_response_consumes_tool_results() {
+        let run = run_with_tool_results();
+        let transition = transition_for_outcome(
+            &run,
+            "claim-1".into(),
+            run.version,
+            LocalAgentStepOutcome::Succeed {
+                output: Value::String("done".into()),
+            },
+            3_000,
+        )
+        .expect("transition");
+        assert!(transition.clear_continuation_input);
+    }
 }

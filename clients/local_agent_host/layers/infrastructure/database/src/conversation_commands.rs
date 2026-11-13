@@ -54,6 +54,9 @@ pub(super) async fn resume_conversation_turn(
                 current.run_id
             )));
         }
+        let continuation_input =
+            super::run_continuation::for_resume(&mut connection, &current, continuation_input)
+                .await?;
         let expected_run_version = i64::try_from(turn.expected_run_version)
             .map_err(|_| ClientStorageError::InvalidState("run version exceeds i64".to_string()))?;
         let updated = sqlx::query(
@@ -61,7 +64,7 @@ pub(super) async fn resume_conversation_turn(
              terminal_outcome_json = NULL, continuation_input_json = ?, updated_at_unix_ms = ? \
              WHERE run_id = ? AND status = ? AND version = ?",
         )
-        .bind(serde_json::to_string(continuation_input)?)
+        .bind(serde_json::to_string(&continuation_input)?)
         .bind(now_unix_ms)
         .bind(&current.run_id)
         .bind(turn.expected_run_status.as_str())
@@ -130,7 +133,7 @@ pub(super) async fn resume_conversation_turn(
             event_id,
             &current.run_id,
             "conversation_turn_resumed",
-            continuation_input,
+            &continuation_input,
             now_unix_ms,
         )
         .await?;

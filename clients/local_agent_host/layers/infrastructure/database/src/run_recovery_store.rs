@@ -116,6 +116,109 @@ pub(super) async fn recover_expired_claims(
         .db()?;
     }
 
+    // A historical Host could clear a completed tool batch when the following model
+    // request failed before reaching the provider. Once resumed, Responses rejects the
+    // orphaned function_call with "No tool output found". The provider did not execute a
+    // model step, and every tool result remains durable, so restoring those outputs and
+    // requeueing the same Run is replay-safe and avoids executing side effects again.
+    let missing_tool_output_rows = sqlx::query(
+        "SELECT run.run_id, run.version, turn.turn_id, turn.conversation_id \
+         FROM local_agent_runs run \
+         JOIN local_conversation_turns turn ON turn.run_id = run.run_id \
+         WHERE run.owner_user_id = ? AND run.owner_entity_type = 'conversation_turn' \
+           AND run.status = 'failed' AND turn.status = 'failed' \
+           AND run.iteration < run.max_iterations \
+           AND run.continuation_input_json IS NULL \
+           AND json_extract(run.terminal_outcome_json, '$.detail.phase') = 'model_step' \
+           AND json_extract(run.terminal_outcome_json, '$.error') \
+             LIKE '%No tool output found for function call%' \
+         ORDER BY run.run_id",
+    )
+    .bind(owner_user_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    let mut recovered_missing_tool_outputs = 0usize;
+    for row in &missing_tool_output_rows {
+        let run_id: String = row.try_get("run_id").db()?;
+        let version: i64 = row.try_get("version").db()?;
+        let turn_id: String = row.try_get("turn_id").db()?;
+        let conversation_id: String = row.try_get("conversation_id").db()?;
+        let run = SqliteClientStorage::fetch_run_on(connection, &run_id)
+            .await?
+            .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
+        let Some(continuation) =
+            super::run_continuation::recover_tool_results(connection, &run).await?
+        else {
+            continue;
+        };
+        let updated = sqlx::query(
+            "UPDATE local_agent_runs SET status = 'continuation_ready', \
+             version = version + 1, terminal_outcome_json = NULL, \
+             continuation_input_json = ?, claim_token = NULL, claim_until_unix_ms = NULL, \
+             next_attempt_at_unix_ms = NULL, pending_tool_batch_json = NULL, \
+             updated_at_unix_ms = ? \
+             WHERE run_id = ? AND owner_user_id = ? AND version = ? AND status = 'failed'",
+        )
+        .bind(serde_json::to_string(&continuation)?)
+        .bind(now_unix_ms)
+        .bind(&run_id)
+        .bind(owner_user_id)
+        .bind(version)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        if updated.rows_affected() != 1 {
+            return Err(ClientStorageError::Conflict(format!(
+                "missing tool output Run changed during recovery: {run_id}"
+            )));
+        }
+        sqlx::query(
+            "DELETE FROM local_conversation_messages \
+             WHERE message_id = ? AND conversation_id = ? AND turn_id = ? \
+               AND role = 'assistant' \
+               AND json_extract(metadata_json, '$.terminal_status') = 'failed'",
+        )
+        .bind(format!("assistant:{run_id}"))
+        .bind(&conversation_id)
+        .bind(&turn_id)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        sqlx::query(
+            "UPDATE local_conversation_turns SET status = 'running', updated_at_unix_ms = ? \
+             WHERE turn_id = ? AND run_id = ? AND status = 'failed'",
+        )
+        .bind(now_unix_ms)
+        .bind(&turn_id)
+        .bind(&run_id)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        sqlx::query(
+            "UPDATE local_conversations SET version = version + 1, updated_at_unix_ms = ? \
+             WHERE conversation_id = ?",
+        )
+        .bind(now_unix_ms)
+        .bind(&conversation_id)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        SqliteClientStorage::insert_event(
+            connection,
+            &format!("missing-tool-output-requeued:{run_id}:{}", version + 1),
+            &run_id,
+            "missing_tool_output_requeued",
+            &serde_json::json!({
+                "reason": "restored completed tool outputs from durable invocations"
+            }),
+            now_unix_ms,
+        )
+        .await
+        .db()?;
+        recovered_missing_tool_outputs += 1;
+    }
+
     // A model claim is only a lease around response generation. Model output cannot
     // execute tools until commit_step has durably persisted the calls, so losing this
     // lease is safe to replay and should not require user review after an app restart.
@@ -378,6 +481,7 @@ pub(super) async fn recover_expired_claims(
             .await?;
     }
     Ok((stranded_followup_rows.len()
+        + recovered_missing_tool_outputs
         + replayable_rows.len()
         + rows.len()
         + stranded_task_runs.len()

@@ -1107,3 +1107,83 @@ async fn reviewed_turn_resumes_and_can_fail_again_then_finish_without_stale_term
         assert_eq!(replay, resumed);
     }
 }
+
+#[tokio::test]
+async fn missing_tool_output_failure_is_requeued_from_durable_invocation() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    create(&storage, "conversation-tool-recovery").await;
+    let initial = turn("conversation-tool-recovery", 1, "tool-recovery");
+    start(&storage, &initial, 2_000).await.expect("start Turn");
+    let checkpoint = json!({"response":{"response_output_items":[{
+        "type":"function_call",
+        "call_id":"call-stage",
+        "name":"stage_edit_batch",
+        "arguments":"{}"
+    }]}});
+    sqlx::query(
+        "UPDATE local_agent_runs SET status = 'failed', iteration = 2, version = 4, \
+         checkpoint_json = ?, continuation_input_json = NULL, terminal_outcome_json = ? \
+         WHERE run_id = ?",
+    )
+    .bind(serde_json::to_string(&checkpoint).unwrap())
+    .bind(
+        serde_json::to_string(&json!({
+            "error":"status 400 Bad Request: No tool output found for function call call-stage",
+            "detail":{"phase":"model_step"}
+        }))
+        .unwrap(),
+    )
+    .bind(&initial.run_id)
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE local_conversation_turns SET status = 'failed' WHERE turn_id = ?")
+        .bind(&initial.turn_id)
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO local_agent_tool_invocations(\
+         invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
+         side_effecting, status, result_json, error_text, version, claim_token, \
+         claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms) \
+         VALUES('invocation-stage', ?, 'batch-stage', 'call-stage', \
+         'stage_edit_batch', '{}', 1, 'succeeded', ?, NULL, 3, NULL, NULL, 2500, 2600)",
+    )
+    .bind(&initial.run_id)
+    .bind(r#"{"changed":true,"path":"plan.md"}"#)
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        storage
+            .recover_expired_claims("user-1", 3_000)
+            .await
+            .expect("recover missing output"),
+        1
+    );
+    let recovered = storage
+        .get_run(&initial.run_id)
+        .await
+        .unwrap()
+        .expect("recovered Run");
+    assert_eq!(recovered.status, LocalAgentRunStatus::ContinuationReady);
+    assert!(recovered.terminal_outcome.is_none());
+    let continuation = recovered.continuation_input.expect("tool continuation");
+    assert_eq!(continuation["type"], "tool_results");
+    assert_eq!(continuation["invocations"][0]["call_id"], "call-stage");
+    let detail = storage
+        .get_conversation("user-1", "conversation-tool-recovery")
+        .await
+        .unwrap()
+        .expect("conversation");
+    assert_eq!(detail.turns[0].status, LocalConversationTurnStatus::Running);
+    let invocation_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM local_agent_tool_invocations WHERE run_id = ?")
+            .bind(&initial.run_id)
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
+    assert_eq!(invocation_count, 1, "recovery must not duplicate the tool");
+}
