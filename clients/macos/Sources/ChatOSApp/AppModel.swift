@@ -12,6 +12,7 @@ import SwiftUI
 final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding {
     @Published var selection: SidebarSelection?
     @Published var requestedRequirementSurvey: RequirementSurveyNavigationTarget?
+    @Published var requestedAgentTeamNavigation: AgentTeamNavigationTarget?
     @Published var projectTab: ProjectWorkspaceTab = .messages
     @Published var isNotepadPresented = false
     @Published var navigationSplitVisibility: NavigationSplitViewVisibility = .all

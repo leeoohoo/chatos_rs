@@ -471,6 +471,119 @@ mod tests {
         assert!(second.to_string().contains("memory-2"));
     }
 
+    #[tokio::test]
+    async fn responses_compaction_skips_memory_and_reaches_provider_above_soft_limit() {
+        async fn compose_call(State(calls): State<Arc<AtomicUsize>>) -> Json<Value> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Json(json!({
+                "thread_id": "thread-1",
+                "blocks": [],
+                "recent_records": [],
+                "meta": memory_engine_sdk::ComposeContextMeta::default()
+            }))
+        }
+
+        async fn model_call(
+            State(payload): State<Arc<std::sync::Mutex<Option<Value>>>>,
+            Json(request): Json<Value>,
+        ) -> Json<Value> {
+            *payload.lock().expect("provider request") = Some(request);
+            Json(json!({
+                "id": "response-1",
+                "status": "completed",
+                "output_text": "ok",
+                "output": []
+            }))
+        }
+
+        let compose_calls = Arc::new(AtomicUsize::new(0));
+        let memory_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind memory mock");
+        let memory_address = memory_listener.local_addr().expect("memory mock address");
+        let memory_server = tokio::spawn({
+            let compose_calls = Arc::clone(&compose_calls);
+            async move {
+                let _ = axum::serve(
+                    memory_listener,
+                    Router::new()
+                        .route("/api/memory-engine/v1/context/compose", post(compose_call))
+                        .with_state(compose_calls),
+                )
+                .await;
+            }
+        });
+        let composer = MemoryContextComposer::new_direct(
+            format!("http://{memory_address}"),
+            Duration::from_secs(1),
+            "task_execution",
+        )
+        .expect("memory composer")
+        .with_runtime_context_assertion_issuer(test_issuer());
+
+        let provider_payload = Arc::new(std::sync::Mutex::new(None));
+        let provider_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind provider mock");
+        let provider_address = provider_listener
+            .local_addr()
+            .expect("provider mock address");
+        let provider_server = tokio::spawn({
+            let provider_payload = Arc::clone(&provider_payload);
+            async move {
+                let _ = axum::serve(
+                    provider_listener,
+                    Router::new()
+                        .route("/responses", post(model_call))
+                        .with_state(provider_payload),
+                )
+                .await;
+            }
+        });
+
+        let config = published_test_config(
+            ModelRuntimeConfig::openai_compatible(
+                format!("http://{provider_address}"),
+                "secret",
+                "gpt-test",
+                "openai",
+            )
+            .with_responses_support(true),
+        );
+        let runtime_options =
+            AiRuntimeOptions::for_conversation("task-1").with_conversation_turn_id("run-1");
+        let request = ContextualTurnRequest::new(
+            config.to_model_request(Value::Null, Vec::new()),
+            runtime_options,
+            vec![user_text_item("x".repeat(320_000))],
+        )
+        .with_memory_scope(Some(test_scope()));
+        let runner = super::ContextualTurnRunner::new(AiRuntime::new(None), Some(composer));
+
+        runner
+            .execute_once(request, 1, "initial", 1)
+            .await
+            .expect("provider request succeeds");
+        memory_server.abort();
+        provider_server.abort();
+
+        assert_eq!(compose_calls.load(Ordering::SeqCst), 0);
+        let payload = provider_payload
+            .lock()
+            .expect("provider payload")
+            .clone()
+            .expect("provider was called");
+        assert_eq!(
+            payload.pointer("/context_management/0/type"),
+            Some(&json!("compaction"))
+        );
+        assert_eq!(
+            payload.pointer("/context_management/0/compact_threshold"),
+            Some(&json!(100_000))
+        );
+        assert!(!payload.to_string().contains("[memory_engine_context]"));
+    }
+
     #[test]
     fn input_value_to_items_wraps_text_as_user_message() {
         let items = input_value_to_items(json!("hello"));

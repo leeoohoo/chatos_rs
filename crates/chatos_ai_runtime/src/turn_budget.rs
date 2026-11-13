@@ -79,7 +79,7 @@ fn estimated_input_tokens(request: &ModelRequest) -> Result<usize, String> {
 pub(super) fn restrict_memory_scope(
     scope: &mut MemoryScope,
     baseline: &ModelRequest,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if scope.model_capability_revision != baseline.model_capability_revision {
         return Err("Memory scope capability revision differs from the model request".into());
     }
@@ -88,10 +88,23 @@ pub(super) fn restrict_memory_scope(
         .context_window_tokens
         .checked_sub(baseline.output_reserve_tokens)
         .and_then(|input| input.checked_sub(fixed_input))
-        .filter(|remaining| *remaining > 0)
-        .ok_or_else(|| {
-            "current model request leaves no input capacity for Memory context".to_string()
-        })?;
+        .filter(|remaining| *remaining > 0);
+    let Some(remaining) = remaining else {
+        // Once the durable Responses history reaches the published soft input
+        // limit, adding Memory would prevent the provider-owned compaction request
+        // from being sent at all. Omit Memory for this one request and let Responses
+        // compact the fixed history. Requests above the hard model window, and
+        // transports without compaction, must still fail closed.
+        if baseline.supports_responses
+            && baseline.responses_compaction_threshold.is_some()
+            && fixed_input <= baseline.context_window_tokens
+        {
+            return Ok(false);
+        }
+        return Err(
+            "current model request leaves no input capacity for Memory context".to_string(),
+        );
+    };
     let policy = scope.policy.as_mut().ok_or_else(|| {
         "Memory compose requires an explicit model-derived request budget".to_string()
     })?;
@@ -106,7 +119,7 @@ pub(super) fn restrict_memory_scope(
         .max_project_memory_tokens
         .min(policy.max_memory_tokens);
     policy.max_agent_memory_tokens = policy.max_agent_memory_tokens.min(policy.max_memory_tokens);
-    Ok(())
+    Ok(true)
 }
 
 pub(super) fn validate_complete_request_budget(request: &ModelRequest) -> Result<(), String> {
@@ -215,7 +228,7 @@ mod tests {
                 max_project_memory_tokens: 100_000,
                 max_agent_memory_tokens: 100_000,
             });
-        restrict_memory_scope(&mut scope, &baseline).unwrap();
+        assert!(restrict_memory_scope(&mut scope, &baseline).unwrap());
         let expected = 100_000 - estimated_input_tokens(&baseline).unwrap();
         assert_eq!(scope.policy.as_ref().unwrap().max_memory_tokens, expected);
         assert_eq!(
@@ -229,6 +242,30 @@ mod tests {
         baseline.input = json!("x".repeat(400_000));
         assert!(restrict_memory_scope(&mut scope, &baseline).is_err());
         scope.model_capability_revision = "other".into();
+        assert!(restrict_memory_scope(&mut scope, &baseline).is_err());
+    }
+
+    #[test]
+    fn responses_compaction_omits_memory_between_soft_and_hard_limits() {
+        use memory_engine_sdk::ComposeContextPolicy;
+        let mut baseline = request(json!("x".repeat(320_000)));
+        baseline.supports_responses = true;
+        baseline.responses_compaction_threshold =
+            Some(baseline.context_window_tokens - baseline.output_reserve_tokens);
+        let mut scope = MemoryScope::thread("tenant", "source", "thread")
+            .with_compose_context(None, None, "test")
+            .with_policy(ComposeContextPolicy {
+                max_memory_tokens: 100_000,
+                max_recent_record_tokens: 100_000,
+                max_thread_summary_tokens: 100_000,
+                max_project_memory_tokens: 100_000,
+                max_agent_memory_tokens: 100_000,
+            });
+
+        assert!(!restrict_memory_scope(&mut scope, &baseline).unwrap());
+        validate_complete_request_budget(&baseline).unwrap();
+
+        baseline.input = json!("x".repeat(400_000));
         assert!(restrict_memory_scope(&mut scope, &baseline).is_err());
     }
 

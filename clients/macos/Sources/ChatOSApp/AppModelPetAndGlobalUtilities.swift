@@ -100,6 +100,19 @@ extension AppModel {
             openGlobalSearchSettings(tab: .approvals)
             return
         }
+        if let roomID = activity?.route.agentTeamRoomID?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !roomID.isEmpty {
+            requestedAgentTeamNavigation = .init(
+                roomID: roomID,
+                todoID: activity?.route.agentTodoID?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .petNonEmpty
+            )
+            selection = .agentGroupChat
+            showMainWindow()
+            return
+        }
         if let surveyID = activity?.route.requirementSurveyID,
            let ownerUserID = localProjectOwnerUserID {
             requestedRequirementSurvey = .init(ownerUserID: ownerUserID, surveyID: surveyID)

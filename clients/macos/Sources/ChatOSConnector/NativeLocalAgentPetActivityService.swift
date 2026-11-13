@@ -130,13 +130,17 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
             ?? string("source_turn_id", in: run.input)
             ?? (run.ownerEntityType == "conversation_turn" ? run.ownerEntityID : nil)
         let taskID = run.ownerEntityType == "task" ? run.ownerEntityID : nil
+        let agentTeamRoomID = string("room_id", inObject: "agent_execution_context", in: run.input)
+            ?? string("team_id", inObject: "team_executor_context", in: run.input)
+        let agentTodoID = string("todo_id", in: run.input)
+            ?? string("todo_id", inObject: "team_executor_context", in: run.input)
         let updatedAt = date(run.updatedAtUnixMs)
         let kind = activityKind(run.status)
         return PetActivity(
             id: "local-run:\(run.runID)",
             source: source,
             kind: kind,
-            title: survey?.title ?? (source == .chat ? "对话" : "任务"),
+            title: survey?.title ?? activityTitle(run, source: source),
             detail: survey == nil ? detail(run) : "请填写需求调研，帮助我理解你的目标和想法。",
             route: .init(
                 projectID: survey?.projectResourceID,
@@ -145,7 +149,9 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
                 promptID: run.status == "waiting_user" && survey == nil ? "local-ask:\(run.runID)" : nil,
                 taskID: taskID,
                 runID: run.runID,
-                requirementSurveyID: survey?.id
+                requirementSurveyID: survey?.id,
+                agentTeamRoomID: agentTeamRoomID,
+                agentTodoID: agentTodoID
             ),
             eventID: "local-run:\(run.runID):\(run.version)",
             eventSequence: Int64(clamping: run.version),
@@ -189,6 +195,39 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
     private static func string(_ key: String, in value: LocalAgentJSONValue) -> String? {
         guard case let .object(object) = value,
               case let .string(result)? = object[key] else { return nil }
+        return result
+    }
+
+    private static func nonEmptyString(_ key: String, in value: LocalAgentJSONValue) -> String? {
+        guard let result = string(key, in: value)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !result.isEmpty else { return nil }
+        return result
+    }
+
+    private static func activityTitle(
+        _ run: LocalAgentRunRecord,
+        source: PetActivitySource
+    ) -> String {
+        for key in ["title", "conversation_title", "message", "objective"] {
+            guard let value = nonEmptyString(key, in: run.input),
+                  let firstLine = value.split(whereSeparator: \Character.isNewline).first else {
+                continue
+            }
+            let title = String(firstLine)
+            return title.count > 60 ? String(title.prefix(60)) + "…" : title
+        }
+        return source == .chat ? "对话" : "任务"
+    }
+
+    private static func string(
+        _ key: String,
+        inObject objectKey: String,
+        in value: LocalAgentJSONValue
+    ) -> String? {
+        guard case let .object(object) = value,
+              case let .object(nested)? = object[objectKey],
+              case let .string(result)? = nested[key] else { return nil }
         return result
     }
 
