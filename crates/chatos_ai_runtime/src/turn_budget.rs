@@ -117,9 +117,19 @@ pub(super) fn validate_complete_request_budget(request: &ModelRequest) -> Result
     {
         return Err("max_output_tokens must not exceed the published output reserve".into());
     }
-    if estimated_input_tokens.saturating_add(request.output_reserve_tokens)
-        > request.context_window_tokens
-    {
+    // Responses compaction runs at the published soft input limit and makes
+    // room for the reserved output before inference. The client must still
+    // reject a raw request that already exceeds the real model window, but it
+    // must not prevent the provider from receiving a compactable request.
+    let input_limit =
+        if request.supports_responses && request.responses_compaction_threshold.is_some() {
+            request.context_window_tokens
+        } else {
+            request
+                .context_window_tokens
+                .saturating_sub(request.output_reserve_tokens)
+        };
+    if estimated_input_tokens > input_limit {
         return Err(format!(
             "complete model request exceeds frozen context budget: estimated_input_tokens={estimated_input_tokens}, output_reserve_tokens={}, context_window_tokens={}",
             request.output_reserve_tokens, request.context_window_tokens
@@ -220,5 +230,30 @@ mod tests {
         assert!(restrict_memory_scope(&mut scope, &baseline).is_err());
         scope.model_capability_revision = "other".into();
         assert!(restrict_memory_scope(&mut scope, &baseline).is_err());
+    }
+
+    #[test]
+    fn responses_compaction_allows_input_between_soft_and_hard_limits() {
+        let mut compactable = request(json!("x".repeat(320_000)));
+        compactable.supports_responses = true;
+        compactable.responses_compaction_threshold =
+            Some(compactable.context_window_tokens - compactable.output_reserve_tokens);
+        let estimated = estimated_input_tokens(&compactable).unwrap();
+        assert!(estimated > compactable.context_window_tokens - compactable.output_reserve_tokens);
+        assert!(estimated <= compactable.context_window_tokens);
+        validate_complete_request_budget(&compactable).unwrap();
+
+        compactable.responses_compaction_threshold = None;
+        assert!(validate_complete_request_budget(&compactable).is_err());
+    }
+
+    #[test]
+    fn responses_compaction_still_rejects_input_above_the_hard_window() {
+        let mut oversized = request(json!("x".repeat(400_000)));
+        oversized.supports_responses = true;
+        oversized.responses_compaction_threshold =
+            Some(oversized.context_window_tokens - oversized.output_reserve_tokens);
+        assert!(estimated_input_tokens(&oversized).unwrap() > oversized.context_window_tokens);
+        assert!(validate_complete_request_budget(&oversized).is_err());
     }
 }

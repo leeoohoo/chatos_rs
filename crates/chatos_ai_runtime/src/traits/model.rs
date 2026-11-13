@@ -67,8 +67,9 @@ pub struct ModelRuntimeConfig {
     pub include_prompt_cache_retention: bool,
     pub request_body_limit_bytes: Option<usize>,
     pub max_transient_retries: Option<usize>,
-    /// Provider-side Responses compaction threshold supplied by the managed
-    /// runtime policy. The AI runtime must not infer a model context window.
+    /// Optional provider-side Responses compaction threshold supplied by the
+    /// managed runtime policy. When omitted, Responses uses the input limit
+    /// derived from the published context window and output reserve.
     pub responses_compaction_threshold: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_format: Option<JsonSchemaOutputFormat>,
@@ -196,6 +197,19 @@ impl ModelRuntimeConfig {
             self.base_url.as_str(),
             self.supports_responses,
         );
+        let published_input_limit = self
+            .context_window_tokens
+            .checked_sub(self.output_reserve_tokens)
+            .filter(|limit| *limit >= 2_048);
+        let responses_compaction_threshold = if supports_responses {
+            published_input_limit.map(|input_limit| {
+                self.responses_compaction_threshold
+                    .unwrap_or(input_limit)
+                    .min(input_limit)
+            })
+        } else {
+            None
+        };
         ModelRequest {
             model_capability_revision: self.model_capability_revision.clone(),
             context_window_tokens: self.context_window_tokens,
@@ -223,7 +237,7 @@ impl ModelRuntimeConfig {
             include_prompt_cache_retention: self.include_prompt_cache_retention,
             request_body_limit_bytes: self.request_body_limit_bytes,
             max_transient_retries: self.max_transient_retries,
-            responses_compaction_threshold: self.responses_compaction_threshold,
+            responses_compaction_threshold,
             output_format: self.output_format.clone(),
         }
     }

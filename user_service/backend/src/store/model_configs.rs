@@ -272,19 +272,6 @@ fn normalized_base_url(value: Option<&str>) -> String {
         .to_string()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::AppStore;
-
-    #[test]
-    fn api_key_availability_requires_a_real_secret() {
-        assert!(!AppStore::has_usable_api_key(None));
-        assert!(!AppStore::has_usable_api_key(Some("")));
-        assert!(!AppStore::has_usable_api_key(Some("   ")));
-        assert!(AppStore::has_usable_api_key(Some("provider-token")));
-    }
-}
-
 fn clear_model_capability(model: &mut UserModelConfigRecord) {
     model.model_capability_revision = None;
     model.context_window_tokens = None;
@@ -308,6 +295,7 @@ fn apply_published_capability(model: &mut UserModelConfigRecord) -> Result<(), S
     if let Some((revision, capability)) =
         chatos_service_runtime::model_capability::active_from_env()?
     {
+        let compaction_threshold = capability.input_limit()?;
         model.model_capability_revision = Some(revision);
         model.context_window_tokens = Some(
             i64::try_from(capability.context_window_tokens)
@@ -319,6 +307,23 @@ fn apply_published_capability(model: &mut UserModelConfigRecord) -> Result<(), S
         );
         model.protocol_overhead_estimator_id = Some(capability.protocol_overhead_estimator_id);
         model.tokenizer_id = capability.tokenizer_id;
+        model.responses_compaction_threshold = Some(
+            i64::try_from(compaction_threshold)
+                .map_err(|_| "model compaction threshold exceeds supported integer range")?,
+        );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppStore;
+
+    #[test]
+    fn api_key_availability_requires_a_real_secret() {
+        assert!(!AppStore::has_usable_api_key(None));
+        assert!(!AppStore::has_usable_api_key(Some("")));
+        assert!(!AppStore::has_usable_api_key(Some("   ")));
+        assert!(AppStore::has_usable_api_key(Some("provider-token")));
+    }
 }
