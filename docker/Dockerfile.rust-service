@@ -33,7 +33,7 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
       -e 's|http://security.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g' \
       -e 's|https://security.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g' \
     && apt-get update \
-    && apt-get install -y --no-install-recommends \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       build-essential \
       ca-certificates \
       clang \
@@ -94,7 +94,7 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
       -e 's|http://security.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g' \
       -e 's|https://security.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g' \
     && apt-get update \
-    && apt-get install -y --no-install-recommends \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \
         curl \
@@ -103,8 +103,8 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
         ripgrep \
         tzdata \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system --gid 10001 chatos \
-    && useradd --system --uid 10001 --gid chatos --home-dir /nonexistent \
+    && groupadd --gid 10001 chatos \
+    && useradd --no-create-home --uid 10001 --gid chatos --home-dir /nonexistent \
         --shell /usr/sbin/nologin chatos \
     && mkdir -p /app /data /workspace /tmp/chatos \
     && chown -R chatos:chatos /app /data /workspace /tmp/chatos
