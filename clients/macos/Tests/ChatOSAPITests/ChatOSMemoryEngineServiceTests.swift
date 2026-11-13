@@ -104,6 +104,18 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         )
     }
 
+    func testBudgetCompactionPreservesTerminalGenerationFailure() async throws {
+        let (scope, _, client) = try fixture(summaryError: "stream disconnected")
+        let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
+
+        do {
+            try await service.compactSummary()
+            XCTFail("Expected compaction failure")
+        } catch let error as AgentMemoryCompactionFailure {
+            XCTAssertEqual(error.reason, "stream disconnected")
+        }
+    }
+
     func testTaskThreadRegistersBothAgentAndProjectAggregationScopes() async throws {
         let scope = try AgentMemoryScope(
             tenantID: "user/a?&b", todoID: "todo-1", agentID: "agent-1", projectID: "project-1",

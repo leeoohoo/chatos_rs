@@ -64,6 +64,8 @@ pub(crate) struct CloudSummaryPipelineState {
     effective_token_limit: i64,
     pub budget: crate::services::model_budget::MemoryModelBudget,
     overflow_retry_count: usize,
+    #[serde(default)]
+    transient_split_count: usize,
     chunk_count: usize,
     phase: PipelinePhase,
     groups: Vec<Vec<String>>,
@@ -87,6 +89,7 @@ impl CloudSummaryPipelineState {
             effective_token_limit,
             budget,
             overflow_retry_count: 0,
+            transient_split_count: 0,
             chunk_count: 0,
             phase: PipelinePhase::Leaf,
             groups: Vec::new(),
@@ -225,11 +228,15 @@ impl CloudSummaryPipelineState {
                 None,
             )),
             Err(AiGenerateTextError::Retryable { message, .. }) => Ok((
-                AiSingleStepOutcome::Failed {
-                    error: format!(
-                        "model request exhausted {} transient retries: {message}",
-                        ai.max_transient_retries()
-                    ),
+                if self.split_after_exhausted_transient(group.as_slice())? {
+                    continuation_outcome("summary_transient_split")
+                } else {
+                    AiSingleStepOutcome::Failed {
+                        error: format!(
+                            "model request exhausted {} transient retries: {message}",
+                            ai.max_transient_retries()
+                        ),
+                    }
                 },
                 self,
                 None,
@@ -361,6 +368,25 @@ impl CloudSummaryPipelineState {
             );
         }
         Ok(())
+    }
+
+    fn split_after_exhausted_transient(&mut self, group: &[String]) -> Result<bool, String> {
+        let next_limit = self.effective_token_limit / 2;
+        let group_tokens = group
+            .iter()
+            .map(|item| super::estimate_tokens_text(item))
+            .sum::<i64>();
+        if next_limit <= 0
+            || next_limit >= self.effective_token_limit
+            || group_tokens <= next_limit
+            || self.transient_split_count >= MAX_OVERFLOW_RETRIES
+        {
+            return Ok(false);
+        }
+        self.transient_split_count = self.transient_split_count.saturating_add(1);
+        self.effective_token_limit = next_limit;
+        self.reset_leaf_groups()?;
+        Ok(true)
     }
 
     fn payload_contract_for_group(
@@ -702,6 +728,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exhausted_transient_retries_split_large_input_before_failing_job() {
+        let ai = test_ai(
+            vec![error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "stream closed before response.completed",
+            )],
+            2,
+        )
+        .await;
+        let state =
+            test_state(spec(vec!["x".repeat(1_800)], 512), contract()).expect("pipeline state");
+        let (outcome, state, result) = state.execute_one(&ai, 3).await.expect("model step");
+
+        assert!(
+            matches!(outcome, AiSingleStepOutcome::Continue { ref reason, .. } if reason == "summary_transient_split")
+        );
+        assert_eq!(state.effective_token_limit, 256);
+        assert!(state.chunk_count > 1);
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn exhausted_transient_retries_do_not_split_small_input() {
+        let ai = test_ai(
+            vec![error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "service unavailable",
+            )],
+            2,
+        )
+        .await;
+        let state =
+            test_state(spec(vec!["input".to_string()], 512), contract()).expect("pipeline state");
+        let (outcome, _, result) = state.execute_one(&ai, 3).await.expect("model step");
+
+        assert!(matches!(outcome, AiSingleStepOutcome::Failed { .. }));
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
     async fn trivial_input_can_complete_with_no_durable_facts() {
         let ai = test_ai(vec![empty_success()], 2).await;
         let mut payload_contract = contract();
@@ -808,6 +874,15 @@ mod tests {
         let decoded =
             serde_json::from_value::<CloudSummaryPipelineState>(encoded).expect("decode state");
         assert_eq!(decoded, state);
+
+        let mut legacy = serde_json::to_value(&state).expect("encode legacy state");
+        legacy
+            .as_object_mut()
+            .expect("state object")
+            .remove("transient_split_count");
+        let decoded_legacy = serde_json::from_value::<CloudSummaryPipelineState>(legacy)
+            .expect("decode legacy state");
+        assert_eq!(decoded_legacy, state);
     }
 
     #[test]

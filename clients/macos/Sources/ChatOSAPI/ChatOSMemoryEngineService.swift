@@ -124,7 +124,12 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
             try await Task.sleep(for: .seconds(1))
             result = try await activeSummaryStatus(jobRunID: result.job_run_id)
         }
-        guard result.completed, !result.failed, result.generated || result.compacted else {
+        if result.failed {
+            throw AgentMemoryCompactionFailure(
+                reason: result.error_message ?? "summary generation failed"
+            )
+        }
+        guard result.completed, result.generated || result.compacted else {
             throw AgentContextError.budgetExceeded
         }
     }

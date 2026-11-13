@@ -182,6 +182,30 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertEqual(flushes, 1)
     }
 
+    func testCompactionGenerationFailureContinuesWithExactCurrentTurn() async throws {
+        let (checkpoint, scope) = try fixture()
+        let memory = TestMemory(
+            scope: scope,
+            requiresCompaction: true,
+            compactionFailure: true
+        )
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+
+        let prepared = try await provider.prepare(
+            checkpoint: provider.bind(checkpoint),
+            tools: tools,
+            modelCapability: try modelCapability(),
+            deadline: Date().addingTimeInterval(60),
+            record: { _, _ in }
+        )
+
+        XCTAssertEqual(prepared.messages, checkpoint.messages)
+        let composeCalls = await memory.composeCalls
+        let flushes = await memory.flushes
+        XCTAssertEqual(composeCalls, 1)
+        XCTAssertEqual(flushes, 1)
+    }
+
     func testRuntimeRecomposesMemoryBeforeStoppingForBudget() async throws {
         let (checkpoint, scope) = try fixture()
         let memory = TestMemory(scope: scope, firstComposeBlockCharacters: 10_000)
@@ -672,18 +696,21 @@ private actor TestMemory: AgentMemoryServicing {
     var reconciliations = 0
     var flushes = 0
     let requiresCompaction: Bool
+    let compactionFailure: Bool
     let firstComposeBlockCharacters: Int
     init(
         scope: AgentMemoryScope,
         loseSyncAck: Bool = false,
         failWriteNumber: Int? = nil,
         requiresCompaction: Bool = false,
+        compactionFailure: Bool = false,
         firstComposeBlockCharacters: Int = 0
     ) {
         self.scope = scope
         self.loseSyncAck = loseSyncAck
         self.failWriteNumber = failWriteNumber
         self.requiresCompaction = requiresCompaction
+        self.compactionFailure = compactionFailure
         self.firstComposeBlockCharacters = firstComposeBlockCharacters
     }
     func ensureThread() {}
@@ -711,5 +738,10 @@ private actor TestMemory: AgentMemoryServicing {
             pendingRecordCount: requiresCompaction && flushes == 0 ? 10 : 1
         )
     }
-    func flushSummary() { flushes += 1 }
+    func flushSummary() throws {
+        flushes += 1
+        if compactionFailure {
+            throw AgentMemoryCompactionFailure(reason: "stream closed before response.completed")
+        }
+    }
 }

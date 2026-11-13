@@ -165,7 +165,18 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
                 )
                 let beforeTokens = context.budgetUsedTokens
                 let beforePending = context.pendingRecordCount ?? context.recentRecords.count
-                try await service.compactSummary()
+                do {
+                    try await service.compactSummary()
+                } catch let failure as AgentMemoryCompactionFailure {
+                    try await emit(
+                        state,
+                        "memory_compaction_deferred",
+                        "Memory Engine 历史压缩暂时失败；本轮仅使用固定指令和完整当前活动轮继续，历史记录仍保留并等待后续重试。\(failure.reason.prefix(400))",
+                        record: record
+                    )
+                    try await check(deadline: deadline, shouldPause: shouldPause)
+                    return .init(checkpoint: state, messages: fixedMessages)
+                }
                 try await check(deadline: deadline, shouldPause: shouldPause)
                 let recomposed = try await service.compose(composeRequest)
                 let afterPending = recomposed.pendingRecordCount ?? recomposed.recentRecords.count

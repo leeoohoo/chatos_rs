@@ -348,6 +348,18 @@ public enum AgentContextError: LocalizedError, Sendable {
     }
 }
 
+public struct AgentMemoryCompactionFailure: LocalizedError, Sendable {
+    public let reason: String
+
+    public init(reason: String) {
+        self.reason = reason
+    }
+
+    public var errorDescription: String? {
+        "Memory Engine 历史压缩暂时失败：\(reason)"
+    }
+}
+
 public enum AgentContextBudget {
     /// Mirrors `chatos_ai_runtime::estimated_json_tokens`: serialize the complete model-input
     /// payload and use four JSON bytes per estimated token. This remains an estimate, but the
