@@ -5,7 +5,8 @@ use super::*;
 use chatos_local_agent_ports::{LocalAgentRunStore, RunTransition};
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, GuideConversationTurnCommand, LocalAgentRunStatus,
-    LocalConversationAttachmentSpec, ResumeConversationTurnCommand,
+    LocalConversationAttachmentSpec, LocalConversationResourceBinding,
+    LocalConversationResourceKind, ResumeConversationTurnCommand,
 };
 use serde_json::{json, Value};
 
@@ -1106,6 +1107,92 @@ async fn reviewed_turn_resumes_and_can_fail_again_then_finish_without_stale_term
             .unwrap();
         assert_eq!(replay, resumed);
     }
+}
+
+#[tokio::test]
+async fn expired_legacy_contact_run_projects_recovery_without_input_agent_id() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    let mut contact = conversation("legacy-plugin-installer");
+    contact.title = "插件安装助手".to_string();
+    contact.resource = Some(LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Contact,
+        resource_id: "plugin-installer".to_string(),
+    });
+    storage
+        .create_conversation(&idempotency("create-legacy-contact"), &contact, 1_000)
+        .await
+        .unwrap();
+    storage
+        .configure_memory_projection("user-1", "chatos", 1_500)
+        .await
+        .unwrap();
+    let initial = turn("legacy-plugin-installer", 1, "legacy-contact-recovery");
+    storage
+        .start_conversation_turn(
+            &idempotency("start-legacy-contact"),
+            &initial,
+            &run(&initial, 2_000),
+            "legacy-contact-started",
+            2_000,
+        )
+        .await
+        .unwrap();
+    let claim = storage
+        .claim_next_run(
+            &idempotency("claim-legacy-contact"),
+            "user-1",
+            "worker-1",
+            "legacy-contact-token",
+            3_000,
+            4_000,
+            "legacy-contact-claimed",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO local_agent_tool_invocations(\
+         invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
+         side_effecting, status, result_json, error_text, version, claim_token, \
+         claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms) \
+         VALUES('legacy-contact-invocation', ?, 'legacy-contact-batch', \
+         'legacy-contact-call', 'plugin_installer_install_npm', '{}', 1, \
+         'needs_review', NULL, 'result unknown', 1, NULL, NULL, 3000, 3000)",
+    )
+    .bind(&claim.run.run_id)
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        storage
+            .recover_expired_claims("user-1", 4_001)
+            .await
+            .expect("recover legacy Contact Run"),
+        1
+    );
+    let recovered = storage
+        .get_run(&initial.run_id)
+        .await
+        .unwrap()
+        .expect("recovered Run");
+    assert_eq!(recovered.status, LocalAgentRunStatus::NeedsReview);
+    let turn = storage
+        .get_conversation("user-1", "legacy-plugin-installer")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(turn.turns[0].status, LocalConversationTurnStatus::Failed);
+    let payload: String =
+        sqlx::query_scalar("SELECT payload_json FROM local_memory_outbox WHERE record_id LIKE ?")
+            .bind(format!("assistant:{}:diagnostic:%", initial.run_id))
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
+    let payload: Value = serde_json::from_str(&payload).unwrap();
+    assert_eq!(payload["metadata"]["agent_id"], "plugin-installer");
+    assert_eq!(payload["metadata"]["agent_name"], "插件安装助手");
+    assert_eq!(payload["metadata"]["thread_kind"], "agent_conversation");
 }
 
 #[tokio::test]
