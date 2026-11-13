@@ -4,7 +4,7 @@ import Darwin
 import Foundation
 import Testing
 
-@Suite("Native Plugin Runtime")
+@Suite("Native Plugin Runtime", .serialized)
 struct NativePluginRuntimeTests {
     @Test("isolated performance Plugin probe launches, serves requests and stops")
     func performanceAcceptanceProbeExercisesRealRuntime() async throws {

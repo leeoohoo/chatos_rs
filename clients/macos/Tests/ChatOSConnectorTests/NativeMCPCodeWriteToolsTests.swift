@@ -56,6 +56,91 @@ struct NativeMCPCodeWriteToolsTests {
     }
 
     @Test
+    func laterNullBaselineDoesNotRejectMultipleOperationsForSameFile() async throws {
+        let fixture = try WriteFixture()
+        defer { fixture.dispose() }
+        let file = fixture.root.appendingPathComponent("existing.txt")
+        try Data("before\n".utf8).write(to: file)
+        let store = NativeMCPCodeWriteStore()
+        let opened = try await store.call(
+            name: "open_edit_session",
+            arguments: [:],
+            scope: fixture.scope,
+            projectRoot: fixture.root
+        )
+        let sessionID = try opened.string(at: ["result", "session_id"])
+
+        _ = try await store.call(
+            name: "stage_edit_batch",
+            arguments: [
+                "session_id": .string(sessionID),
+                "operations": .array([
+                    .object([
+                        "kind": .string("replace_text"),
+                        "path": .string("existing.txt"),
+                        "old_text": .string("before"),
+                        "new_text": .string("after"),
+                        "expected_sha256": .string(Self.sha256("before\n")),
+                    ]),
+                    .object([
+                        "kind": .string("append"),
+                        "path": .string("existing.txt"),
+                        "content": .string("done\n"),
+                        "expected_sha256": .null,
+                    ]),
+                ]),
+            ],
+            scope: fixture.scope,
+            projectRoot: fixture.root
+        )
+        _ = try await store.call(
+            name: "commit_edit_session",
+            arguments: ["session_id": .string(sessionID)],
+            scope: fixture.scope,
+            projectRoot: fixture.root
+        )
+
+        #expect(try String(contentsOf: file, encoding: .utf8) == "after\ndone\n")
+    }
+
+    @Test
+    func nullBaselineCannotModifyExistingFileOnFirstOperation() async throws {
+        let fixture = try WriteFixture()
+        defer { fixture.dispose() }
+        let file = fixture.root.appendingPathComponent("existing.txt")
+        try Data("before\n".utf8).write(to: file)
+        let store = NativeMCPCodeWriteStore()
+        let opened = try await store.call(
+            name: "open_edit_session",
+            arguments: [:],
+            scope: fixture.scope,
+            projectRoot: fixture.root
+        )
+        let sessionID = try opened.string(at: ["result", "session_id"])
+
+        do {
+            _ = try await store.call(
+                name: "stage_edit_batch",
+                arguments: [
+                    "session_id": .string(sessionID),
+                    "operations": .array([.object([
+                        "kind": .string("write"),
+                        "path": .string("existing.txt"),
+                        "content": .string("after\n"),
+                        "expected_sha256": .null,
+                    ])]),
+                ],
+                scope: fixture.scope,
+                projectRoot: fixture.root
+            )
+            Issue.record("Expected an existing-file baseline error")
+        } catch let error as NativeMCPCodeWriteError {
+            #expect(error.errorDescription == "expected_sha256 为 null 仅用于新文件；现有文件 existing.txt 须使用读取所得 SHA-256")
+        }
+        #expect(try String(contentsOf: file, encoding: .utf8) == "before\n")
+    }
+
+    @Test
     func refusesCommitWhenFileChangedAfterStaging() async throws {
         let fixture = try WriteFixture()
         defer { fixture.dispose() }
