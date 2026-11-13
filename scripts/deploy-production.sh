@@ -635,6 +635,7 @@ echo "[INFO] building release images while the current release stays online"
 write_deploy_status running build "Building selected production images"
 (
   cd "$release_dir"
+  export COMPOSE_BAKE=false
   if (( deploy_all == 1 )); then
     ./docker/deploy.sh build
   elif [[ ${#deploy_services[@]} -gt 0 ]]; then
