@@ -33,6 +33,7 @@ mod platform_execution_context;
 mod plugin_application;
 mod plugin_credentials;
 mod plugin_installer;
+mod plugin_repository;
 mod plugin_installer_tool_worker;
 mod plugin_integrity;
 mod plugin_settings;
