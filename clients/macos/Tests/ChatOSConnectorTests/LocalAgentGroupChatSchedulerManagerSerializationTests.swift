@@ -182,4 +182,122 @@ extension LocalAgentGroupChatSchedulerTests {
         XCTAssertNil(noRun)
         XCTAssertEqual(next.first?.outcome, .completed)
     }
+
+    func testUnrecoverablePausedManagerReleasesLaneForNextMessage() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("manager-paused-lane-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let (service, agent, _, direct) = try await managerFixture(folder)
+        let store = try await service.store()
+        let firstPost = try await store.postMessage(
+            ownerUserID: "alice", roomID: direct.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "旧消息"),
+            limits: .init()
+        )
+        let firstClaim = try await store.claimNextDelivery(
+            ownerUserID: "alice", agentID: agent.id, lane: .manager, nowUnixMs: 100
+        )
+        let firstDelivery = try XCTUnwrap(firstClaim)
+        let runID = UUID()
+        let context = try LocalAgentChatRunContext(
+            ownerUserID: "alice", projectID: direct.projectID, roomID: direct.id,
+            agentID: agent.id, deliveryID: firstDelivery.id,
+            triggerMessageID: firstPost.message.id,
+            rootMessageID: firstPost.message.rootMessageID,
+            runID: runID.uuidString.lowercased(), hopCount: 0
+        )
+        var checkpoint = AgentRunCheckpoint(
+            scope: LocalAgentGroupChatRun.runtimeScope(for: context),
+            messages: [.init(role: .system, content: "system"), .init(role: .user, content: "旧消息")]
+        )
+        checkpoint.id = runID
+        checkpoint.status = .paused
+        checkpoint.stopReason = AgentRuntimeError.timeout.localizedDescription
+        try await store.saveRun(try LocalAgentGroupChatRun(
+            id: runID, context: context, modelConfigID: "fast-lane-model",
+            policy: .init(), checkpoint: checkpoint,
+            createdAtUnixMs: 100, updatedAtUnixMs: 200
+        ))
+        let nextPost = try await store.postMessage(
+            ownerUserID: "alice", roomID: direct.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "新消息"),
+            limits: .init()
+        )
+        let suite = "manager-paused-lane-\(UUID())"
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: CommunicationFastLaneServices(probe: CommunicationFastLaneProbe()),
+            settings: .init(suiteName: suite)
+        )
+
+        let results = try await scheduler.drainAccount(ownerUserID: "alice", maximumRuns: 2)
+
+        let released = try await store.delivery(
+            ownerUserID: "alice", deliveryID: firstDelivery.id
+        )
+        let completed = try await store.delivery(
+            ownerUserID: "alice", deliveryID: try XCTUnwrap(nextPost.deliveries.first).id
+        )
+        XCTAssertEqual(released?.status, .failed)
+        XCTAssertEqual(completed?.status, .completed)
+        XCTAssertTrue(results.contains { $0.deliveryID == firstDelivery.id && $0.outcome == .failed })
+        XCTAssertTrue(results.contains {
+            $0.deliveryID == nextPost.deliveries.first?.id && $0.outcome == .completed
+        })
+    }
+
+    func testFreshUnrecoverablePausedManagerFailsDeliveryImmediately() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("manager-fresh-pause-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let (service, _, _, direct) = try await managerFixture(folder)
+        let store = try await service.store()
+        let post = try await store.postMessage(
+            ownerUserID: "alice", roomID: direct.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "会超时的消息"),
+            limits: .init()
+        )
+        let delivery = try XCTUnwrap(post.deliveries.first)
+        let suite = "manager-fresh-pause-\(UUID())"
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: CommunicationFastLaneServices(probe: CommunicationFastLaneProbe()),
+            settings: .init(suiteName: suite),
+            runtime: PausedManagerRuntime()
+        )
+
+        let results = try await scheduler.drainConversation(
+            ownerUserID: "alice", roomID: direct.id, maximumRuns: 1
+        )
+
+        let storedDelivery = try await store.delivery(
+            ownerUserID: "alice", deliveryID: delivery.id
+        )
+        let storedRun = try await store.run(ownerUserID: "alice", deliveryID: delivery.id)
+        XCTAssertEqual(results.first?.outcome, .suspended)
+        XCTAssertEqual(storedRun?.checkpoint.status, .paused)
+        XCTAssertEqual(storedDelivery?.status, .failed)
+    }
+}
+
+private struct PausedManagerRuntime: AgentRuntimeExecuting {
+    func executeRun(
+        checkpoint: AgentRunCheckpoint,
+        scope: String,
+        policy: AgentRunPolicy,
+        model: any AgentModelClient,
+        tools: [AgentToolDefinition],
+        execute: @escaping AgentRuntime.Executor,
+        completionCheck: @escaping AgentRuntime.CompletionCheck,
+        incompletionReminder: @escaping AgentRuntime.IncompletionReminder,
+        contextProvider: (any AgentContextProviding)?,
+        record: @escaping AgentRuntime.Recorder
+    ) async throws -> AgentRunCheckpoint {
+        var paused = checkpoint
+        paused.status = .paused
+        paused.stopReason = AgentRuntimeError.timeout.localizedDescription
+        return paused
+    }
 }

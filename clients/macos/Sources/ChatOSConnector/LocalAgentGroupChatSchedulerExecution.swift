@@ -519,9 +519,8 @@ extension LocalAgentGroupChatScheduler {
             }
         }
         _ = try await session.finish(checkpoint: finalCheckpoint)
-        if finalCheckpoint.status == .needsReview,
-           currentDelivery?.status == .running {
-            if delivery.lane == .executor {
+        if currentDelivery?.status == .running {
+            if finalCheckpoint.status == .needsReview, delivery.lane == .executor {
                 try await suspendTodoForReview(
                     store: store,
                     ownerUserID: ownerUserID,
@@ -529,7 +528,9 @@ extension LocalAgentGroupChatScheduler {
                     runID: context.runID,
                     detail: finalCheckpoint.stopReason ?? "执行中断，需要检查副作用后再决定是否重试。"
                 )
-            } else {
+            } else if delivery.lane == .manager,
+                      [.paused, .needsReview, .limitReached].contains(finalCheckpoint.status),
+                      Self.interruptedCheckpointDisposition(finalCheckpoint) != .safeRetry {
                 _ = try await store.failDelivery(
                     ownerUserID: ownerUserID,
                     deliveryID: delivery.id,
