@@ -1396,12 +1396,33 @@ pub async fn install_marketplace_plugin(
 ) -> Result<PluginSettingsSnapshot, String> {
     let owner_user_id = required_identifier("owner_user_id", input.owner_user_id)?;
     let plugin_id = required_identifier("plugin_id", input.plugin_id)?;
+    install_marketplace_for_owner(
+        &authentication,
+        &host,
+        &settings,
+        &applications,
+        &owner_user_id,
+        &plugin_id,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn install_marketplace_for_owner(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    plugin_id: &str,
+    expected_release_id: Option<&str>,
+) -> Result<PluginSettingsSnapshot, String> {
     let generation = authentication
-        .session_generation_for_owner(&owner_user_id)
+        .session_generation_for_owner(owner_user_id)
         .await?;
     let _transaction = settings.installation_transactions.lock().await;
     let sources = authentication
-        .plugin_install_sources_for_owner(&owner_user_id)
+        .plugin_install_sources_for_owner(owner_user_id)
         .await
         .map_err(|error| error.message)?;
     let source = sources
@@ -1410,7 +1431,10 @@ pub async fn install_marketplace_plugin(
         .find(|source| source.catalog.id == plugin_id)
         .cloned()
         .ok_or_else(|| "Marketplace 中没有找到这个 Plugin。".to_owned())?;
-    let records = list_installation_records(&*host, &owner_user_id).await?;
+    if expected_release_id.is_some_and(|expected| expected != source.release.id) {
+        return Err("Marketplace Release 已变化，请重新搜索并确认后再安装。".into());
+    }
+    let records = list_installation_records(host, owner_user_id).await?;
     let previous = records
         .into_iter()
         .filter(|record| record.spec.plugin_id == plugin_id)
@@ -1419,12 +1443,12 @@ pub async fn install_marketplace_plugin(
     // Do not let an unreadable old directory prevent a signed replacement from being staged.
     let previous_roots = installation_roots(&settings.plugin_root, &previous).unwrap_or_default();
     let response = authentication
-        .download_plugin_artifact_for_owner(&owner_user_id, &source.catalog.id, &source.release.id)
+        .download_plugin_artifact_for_owner(owner_user_id, &source.catalog.id, &source.release.id)
         .await
         .map_err(|error| error.message)?;
     let package =
         install_marketplace_package(settings.plugin_root.clone(), source.clone(), response).await?;
-    let specs = match installation_specs(&owner_user_id, &source, &package, &previous) {
+    let specs = match installation_specs(owner_user_id, &source, &package, &previous) {
         Ok(specs) => specs,
         Err(error) => {
             package.rollback();
@@ -1432,7 +1456,7 @@ pub async fn install_marketplace_plugin(
         }
     };
     applications.reset().await;
-    if let Err(error) = replace_installation_records(&*host, previous, specs).await {
+    if let Err(error) = replace_installation_records(host, previous, specs).await {
         package.rollback();
         return Err(error);
     }
@@ -1445,14 +1469,14 @@ pub async fn install_marketplace_plugin(
     let _ = remove_installation_roots(&settings.plugin_root, stale_roots).await;
     applications.reset().await;
     authentication
-        .require_session_generation(&owner_user_id, generation)
+        .require_session_generation(owner_user_id, generation)
         .await?;
     load_snapshot(
-        &authentication,
-        &*host,
+        authentication,
+        host,
         &settings.plugin_root,
-        &owner_user_id,
-        &applications,
+        owner_user_id,
+        applications,
     )
     .await
 }
@@ -2148,6 +2172,27 @@ fn group_records(
             .push(record);
     }
     Ok(grouped)
+}
+
+pub(crate) async fn list_installation_records_for_owner(
+    host: &HostManager,
+    owner_user_id: &str,
+) -> Result<Vec<LocalPluginInstallationRecord>, String> {
+    list_installation_records(host, owner_user_id).await
+}
+
+/// Return the user-facing Plugin version from an installed manifest without exposing
+/// the installation path or any manifest credentials to callers.  Installation
+/// records intentionally store a monotonically increasing host record version, not
+/// the semantic Plugin version, so callers that present installed metadata should
+/// use this helper when the manifest is still readable.
+pub(crate) fn installed_manifest_version(
+    plugin_root: &Path,
+    records: &[LocalPluginInstallationRecord],
+) -> Option<String> {
+    installed_projection(plugin_root, records)
+        .manifest
+        .map(|manifest| manifest.version)
 }
 
 async fn list_installation_records(
