@@ -29,6 +29,7 @@ tokio-util = "0.7"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
 flate2 = "1"
 tar = "0.4"
+zip = { version = "9.0.0-pre2", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 sha2 = "0.10"
 regex = "1"

@@ -3,8 +3,15 @@ use flate2::read::GzDecoder;
 use reqwest::{Client, StatusCode, Url};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{io::Cursor, path::Path, time::Duration};
+use std::{
+    collections::BTreeSet,
+    fs::{self, OpenOptions},
+    io::{Cursor, Read, Write},
+    path::Path,
+    time::Duration,
+};
 use tar::Archive;
+use zip::ZipArchive;
 
 const MAXIMUM_RESPONSE_BYTES: usize = 4 * 1_024 * 1_024;
 const MAXIMUM_ARCHIVE_BYTES: usize = 256 * 1_024 * 1_024;
@@ -95,7 +102,7 @@ pub(crate) async fn resolve_release(
     asset_name: &str,
 ) -> Result<Value, String> {
     let repository = Repository::parse(repository_url)?;
-    let (archive_sha256, archive_entries) =
+    let (_, archive_sha256, archive_entries) =
         download_and_inspect_release(&repository, tag, asset_name).await?;
     Ok(json!({
         "repository_url": repository.url(),
@@ -106,6 +113,115 @@ pub(crate) async fn resolve_release(
         "archive_entries": archive_entries.iter().take(300).cloned().collect::<Vec<_>>(),
         "entry_count": archive_entries.len(),
     }))
+}
+
+/// Download and verify a fixed GitHub Release asset for the program-MCP
+/// installer. Bytes are returned only after official URL, size, digest, and
+/// archive-entry checks all pass.
+pub(crate) async fn download_release_archive(
+    repository_url: &str,
+    tag: &str,
+    asset_name: &str,
+) -> Result<(Vec<u8>, String, Vec<String>), String> {
+    let repository = Repository::parse(repository_url)?;
+    download_and_inspect_release(&repository, tag, asset_name).await
+}
+
+pub(crate) fn extract_release_archive(
+    bytes: &[u8],
+    asset_name: &str,
+    destination: &Path,
+) -> Result<(), String> {
+    let entries = archive_entries(bytes, asset_name)?;
+    let mut seen = BTreeSet::new();
+    for entry in &entries {
+        if !seen.insert(entry.trim_end_matches('/').to_lowercase()) {
+            return Err("发行包包含重复或大小写冲突的路径。".into());
+        }
+    }
+    if asset_name.ends_with(".zip") {
+        let mut archive =
+            ZipArchive::new(Cursor::new(bytes)).map_err(|_| "ZIP 发行包无法读取。".to_owned())?;
+        for index in 0..archive.len() {
+            let mut item = archive
+                .by_index(index)
+                .map_err(|_| "ZIP 发行包条目无效。".to_owned())?;
+            let name = item
+                .name()
+                .map_err(|_| "ZIP 发行包路径无效。".to_owned())?
+                .into_owned();
+            validate_archive_path(&name)?;
+            let target = destination.join(name.trim_end_matches('/'));
+            if item.is_dir() {
+                fs::create_dir_all(&target).map_err(|_| "无法创建发行包目录。".to_owned())?;
+                continue;
+            }
+            let parent = target
+                .parent()
+                .ok_or_else(|| "发行包目标路径无效。".to_owned())?;
+            fs::create_dir_all(parent).map_err(|_| "无法创建发行包目录。".to_owned())?;
+            let mut output = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)
+                .map_err(|_| "无法写入发行包文件。".to_owned())?;
+            let mut copied = 0u64;
+            let mut buffer = [0u8; 64 * 1024];
+            loop {
+                let read = item
+                    .read(&mut buffer)
+                    .map_err(|_| "发行包文件读取失败。".to_owned())?;
+                if read == 0 {
+                    break;
+                }
+                copied = copied.saturating_add(read as u64);
+                if copied > MAXIMUM_ARCHIVE_UNPACKED_BYTES {
+                    return Err("发行包解压体积超限。".into());
+                }
+                output
+                    .write_all(&buffer[..read])
+                    .map_err(|_| "发行包文件写入失败。".to_owned())?;
+            }
+            output
+                .sync_all()
+                .map_err(|_| "发行包文件提交失败。".to_owned())?;
+        }
+    } else {
+        let decoder = GzDecoder::new(Cursor::new(bytes));
+        let mut archive = Archive::new(decoder);
+        for item in archive
+            .entries()
+            .map_err(|_| "发行包归档无法读取。".to_owned())?
+        {
+            let mut item = item.map_err(|_| "发行包归档条目无效。".to_owned())?;
+            let name = item
+                .path()
+                .map_err(|_| "发行包包含无效路径。".to_owned())?
+                .to_str()
+                .ok_or_else(|| "发行包包含非 UTF-8 路径。".to_owned())?
+                .to_owned();
+            validate_archive_path(&name)?;
+            let target = destination.join(name.trim_end_matches('/'));
+            if item.header().entry_type().is_dir() {
+                fs::create_dir_all(&target).map_err(|_| "无法创建发行包目录。".to_owned())?;
+                continue;
+            }
+            let parent = target
+                .parent()
+                .ok_or_else(|| "发行包目标路径无效。".to_owned())?;
+            fs::create_dir_all(parent).map_err(|_| "无法创建发行包目录。".to_owned())?;
+            let mut output = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)
+                .map_err(|_| "无法写入发行包文件。".to_owned())?;
+            std::io::copy(&mut item, &mut output).map_err(|_| "发行包文件写入失败。".to_owned())?;
+            output
+                .sync_all()
+                .map_err(|_| "发行包文件提交失败。".to_owned())?;
+        }
+    }
+    Ok(())
 }
 
 struct Repository {
@@ -303,7 +419,7 @@ async fn download_and_inspect_release(
     repository: &Repository,
     tag: &str,
     asset_name: &str,
-) -> Result<(String, Vec<String>), String> {
+) -> Result<(Vec<u8>, String, Vec<String>), String> {
     if tag.is_empty()
         || tag.len() > 256
         || tag.contains('\0')
@@ -376,7 +492,7 @@ async fn download_and_inspect_release(
         }
     }
     let entries = archive_entries(&bytes, asset_name)?;
-    Ok((digest, entries))
+    Ok((bytes, digest, entries))
 }
 
 fn archive_entries(bytes: &[u8], asset_name: &str) -> Result<Vec<String>, String> {
@@ -607,6 +723,43 @@ impl RepoError {
 mod tests {
     use super::*;
 
+    fn tar_gz<F>(build: F) -> Vec<u8>
+    where
+        F: FnOnce(&mut tar::Builder<flate2::write::GzEncoder<Vec<u8>>>) -> std::io::Result<()>,
+    {
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        build(&mut archive).unwrap();
+        archive.into_inner().unwrap().finish().unwrap()
+    }
+
+    fn tar_file(
+        archive: &mut tar::Builder<flate2::write::GzEncoder<Vec<u8>>>,
+        path: &str,
+        body: &[u8],
+    ) {
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(0o755);
+        header.set_size(body.len() as u64);
+        header.set_cksum();
+        archive.append_data(&mut header, path, body).unwrap();
+    }
+
+    fn tar_raw_file(
+        archive: &mut tar::Builder<flate2::write::GzEncoder<Vec<u8>>>,
+        path: &[u8],
+        body: &[u8],
+    ) {
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(0o755);
+        header.set_size(body.len() as u64);
+        let name = header.as_mut_bytes();
+        name[..100].fill(0);
+        name[..path.len()].copy_from_slice(path);
+        header.set_cksum();
+        archive.append(&header, body).unwrap();
+    }
+
     #[test]
     fn repository_urls_are_credential_free_and_root_scoped() {
         assert_eq!(
@@ -635,6 +788,77 @@ mod tests {
         assert_eq!(
             sha256(b"ChatOS"),
             "4e8255f84fec1597083c28014438d4991abe6ab388b1e08d77411b719078c874"
+        );
+    }
+
+    #[test]
+    fn tar_gz_release_archive_extracts_windows_program_files() {
+        let bytes = tar_gz(|archive| {
+            tar_file(archive, "chat-mcp/chatos.exe", b"MZ-test");
+            tar_file(
+                archive,
+                "chat-mcp/chatos.plugin.json",
+                br#"{"kind":"program_mcp"}"#,
+            );
+            Ok(())
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let package = directory.path().join("package");
+        fs::create_dir_all(&package).unwrap();
+
+        extract_release_archive(&bytes, "release.tar.gz", &package).unwrap();
+
+        assert_eq!(
+            fs::read(package.join("chat-mcp/chatos.exe")).unwrap(),
+            b"MZ-test"
+        );
+        assert!(package.join("chat-mcp/chatos.plugin.json").is_file());
+    }
+
+    #[test]
+    fn tar_gz_release_archive_rejects_traversal_and_does_not_escape_destination() {
+        let bytes = tar_gz(|archive| {
+            tar_raw_file(archive, b"../escape.exe", b"MZ-test");
+            Ok(())
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let package = directory.path().join("package");
+        fs::create_dir_all(&package).unwrap();
+
+        let error = extract_release_archive(&bytes, "release.tgz", &package).unwrap_err();
+
+        assert!(error.contains("不安全路径"));
+        assert!(!directory.path().join("escape.exe").exists());
+    }
+
+    #[test]
+    fn tar_gz_release_archive_rejects_links_and_case_collisions() {
+        let symlink = tar_gz(|archive| {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            header.set_link_name("target.exe").unwrap();
+            header.set_cksum();
+            archive.append(&header, std::io::empty())
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let package = directory.path().join("package");
+        fs::create_dir_all(&package).unwrap();
+        assert!(
+            extract_release_archive(&symlink, "release.tar.gz", &package)
+                .unwrap_err()
+                .contains("链接或特殊文件")
+        );
+
+        let collision = tar_gz(|archive| {
+            tar_file(archive, "bin/Chat.exe", b"one");
+            tar_file(archive, "bin/chat.exe", b"two");
+            Ok(())
+        });
+        assert!(
+            extract_release_archive(&collision, "release.tar.gz", &package)
+                .unwrap_err()
+                .contains("重复或大小写冲突")
         );
     }
 }

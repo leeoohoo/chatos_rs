@@ -39,8 +39,9 @@ use crate::{
     plugin_installer::{
         inspect_local_package_source, install_git_package, install_local_package,
         install_marketplace_package, install_npm_mcp, install_npm_package_source,
-        resolve_executable, trusted_local_hook_bundles, CommittedPluginPackage,
-        LocalPluginHookSummary, NpmMcpDraft, NpmMcpInspection,
+        install_program_mcp as install_program_mcp_package, resolve_executable,
+        trusted_local_hook_bundles, CommittedPluginPackage, LocalPluginHookSummary, NpmMcpDraft,
+        NpmMcpInspection, ProgramMcpDraft, ProgramMcpInspection,
     },
     plugin_integrity::{
         recover_interrupted_installations, requires_installation_integrity,
@@ -627,6 +628,35 @@ pub(crate) async fn install_custom_npm_mcp(
     let _transaction = settings.installation_transactions.lock().await;
     let (package, inspection) =
         install_npm_mcp(&settings.plugin_root, &draft, &expected_fingerprint).await?;
+    let result = finish_local_plugin_install(
+        authentication,
+        host,
+        settings,
+        applications,
+        owner_user_id,
+        generation,
+        package,
+    )
+    .await?;
+    Ok((result, inspection))
+}
+
+pub(crate) async fn install_program_mcp_source(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    draft: ProgramMcpDraft,
+    expected_fingerprint: String,
+) -> Result<(LocalPluginInstallResult, ProgramMcpInspection), String> {
+    let _resource_permit = settings.acquire_install_resource().await?;
+    let generation = authentication
+        .session_generation_for_owner(owner_user_id)
+        .await?;
+    let _transaction = settings.installation_transactions.lock().await;
+    let (package, inspection) =
+        install_program_mcp_package(&settings.plugin_root, &draft, &expected_fingerprint).await?;
     let result = finish_local_plugin_install(
         authentication,
         host,
