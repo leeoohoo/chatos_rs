@@ -50,16 +50,36 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
               entries.allSatisfy({ $0.index >= 0 && scope.acceptsRecord(id: $0.id, index: $0.index) }) else {
             throw AgentContextError.invalidHistory
         }
+        do {
+            try await syncOnce(entries, reconciling: reconciling)
+        } catch {
+            guard Self.isTransientSyncFailure(error) else { throw error }
+            guard !reconciling else { throw AgentContextError.syncUncertain }
+            do {
+                try await syncOnce(entries, reconciling: true)
+            } catch {
+                guard Self.isTransientSyncFailure(error) else { throw error }
+                throw AgentContextError.syncUncertain
+            }
+        }
+    }
+
+    private func syncOnce(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
         let assertion = try await runtimeAssertion(operation: "record_ingest")
         let records = try entries.map {
             try record($0, projectContextAssertionID: assertion.runtime_identity_revision)
         }
+        var recordsToWrite = records
         if reconciling {
             // Existing batch-sync overwrites summary_status, even for identical IDs. Never blindly
-            // resend an unacknowledged batch: it could turn summarized records back into pending.
+            // resend an unacknowledged batch: only ingest IDs proven to still be absent.
+            recordsToWrite = []
             for expected in records {
                 let result: MemoryRecordEnvelope = try await request("/records/\(encoded(expected.id))" + query(includeThread: true))
-                guard let stored = result.item else { throw AgentContextError.syncUncertain }
+                guard let stored = result.item else {
+                    recordsToWrite.append(expected)
+                    continue
+                }
                 try validate(tenant: stored.tenant_id, source: stored.source_id, thread: stored.thread_id)
                 guard stored.id == expected.id, stored.role == expected.role, stored.record_type == expected.record_type,
                       stored.content == expected.content, stored.structured_payload == expected.structured_payload,
@@ -67,18 +87,29 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
                     throw AgentContextError.invalidHistory
                 }
             }
-            return
+            guard !recordsToWrite.isEmpty else { return }
         }
         let body = MemorySyncRequest(
             tenant_id: scope.tenantID,
             source_id: scope.sourceID,
             project_partition_key: assertion.project_partition_key,
             runtime_context_assertion: assertion.runtime_context_assertion,
-            records: records
+            records: recordsToWrite
         )
         let result: MemorySyncResponse = try await request(threadPath + "/records/batch-sync", method: "PUT", body: body)
-        guard result.thread_id == scope.threadID, result.received_count == entries.count,
-              result.upserted_count == entries.count else { throw ChatOSAPIError.invalidResponse }
+        guard result.thread_id == scope.threadID, result.received_count == recordsToWrite.count,
+              result.upserted_count == recordsToWrite.count else { throw ChatOSAPIError.invalidResponse }
+    }
+
+    private static func isTransientSyncFailure(_ error: Error) -> Bool {
+        if AgentRuntimeError.isTransient(error) { return true }
+        guard let error = error as? ChatOSAPIError else { return false }
+        let statusCode: Int
+        switch error {
+        case let .server(code, _), let .serverDetail(code, _, _, _): statusCode = code
+        default: return false
+        }
+        return statusCode == 408 || statusCode == 429 || statusCode >= 500
     }
 
     public func compose(_ composeRequest: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {

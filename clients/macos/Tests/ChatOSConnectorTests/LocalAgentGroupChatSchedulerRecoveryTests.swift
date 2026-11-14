@@ -25,6 +25,27 @@ extension LocalAgentGroupChatSchedulerTests {
         XCTAssertEqual(LocalAgentGroupChatScheduler.maximumConsecutiveAutomaticRecoveries, 3)
     }
 
+    func testMemorySyncPauseBeforeToolExecutionIsSafeToRecover() {
+        let call = AgentToolCall(id: "read-unread", name: "chat_read_all_unread", arguments: "{}")
+        var checkpoint = AgentRunCheckpoint(
+            scope: "manager:test",
+            messages: [.init(role: .assistant, toolCalls: [call])]
+        )
+        checkpoint.status = .paused
+        checkpoint.stopReason = AgentContextError.syncUncertain.localizedDescription
+        checkpoint.pendingCalls = [call]
+
+        XCTAssertEqual(
+            LocalAgentGroupChatScheduler.interruptedCheckpointDisposition(checkpoint),
+            .safeRetry
+        )
+        checkpoint.inFlightCallID = call.id
+        XCTAssertEqual(
+            LocalAgentGroupChatScheduler.interruptedCheckpointDisposition(checkpoint),
+            .needsReview
+        )
+    }
+
     func testRecoveryCircuitStopsOnlyRepeatedlyCrashingRunAndContinuesIndependentRun() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-recovery-circuit-\(UUID().uuidString)")

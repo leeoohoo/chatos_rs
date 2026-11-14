@@ -149,14 +149,7 @@ actor DurableAgentMemoryService: AgentMemoryServicing {
             guard !batch.isEmpty else { return }
             let wasAttempted = batch.contains(where: \.attempted)
             try await store.markAttempted(batch.map(\.entry.id), scope: scope)
-            do {
-                try await service.sync(batch.map(\.entry), reconciling: wasAttempted)
-            } catch AgentContextError.syncUncertain {
-                // A successful point lookup would have reconciled the batch.
-                // `syncUncertain` means it is definitely absent, so the same
-                // immutable ids can now be uploaded without rewriting records.
-                try await service.sync(batch.map(\.entry), reconciling: false)
-            }
+            try await service.sync(batch.map(\.entry), reconciling: wasAttempted)
             try await store.markUploaded(batch.map(\.entry.id), scope: scope)
         }
     }
