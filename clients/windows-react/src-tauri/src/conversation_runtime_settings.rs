@@ -160,8 +160,31 @@ async fn ensure_settings(
 ) -> Result<LocalConversationRuntimeSettings, String> {
     match get_settings(host, owner_user_id, conversation_id).await {
         Ok(settings) => {
-            selected_model(&settings, models)?;
-            return Ok(settings);
+            if selected_model(&settings, models).is_ok() {
+                return Ok(settings);
+            }
+
+            // Keep a conversation usable when the control plane rotates the
+            // capability revision for the same model. macOS reconciles this
+            // case on load; rejecting it here leaves the composer disabled
+            // until the user performs an unrelated model change.
+            let Some(current_model) = models
+                .iter()
+                .find(|model| model.id == settings.selected_model_config_ref)
+            else {
+                return Err("会话所选模型版本已不可用，请刷新本地配置。".into());
+            };
+            let level = reconciled_thinking_level(current_model, &settings);
+            let reasoning_enabled = level != "none" && current_model.supports_reasoning;
+            return put_settings(
+                host,
+                &settings,
+                current_model,
+                Some(level),
+                settings.remote_connection_id.clone(),
+                reasoning_enabled,
+            )
+            .await;
         }
         Err(error) if error.code.as_deref() != Some("not_found") => return Err(error.message),
         Err(_) => {}
@@ -191,6 +214,26 @@ async fn ensure_settings(
         }
         Err(error) => Err(error.message),
     }
+}
+
+fn reconciled_thinking_level(
+    model: &ControlPlaneModelOption,
+    settings: &LocalConversationRuntimeSettings,
+) -> String {
+    if !model.supports_reasoning || !settings.reasoning_enabled {
+        return "none".into();
+    }
+    settings
+        .selected_thinking_level
+        .as_deref()
+        .filter(|level| {
+            model
+                .thinking_levels
+                .iter()
+                .any(|candidate| candidate == level)
+        })
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| model.default_thinking_level.clone())
 }
 
 async fn get_settings(
@@ -363,5 +406,43 @@ mod tests {
             default_model(&models).map(|model| model.id.as_str()),
             Some("chat")
         );
+    }
+
+    #[test]
+    fn reconciles_rotated_model_revision_without_changing_the_model() {
+        let model = option("chat", "gpt-5");
+        let settings = LocalConversationRuntimeSettings {
+            owner_user_id: "owner".into(),
+            conversation_id: "conversation".into(),
+            selected_model_config_ref: "chat".into(),
+            selected_model_config_revision: "old-revision".into(),
+            selected_thinking_level: Some("medium".into()),
+            remote_connection_id: None,
+            reasoning_enabled: true,
+            version: 4,
+            updated_at_unix_ms: 0,
+        };
+
+        assert_eq!(reconciled_thinking_level(&model, &settings), "medium");
+    }
+
+    #[test]
+    fn falls_back_to_model_default_when_rotated_revision_removed_the_level() {
+        let mut model = option("chat", "gpt-5");
+        model.default_thinking_level = "high".into();
+        model.thinking_levels = vec!["none".into(), "high".into()];
+        let settings = LocalConversationRuntimeSettings {
+            owner_user_id: "owner".into(),
+            conversation_id: "conversation".into(),
+            selected_model_config_ref: "chat".into(),
+            selected_model_config_revision: "old-revision".into(),
+            selected_thinking_level: Some("medium".into()),
+            remote_connection_id: None,
+            reasoning_enabled: true,
+            version: 4,
+            updated_at_unix_ms: 0,
+        };
+
+        assert_eq!(reconciled_thinking_level(&model, &settings), "high");
     }
 }
