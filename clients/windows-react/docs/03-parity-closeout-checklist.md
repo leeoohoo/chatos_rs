@@ -28,6 +28,7 @@ Windows 产品版本：`3.0.9`
 - 同一重建 worker 追加 30 次连续屏幕采集 smoke：30/30 通过、失败数 `0`，耗时 `p50=1,117 ms`、`p95=1,130 ms`、最大 `1,178 ms`。该短压力结果替代前一条 10 次数据作为当前重复稳定性记录，但仍不替代 8 小时长稳基线。
 - 使用仓库正式 sidecar 追加 5 次 Host 原生协议短压力回归：health handshake 与 account-scoped business requests 每次均通过，失败数 `0`，耗时 `median=2,812 ms`、`p95=2,935 ms`（范围 `2,798–2,935 ms`）。这是协议重复短测，不替代单实例客户端、干净 VM 或长稳验收。
 - 追加 20 次 sidecar Host 原生协议短压力回归：health handshake 与 account-scoped business requests 20/20 通过、失败数 `0`，耗时 `p50=2,808 ms`、`p95=2,836 ms`、最大 `2,851 ms`。该数据替代前一条 5 次数据作为当前重复协议基线，但仍不替代单实例客户端和 8 小时长稳验收。
+- 当前 x64 Computer Use worker `doctor` 快照显示 `screenCaptureAvailable=true`、`inputDesktopAvailable=true`、`allGranted=true`、`processElevated=false`；正常桌面目标可用，管理员目标仍受 Windows UIPI 约束。该权限状态与真实 `observe_screen` smoke 一致，未修改系统权限。
 
 - 本轮网络恢复后的原生窗口复核再次打开“插件与 Skills”：控制面返回 6 项 Marketplace 目录；Browser CDP、Solution Studio、Visual Computer Use 明确标记为 Windows 不支持，Diagram Studio、Document Tools、Web Design Studio 显示可安全安装。Computer Use/屏幕采集没有被客户端伪造为可用；该观察不关闭跨平台 `.tgz`、签名 Marketplace 发布和客户端安装闭环。
 - 同步执行 Windows Tauri 定向回归：Controlled Network URL/签名策略 5 项、Plugin 应用运行时 36 项全部通过；本轮没有修改运行逻辑，也没有输入测试账号密码、安装 Plugin、发送消息或修改持久化设置。
