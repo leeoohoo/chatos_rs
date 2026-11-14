@@ -1,14 +1,17 @@
 use crate::authentication::{
     model_credential_environment_variable, AuthenticationManager, GatewayAgentCapability,
-    GatewayModelConfig,
+    GatewayManagedRuntimeConfig, GatewayModelConfig,
 };
 use crate::host_lifecycle::transport::{request, ManagedHost};
 use crate::{
     agent_plugin_runtime::capability_broker_tool_schemas,
     attachment_tool_worker::{
-        attachment_read_tool_schema, team_asset_tool_schemas, team_chat_read_tool_schemas,
-        team_chat_write_tool_schemas, todo_execution_tool_schemas, todo_planning_read_tool_schemas,
-        todo_planning_write_tool_schemas,
+        attachment_read_tool_schema, project_dashboard_tool_schemas, team_asset_tool_schemas,
+        team_chat_read_tool_schemas, team_chat_write_tool_schemas, todo_execution_tool_schemas,
+        todo_planning_read_tool_schemas, todo_planning_write_tool_schemas,
+    },
+    plugin_installer_tool_worker::{
+        plugin_installer_revision, plugin_installer_tool_schemas, PLUGIN_INSTALLER_INSTRUCTIONS,
     },
     terminal_tool_worker::{
         project_read_tool_schemas, project_write_tool_schemas, terminal_tool_schemas,
@@ -184,6 +187,23 @@ async fn persisted_capabilities_are_complete(host: &mut ManagedHost, owner_user_
     if !valid_main_chat_snapshot(&main, owner_user_id) {
         return false;
     }
+    let Ok(HostResult::CapabilityPolicySnapshot {
+        snapshot: plugin_installer,
+    }) = request(
+        host,
+        HostCommand::GetCapabilityPolicySnapshot(GetCapabilityPolicySnapshotCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            profile_key: MAIN_CHAT_PROFILE.into(),
+            capability_policy_revision: plugin_installer_revision(&main.capability_policy_revision),
+        }),
+    )
+    .await
+    else {
+        return false;
+    };
+    if !valid_plugin_installer_snapshot(&plugin_installer, owner_user_id) {
+        return false;
+    }
     for profile_key in [TASK_EXECUTION_PROFILE, TASK_POLICY_PROFILE] {
         let result = request(
             host,
@@ -212,6 +232,7 @@ async fn persisted_capabilities_are_complete(host: &mut ManagedHost, owner_user_
 fn valid_main_chat_snapshot(snapshot: &LocalCapabilityPolicySnapshot, owner_user_id: &str) -> bool {
     let mut expected_tools = vec![attachment_read_tool_schema()];
     expected_tools.extend(team_asset_tool_schemas());
+    expected_tools.extend(project_dashboard_tool_schemas());
     expected_tools.extend(team_chat_read_tool_schemas());
     expected_tools.extend(team_chat_write_tool_schemas());
     expected_tools.extend(todo_planning_read_tool_schemas());
@@ -219,6 +240,16 @@ fn valid_main_chat_snapshot(snapshot: &LocalCapabilityPolicySnapshot, owner_user
     snapshot.owner_user_id == owner_user_id
         && snapshot.profile_key == MAIN_CHAT_PROFILE
         && snapshot.tools == expected_tools
+}
+
+fn valid_plugin_installer_snapshot(
+    snapshot: &LocalCapabilityPolicySnapshot,
+    owner_user_id: &str,
+) -> bool {
+    snapshot.owner_user_id == owner_user_id
+        && snapshot.profile_key == MAIN_CHAT_PROFILE
+        && snapshot.instructions.as_deref() == Some(PLUGIN_INSTALLER_INSTRUCTIONS)
+        && snapshot.tools == plugin_installer_tool_schemas()
 }
 
 fn valid_task_execution_snapshot(
@@ -286,12 +317,15 @@ async fn refresh_from_gateway(
         .iter()
         .map(|model| model.id.clone())
         .collect::<Vec<_>>();
-    let (resolved, capability) = tokio::join!(
+    let (resolved, capability, managed_runtime) = tokio::join!(
         authentication.resolved_models_for_owner(owner_user_id, model_config_refs),
         authentication.local_agent_capability_for_owner(owner_user_id),
+        authentication.managed_runtime_config_for_owner(owner_user_id),
     );
     let resolved = resolved.map_err(|error| error.message)?;
     let capability = capability.map_err(|error| error.message)?;
+    let managed_runtime = managed_runtime.map_err(|error| error.message)?;
+    let task_max_iterations = task_max_iterations(&managed_runtime)?;
     validate_capability(&capability, owner_user_id)?;
 
     let mut environment = persisted.credential_environment.clone();
@@ -304,16 +338,17 @@ async fn refresh_from_gateway(
         if item.id != resolved.id {
             return Err("模型目录刷新顺序不一致。".into());
         }
-        let (snapshot, credential, variable) = match resolved_snapshot(resolved.clone(), owner_user_id) {
-            Ok(snapshot) => snapshot,
-            Err(_) => {
-                // macOS treats one incomplete model configuration as an unusable catalog item
-                // and continues with other complete models. Keep the same behavior on Windows;
-                // capability fields are safety-critical and must never be guessed or defaulted.
-                skipped_invalid_models += 1;
-                continue;
-            }
-        };
+        let (snapshot, credential, variable) =
+            match resolved_snapshot(resolved.clone(), owner_user_id) {
+                Ok(snapshot) => snapshot,
+                Err(_) => {
+                    // macOS treats one incomplete model configuration as an unusable catalog item
+                    // and continues with other complete models. Keep the same behavior on Windows;
+                    // capability fields are safety-critical and must never be guessed or defaulted.
+                    skipped_invalid_models += 1;
+                    continue;
+                }
+            };
         let mut option = model_option_from_gateway(&resolved);
         option.model_config_revision = snapshot.model_config_revision.clone();
         if !refreshed_variables.insert(variable.clone()) {
@@ -344,6 +379,7 @@ async fn refresh_from_gateway(
         owner_user_id,
         &capability.policy_revision,
         &task_enabled_refs,
+        task_max_iterations,
     )
     .await?;
     Ok(RefreshedControlPlane {
@@ -646,15 +682,36 @@ async fn publish_model(
     }
 }
 
+fn task_max_iterations(config: &GatewayManagedRuntimeConfig) -> Result<u32, String> {
+    let configured = config
+        .local_task_execution_settings
+        .as_ref()
+        .map(|settings| settings.max_iterations)
+        .unwrap_or(MAX_TASK_ITERATIONS as usize);
+    if !(2..=10_000).contains(&configured) {
+        return Err("账号的本地任务最大迭代次数超出允许范围。".into());
+    }
+    u32::try_from(configured).map_err(|_| "账号的本地任务最大迭代次数无效。".into())
+}
+
 async fn publish_capabilities(
     host: &mut ManagedHost,
     owner_user_id: &str,
     gateway_revision: &str,
     task_enabled_refs: &[String],
+    task_max_iterations: u32,
 ) -> Result<(), String> {
     let revision = capability_revision(gateway_revision);
+    let plugin_installer = LocalCapabilityPolicySnapshot {
+        owner_user_id: owner_user_id.to_owned(),
+        profile_key: MAIN_CHAT_PROFILE.into(),
+        capability_policy_revision: plugin_installer_revision(&revision),
+        instructions: Some(PLUGIN_INSTALLER_INSTRUCTIONS.into()),
+        prefixed_input_items: Vec::new(),
+        tools: plugin_installer_tool_schemas(),
+    };
     let task_policy = json!({
-        "max_iterations": MAX_TASK_ITERATIONS,
+        "max_iterations": task_max_iterations,
         "allowed_model_config_ids": task_enabled_refs,
         "enabled_builtin_kinds": ["CodeMaintainerRead", "CodeMaintainerWrite", "TerminalController"],
         "external_mcp_config_ids": [],
@@ -663,6 +720,9 @@ async fn publish_capabilities(
     })
     .to_string();
     for snapshot in [
+        // Publish this before the normal main-chat snapshot so GetLatest remains
+        // the regular capability while the installer is selected by exact revision.
+        plugin_installer,
         LocalCapabilityPolicySnapshot {
             owner_user_id: owner_user_id.to_owned(),
             profile_key: MAIN_CHAT_PROFILE.into(),
@@ -672,6 +732,7 @@ async fn publish_capabilities(
             tools: {
                 let mut tools = vec![attachment_read_tool_schema()];
                 tools.extend(team_asset_tool_schemas());
+                tools.extend(project_dashboard_tool_schemas());
                 tools.extend(team_chat_read_tool_schemas());
                 tools.extend(team_chat_write_tool_schemas());
                 tools.extend(todo_planning_read_tool_schemas());
@@ -859,7 +920,8 @@ mod tests {
             supports_reasoning: true,
             supports_responses: true,
         };
-        let error = resolved_snapshot(model, "owner-1").expect_err("missing revision must fail closed");
+        let error =
+            resolved_snapshot(model, "owner-1").expect_err("missing revision must fail closed");
         assert!(error.contains("capability revision"));
     }
 
@@ -907,5 +969,31 @@ mod tests {
         };
         assert!(valid_task_execution_snapshot(&execution, owner));
         assert!(valid_task_policy_snapshot(&policy, owner));
+    }
+
+    #[test]
+    fn managed_task_iterations_use_gateway_value_and_default_safely() {
+        let configured: GatewayManagedRuntimeConfig = serde_json::from_value(json!({
+            "local_task_execution_settings": { "max_iterations": 725 }
+        }))
+        .unwrap();
+        assert_eq!(task_max_iterations(&configured).unwrap(), 725);
+        assert_eq!(
+            task_max_iterations(&GatewayManagedRuntimeConfig {
+                native_agent_runtime_settings: None,
+                local_task_execution_settings: None,
+            })
+            .unwrap(),
+            MAX_TASK_ITERATIONS
+        );
+    }
+
+    #[test]
+    fn managed_task_iterations_reject_out_of_range_values() {
+        let config: GatewayManagedRuntimeConfig = serde_json::from_value(json!({
+            "local_task_execution_settings": { "max_iterations": 1 }
+        }))
+        .unwrap();
+        assert!(task_max_iterations(&config).is_err());
     }
 }

@@ -1,10 +1,10 @@
 use chatos_local_agent_protocol::{
-    GetConversationCommand, GetConversationRuntimeSettingsCommand,
-    GetLatestCapabilityPolicySnapshotCommand, GuideConversationTurnCommand, HostCommand,
-    HostResult, ListLatestModelConfigSnapshotsCommand, LocalConversationAttachmentSpec,
-    LocalConversationDetail, LocalConversationResourceBinding, LocalConversationResourceKind,
-    LocalConversationRuntimeSettings, LocalConversationTurnStatus, LocalModelConfigSnapshot,
-    PutConversationRuntimeSettingsCommand, StartConversationTurnCommand,
+    GetCapabilityPolicySnapshotCommand, GetConversationCommand,
+    GetConversationRuntimeSettingsCommand, GetLatestCapabilityPolicySnapshotCommand,
+    GuideConversationTurnCommand, HostCommand, HostResult, ListLatestModelConfigSnapshotsCommand,
+    LocalConversationAttachmentSpec, LocalConversationDetail, LocalConversationResourceBinding,
+    LocalConversationResourceKind, LocalConversationRuntimeSettings, LocalConversationTurnStatus,
+    LocalModelConfigSnapshot, PutConversationRuntimeSettingsCommand, StartConversationTurnCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -14,6 +14,10 @@ use crate::{
     attachment_tool_worker::AttachmentToolWorker,
     conversation_attachments::{AttachmentManager, AttachmentScope},
     host_lifecycle::{HostExecutionError, HostManager},
+    plugin_installer_tool_worker::{
+        plugin_installer_revision, plugin_installer_tool_schemas, PLUGIN_INSTALLER_CONTACT_ID,
+        PLUGIN_INSTALLER_INSTRUCTIONS,
+    },
     terminal_tool_worker::TerminalToolWorker,
 };
 
@@ -194,7 +198,12 @@ async fn start_new_turn(
     attachments: Vec<LocalConversationAttachmentSpec>,
 ) -> Result<ConversationSendAck, String> {
     let settings = ensure_runtime_settings(manager, owner_user_id, conversation_id).await?;
-    let capability_revision = latest_main_chat_capability(manager, owner_user_id).await?;
+    let capability_revision = latest_capability_for_resource(
+        manager,
+        owner_user_id,
+        detail.conversation.resource.as_ref(),
+    )
+    .await?;
     let turn_id = identifier("turn");
     let message_id = identifier("message");
     let mut metadata = Map::from_iter([
@@ -386,6 +395,42 @@ async fn latest_main_chat_capability(
     Ok(snapshot.capability_policy_revision)
 }
 
+async fn latest_capability_for_resource(
+    manager: &HostManager,
+    owner_user_id: &str,
+    resource: Option<&LocalConversationResourceBinding>,
+) -> Result<String, String> {
+    let base_revision = latest_main_chat_capability(manager, owner_user_id).await?;
+    let is_plugin_installer = resource.is_some_and(|resource| {
+        resource.kind == LocalConversationResourceKind::Contact
+            && resource.resource_id == PLUGIN_INSTALLER_CONTACT_ID
+    });
+    if !is_plugin_installer {
+        return Ok(base_revision);
+    }
+    let plugin_revision = plugin_installer_revision(&base_revision);
+    let result = manager
+        .execute(HostCommand::GetCapabilityPolicySnapshot(
+            GetCapabilityPolicySnapshotCommand {
+                owner_user_id: owner_user_id.to_owned(),
+                profile_key: MAIN_CHAT_PROFILE.into(),
+                capability_policy_revision: plugin_revision,
+            },
+        ))
+        .await?;
+    let HostResult::CapabilityPolicySnapshot { snapshot } = result else {
+        return Err("Local Agent Host 返回了错误的 Plugin 安装能力响应。".into());
+    };
+    if snapshot.owner_user_id != owner_user_id
+        || snapshot.profile_key != MAIN_CHAT_PROFILE
+        || snapshot.instructions.as_deref() != Some(PLUGIN_INSTALLER_INSTRUCTIONS)
+        || snapshot.tools != plugin_installer_tool_schemas()
+    {
+        return Err("Local Agent Host 返回了不匹配的 Plugin 安装能力。".into());
+    }
+    Ok(snapshot.capability_policy_revision)
+}
+
 fn default_conversation_model(
     snapshots: &[LocalModelConfigSnapshot],
 ) -> Option<&LocalModelConfigSnapshot> {
@@ -528,8 +573,14 @@ mod tests {
         };
         append_conversation_identity(&mut metadata, Some(&project), "我的项目")
             .expect("project identity");
-        assert_eq!(metadata.get("agent_id"), Some(&Value::String("jiguli".into())));
-        assert_eq!(metadata.get("agent_name"), Some(&Value::String("叽咕狸".into())));
+        assert_eq!(
+            metadata.get("agent_id"),
+            Some(&Value::String("jiguli".into()))
+        );
+        assert_eq!(
+            metadata.get("agent_name"),
+            Some(&Value::String("叽咕狸".into()))
+        );
         assert_eq!(
             metadata.get("project_name"),
             Some(&Value::String("我的项目".into()))
