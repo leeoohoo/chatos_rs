@@ -32,7 +32,7 @@ use std::{
     },
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufStream},
     net::{TcpListener as TokioTcpListener, TcpStream},
     process::{Child, Command},
     sync::{Mutex, Notify, Semaphore},
@@ -56,6 +56,7 @@ const MAXIMUM_STATIC_TOTAL_BYTES: u64 = 32 * 1_024 * 1_024;
 const MAXIMUM_STATIC_REQUEST_BYTES: usize = 16 * 1_024;
 const MAXIMUM_STATIC_CONNECTIONS: usize = 64;
 const MAXIMUM_LOOPBACK_PROXY_CONNECTIONS: usize = 64;
+const MAXIMUM_LOOPBACK_PROXY_HEADER_BYTES: usize = 256 * 1_024;
 const LOOPBACK_PROXY_CONNECT_TIMEOUT_MS: u64 = 700;
 const LOOPBACK_PROXY_IDLE_TIMEOUT_MS: u64 = 300_000;
 const HOST_CONTEXT_READ_CAPABILITY: &str = "host.context.read";
@@ -1527,11 +1528,11 @@ async fn run_loopback_proxy(
 }
 
 async fn proxy_loopback_connection(
-    mut downstream: TcpStream,
+    downstream: TcpStream,
     target: SocketAddr,
     _permit: tokio::sync::OwnedSemaphorePermit,
 ) {
-    let Ok(Ok(mut upstream)) = timeout(
+    let Ok(Ok(upstream)) = timeout(
         Duration::from_millis(LOOPBACK_PROXY_CONNECT_TIMEOUT_MS),
         TcpStream::connect(target),
     )
@@ -1539,11 +1540,87 @@ async fn proxy_loopback_connection(
     else {
         return;
     };
+    let mut downstream = BufStream::new(downstream);
+    let mut upstream = BufStream::new(upstream);
+    let Some(request_headers) = read_proxy_headers(&mut downstream).await else {
+        return;
+    };
+    if !valid_proxy_request(&request_headers)
+        || upstream.write_all(&request_headers).await.is_err()
+        || upstream.flush().await.is_err()
+    {
+        return;
+    }
+    let Some(response_headers) = read_proxy_headers(&mut upstream).await else {
+        return;
+    };
+    if !valid_proxy_response(&response_headers)
+        || downstream.write_all(&response_headers).await.is_err()
+        || downstream.flush().await.is_err()
+    {
+        return;
+    }
     let _ = timeout(
         Duration::from_millis(LOOPBACK_PROXY_IDLE_TIMEOUT_MS),
         tokio::io::copy_bidirectional(&mut downstream, &mut upstream),
     )
     .await;
+}
+
+async fn read_proxy_headers(stream: &mut BufStream<TcpStream>) -> Option<Vec<u8>> {
+    let mut headers = Vec::with_capacity(1_024);
+    let mut buffer = [0_u8; 4_096];
+    loop {
+        let count = timeout(Duration::from_secs(2), stream.read(&mut buffer))
+            .await
+            .ok()?
+            .ok()?;
+        if count == 0 {
+            return None;
+        }
+        headers.extend_from_slice(&buffer[..count]);
+        if headers.windows(4).any(|window| window == b"\r\n\r\n")
+            || headers.windows(2).any(|window| window == b"\n\n")
+        {
+            return Some(headers);
+        }
+        if headers.len() > MAXIMUM_LOOPBACK_PROXY_HEADER_BYTES {
+            return None;
+        }
+    }
+}
+
+fn valid_proxy_request(headers: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(headers) else {
+        return false;
+    };
+    let Some(first_line) = text.lines().next() else {
+        return false;
+    };
+    let mut parts = first_line.split_ascii_whitespace();
+    let method = parts.next().unwrap_or_default();
+    let target = parts.next().unwrap_or_default();
+    let version = parts.next().unwrap_or_default();
+    parts.next().is_none()
+        && !method.eq_ignore_ascii_case("CONNECT")
+        && target.starts_with('/')
+        && !target.starts_with("//")
+        && matches!(version, "HTTP/1.0" | "HTTP/1.1")
+}
+
+fn valid_proxy_response(headers: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(headers) else {
+        return false;
+    };
+    let Some(first_line) = text.lines().next() else {
+        return false;
+    };
+    let mut parts = first_line.split_ascii_whitespace();
+    let version = parts.next().unwrap_or_default();
+    let status = parts.next().unwrap_or_default();
+    matches!(version, "HTTP/1.0" | "HTTP/1.1")
+        && status.len() == 3
+        && status.as_bytes().iter().all(u8::is_ascii_digit)
 }
 
 async fn spawn_runtime_process(
@@ -2659,5 +2736,20 @@ mod tests {
         let mut oversized = request;
         oversized.payload = json!({"value": "x".repeat(MAXIMUM_BRIDGE_REQUEST_BYTES)});
         assert!(validate_bridge_request(&oversized).is_err());
+    }
+
+    #[test]
+    fn loopback_proxy_header_gate_rejects_connect_and_absolute_targets() {
+        assert!(valid_proxy_request(
+            b"GET /api/health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+        ));
+        assert!(!valid_proxy_request(
+            b"CONNECT 10.0.0.1:443 HTTP/1.1\r\n\r\n"
+        ));
+        assert!(!valid_proxy_request(
+            b"GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n"
+        ));
+        assert!(valid_proxy_response(b"HTTP/1.1 200 OK\r\n\r\n"));
+        assert!(!valid_proxy_response(b"not-http\r\n\r\n"));
     }
 }
