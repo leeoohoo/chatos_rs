@@ -275,9 +275,8 @@ public struct AgentMemoryContextRecord: Equatable, Sendable {
 public struct AgentMemoryContext: Sendable {
     public let blocks: [AgentMemoryContextBlock]
     public let recentRecords: [AgentMemoryContextRecord]
-    /// Memory Engine sets this when the requested projection cannot fit until raw records are
-    /// summarized. Callers must compact and re-compose instead of forwarding the oversized
-    /// projection to a model.
+    /// Memory Engine sets this when it omitted older raw records from the already budgeted
+    /// projection. Callers may use this projection immediately and start compaction in background.
     public let needsCompaction: Bool
     public let budgetUsedTokens: Int?
     public let pendingRecordCount: Int?
@@ -300,8 +299,8 @@ public protocol AgentMemoryServicing: Sendable {
     func ensureThread() async throws
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws
     func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext
-    /// Runs the active summary required by a compose response with `needsCompaction=true` and
-    /// returns only after that job reaches a terminal state.
+    /// Starts the active summary requested by a compose response with `needsCompaction=true`.
+    /// The server owns the background job after accepting it.
     func compactSummary() async throws
     func flushSummary() async throws
 }

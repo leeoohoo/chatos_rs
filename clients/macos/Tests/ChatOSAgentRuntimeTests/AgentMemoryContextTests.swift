@@ -162,32 +162,12 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertEqual(flushes, 1)
     }
 
-    func testComposeCompactsAndRecomposesWhenMemoryExceedsBudget() async throws {
-        let (checkpoint, scope) = try fixture()
-        let memory = TestMemory(scope: scope, requiresCompaction: true)
-        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
-
-        let prepared = try await provider.prepare(
-            checkpoint: provider.bind(checkpoint),
-            tools: tools,
-            modelCapability: try modelCapability(),
-            deadline: Date().addingTimeInterval(60),
-            record: { _, _ in }
-        )
-
-        XCTAssertEqual(prepared.messages.map(\.content), checkpoint.messages.map(\.content))
-        let composeCalls = await memory.composeCalls
-        let flushes = await memory.flushes
-        XCTAssertEqual(composeCalls, 2)
-        XCTAssertEqual(flushes, 1)
-    }
-
-    func testCompactionGenerationFailureContinuesWithExactCurrentTurn() async throws {
+    func testComposeStartsBackgroundCompactionAndUsesBudgetedProjection() async throws {
         let (checkpoint, scope) = try fixture()
         let memory = TestMemory(
             scope: scope,
             requiresCompaction: true,
-            compactionFailure: true
+            firstComposeBlockCharacters: 32
         )
         let provider = AgentMemoryContextProvider(scope: scope, service: memory)
 
@@ -199,19 +179,21 @@ final class AgentMemoryContextTests: XCTestCase {
             record: { _, _ in }
         )
 
-        XCTAssertEqual(prepared.messages, checkpoint.messages)
+        XCTAssertTrue(prepared.messages.contains { $0.content.contains(String(repeating: "h", count: 32)) })
+        XCTAssertEqual(prepared.messages.last, checkpoint.messages.last)
         let composeCalls = await memory.composeCalls
         let flushes = await memory.flushes
         XCTAssertEqual(composeCalls, 1)
         XCTAssertEqual(flushes, 1)
     }
 
-    func testTransientCompactionFailureContinuesWithExactCurrentTurn() async throws {
+    func testCompactionGenerationFailureKeepsBudgetedProjectionAndCurrentTurn() async throws {
         let (checkpoint, scope) = try fixture()
         let memory = TestMemory(
             scope: scope,
             requiresCompaction: true,
-            transientCompactionFailure: true
+            compactionFailure: true,
+            firstComposeBlockCharacters: 32
         )
         let provider = AgentMemoryContextProvider(scope: scope, service: memory)
 
@@ -223,7 +205,34 @@ final class AgentMemoryContextTests: XCTestCase {
             record: { _, _ in }
         )
 
-        XCTAssertEqual(prepared.messages, checkpoint.messages)
+        XCTAssertTrue(prepared.messages.contains { $0.content.contains(String(repeating: "h", count: 32)) })
+        XCTAssertEqual(prepared.messages.last, checkpoint.messages.last)
+        let composeCalls = await memory.composeCalls
+        let flushes = await memory.flushes
+        XCTAssertEqual(composeCalls, 1)
+        XCTAssertEqual(flushes, 1)
+    }
+
+    func testTransientCompactionFailureKeepsBudgetedProjectionAndCurrentTurn() async throws {
+        let (checkpoint, scope) = try fixture()
+        let memory = TestMemory(
+            scope: scope,
+            requiresCompaction: true,
+            transientCompactionFailure: true,
+            firstComposeBlockCharacters: 32
+        )
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+
+        let prepared = try await provider.prepare(
+            checkpoint: provider.bind(checkpoint),
+            tools: tools,
+            modelCapability: try modelCapability(),
+            deadline: Date().addingTimeInterval(60),
+            record: { _, _ in }
+        )
+
+        XCTAssertTrue(prepared.messages.contains { $0.content.contains(String(repeating: "h", count: 32)) })
+        XCTAssertEqual(prepared.messages.last, checkpoint.messages.last)
         let composeCalls = await memory.composeCalls
         let flushes = await memory.flushes
         XCTAssertEqual(composeCalls, 1)

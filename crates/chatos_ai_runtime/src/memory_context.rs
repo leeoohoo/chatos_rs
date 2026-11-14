@@ -19,8 +19,6 @@ use crate::tool_runtime::ToolResultModelBudgetLimits;
 use crate::traits::SaveRecordInput;
 
 pub(crate) const MEMORY_CONTEXT_ITEM_PREFIX: &str = "[memory_engine_context]";
-const REQUIRED_COMPACTION_POLL_INTERVAL: Duration = Duration::from_millis(250);
-const MAX_REQUIRED_COMPACTION_ROUNDS: usize = 128;
 
 #[path = "memory_context/compose_items.rs"]
 mod compose_items;
@@ -222,59 +220,31 @@ impl MemoryContextComposer {
     }
 
     pub async fn compose(&self, scope: &MemoryScope) -> Result<ComposeContextResponse, String> {
-        let mut response = self.compose_once(scope).await?;
-        for _ in 0..MAX_REQUIRED_COMPACTION_ROUNDS {
-            if !response.meta.needs_compaction {
-                if let Some(cache) = self.resilient_cache.as_ref() {
-                    if let Err(error) = cache.store(scope, &response).await {
-                        warn!(
-                            error = error.as_str(),
-                            "store local Memory context cache failed"
-                        );
-                    }
+        let response = self.compose_once(scope).await?;
+        if response.meta.needs_compaction {
+            let composer = self.clone();
+            let scope = scope.clone();
+            tokio::spawn(async move {
+                if let Err(error) = composer
+                    .run_active_summary(&scope, Some("compose_budget_compaction"))
+                    .await
+                {
+                    warn!(
+                        error = error.as_str(),
+                        "start background Memory compaction failed"
+                    );
                 }
-                return Ok(response);
-            }
-            let before_pending = response
-                .meta
-                .candidate_count_by_pool
-                .get("raw_tail")
-                .copied()
-                .unwrap_or(response.meta.recent_record_count);
-            let before_tokens = response.meta.budget_used.total;
-            let initial = self
-                .run_active_summary(scope, Some("compose_budget_compaction"))
-                .await?;
-            let status = self
-                .wait_for_active_summary_completion(
-                    scope,
-                    initial,
-                    REQUIRED_COMPACTION_POLL_INTERVAL,
-                )
-                .await?;
-            if status.failed || (!status.generated && !status.compacted) {
-                return Err(
-                    "Memory compose required compaction but the summary job made no progress"
-                        .to_string(),
-                );
-            }
-            let recomposed = self.compose_once(scope).await?;
-            let after_pending = recomposed
-                .meta
-                .candidate_count_by_pool
-                .get("raw_tail")
-                .copied()
-                .unwrap_or(recomposed.meta.recent_record_count);
-            if after_pending >= before_pending && recomposed.meta.budget_used.total >= before_tokens
-            {
-                return Err(
-                    "Memory compose compaction did not reduce pending records or token usage"
-                        .to_string(),
-                );
-            }
-            response = recomposed;
+            });
         }
-        Err("Memory compose exceeded the required compaction round limit".to_string())
+        if let Some(cache) = self.resilient_cache.as_ref() {
+            if let Err(error) = cache.store(scope, &response).await {
+                warn!(
+                    error = error.as_str(),
+                    "store local Memory context cache failed"
+                );
+            }
+        }
+        Ok(response)
     }
 
     async fn compose_once(&self, scope: &MemoryScope) -> Result<ComposeContextResponse, String> {
