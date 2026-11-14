@@ -40,6 +40,57 @@ pub(super) struct MemoryWriteServerState {
     record_syncs: Arc<AtomicUsize>,
 }
 
+#[derive(Clone, Default)]
+struct BackgroundCompactionState {
+    triggers: Arc<AtomicUsize>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+async fn compose_budgeted_context() -> axum::Json<ComposeContextResponse> {
+    let meta = ComposeContextMeta {
+        budget_used: memory_engine_sdk::ComposeTokenBudget {
+            total: 10,
+            ..Default::default()
+        },
+        needs_compaction: true,
+        ..Default::default()
+    };
+    axum::Json(ComposeContextResponse {
+        thread_id: "conversation-1".to_string(),
+        blocks: vec![ComposeContextBlock {
+            block_type: "thread_summary".to_string(),
+            pool: "thread_continuity".to_string(),
+            text: "budgeted history".to_string(),
+            estimated_tokens: 10,
+            ..Default::default()
+        }],
+        recent_records: Vec::new(),
+        meta,
+    })
+}
+
+async fn accept_background_compaction(
+    axum::extract::State(state): axum::extract::State<BackgroundCompactionState>,
+) -> axum::Json<Value> {
+    state.triggers.fetch_add(1, Ordering::SeqCst);
+    state.release.notified().await;
+    axum::Json(json!({
+        "thread_id": "conversation-1",
+        "accepted": true,
+        "running": true,
+        "completed": false,
+        "failed": false,
+        "job_run_id": "job-1",
+        "generated": false,
+        "summary_id": null,
+        "source_record_count": 0,
+        "pending_before_count": 10,
+        "pending_after_count": null,
+        "compacted": false,
+        "error_message": null
+    }))
+}
+
 pub(super) async fn accept_thread_upsert(
     axum::extract::State(state): axum::extract::State<MemoryWriteServerState>,
     axum::extract::Path(thread_id): axum::extract::Path<String>,
@@ -384,6 +435,66 @@ async fn composer_fails_closed_when_remote_is_offline() {
     .with_runtime_context_assertion_issuer(test_assertion_issuer())
     .with_resilient_cache(TestContextCache);
     assert!(composer.compose(&scope).await.is_err());
+    server.abort();
+}
+
+#[tokio::test]
+async fn composer_returns_budgeted_context_without_waiting_for_background_compaction() {
+    use axum::{routing::post, Router};
+
+    let state = BackgroundCompactionState::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn({
+        let state = state.clone();
+        async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route(
+                        "/api/memory-engine/v1/context/compose",
+                        post(compose_budgeted_context),
+                    )
+                    .route(
+                        "/api/memory-engine/v1/threads/{thread_id}/active-summary/run",
+                        post(accept_background_compaction),
+                    )
+                    .with_state(state),
+            )
+            .await
+            .expect("server");
+        }
+    });
+    let composer = MemoryContextComposer::new_direct(
+        format!("http://{address}"),
+        Duration::from_secs(2),
+        "local_agent",
+    )
+    .expect("composer")
+    .with_runtime_context_assertion_issuer(test_assertion_issuer());
+    let scope = MemoryScope::thread("user-1", "local_agent", "conversation-1")
+        .with_subject_id("agent:test-agent")
+        .with_policy(ComposeContextPolicy {
+            max_memory_tokens: 1_000,
+            max_recent_record_tokens: 600,
+            max_thread_summary_tokens: 200,
+            max_project_memory_tokens: 100,
+            max_agent_memory_tokens: 100,
+        })
+        .with_compose_context(None, None, "capability-v1");
+
+    let response = composer.compose(&scope).await.expect("compose");
+    assert_eq!(response.blocks[0].text, "budgeted history");
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while state.triggers.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("background compaction trigger");
+    state.release.notify_one();
     server.abort();
 }
 

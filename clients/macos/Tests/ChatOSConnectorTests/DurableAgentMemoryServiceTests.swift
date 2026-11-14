@@ -91,7 +91,7 @@ final class DurableAgentMemoryServiceTests: XCTestCase {
                 try await service.compactSummary()
                 XCTFail("Expected recoverable compaction failure")
             } catch is AgentMemoryCompactionFailure {
-                // The provider can continue with the exact current turn.
+                // The provider can continue with the already budgeted projection.
             }
         }
         let compactCalls = await remote.compactCalls

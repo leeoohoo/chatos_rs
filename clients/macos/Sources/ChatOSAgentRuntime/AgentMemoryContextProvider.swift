@@ -42,7 +42,7 @@ public extension AgentContextProviding {
 
 /// No credentials or network configuration are stored in checkpoints.
 public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
-    private static let maximumRequiredCompactionRounds = 3
+    private static let foregroundCompactionWaitSeconds = 5.0
     public let scope: AgentMemoryScope
     private let service: any AgentMemoryServicing
 
@@ -155,41 +155,42 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
                 currentTurnID: conversationTurnID(state.messages, index: currentUserIndex),
                 availableMemoryTokens: available
             )
-            var context = try await service.compose(composeRequest)
-            for round in 1...Self.maximumRequiredCompactionRounds where context.needsCompaction {
+            let context = try await service.compose(composeRequest)
+            if context.needsCompaction {
                 try await emit(
                     state,
                     "memory_compacting",
-                    "Memory Engine 正在压缩超出预算的历史上下文（\(round)/\(Self.maximumRequiredCompactionRounds)）",
+                    "Memory Engine 正在后台压缩尚未摘要的历史；本轮继续使用已按预算组合的 Memory 上下文",
                     record: record
                 )
-                let beforeTokens = context.budgetUsedTokens
-                let beforePending = context.pendingRecordCount ?? context.recentRecords.count
                 do {
-                    try await service.compactSummary()
-                } catch let failure as AgentMemoryCompactionFailure {
+                    try await withAgentTimeout(seconds: Self.foregroundCompactionWaitSeconds) {
+                        try await service.compactSummary()
+                    }
+                    try await emit(
+                        state,
+                        "memory_compaction_started",
+                        "Memory Engine 历史压缩已在后台启动；本轮继续使用已按预算组合的 Memory 上下文",
+                        record: record
+                    )
+                } catch {
+                    let reason: String
+                    if let failure = error as? AgentMemoryCompactionFailure {
+                        reason = failure.reason
+                    } else if AgentRuntimeError.isTransient(error) {
+                        reason = error.localizedDescription
+                    } else {
+                        throw error
+                    }
                     try await emit(
                         state,
                         "memory_compaction_deferred",
-                        "Memory Engine 历史压缩暂时失败；本轮仅使用固定指令和完整当前活动轮继续，历史记录仍保留并等待后续重试。\(failure.reason.prefix(400))",
+                        "Memory Engine 历史压缩本次未能启动；本轮继续使用已按预算组合的 Memory 上下文，下轮会重试，历史记录仍完整保留。\(reason.prefix(400))",
                         record: record
                     )
-                    try await check(deadline: deadline, shouldPause: shouldPause)
-                    return .init(checkpoint: state, messages: fixedMessages)
                 }
                 try await check(deadline: deadline, shouldPause: shouldPause)
-                let recomposed = try await service.compose(composeRequest)
-                let afterPending = recomposed.pendingRecordCount ?? recomposed.recentRecords.count
-                if recomposed.needsCompaction,
-                   afterPending >= beforePending,
-                   let beforeTokens,
-                   let afterTokens = recomposed.budgetUsedTokens,
-                   afterTokens >= beforeTokens {
-                    throw AgentContextError.budgetExceeded
-                }
-                context = recomposed
             }
-            guard !context.needsCompaction else { throw AgentContextError.budgetExceeded }
             let messages = try AgentContextAssembler.assemble(
                 checkpoint: state, memory: state.memory!, context: context
             )

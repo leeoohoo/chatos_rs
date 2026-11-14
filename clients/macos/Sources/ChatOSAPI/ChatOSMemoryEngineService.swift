@@ -149,19 +149,11 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
     }
 
     public func compactSummary() async throws {
-        var result = try await runSummary(triggerReason: "compose_budget_compaction")
-        while result.running {
-            try Task.checkCancellation()
-            try await Task.sleep(for: .seconds(1))
-            result = try await activeSummaryStatus(jobRunID: result.job_run_id)
-        }
+        let result = try await runSummary(triggerReason: "compose_budget_compaction")
         if result.failed {
             throw AgentMemoryCompactionFailure(
                 reason: result.error_message ?? "summary generation failed"
             )
-        }
-        guard result.completed, result.generated || result.compacted else {
-            throw AgentContextError.budgetExceeded
         }
     }
 
@@ -182,25 +174,6 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
             threadPath + "/active-summary/run", method: "POST", body: body
         )
         guard result.thread_id == scope.threadID, result.accepted else {
-            throw AgentRuntimeError.scopeMismatch
-        }
-        return result
-    }
-
-    private func activeSummaryStatus(jobRunID: String?) async throws -> MemorySummaryDTO {
-        let assertion = try await runtimeAssertion(operation: "summarize")
-        var body: [String: JSONValue] = [
-            "tenant_id": .string(scope.tenantID),
-            "source_id": .string(scope.sourceID),
-            "project_partition_key": .string(assertion.project_partition_key),
-            "runtime_context_assertion": .string(assertion.runtime_context_assertion),
-        ]
-        if let jobRunID { body["job_run_id"] = .string(jobRunID) }
-        let result: MemorySummaryDTO = try await request(
-            threadPath + "/active-summary/status", method: "POST", body: body
-        )
-        guard result.thread_id == scope.threadID,
-              jobRunID == nil || result.job_run_id == jobRunID else {
             throw AgentRuntimeError.scopeMismatch
         }
         return result

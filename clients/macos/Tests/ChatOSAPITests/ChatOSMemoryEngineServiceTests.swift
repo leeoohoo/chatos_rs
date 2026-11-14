@@ -89,7 +89,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual(try object(requests[1].body)["trigger_reason"] as? String, "agent_run_terminal")
     }
 
-    func testBudgetCompactionWaitsForAUsableActiveSummary() async throws {
+    func testBudgetCompactionStartsBackgroundActiveSummary() async throws {
         let (scope, transport, client) = try fixture()
         let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
 

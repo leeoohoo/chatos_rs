@@ -636,6 +636,22 @@ extension LocalAgentGroupChatScheduler {
             )
             isRecoveryEligible = true
         }
+        if !isRecoveryEligible, currentDelivery.lane == .manager {
+            let detail = currentRun.checkpoint.stopReason
+                ?? "通讯 Run 已停止；旧 Delivery 已终止，后续通讯将继续处理。"
+            _ = try await store.failDelivery(
+                ownerUserID: ownerUserID,
+                deliveryID: currentDelivery.id,
+                error: detail,
+                nowUnixMs: now()
+            )
+            return .init(
+                deliveryID: currentDelivery.id,
+                agentID: currentDelivery.targetAgentID,
+                outcome: .failed,
+                detail: detail
+            )
+        }
         guard isRecoveryEligible else { return nil }
 
         let automaticRecoveryCount = Self.consecutiveAutomaticRecoveryCount(currentRun.events)

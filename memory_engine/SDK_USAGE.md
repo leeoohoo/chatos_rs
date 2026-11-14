@@ -119,7 +119,7 @@ let response = client
 
 调用方必须传已发布的 `model_capability_revision`。服务端按冻结的 context window、output reserve、tokenizer/estimator 和 compose policy 计算预算；必需内容超硬上限或检索前置条件不完整时直接失败。
 
-返回值中的 `meta.budget_requested`、`meta.budget_effective`、`meta.budget_used`、`selected_count_by_pool`、`dropped_count_by_reason` 和 `needs_compaction` 用于解释本次选择。
+返回值中的 `meta.budget_requested`、`meta.budget_effective`、`meta.budget_used`、`selected_count_by_pool`、`dropped_count_by_reason` 和 `needs_compaction` 用于解释本次选择。Compose 返回的内容始终已经受这些预算约束；`needs_compaction=true` 仅表示有更旧的原始记录未进入本次投影，应在后台启动摘要，不能因此阻塞当前模型调用或丢弃本次已选择的 Memory。
 
 ## 5. 总结与待处理重建
 

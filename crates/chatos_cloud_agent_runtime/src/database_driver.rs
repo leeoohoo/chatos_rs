@@ -15,7 +15,6 @@ use crate::{
 };
 
 const MAX_PROCESSING_ATTEMPTS: u32 = 8;
-const OUTBOX_CLAIM_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub struct CloudAgentDatabaseWorkerConfig {
@@ -23,6 +22,7 @@ pub struct CloudAgentDatabaseWorkerConfig {
     pub batch_size: i64,
     pub worker_concurrency: usize,
     pub conflict_retry_delay: Duration,
+    pub claim_ttl: Duration,
 }
 
 impl CloudAgentDatabaseWorkerConfig {
@@ -31,6 +31,7 @@ impl CloudAgentDatabaseWorkerConfig {
             || self.batch_size <= 0
             || self.worker_concurrency == 0
             || self.conflict_retry_delay.is_zero()
+            || self.claim_ttl.is_zero()
         {
             return Err(
                 "Cloud Agent database worker intervals, batch size and concurrency must be positive"
@@ -207,7 +208,7 @@ where
     let store = owner.cloud_agent_store();
     let claim_token = uuid::Uuid::new_v4().to_string();
     let claim_until = chrono::Utc::now()
-        + chrono::Duration::from_std(OUTBOX_CLAIM_TTL)
+        + chrono::Duration::from_std(config.claim_ttl)
             .map_err(|error| format!("invalid Cloud Agent outbox claim TTL: {error}"))?;
     let mut pending = store
         .claim_ready_outbox_with_attempts(config.batch_size, claim_token.as_str(), claim_until)
@@ -447,9 +448,13 @@ mod tests {
             batch_size: 16,
             worker_concurrency: 4,
             conflict_retry_delay: Duration::from_secs(1),
+            claim_ttl: Duration::from_secs(180),
         };
         assert!(config.validate().is_ok());
         config.worker_concurrency = 0;
+        assert!(config.validate().is_err());
+        config.worker_concurrency = 4;
+        config.claim_ttl = Duration::ZERO;
         assert!(config.validate().is_err());
     }
 
