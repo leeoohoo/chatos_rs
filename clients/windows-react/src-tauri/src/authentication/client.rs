@@ -3,8 +3,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
 
 use super::{AuthSession, AuthUser, RegistrationCodeDelivery};
-use chatos_plugin_management_sdk::{PluginInstallSourceList, UpdateUserPluginPreferenceResponse};
 use crate::controlled_network_policy::ControlledNetworkPolicyEnvelope;
+use chatos_plugin_management_sdk::{PluginInstallSourceList, UpdateUserPluginPreferenceResponse};
 
 const MAXIMUM_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAXIMUM_PLUGIN_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
@@ -579,37 +579,19 @@ impl AuthenticationApiClient {
                 unauthorized: false,
             });
         }
-        let mut url = self.connector_url.clone();
-        {
-            let mut segments = url.path_segments_mut().map_err(|_| ApiError {
-                message: "ChatOS API 地址无效。".into(),
-                unauthorized: false,
-            })?;
-            segments.pop_if_empty();
-            for segment in [
-                "api",
-                "local-connectors",
-                "devices",
-                device_id,
-                "controlled-network",
-                "policy",
-            ] {
-                segments.push(segment);
-            }
-        }
-        {
-            let mut query = url.query_pairs_mut();
-            query.append_pair("workspace_id", workspace_id);
-            if let Some(profile) = permission_profile.map(str::trim).filter(|v| !v.is_empty()) {
-                query.append_pair("permission_profile", profile);
-            }
-        }
+        let url = controlled_network_policy_url(
+            &self.connector_url,
+            device_id,
+            workspace_id,
+            permission_profile,
+        )?;
         let reply = self
             .send::<(), ControlledNetworkPolicyEnvelope>(url, "GET", None, Some(access_token))
             .await?;
         Ok(reply.value)
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn plugin_install_sources(
         &self,
         access_token: &str,
@@ -854,6 +836,42 @@ impl AuthenticationApiClient {
     }
 }
 
+fn controlled_network_policy_url(
+    connector_url: &Url,
+    device_id: &str,
+    workspace_id: &str,
+    permission_profile: Option<&str>,
+) -> Result<Url, ApiError> {
+    let mut url = connector_url.clone();
+    url.set_query(None);
+    url.set_fragment(None);
+    {
+        let mut segments = url.path_segments_mut().map_err(|_| ApiError {
+            message: "ChatOS API 地址无效。".into(),
+            unauthorized: false,
+        })?;
+        segments.pop_if_empty();
+        for segment in [
+            "api",
+            "local-connectors",
+            "devices",
+            device_id,
+            "controlled-network",
+            "policy",
+        ] {
+            segments.push(segment);
+        }
+    }
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("workspace_id", workspace_id);
+        if let Some(profile) = permission_profile.map(str::trim).filter(|v| !v.is_empty()) {
+            query.append_pair("permission_profile", profile);
+        }
+    }
+    Ok(url)
+}
+
 pub(crate) fn runtime_api_base_url() -> String {
     if let Ok(value) = std::env::var("CHATOS_API_BASE_URL") {
         if !value.trim().is_empty() {
@@ -999,5 +1017,36 @@ mod tests {
     #[test]
     fn rejects_urls_with_embedded_credentials() {
         assert!(AuthenticationApiClient::new("https://user:secret@example.test").is_err());
+    }
+
+    #[test]
+    fn controlled_network_policy_url_encodes_context_and_preserves_prefix() {
+        let base = Url::parse("https://connector.example.test/deploy/").unwrap();
+        let url = controlled_network_policy_url(
+            &base,
+            "device id/1?",
+            "workspace id/2?",
+            Some(" profile/name? "),
+        )
+        .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://connector.example.test/deploy/api/local-connectors/devices/device%20id%2F1%3F/controlled-network/policy?workspace_id=workspace+id%2F2%3F&permission_profile=profile%2Fname%3F"
+        );
+    }
+
+    #[test]
+    fn controlled_network_policy_url_omits_blank_profile_and_base_query_fragment() {
+        let base = Url::parse("https://connector.example.test/deploy/?stale=1#fragment").unwrap();
+        let url = controlled_network_policy_url(&base, "device", "workspace", Some("  ")).unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://connector.example.test/deploy/api/local-connectors/devices/device/controlled-network/policy?workspace_id=workspace"
+        );
+        let url = controlled_network_policy_url(&base, "device", "workspace", None).unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://connector.example.test/deploy/api/local-connectors/devices/device/controlled-network/policy?workspace_id=workspace"
+        );
     }
 }
