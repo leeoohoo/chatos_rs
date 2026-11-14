@@ -14,6 +14,8 @@ Windows 产品版本：`3.0.9`
 
 ### 2026-11-14 最新同步与回归
 
+- 网络恢复后重新执行完整基线回归：Windows Tauri Rust `582 passed, 0 failed, 6 ignored`，React Vitest `142` 个测试文件 / `524` 项全部通过；远端 `origin/3.0.9.8` 本轮 fetch 后仍为当前分支已包含的最新提交，没有新的上游代码可合并。正式嵌入版窗口复核仍发现同一 Windows 账号下已有多个 ChatOS 实例，Host 显示 `early eof`；未强制结束用户进程，因此该状态继续记录为多实例/单实例环境限制，不作为 Host 业务链路失败结论。
+
 - 本轮网络恢复后的原生窗口复核再次打开“插件与 Skills”：控制面返回 6 项 Marketplace 目录；Browser CDP、Solution Studio、Visual Computer Use 明确标记为 Windows 不支持，Diagram Studio、Document Tools、Web Design Studio 显示可安全安装。Computer Use/屏幕采集没有被客户端伪造为可用；该观察不关闭跨平台 `.tgz`、签名 Marketplace 发布和客户端安装闭环。
 - 同步执行 Windows Tauri 定向回归：Controlled Network URL/签名策略 5 项、Plugin 应用运行时 36 项全部通过；本轮没有修改运行逻辑，也没有输入测试账号密码、安装 Plugin、发送消息或修改持久化设置。
 - 重新执行 `plugins/computer-use` 的正式 `npm run pack:chatos`：Skill gate 审计先通过，随后按设计在 Windows `win32` 主机因缺少 macOS Swift App、`lipo` 与 `PlistBuddy` 工具链而明确失败；同一轮 `build:windows`、`smoke:windows` 和 `smoke:windows:screen` 均通过。该失败是跨平台正式包的真实外部构建依赖，不是 Windows worker 回归失败。
