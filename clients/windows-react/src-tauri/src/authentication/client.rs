@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use super::{AuthSession, AuthUser, RegistrationCodeDelivery};
 use chatos_plugin_management_sdk::{PluginInstallSourceList, UpdateUserPluginPreferenceResponse};
+use crate::controlled_network_policy::ControlledNetworkPolicyEnvelope;
 
 const MAXIMUM_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAXIMUM_PLUGIN_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
@@ -560,6 +561,53 @@ impl AuthenticationApiClient {
     ) -> Result<GatewayManagedRuntimeConfig, ApiError> {
         self.control_plane_request("api/local-connectors/config/runtime", None, access_token)
             .await
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn controlled_network_policy(
+        &self,
+        access_token: &str,
+        device_id: &str,
+        workspace_id: &str,
+        permission_profile: Option<&str>,
+    ) -> Result<ControlledNetworkPolicyEnvelope, ApiError> {
+        let device_id = device_id.trim();
+        let workspace_id = workspace_id.trim();
+        if device_id.is_empty() || workspace_id.is_empty() {
+            return Err(ApiError {
+                message: "Controlled Network 策略上下文无效。".into(),
+                unauthorized: false,
+            });
+        }
+        let mut url = self.connector_url.clone();
+        {
+            let mut segments = url.path_segments_mut().map_err(|_| ApiError {
+                message: "ChatOS API 地址无效。".into(),
+                unauthorized: false,
+            })?;
+            segments.pop_if_empty();
+            for segment in [
+                "api",
+                "local-connectors",
+                "devices",
+                device_id,
+                "controlled-network",
+                "policy",
+            ] {
+                segments.push(segment);
+            }
+        }
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("workspace_id", workspace_id);
+            if let Some(profile) = permission_profile.map(str::trim).filter(|v| !v.is_empty()) {
+                query.append_pair("permission_profile", profile);
+            }
+        }
+        let reply = self
+            .send::<(), ControlledNetworkPolicyEnvelope>(url, "GET", None, Some(access_token))
+            .await?;
+        Ok(reply.value)
     }
 
     pub(crate) async fn plugin_install_sources(
