@@ -9,6 +9,62 @@ use super::{
 };
 
 #[test]
+fn unspecified_output_limit_uses_the_published_reserve() {
+    let mut config =
+        ModelRuntimeConfig::openai_compatible("https://provider.example", "key", "test", "gpt");
+    config.model_capability_revision = "published-test".into();
+    config.context_window_tokens = 117_031;
+    config.output_reserve_tokens = 17_031;
+    config.protocol_overhead_estimator_id = "responses-json-v1".into();
+    config.validate_model_capability().unwrap();
+    assert_eq!(
+        config
+            .to_model_request(json!("input"), Vec::new())
+            .max_output_tokens,
+        Some(17_031)
+    );
+    config.max_output_tokens = Some(9_137);
+    assert_eq!(
+        config
+            .to_model_request(json!("input"), Vec::new())
+            .max_output_tokens,
+        Some(9_137)
+    );
+    config.max_output_tokens = Some(17_032);
+    assert!(config.validate_model_capability().is_err());
+}
+
+#[test]
+fn responses_defaults_compaction_to_the_published_input_limit() {
+    let mut config =
+        ModelRuntimeConfig::openai_compatible("https://provider.example", "key", "test", "gpt");
+    config.model_capability_revision = "published-test".into();
+    config.context_window_tokens = 400_000;
+    config.output_reserve_tokens = 128_000;
+    config.protocol_overhead_estimator_id = "responses-json-v1".into();
+
+    let request = config.to_model_request(json!("input"), Vec::new());
+    assert!(request.supports_responses);
+    assert_eq!(request.responses_compaction_threshold, Some(272_000));
+
+    config.responses_compaction_threshold = Some(250_000);
+    assert_eq!(
+        config
+            .to_model_request(json!("input"), Vec::new())
+            .responses_compaction_threshold,
+        Some(250_000)
+    );
+
+    config.responses_compaction_threshold = Some(300_000);
+    assert_eq!(
+        config
+            .to_model_request(json!("input"), Vec::new())
+            .responses_compaction_threshold,
+        Some(272_000)
+    );
+}
+
+#[test]
 fn model_runtime_config_builds_model_request() {
     let config = ModelRuntimeConfig::openai_compatible(
         "http://127.0.0.1:8080/v1",

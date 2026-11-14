@@ -60,7 +60,14 @@ struct MemorySyncResponse: Decodable, Sendable {
 }
 struct MemoryComposeDTO: Decodable, Sendable {
     struct Block: Decodable, Sendable { let block_type: String; let text: String }
-    struct Meta: Decodable, Sendable { let summary_count: Int; let recent_record_count: Int }
+    struct Meta: Decodable, Sendable {
+        struct TokenBudget: Decodable, Sendable { let total: Int }
+        let summary_count: Int
+        let recent_record_count: Int
+        let needs_compaction: Bool?
+        let budget_used: TokenBudget?
+        let candidate_count_by_pool: [String: Int]?
+    }
     let thread_id: String
     let blocks: [Block]
     let recent_records: [MemoryRecordDTO]

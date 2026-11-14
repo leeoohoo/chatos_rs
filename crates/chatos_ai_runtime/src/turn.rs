@@ -85,19 +85,31 @@ impl ContextualTurnRunner {
         request: ContextualTurnRequest,
     ) -> Result<AiRuntimeResult, String> {
         let ContextualTurnRequest {
-            model_request,
+            mut model_request,
             runtime_options,
-            memory_scope,
+            mut memory_scope,
             prefixed_input_items,
             current_input_items,
             mut user_record,
         } = request;
+        enable_openai_responses_protocol(&mut model_request);
         if let (Some(composer), Some(scope), Some(record)) = (
             self.memory_composer.as_ref(),
             memory_scope.as_ref(),
             user_record.as_ref(),
         ) {
             composer.ensure_thread_for_record(scope, record).await?;
+        }
+        let include_memory = self
+            .restrict_memory_budget(
+                &model_request,
+                memory_scope.as_mut(),
+                &prefixed_input_items,
+                &current_input_items,
+            )
+            .await?;
+        if !include_memory {
+            memory_scope = None;
         }
         let contextual_input = build_contextual_input(
             self.memory_composer.as_ref(),
@@ -112,8 +124,6 @@ impl ContextualTurnRunner {
             self.runtime.save_record(user_record).await?;
         }
 
-        let mut model_request = model_request;
-        enable_openai_responses_protocol(&mut model_request);
         model_request.input = contextual_input;
         validate_complete_request_budget(&model_request)?;
         self.runtime.run_turn(model_request, runtime_options).await
@@ -129,17 +139,29 @@ impl ContextualTurnRunner {
         let ContextualTurnRequest {
             mut model_request,
             runtime_options,
-            memory_scope,
+            mut memory_scope,
             prefixed_input_items,
             current_input_items,
             user_record,
         } = request;
+        enable_openai_responses_protocol(&mut model_request);
         if let (Some(composer), Some(scope), Some(record)) = (
             self.memory_composer.as_ref(),
             memory_scope.as_ref(),
             user_record.as_ref(),
         ) {
             composer.ensure_thread_for_record(scope, record).await?;
+        }
+        let include_memory = self
+            .restrict_memory_budget(
+                &model_request,
+                memory_scope.as_mut(),
+                &prefixed_input_items,
+                &current_input_items,
+            )
+            .await?;
+        if !include_memory {
+            memory_scope = None;
         }
         let contextual_input = build_contextual_input(
             self.memory_composer.as_ref(),
@@ -153,7 +175,6 @@ impl ContextualTurnRunner {
         if let Some(user_record) = user_record {
             self.runtime.save_record(user_record).await?;
         }
-        enable_openai_responses_protocol(&mut model_request);
         model_request.input = contextual_input;
         validate_complete_request_budget(&model_request)?;
         let single_step = AiSingleStepRequest {
@@ -165,6 +186,26 @@ impl ContextualTurnRunner {
             force_identity_encoding: false,
         };
         self.runtime.execute_once(single_step).await
+    }
+
+    async fn restrict_memory_budget(
+        &self,
+        request: &ModelRequest,
+        scope: Option<&mut MemoryScope>,
+        prefixed: &[Value],
+        current: &[Value],
+    ) -> Result<bool, String> {
+        if self.memory_composer.is_none() {
+            return Ok(true);
+        }
+        let Some(scope) = scope else {
+            return Ok(true);
+        };
+        let mut baseline = request.clone();
+        baseline.input =
+            build_contextual_input(None, None, prefixed, current, request.input.clone(), None)
+                .await?;
+        budget::restrict_memory_scope(scope, &baseline)
     }
 
     #[cfg(feature = "local-agent-loop")]

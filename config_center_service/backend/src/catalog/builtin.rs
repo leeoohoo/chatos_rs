@@ -1,10 +1,8 @@
 use chatos_agent::{
-    AGENT_CONTEXT_WINDOW_TOKENS_CONFIG_KEY, AGENT_MAX_ITERATIONS_CONFIG_KEY,
-    AGENT_MAX_NO_PROGRESS_ROUNDS_CONFIG_KEY, AGENT_MAX_REQUEST_RETRIES_CONFIG_KEY,
-    AGENT_OUTPUT_RESERVE_TOKENS_CONFIG_KEY, AGENT_REQUEST_TIMEOUT_SECONDS_CONFIG_KEY,
-    AGENT_RUN_TIMEOUT_SECONDS_CONFIG_KEY, DEFAULT_AGENT_CONTEXT_WINDOW_TOKENS,
-    DEFAULT_AGENT_MAX_ITERATIONS, DEFAULT_AGENT_MAX_NO_PROGRESS_ROUNDS,
-    DEFAULT_AGENT_MAX_REQUEST_RETRIES, DEFAULT_AGENT_OUTPUT_RESERVE_TOKENS,
+    AGENT_MAX_ITERATIONS_CONFIG_KEY, AGENT_MAX_NO_PROGRESS_ROUNDS_CONFIG_KEY,
+    AGENT_MAX_REQUEST_RETRIES_CONFIG_KEY, AGENT_REQUEST_TIMEOUT_SECONDS_CONFIG_KEY,
+    AGENT_RUN_TIMEOUT_SECONDS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS,
+    DEFAULT_AGENT_MAX_NO_PROGRESS_ROUNDS, DEFAULT_AGENT_MAX_REQUEST_RETRIES,
     DEFAULT_AGENT_REQUEST_TIMEOUT_SECONDS, DEFAULT_AGENT_RUN_TIMEOUT_SECONDS,
     DEFAULT_LOCAL_TASK_EXECUTION_MAX_ITERATIONS, DEFAULT_LOCAL_TASK_EXECUTION_PROMPT_CACHE_ENABLED,
     DEFAULT_LOCAL_TASK_EXECUTION_PROMPT_CACHE_RETENTION_ENABLED,
@@ -19,7 +17,6 @@ use chatos_agent::{
     LOCAL_TASK_EXECUTION_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
 };
 use chrono::Utc;
-use memory_engine_sdk::{memory_policy_config_key, ManagedMemoryPolicy, MemoryPolicyKind};
 use serde_json::{json, Value};
 
 use super::constants::*;
@@ -47,7 +44,6 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
     definitions.extend(plugin_management::definitions(&now));
     definitions.extend(memory_engine::definitions(&now));
     definitions.extend(user_service::definitions(&now));
-    definitions.extend(memory_policy_definitions(&now));
     definitions.extend(postgres_definitions(&now));
     definitions
 }
@@ -249,211 +245,6 @@ fn postgres_definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
     definitions
 }
 
-fn memory_policy_definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
-    let mut definitions = Vec::new();
-    for (kind, title, order) in [
-        (MemoryPolicyKind::Summary, "消息总结", 400),
-        (MemoryPolicyKind::Rollup, "总结聚合", 500),
-        (MemoryPolicyKind::SubjectMemory, "主题记忆与记忆归并", 600),
-    ] {
-        let defaults = kind.defaults();
-        let category = format!("Memory Engine / {title}");
-        push_optional_integer_definition(
-            &mut definitions,
-            kind,
-            &defaults,
-            "dispatch_threshold_tokens",
-            "派发 Token 阈值",
-            "累计待处理内容达到该值后派发生成任务",
-            category.as_str(),
-            1,
-            2_000_000,
-            order + 1,
-            now,
-        );
-        for (field, label, description, offset) in [
-            (
-                "max_source_batch_tokens",
-                "源批次硬上限",
-                "一次冻结的源输入 Token 硬上限",
-                2,
-            ),
-            (
-                "max_model_input_tokens",
-                "模型输入硬上限",
-                "单次模型请求的输入 Token 硬上限",
-                3,
-            ),
-        ] {
-            push_optional_integer_definition(
-                &mut definitions,
-                kind,
-                &defaults,
-                field,
-                label,
-                description,
-                category.as_str(),
-                128,
-                2_000_000,
-                order + offset,
-                now,
-            );
-        }
-        if kind == MemoryPolicyKind::Summary {
-            push_optional_integer_definition(
-                &mut definitions,
-                kind,
-                &defaults,
-                "max_leaf_tokens",
-                "叶节点硬上限",
-                "单个 leaf 分块的 Token 硬上限",
-                category.as_str(),
-                128,
-                2_000_000,
-                order + 4,
-                now,
-            );
-            push_optional_integer_definition(
-                &mut definitions,
-                kind,
-                &defaults,
-                "max_merge_rounds",
-                "最大归并轮数",
-                "oversized Pipeline 允许的最大归并轮数",
-                category.as_str(),
-                1,
-                128,
-                order + 5,
-                now,
-            );
-        }
-        if !matches!(
-            kind,
-            MemoryPolicyKind::Rollup | MemoryPolicyKind::SubjectMemory
-        ) {
-            continue;
-        }
-        push_optional_integer_definition(
-            &mut definitions,
-            kind,
-            &defaults,
-            "count_limit",
-            "聚合条数阈值",
-            "达到该数量后允许执行聚合；0 表示仅按 Token 阈值判断",
-            category.as_str(),
-            0,
-            1_000_000,
-            order + 5,
-            now,
-        );
-        push_optional_integer_definition(
-            &mut definitions,
-            kind,
-            &defaults,
-            "keep_level0_count",
-            "保留 L0 数量",
-            "执行聚合后保留的底层总结或记忆数量",
-            category.as_str(),
-            0,
-            1_000_000,
-            order + 6,
-            now,
-        );
-        push_optional_integer_definition(
-            &mut definitions,
-            kind,
-            &defaults,
-            "max_level",
-            "最大聚合层级",
-            "总结或记忆允许向上聚合的最大层级",
-            category.as_str(),
-            1,
-            128,
-            order + 7,
-            now,
-        );
-    }
-    definitions
-}
-
-#[allow(clippy::too_many_arguments)]
-fn push_optional_integer_definition(
-    definitions: &mut Vec<ConfigDefinitionRecord>,
-    kind: MemoryPolicyKind,
-    defaults: &ManagedMemoryPolicy,
-    field: &str,
-    display_name: &str,
-    description: &str,
-    category: &str,
-    min: i64,
-    max: i64,
-    ui_order: i32,
-    now: &str,
-) {
-    let default_value = match field {
-        "dispatch_threshold_tokens" => defaults.dispatch_threshold_tokens,
-        "max_source_batch_tokens" => defaults.max_source_batch_tokens,
-        "max_model_input_tokens" => defaults.max_model_input_tokens,
-        "max_leaf_tokens" => defaults.max_leaf_tokens,
-        "max_merge_rounds" => defaults.max_merge_rounds,
-        "count_limit" => defaults.count_limit,
-        "keep_level0_count" => defaults.keep_level0_count,
-        "max_level" => defaults.max_level,
-        _ => None,
-    };
-    definitions.push(memory_policy_definition(
-        kind,
-        field,
-        display_name,
-        description,
-        category,
-        "integer",
-        default_value.map_or(Value::Null, Value::from),
-        Some(min),
-        Some(max),
-        true,
-        ui_order,
-        now,
-    ));
-}
-
-#[allow(clippy::too_many_arguments)]
-fn memory_policy_definition(
-    kind: MemoryPolicyKind,
-    field: &str,
-    display_name: &str,
-    description: &str,
-    category: &str,
-    value_type: &str,
-    default_value: Value,
-    min: Option<i64>,
-    max: Option<i64>,
-    nullable: bool,
-    ui_order: i32,
-    now: &str,
-) -> ConfigDefinitionRecord {
-    let key = memory_policy_config_key(kind, field);
-    let mut record = definition(
-        key.as_str(),
-        display_name,
-        description,
-        category,
-        "shared",
-        None,
-        value_type,
-        default_value,
-        min,
-        max,
-        &[],
-        "hot_reload",
-        &[],
-        ui_order,
-        now,
-    );
-    record.nullable = nullable;
-    record
-}
-
 #[allow(clippy::too_many_arguments)]
 fn definition(
     key: &str,
@@ -518,6 +309,11 @@ fn secret_definition(
     ui_order: i32,
     now: &str,
 ) -> ConfigDefinitionRecord {
+    let value_type = if default_value.is_string() {
+        "string"
+    } else {
+        "json"
+    };
     let mut record = definition(
         key,
         display_name,
@@ -525,7 +321,7 @@ fn secret_definition(
         category,
         scope,
         service_name,
-        "string",
+        value_type,
         default_value,
         None,
         None,

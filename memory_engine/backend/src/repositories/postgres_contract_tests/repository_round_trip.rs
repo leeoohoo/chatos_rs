@@ -127,7 +127,7 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
     );
     assert!(
         crate::repositories::summaries::rearm_rollup_dispatch_if_eligible(
-            &pool, &tenant, &source, &thread_id, 8,
+            &pool, &tenant, &source, &thread_id,
         )
         .await
         .expect("rearm rollup")

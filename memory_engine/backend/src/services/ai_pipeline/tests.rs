@@ -5,13 +5,13 @@ use super::chunking::{
     contains_source_ref, split_chunks_by_token_limit, split_text_by_token_limit,
 };
 use super::input::build_ai_input;
-use super::{estimate_tokens_text, is_context_overflow_error, MIN_TOKEN_LIMIT};
+use super::{estimate_tokens_text, is_context_overflow_error, CHUNK_TEST_CAPACITY};
 
 #[test]
 fn estimate_tokens_has_minimum_floor() {
     assert_eq!(estimate_tokens_text(""), 1);
     assert_eq!(estimate_tokens_text("abc"), 1);
-    assert_eq!(estimate_tokens_text("abcdefgh"), 2);
+    assert_eq!(estimate_tokens_text("abcdefgh"), 3);
 }
 
 #[test]
@@ -23,8 +23,8 @@ fn estimate_tokens_is_more_conservative_for_multibyte_text() {
 
 #[test]
 fn oversized_items_are_split_when_enabled() {
-    let items = vec!["a".repeat((MIN_TOKEN_LIMIT as usize * 4) + 32)];
-    let chunks = split_chunks_by_token_limit(items.as_slice(), MIN_TOKEN_LIMIT, true);
+    let items = vec!["a".repeat((CHUNK_TEST_CAPACITY as usize * 4) + 32)];
+    let chunks = split_chunks_by_token_limit(items.as_slice(), CHUNK_TEST_CAPACITY, true);
 
     assert!(chunks.len() > 1);
     assert!(chunks.iter().all(|chunk| {
@@ -32,7 +32,7 @@ fn oversized_items_are_split_when_enabled() {
             .iter()
             .map(|item| estimate_tokens_text(item.as_str()))
             .sum::<i64>()
-            <= MIN_TOKEN_LIMIT
+            <= CHUNK_TEST_CAPACITY
     }));
 }
 
@@ -43,7 +43,7 @@ fn content_aware_chunks_preserve_utf8_order_identity_and_markdown_boundaries() {
         "中文段落。".repeat(160),
         "    let value = \"保持完整\";\n".repeat(80)
     );
-    let chunks = split_text_by_token_limit(source.as_str(), MIN_TOKEN_LIMIT);
+    let chunks = split_text_by_token_limit(source.as_str(), CHUNK_TEST_CAPACITY);
 
     assert!(chunks.len() > 2);
     for (index, chunk) in chunks.iter().enumerate() {
@@ -52,7 +52,7 @@ fn content_aware_chunks_preserve_utf8_order_identity_and_markdown_boundaries() {
             chunk.contains(format!("record-utf8#chunk:{}/{}", index + 1, chunks.len()).as_str())
         );
         assert!(chunk.contains("chunk_digest=sha256:"));
-        assert!(estimate_tokens_text(chunk) <= MIN_TOKEN_LIMIT);
+        assert!(estimate_tokens_text(chunk) <= CHUNK_TEST_CAPACITY);
     }
     let rendered = chunks.join("\n");
     assert!(rendered.contains("# 决策记录"));
@@ -71,7 +71,7 @@ fn tool_json_chunks_keep_call_identity_json_paths_and_unique_conclusion() {
     let source = format!(
         "[record_id=tool-record][created_at=2026-11-09T00:00:00Z][role=tool]\n[tool_result]\n{payload}"
     );
-    let chunks = split_text_by_token_limit(source.as_str(), MIN_TOKEN_LIMIT);
+    let chunks = split_text_by_token_limit(source.as_str(), CHUNK_TEST_CAPACITY);
 
     assert!(chunks.len() > 1);
     assert!(chunks
@@ -95,7 +95,7 @@ fn raw_reasoning_is_excluded_from_oversized_durable_chunks() {
         "公开正文".repeat(200),
         "私密推理".repeat(100)
     );
-    let chunks = split_text_by_token_limit(source.as_str(), MIN_TOKEN_LIMIT);
+    let chunks = split_text_by_token_limit(source.as_str(), CHUNK_TEST_CAPACITY);
     let rendered = chunks.join("\n");
 
     assert!(!rendered.contains("DO_NOT_PERSIST_PRIVATE_REASONING"));
@@ -121,8 +121,8 @@ fn source_ref_matching_rejects_prefix_collisions() {
 
 #[test]
 fn oversized_single_item_is_preserved_when_split_is_disabled() {
-    let items = vec!["a".repeat((MIN_TOKEN_LIMIT as usize * 4) + 32)];
-    let chunks = split_chunks_by_token_limit(items.as_slice(), MIN_TOKEN_LIMIT, false);
+    let items = vec!["a".repeat((CHUNK_TEST_CAPACITY as usize * 4) + 32)];
+    let chunks = split_chunks_by_token_limit(items.as_slice(), CHUNK_TEST_CAPACITY, false);
 
     assert_eq!(chunks.len(), 1);
     assert_eq!(chunks[0].len(), 1);
@@ -131,7 +131,7 @@ fn oversized_single_item_is_preserved_when_split_is_disabled() {
             .iter()
             .map(|item| estimate_tokens_text(item.as_str()))
             .sum::<i64>()
-            > MIN_TOKEN_LIMIT
+            > CHUNK_TEST_CAPACITY
     );
 }
 

@@ -526,6 +526,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "plugin_installer_search_npm", "plugin_installer_resolve_npm",
                 "plugin_installer_inspect_npm", "plugin_installer_inspect_source",
                 "plugin_installer_list_installed", "plugin_installer_search_marketplace",
+                "plugin_installer_discover_repository", "plugin_installer_resolve_release",
             ]
         )
         XCTAssertEqual(

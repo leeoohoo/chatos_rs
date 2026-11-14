@@ -16,6 +16,7 @@ pub struct RestorePendingResult {
     pub previous_status: String,
 }
 
+#[cfg(test)]
 pub async fn restore_record_pending(
     db: &Db,
     tenant_id: &str,
@@ -46,7 +47,9 @@ pub async fn restore_record_pending_in_tx(
     .map_err(|error| error.to_string())?
     .ok_or_else(|| "record not found".to_string())?;
     if !row.4 {
-        return Err("retired records cannot be restored by the pending repair operation".to_string());
+        return Err(
+            "retired records cannot be restored by the pending repair operation".to_string(),
+        );
     }
     let active_coverage = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM engine_summary_record_coverage WHERE tenant_id=$1 \
@@ -59,8 +62,10 @@ pub async fn restore_record_pending_in_tx(
     .await
     .map_err(|error| error.to_string())?;
     if active_coverage {
-        return Err("record still has active coverage; retire or resummarize its complete range"
-            .to_string());
+        return Err(
+            "record still has active coverage; retire or resummarize its complete range"
+                .to_string(),
+        );
     }
     if row.3 == "pending" {
         return Ok(RestorePendingResult {
@@ -102,17 +107,32 @@ pub async fn restore_record_pending_in_tx(
                  updated_at=now() WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 \
                    AND project_partition_key=$4 AND summary_job_run_id=$5",
             )
-            .bind(tenant_id).bind(source_id).bind(&row.1).bind(&row.2).bind(job_run_id)
-            .execute(&mut **tx).await.map_err(|error| error.to_string())?;
+            .bind(tenant_id)
+            .bind(source_id)
+            .bind(&row.1)
+            .bind(&row.2)
+            .bind(job_run_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|error| error.to_string())?;
         }
     } else {
         let version = crate::repositories::thread_partitions::apply_ingest_delta(
-            tx, tenant_id, source_id, &row.1, &row.2, 1, pending_tokens, true,
-        ).await?;
+            tx,
+            tenant_id,
+            source_id,
+            &row.1,
+            &row.2,
+            1,
+            pending_tokens,
+            true,
+        )
+        .await?;
         if let Some(version) = version {
             crate::repositories::derived_events::enqueue_thread_summary_request(
                 tx, tenant_id, source_id, &row.1, &row.2, version,
-            ).await?;
+            )
+            .await?;
         }
     }
     Ok(RestorePendingResult {
@@ -208,6 +228,7 @@ pub async fn release_records_from_terminal_summary_jobs(
     Ok(result.rows_affected())
 }
 
+#[cfg(test)]
 pub async fn mark_claimed_records_summarized(
     db: &Db,
     tenant_id: &str,
@@ -238,6 +259,7 @@ pub async fn mark_claimed_records_summarized(
     .await
 }
 
+#[cfg(test)]
 pub async fn mark_records_summarized(
     db: &Db,
     tenant_id: &str,

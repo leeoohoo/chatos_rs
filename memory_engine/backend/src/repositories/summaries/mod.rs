@@ -81,19 +81,17 @@ pub use subject_dispatch::{
 
 #[allow(unused_imports)]
 pub use queries::{
-    get_summary_by_id, list_latest_thread_summaries, list_latest_thread_summaries_at_level,
-    list_latest_thread_summaries_at_level_for_project, list_latest_thread_summaries_by_type,
+    get_summary_by_id, list_latest_thread_summaries_at_level_for_project,
     list_latest_thread_summary_frontier, list_pending_summaries_by_level_and_partition,
-    list_pending_summary_partition_keys_by_level, list_summaries_by_ids,
-    list_summaries_by_ids_in_source, list_summaries_by_thread_label,
+    list_pending_summary_levels, list_pending_summary_partition_keys_by_level,
+    list_summaries_by_ids, list_summaries_by_ids_in_source, list_summaries_by_thread_label,
     list_summaries_by_thread_label_for_subject_memory_scope, list_thread_summaries,
     list_threads_with_pending_rollups,
 };
 #[allow(unused_imports)]
-pub use status::{
-    mark_summaries_rolled_up, mark_summaries_subject_memory_summarized,
-    mark_summaries_subject_memory_summarized_for_scope,
-};
+pub use status::mark_summaries_subject_memory_summarized;
+#[cfg(test)]
+pub use status::{mark_summaries_rolled_up, mark_summaries_subject_memory_summarized_for_scope};
 #[cfg(test)]
 pub(crate) use test_support::{insert_test_summary, insert_test_thread_summary};
 #[allow(unused_imports)]

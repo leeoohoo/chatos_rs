@@ -60,8 +60,42 @@ final class DurableAgentMemoryServiceTests: XCTestCase {
         XCTAssertEqual(uploaded.map(\.id), entries.map(\.id))
         let recoveredContext = try await recovered.compose(try composeRequest())
         XCTAssertEqual(recoveredContext.recentRecords.map(\.message.content), ["系统约束", "离线消息"])
+        try await recovered.compactSummary()
         let syncCalls = await remote.syncCalls
+        let compactCalls = await remote.compactCalls
         XCTAssertEqual(syncCalls, 1)
+        XCTAssertEqual(compactCalls, 1)
+    }
+
+    func testCompactionFailuresAndBackoffRemainRecoverable() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scope = try AgentMemoryScope(
+            tenantID: "owner-a", agentID: "agent-a", projectID: "project-a",
+            runID: UUID(), runtimeScope: "manager-a"
+        )
+        let store = try SQLiteAgentMemoryCacheStore(
+            databaseURL: root.appendingPathComponent("memory.sqlite3")
+        )
+        let remote = FailingCompactionAgentMemory()
+        let service = DurableAgentMemoryService(
+            scope: scope,
+            store: store,
+            remoteFactory: { remote }
+        )
+
+        for _ in 0 ..< 2 {
+            do {
+                try await service.compactSummary()
+                XCTFail("Expected recoverable compaction failure")
+            } catch is AgentMemoryCompactionFailure {
+                // The provider can continue with the exact current turn.
+            }
+        }
+        let compactCalls = await remote.compactCalls
+        XCTAssertEqual(compactCalls, 1)
     }
 
     func testCacheRejectsARecordIDWithDifferentContent() async throws {
@@ -125,6 +159,39 @@ final class DurableAgentMemoryServiceTests: XCTestCase {
 
         try await store.enqueue([entry], scope: scope)
     }
+
+    func testUncertainSyncKeepsAttemptedRecordForReconciliationWithoutBlindRetry() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scope = try AgentMemoryScope(
+            tenantID: "owner-a", agentID: "agent-a", projectID: "project-a",
+            runID: UUID(), runtimeScope: "manager-a"
+        )
+        let store = try SQLiteAgentMemoryCacheStore(
+            databaseURL: root.appendingPathComponent("memory.sqlite3")
+        )
+        let remote = UncertainAgentMemory()
+        let service = DurableAgentMemoryService(
+            scope: scope,
+            store: store,
+            remoteFactory: { remote }
+        )
+        let entry = AgentMemoryEntry(
+            id: scope.recordID(at: 0), index: 0,
+            message: .init(role: .user, content: "待确认记录"),
+            createdAt: Date(timeIntervalSince1970: 1), conversationTurnID: "turn-0"
+        )
+
+        try await service.sync([entry], reconciling: false)
+
+        let calls = await remote.reconcilingValues
+        XCTAssertEqual(calls, [false])
+        let pending = try await store.pending(scope: scope, limit: 32)
+        XCTAssertEqual(pending.map(\.entry.id), [entry.id])
+        XCTAssertTrue(pending.allSatisfy(\.attempted))
+    }
 }
 
 private func composeRequest() throws -> AgentMemoryComposeRequest {
@@ -137,7 +204,7 @@ private func composeRequest() throws -> AgentMemoryComposeRequest {
             tokenizerID: nil
         ),
         queryText: "current query",
-        currentTurnID: "turn-current"
+        currentTurnID: "turn-current", availableMemoryTokens: 43_219
     )
 }
 
@@ -214,6 +281,7 @@ private struct OfflineAgentMemory: AgentMemoryServicing {
 private actor RecordingAgentMemory: AgentMemoryServicing {
     var entries: [AgentMemoryEntry] = []
     var syncCalls = 0
+    var compactCalls = 0
 
     func ensureThread() async throws {}
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
@@ -226,5 +294,35 @@ private actor RecordingAgentMemory: AgentMemoryServicing {
             blocks: [],
             recentRecords: entries.map { .init(id: $0.id, message: $0.message) }
         )
+    }
+    func compactSummary() async throws { compactCalls += 1 }
+}
+
+private actor FailingCompactionAgentMemory: AgentMemoryServicing {
+    var compactCalls = 0
+
+    func ensureThread() async throws {}
+    func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {}
+    func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
+        .init(blocks: [], recentRecords: [])
+    }
+    func compactSummary() async throws {
+        compactCalls += 1
+        throw URLError(.networkConnectionLost)
+    }
+}
+
+private actor UncertainAgentMemory: AgentMemoryServicing {
+    var reconcilingValues: [Bool] = []
+
+    func ensureThread() async throws {}
+    func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
+        _ = entries
+        reconcilingValues.append(reconciling)
+        throw AgentContextError.syncUncertain
+    }
+    func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
+        _ = request
+        return .init(blocks: [], recentRecords: [])
     }
 }

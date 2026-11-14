@@ -27,7 +27,6 @@ public protocol AgentContextProviding: Sendable {
     func prepare(
         checkpoint initial: AgentRunCheckpoint,
         tools: [AgentToolDefinition],
-        policy: AgentContextPolicy,
         modelCapability: AgentModelCapabilitySnapshot,
         deadline: Date,
         synchronizeOnly: Bool,
@@ -43,6 +42,7 @@ public extension AgentContextProviding {
 
 /// No credentials or network configuration are stored in checkpoints.
 public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
+    private static let maximumRequiredCompactionRounds = 3
     public let scope: AgentMemoryScope
     private let service: any AgentMemoryServicing
 
@@ -72,14 +72,12 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
     }
 
     public func prepare(checkpoint initial: AgentRunCheckpoint, tools: [AgentToolDefinition],
-                        policy: AgentContextPolicy,
                         modelCapability: AgentModelCapabilitySnapshot,
                         deadline: Date, synchronizeOnly: Bool = false,
                         shouldPause: @escaping @Sendable () async -> Bool = { false },
                         record: @escaping AgentRuntime.Recorder) async throws -> AgentPreparedContext {
         var state = initial
         do {
-            try policy.validate()
             guard let bound = state.memory, bound.scope == scope, state.scope == scope.runtimeScope,
                   state.id == scope.runID, bound.syncedMessageCount >= 0,
                   bound.syncedMessageCount <= state.messages.count else { throw AgentContextError.invalidHistory }
@@ -129,17 +127,71 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
             if synchronizeOnly { return .init(checkpoint: state, messages: []) }
             try await check(deadline: deadline, shouldPause: shouldPause)
 
-            // The engine owns durable records and background summaries. It is
-            // composed at this turn boundary, but it is never used as an
-            // in-loop overflow recovery mechanism.
+            // The engine owns durable records and summaries. This same compose path is used at
+            // turn boundaries and when an active tool loop must shrink its recalled history.
             let currentUserIndex = try AgentContextAssembler.currentTurnStart(in: state.messages)
+            let fixedMessages = try AgentContextAssembler.assembleFixed(
+                checkpoint: state, memory: state.memory!
+            )
+            let fixedTokens = try AgentContextBudget.estimate(messages: fixedMessages, tools: tools)
+            let available = modelCapability.contextWindowTokens - modelCapability.outputReserveTokens - fixedTokens
+            // A live turn may itself consume the whole soft recall budget. Memory Engine rejects
+            // zero-token budgets, and asking it to summarize into one token is both invalid in
+            // practice and unnecessary. Return the exact fixed projection and let AgentRuntime
+            // decide whether Responses server-side compaction may carry it up to the hard window.
+            guard available > 0 else {
+                try await emit(
+                    state,
+                    "memory_recall_skipped",
+                    "当前活动轮次已占满 Memory 召回预算，未附加历史召回",
+                    record: record
+                )
+                try await check(deadline: deadline, shouldPause: shouldPause)
+                return .init(checkpoint: state, messages: fixedMessages)
+            }
             let composeRequest = try AgentMemoryComposeRequest(
                 modelCapability: modelCapability,
                 queryText: state.messages[currentUserIndex].content,
-                currentTurnID: conversationTurnID(state.messages, index: currentUserIndex)
+                currentTurnID: conversationTurnID(state.messages, index: currentUserIndex),
+                availableMemoryTokens: available
             )
+            var context = try await service.compose(composeRequest)
+            for round in 1...Self.maximumRequiredCompactionRounds where context.needsCompaction {
+                try await emit(
+                    state,
+                    "memory_compacting",
+                    "Memory Engine 正在压缩超出预算的历史上下文（\(round)/\(Self.maximumRequiredCompactionRounds)）",
+                    record: record
+                )
+                let beforeTokens = context.budgetUsedTokens
+                let beforePending = context.pendingRecordCount ?? context.recentRecords.count
+                do {
+                    try await service.compactSummary()
+                } catch let failure as AgentMemoryCompactionFailure {
+                    try await emit(
+                        state,
+                        "memory_compaction_deferred",
+                        "Memory Engine 历史压缩暂时失败；本轮仅使用固定指令和完整当前活动轮继续，历史记录仍保留并等待后续重试。\(failure.reason.prefix(400))",
+                        record: record
+                    )
+                    try await check(deadline: deadline, shouldPause: shouldPause)
+                    return .init(checkpoint: state, messages: fixedMessages)
+                }
+                try await check(deadline: deadline, shouldPause: shouldPause)
+                let recomposed = try await service.compose(composeRequest)
+                let afterPending = recomposed.pendingRecordCount ?? recomposed.recentRecords.count
+                if recomposed.needsCompaction,
+                   afterPending >= beforePending,
+                   let beforeTokens,
+                   let afterTokens = recomposed.budgetUsedTokens,
+                   afterTokens >= beforeTokens {
+                    throw AgentContextError.budgetExceeded
+                }
+                context = recomposed
+            }
+            guard !context.needsCompaction else { throw AgentContextError.budgetExceeded }
             let messages = try AgentContextAssembler.assemble(
-                checkpoint: state, memory: state.memory!, context: await service.compose(composeRequest)
+                checkpoint: state, memory: state.memory!, context: context
             )
             try await check(deadline: deadline, shouldPause: shouldPause)
             return .init(checkpoint: state, messages: messages)

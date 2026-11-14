@@ -42,7 +42,6 @@ pub struct IterativeContextRefresh {
 #[derive(Clone)]
 pub struct MemoryContextOverflowRecovery {
     poll_interval: Duration,
-    poll_timeout: Duration,
     trigger_reason: Option<String>,
 }
 
@@ -135,12 +134,7 @@ impl IterativeContextRefresh {
             context_summary_payload("wait", scope, &initial, None),
         );
         let status = composer
-            .wait_for_active_summary_completion(
-                scope,
-                initial,
-                recovery.poll_interval,
-                recovery.poll_timeout,
-            )
+            .wait_for_active_summary_completion(scope, initial, recovery.poll_interval)
             .await?;
         notify_context_summary_callback(
             callbacks.on_context_summarized_end.as_ref(),
@@ -181,12 +175,7 @@ impl IterativeContextRefresh {
             context_summary_payload("start", scope, &initial, None),
         );
         let status = composer
-            .wait_for_active_summary_completion(
-                scope,
-                initial,
-                recovery.poll_interval,
-                recovery.poll_timeout,
-            )
+            .wait_for_active_summary_completion(scope, initial, recovery.poll_interval)
             .await?;
         notify_context_summary_callback(
             callbacks.on_context_summarized_end.as_ref(),
@@ -227,12 +216,7 @@ impl IterativeContextRefresh {
             context_summary_payload("start", scope, &initial, None),
         );
         let status = match composer
-            .wait_for_active_summary_completion(
-                scope,
-                initial,
-                recovery.poll_interval,
-                recovery.poll_timeout,
-            )
+            .wait_for_active_summary_completion(scope, initial, recovery.poll_interval)
             .await
         {
             Ok(status) => status,
@@ -296,18 +280,12 @@ impl MemoryContextOverflowRecovery {
     pub fn new() -> Self {
         Self {
             poll_interval: Duration::from_secs(10),
-            poll_timeout: Duration::from_secs(120),
             trigger_reason: Some("context_overflow".to_string()),
         }
     }
 
     pub fn with_poll_interval(mut self, poll_interval: Duration) -> Self {
         self.poll_interval = poll_interval;
-        self
-    }
-
-    pub fn with_poll_timeout(mut self, poll_timeout: Duration) -> Self {
-        self.poll_timeout = poll_timeout;
         self
     }
 

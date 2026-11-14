@@ -971,6 +971,50 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.askUserPrompts.first?.status, .ok)
     }
 
+    func testExternalPromptResolutionReplacesPendingPrompt() async throws {
+        let promptService = DelayedAskUserPromptServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            askUserPromptService: promptService
+        )
+        try await waitUntil {
+            viewModel.askUserPrompts.first?.status == .pending
+        }
+        var resolvedPrompt = try XCTUnwrap(viewModel.askUserPrompts.first)
+        resolvedPrompt.status = .ok
+
+        viewModel.applyExternalAskUserPromptResolution(resolvedPrompt)
+
+        XCTAssertEqual(viewModel.askUserPrompts.first?.status, .ok)
+    }
+
+    func testExternalPromptResolutionRejectsStaleRefresh() async throws {
+        let promptService = DelayedAskUserPromptServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            askUserPromptService: promptService
+        )
+        try await waitUntil {
+            viewModel.askUserPrompts.first?.status == .pending
+        }
+        let refreshTask = Task { await viewModel.refreshAskUserPrompts() }
+        try await waitUntil {
+            await promptService.hasDelayedFetch()
+        }
+        var resolvedPrompt = try XCTUnwrap(viewModel.askUserPrompts.first)
+        resolvedPrompt.status = .canceled
+
+        viewModel.applyExternalAskUserPromptResolution(resolvedPrompt)
+        await promptService.resumeDelayedFetch()
+        await refreshTask.value
+
+        XCTAssertEqual(viewModel.askUserPrompts.first?.status, .canceled)
+    }
+
     func testFailedAskUserSubmitRecoveryDoesNotRetainConversation() async throws {
         let promptService = DelayedAskUserPromptServiceStub()
         var viewModel: ConversationSessionViewModel? = ConversationSessionViewModel(

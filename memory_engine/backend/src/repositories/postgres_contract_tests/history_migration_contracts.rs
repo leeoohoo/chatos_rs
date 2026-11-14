@@ -313,14 +313,11 @@ async fn rebuild_rearm_preserves_attempt_history_and_resets_retry_budget() {
     .expect("create rebuild backlog");
 
     for expected_attempt in 1..=8 {
-        let claim = crate::repositories::partition_rebuilds::claim_next(
-            &pool,
-            "contract-worker",
-            300,
-        )
-        .await
-        .expect("claim rebuild attempt")
-        .expect("pending rebuild item");
+        let claim =
+            crate::repositories::partition_rebuilds::claim_next(&pool, "contract-worker", 300)
+                .await
+                .expect("claim rebuild attempt")
+                .expect("pending rebuild item");
         assert_eq!(claim.attempt_count, expected_attempt);
         assert_eq!(claim.attempt_number, expected_attempt);
         assert!(crate::repositories::partition_rebuilds::record_failed(
@@ -345,14 +342,10 @@ async fn rebuild_rearm_preserves_attempt_history_and_resets_retry_budget() {
     .await
     .expect("rearm failed rebuild item");
 
-    let claim = crate::repositories::partition_rebuilds::claim_next(
-        &pool,
-        "contract-worker",
-        300,
-    )
-    .await
-    .expect("claim rearmed rebuild attempt")
-    .expect("rearmed rebuild item");
+    let claim = crate::repositories::partition_rebuilds::claim_next(&pool, "contract-worker", 300)
+        .await
+        .expect("claim rearmed rebuild attempt")
+        .expect("rearmed rebuild item");
     assert_eq!(claim.attempt_count, 1);
     assert_eq!(claim.attempt_number, 9);
     assert!(crate::repositories::partition_rebuilds::record_completed(
@@ -390,14 +383,11 @@ async fn rebuild_rearm_preserves_attempt_history_and_resets_retry_budget() {
     .await
     .expect("create waiting rebuild backlog");
     for expected_attempt_number in 1..=12 {
-        let waiting_claim = crate::repositories::partition_rebuilds::claim_next(
-            &pool,
-            "contract-worker",
-            300,
-        )
-        .await
-        .expect("claim waiting rebuild check")
-        .expect("waiting rebuild item");
+        let waiting_claim =
+            crate::repositories::partition_rebuilds::claim_next(&pool, "contract-worker", 300)
+                .await
+                .expect("claim waiting rebuild check")
+                .expect("waiting rebuild item");
         assert_eq!(waiting_claim.attempt_count, 1);
         assert_eq!(waiting_claim.attempt_number, expected_attempt_number);
         assert!(crate::repositories::partition_rebuilds::record_waiting(

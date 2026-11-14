@@ -31,6 +31,7 @@ async fn main() -> Result<(), String> {
             tenant_id: optional_env("MEMORY_ENGINE_AUDIT_TENANT_ID"),
             source_id: optional_env("MEMORY_ENGINE_AUDIT_SOURCE_ID"),
         },
+        true, // The audit CLI always emits the complete report.
     )
     .await?;
     println!(

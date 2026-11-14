@@ -233,7 +233,7 @@ extension NativeLocalConnectorService {
                   let modelCapabilityRevision = resolved.modelCapabilityRevision?.trimmedNonEmpty,
                   let contextWindowTokens = resolved.contextWindowTokens.flatMap(UInt64.init(exactly:)),
                   let outputReserveTokens = resolved.outputReserveTokens.flatMap(UInt64.init(exactly:)),
-                  outputReserveTokens >= 256,
+                  outputReserveTokens > 0,
                   outputReserveTokens < contextWindowTokens,
                   let protocolOverheadEstimatorID = resolved.protocolOverheadEstimatorID?.trimmedNonEmpty,
                   let parsedBaseURL = URL(string: baseURL),

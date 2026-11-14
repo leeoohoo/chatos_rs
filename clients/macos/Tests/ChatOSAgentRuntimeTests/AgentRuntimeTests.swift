@@ -8,9 +8,8 @@ final class AgentRuntimeTests: XCTestCase {
         XCTAssertEqual(settings.effective(.story).maximumModelCalls, 600)
         XCTAssertEqual(settings.effective(.approval).maximumModelCalls, 600)
         XCTAssertEqual(settings.global.maximumRequestRetries, 2)
-        let context = try XCTUnwrap(settings.global.context ?? AgentContextPolicy())
-        XCTAssertEqual(context.windowTokens, 200_000)
-        XCTAssertEqual(context.outputReserveTokens, 30_000)
+        let payload = try JSONSerialization.jsonObject(with: JSONEncoder().encode(settings.global)) as? [String: Any]
+        XCTAssertNil(payload?["context"])
         try settings.validate()
     }
 
@@ -24,7 +23,6 @@ final class AgentRuntimeTests: XCTestCase {
 
         var managed = AgentRuntimePreferences()
         managed.global.maximumModelCalls = 725
-        managed.global.context = AgentContextPolicy()
         let store = AgentSettingsStore(suiteName: name)
         try store.saveManaged(managed)
 
@@ -52,21 +50,16 @@ final class AgentRuntimeTests: XCTestCase {
         }
     }
 
-    func testLegacyRetryDefaultMigratesOnceWithoutResettingContextSettings() throws {
+    func testLegacyRetryDefaultMigratesOnce() throws {
         let name = "AgentRetryMigrationTests.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
         var old = AgentRuntimePreferences()
         old.global.maximumRequestRetries = 5
-        var context = AgentContextPolicy()
-        context.windowTokens = 2_000_000
-        context.outputReserveTokens = 30_000
-        old.global.context = context
         defaults.set(try JSONEncoder().encode(old), forKey: "chatos.agent-runtime.settings.v1")
 
         let migrated = try AgentSettingsStore(suiteName: name).load()
         XCTAssertEqual(migrated.global.maximumRequestRetries, 2)
-        XCTAssertEqual(migrated.global.context?.windowTokens, 2_000_000)
 
         var explicitlyChanged = migrated
         explicitlyChanged.global.maximumRequestRetries = 5
@@ -123,6 +116,79 @@ final class AgentRuntimeTests: XCTestCase {
         XCTAssertEqual(callCount, 0)
     }
 
+    func testPublishedBudgetCountsCurrentMessagesAndToolsBeforeCallingModel() async throws {
+        let capability = try AgentModelCapabilitySnapshot(
+            revision: "published-test", contextWindowTokens: 9_137, outputReserveTokens: 1_137,
+            protocolOverheadEstimatorID: "responses-json-v1", tokenizerID: nil
+        )
+        for largeTool in [false, true] {
+            let model = CompletionCheckModel(capability: capability)
+            let checkpoint = AgentRunCheckpoint(scope: "budget", messages: [
+                .init(role: .user, content: largeTool ? "current" : String(repeating: "x", count: 40_000))
+            ])
+            let tools: [AgentToolDefinition] = largeTool ? [.init(
+                name: "test", description: String(repeating: "x", count: 40_000), schema: Data("{}".utf8), effect: .readOnly
+            )] : []
+            let result = try await AgentRuntime().run(
+                checkpoint: checkpoint, scope: "budget", policy: .init(), model: model, tools: tools,
+                execute: { _ in .failure("unexpected") }
+            )
+            XCTAssertEqual(result.status, .paused)
+            let callCount = await model.callCount
+            XCTAssertEqual(callCount, 0)
+        }
+    }
+
+    func testResponsesCompactionAllowsInputBetweenSoftAndHardLimits() async throws {
+        let message = AgentMessage(role: .user, content: String(repeating: "x", count: 120_000))
+        for usesServerCompaction in [false, true] {
+            let model = ContextBoundaryModel(
+                usesServerSideCompaction: usesServerCompaction,
+                contextWindowTokens: 50_000,
+                outputReserveTokens: 30_000
+            )
+            let result = try await AgentRuntime().run(
+                checkpoint: .init(scope: "soft-hard", messages: [message]),
+                scope: "soft-hard",
+                policy: .init(),
+                model: model,
+                tools: [.init(
+                    name: "finish",
+                    description: "Finish",
+                    schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8),
+                    effect: .terminal
+                )],
+                execute: { _ in .init("done") }
+            )
+
+            XCTAssertEqual(result.status, usesServerCompaction ? .completed : .paused)
+            let callCount = await model.callCount
+            XCTAssertEqual(callCount, usesServerCompaction ? 1 : 0)
+        }
+    }
+
+    func testResponsesCompactionStillRejectsInputBeyondHardLimit() async throws {
+        let model = ContextBoundaryModel(
+            usesServerSideCompaction: true,
+            contextWindowTokens: 50_000,
+            outputReserveTokens: 30_000
+        )
+        let result = try await AgentRuntime().run(
+            checkpoint: .init(scope: "hard-limit", messages: [
+                .init(role: .user, content: String(repeating: "x", count: 240_000)),
+            ]),
+            scope: "hard-limit",
+            policy: .init(),
+            model: model,
+            tools: [],
+            execute: { _ in .failure("unexpected") }
+        )
+
+        XCTAssertEqual(result.status, .paused)
+        let callCount = await model.callCount
+        XCTAssertEqual(callCount, 0)
+    }
+
     func testToollessSummaryReceivesSpecificIncompletionReminder() async throws {
         let checkpoint = AgentRunCheckpoint(
             scope: "specific-reminder",
@@ -156,10 +222,40 @@ final class AgentRuntimeTests: XCTestCase {
 }
 
 private actor CompletionCheckModel: AgentModelClient {
+    nonisolated let memoryCapabilitySnapshot: AgentModelCapabilitySnapshot?
+    init(capability: AgentModelCapabilitySnapshot? = nil) { memoryCapabilitySnapshot = capability }
     var callCount = 0
     func complete(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval) async throws -> AgentMessage {
         callCount += 1
         return .init(role: .assistant)
+    }
+}
+
+private actor ContextBoundaryModel: AgentModelClient {
+    nonisolated let usesServerSideCompaction: Bool
+    nonisolated let memoryCapabilitySnapshot: AgentModelCapabilitySnapshot?
+    private(set) var callCount = 0
+
+    init(usesServerSideCompaction: Bool, contextWindowTokens: Int, outputReserveTokens: Int) {
+        self.usesServerSideCompaction = usesServerSideCompaction
+        memoryCapabilitySnapshot = try? .init(
+            revision: "context-boundary-test",
+            contextWindowTokens: contextWindowTokens,
+            outputReserveTokens: outputReserveTokens,
+            protocolOverheadEstimatorID: "responses-json-v1",
+            tokenizerID: nil
+        )
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        callCount += 1
+        return .init(role: .assistant, toolCalls: [
+            .init(id: "finish", name: "finish", arguments: "{}"),
+        ])
     }
 }
 

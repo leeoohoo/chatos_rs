@@ -14,9 +14,7 @@ struct NativeConnectorGatewayDTOTests {
                 "maximum_request_retries": 3,
                 "request_timeout_seconds": 240,
                 "run_timeout_seconds": 8000,
-                "maximum_no_progress_rounds": 9,
-                "context_window_tokens": 1500000,
-                "output_reserve_tokens": 40000
+                "maximum_no_progress_rounds": 9
               },
               "local_task_execution_settings": {
                 "max_iterations": 640,
@@ -42,8 +40,6 @@ struct NativeConnectorGatewayDTOTests {
         #expect(settings.requestTimeoutSeconds == 240)
         #expect(settings.runTimeoutSeconds == 8_000)
         #expect(settings.maximumNoProgressRounds == 9)
-        #expect(settings.contextWindowTokens == 1_500_000)
-        #expect(settings.outputReserveTokens == 40_000)
         #expect(decoded.localTaskExecutionSettings?.maxIterations == 640)
     }
 

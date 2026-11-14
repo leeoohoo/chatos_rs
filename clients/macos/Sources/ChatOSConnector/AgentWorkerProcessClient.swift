@@ -345,7 +345,6 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
                     let prepared = try await contextProvider.prepare(
                         checkpoint: request.checkpoint,
                         tools: request.tools,
-                        policy: request.policy,
                         modelCapability: request.modelCapability,
                         deadline: request.deadline,
                         synchronizeOnly: request.synchronizeOnly,

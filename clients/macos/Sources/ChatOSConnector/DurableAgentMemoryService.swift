@@ -115,6 +115,27 @@ actor DurableAgentMemoryService: AgentMemoryServicing {
         }
     }
 
+    func compactSummary() async throws {
+        guard await store.shouldAttemptRemote() else {
+            throw AgentMemoryCompactionFailure(reason: AgentContextError.unavailable.localizedDescription)
+        }
+        do {
+            let service = try await remoteService()
+            try await service.ensureThread()
+            try await flush(using: service)
+            try await service.compactSummary()
+            await store.recordRemoteSuccess()
+        } catch {
+            try Self.rethrowIntegrityFailure(error)
+            remote = nil
+            await store.recordRemoteFailure()
+            // Required compaction cannot fall back to a stale projection: doing so would make the
+            // caller believe the budget was recovered while returning the same oversized context.
+            if let failure = error as? AgentMemoryCompactionFailure { throw failure }
+            throw AgentMemoryCompactionFailure(reason: error.localizedDescription)
+        }
+    }
+
     private func remoteService() async throws -> any AgentMemoryServicing {
         if let remote { return remote }
         let created = try await remoteFactory()
@@ -128,14 +149,7 @@ actor DurableAgentMemoryService: AgentMemoryServicing {
             guard !batch.isEmpty else { return }
             let wasAttempted = batch.contains(where: \.attempted)
             try await store.markAttempted(batch.map(\.entry.id), scope: scope)
-            do {
-                try await service.sync(batch.map(\.entry), reconciling: wasAttempted)
-            } catch AgentContextError.syncUncertain {
-                // A successful point lookup would have reconciled the batch.
-                // `syncUncertain` means it is definitely absent, so the same
-                // immutable ids can now be uploaded without rewriting records.
-                try await service.sync(batch.map(\.entry), reconciling: false)
-            }
+            try await service.sync(batch.map(\.entry), reconciling: wasAttempted)
             try await store.markUploaded(batch.map(\.entry.id), scope: scope)
         }
     }

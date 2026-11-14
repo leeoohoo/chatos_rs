@@ -55,7 +55,6 @@ async fn main() -> Result<(), String> {
         .load_strict()
         .await
         .map_err(|err| format!("load Memory Engine pressure config failed: {err}"))?;
-    repositories::control_plane::initialize_managed_memory_policy().await?;
     let mut config = AppConfig::from_env()?;
     config.user_service_base_url = chatos_service_runtime::resolve_service_base_url(
         "user-service",

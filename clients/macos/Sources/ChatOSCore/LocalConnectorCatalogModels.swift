@@ -75,6 +75,7 @@ public enum LocalConnectorPluginSource: String, Codable, Sendable, Equatable {
     case localPlugin = "local_plugin"
     case gitPlugin = "git_plugin"
     case npmPlugin = "npm_plugin"
+    case programMCP = "program_mcp"
 }
 
 public enum LocalConnectorPluginRuntimeStatus: String, Codable, Sendable, Equatable {
@@ -89,6 +90,8 @@ public struct LocalConnectorPluginSourceDraft: Codable, Sendable, Equatable {
         case localFolder = "local_folder"
         case gitRepository = "git_repository"
         case npmPackage = "npm_package"
+        case githubRelease = "github_release"
+        case localExecutable = "local_executable"
     }
 
     public var kind: Kind
@@ -96,19 +99,57 @@ public struct LocalConnectorPluginSourceDraft: Codable, Sendable, Equatable {
     public var exactVersion: String?
     public var gitReference: String?
     public var subdirectory: String?
+    public var program: LocalConnectorProgramMCPConfiguration?
 
     public init(
         kind: Kind,
         location: String,
         exactVersion: String? = nil,
         gitReference: String? = nil,
-        subdirectory: String? = nil
+        subdirectory: String? = nil,
+        program: LocalConnectorProgramMCPConfiguration? = nil
     ) {
         self.kind = kind
         self.location = location
         self.exactVersion = exactVersion
         self.gitReference = gitReference
         self.subdirectory = subdirectory
+        self.program = program
+    }
+}
+
+/// Structured launch facts for a managed executable; never a shell command.
+public struct LocalConnectorProgramMCPConfiguration: Codable, Sendable, Equatable {
+    public var displayName: String
+    public var componentKey: String
+    public var executablePath: String
+    public var arguments: [String]
+    public var accessProfile: LocalConnectorCustomMCPDraft.AccessProfile
+    public var assetName: String?
+    public var archiveSHA256: String?
+
+    public init(
+        displayName: String, componentKey: String, executablePath: String,
+        arguments: [String] = [], accessProfile: LocalConnectorCustomMCPDraft.AccessProfile,
+        assetName: String? = nil, archiveSHA256: String? = nil
+    ) {
+        self.displayName = displayName
+        self.componentKey = componentKey
+        self.executablePath = executablePath
+        self.arguments = arguments
+        self.accessProfile = accessProfile
+        self.assetName = assetName
+        self.archiveSHA256 = archiveSHA256
+    }
+}
+
+public struct LocalConnectorProgramRelease: Sendable, Equatable {
+    public var archiveSHA256: String
+    public var archiveEntries: [String]
+
+    public init(archiveSHA256: String, archiveEntries: [String]) {
+        self.archiveSHA256 = archiveSHA256
+        self.archiveEntries = archiveEntries
     }
 }
 

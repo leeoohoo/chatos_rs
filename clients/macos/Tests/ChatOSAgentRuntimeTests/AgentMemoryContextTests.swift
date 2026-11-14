@@ -162,12 +162,82 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertEqual(flushes, 1)
     }
 
+    func testComposeCompactsAndRecomposesWhenMemoryExceedsBudget() async throws {
+        let (checkpoint, scope) = try fixture()
+        let memory = TestMemory(scope: scope, requiresCompaction: true)
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+
+        let prepared = try await provider.prepare(
+            checkpoint: provider.bind(checkpoint),
+            tools: tools,
+            modelCapability: try modelCapability(),
+            deadline: Date().addingTimeInterval(60),
+            record: { _, _ in }
+        )
+
+        XCTAssertEqual(prepared.messages.map(\.content), checkpoint.messages.map(\.content))
+        let composeCalls = await memory.composeCalls
+        let flushes = await memory.flushes
+        XCTAssertEqual(composeCalls, 2)
+        XCTAssertEqual(flushes, 1)
+    }
+
+    func testCompactionGenerationFailureContinuesWithExactCurrentTurn() async throws {
+        let (checkpoint, scope) = try fixture()
+        let memory = TestMemory(
+            scope: scope,
+            requiresCompaction: true,
+            compactionFailure: true
+        )
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+
+        let prepared = try await provider.prepare(
+            checkpoint: provider.bind(checkpoint),
+            tools: tools,
+            modelCapability: try modelCapability(),
+            deadline: Date().addingTimeInterval(60),
+            record: { _, _ in }
+        )
+
+        XCTAssertEqual(prepared.messages, checkpoint.messages)
+        let composeCalls = await memory.composeCalls
+        let flushes = await memory.flushes
+        XCTAssertEqual(composeCalls, 1)
+        XCTAssertEqual(flushes, 1)
+    }
+
+    func testRuntimeRecomposesMemoryBeforeStoppingForBudget() async throws {
+        let (checkpoint, scope) = try fixture()
+        let memory = TestMemory(scope: scope, firstComposeBlockCharacters: 10_000)
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+        let model = BudgetRecoveryModel()
+
+        let result = try await AgentRuntime().run(
+            checkpoint: provider.bind(checkpoint),
+            scope: checkpoint.scope,
+            policy: .init(),
+            model: model,
+            tools: tools,
+            execute: { call in
+                call.name == "finish"
+                    ? .init("done")
+                    : .init(String(repeating: "x", count: 6_000))
+            },
+            contextProvider: provider
+        )
+
+        XCTAssertEqual(result.status, .completed, result.stopReason ?? "")
+        XCTAssertEqual(result.modelCalls, 2)
+        let composeCalls = await memory.composeCalls
+        XCTAssertEqual(composeCalls, 2)
+    }
+
     func test600ResponsesCallsComposeMemoryOnceAndKeepAuditHistoryComplete() async throws {
         let (checkpoint, scope) = try fixture()
         let memory = TestMemory(scope: scope)
         let provider = AgentMemoryContextProvider(scope: scope, service: memory)
         let model = CountingModel(finishAt: 600)
-        var policy = AgentRunPolicy(); policy.context = contextPolicy
+        let policy = AgentRunPolicy()
         let result = try await AgentRuntime().run(checkpoint: provider.bind(checkpoint), scope: checkpoint.scope,
             policy: policy, model: model, tools: tools, execute: { call in .init(call.arguments + String(repeating: "x", count: 150)) },
             contextProvider: provider)
@@ -189,7 +259,6 @@ final class AgentMemoryContextTests: XCTestCase {
         let model = CountingModel(finishAt: 2)
         var policy = AgentRunPolicy()
         policy.maximumModelCalls = 1
-        policy.context = contextPolicy
 
         let result = try await AgentRuntime().run(
             checkpoint: provider.bind(checkpoint), scope: checkpoint.scope,
@@ -401,12 +470,37 @@ final class AgentMemoryContextTests: XCTestCase {
         let memory = TestMemory(scope: scope)
         let provider = AgentMemoryContextProvider(scope: scope, service: memory)
         let model = CountingModel(finishAt: 1)
-        var policy = AgentRunPolicy(); policy.context = contextPolicy
+        let policy = AgentRunPolicy()
         let result = try await AgentRuntime().run(checkpoint: provider.bind(checkpoint), scope: checkpoint.scope,
             policy: policy, model: model, tools: tools, execute: { _ in .init("ok") }, contextProvider: provider)
         XCTAssertEqual(result.status, .completed)
         XCTAssertEqual(result.modelCalls, 1)
         XCTAssertEqual(result.memory?.syncedMessageCount, result.messages.count)
+    }
+
+    func testFixedCurrentTurnBeyondSoftBudgetSkipsRecallAndUsesResponsesCompaction() async throws {
+        var (checkpoint, scope) = try fixture()
+        checkpoint.messages[1].content = String(repeating: "x", count: 50_000)
+        let memory = TestMemory(scope: scope)
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+        let model = FixedTurnCompactionModel()
+
+        let result = try await AgentRuntime().run(
+            checkpoint: provider.bind(checkpoint),
+            scope: checkpoint.scope,
+            policy: .init(),
+            model: model,
+            tools: tools,
+            execute: { _ in .init("done") },
+            contextProvider: provider
+        )
+
+        XCTAssertEqual(result.status, .completed, result.stopReason ?? "")
+        XCTAssertEqual(result.modelCalls, 1)
+        let composeCalls = await memory.composeCalls
+        XCTAssertEqual(composeCalls, 0, "A zero/negative recall budget must not be sent to Memory Engine")
+        let modelCalls = await model.count
+        XCTAssertEqual(modelCalls, 1)
     }
 
     func testLostSyncAcknowledgementReconcilesInsteadOfRewriting() async throws {
@@ -449,12 +543,12 @@ final class AgentMemoryContextTests: XCTestCase {
         let memory = TestMemory(scope: scope)
         let provider = AgentMemoryContextProvider(scope: scope, service: memory)
         var checkpoint = try provider.bind(initial)
-        checkpoint = try await provider.prepare(checkpoint: checkpoint, tools: tools, policy: contextPolicy,
+        checkpoint = try await provider.prepare(checkpoint: checkpoint, tools: tools,
             modelCapability: try modelCapability(),
             deadline: Date().addingTimeInterval(60), synchronizeOnly: true, record: { _, _ in }).checkpoint
         checkpoint.messages[1].content = "mutated"
         do {
-            _ = try await provider.prepare(checkpoint: checkpoint, tools: tools, policy: contextPolicy,
+            _ = try await provider.prepare(checkpoint: checkpoint, tools: tools,
                 modelCapability: try modelCapability(),
                 deadline: Date().addingTimeInterval(60), record: { _, _ in })
             XCTFail("Should fail")
@@ -465,69 +559,42 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertEqual(writes, 1)
     }
 
-    func testModelCapabilityIsFrozenAndLegacyOrChangedSnapshotsFailClosed() async throws {
-        let (initial, scope) = try fixture()
-        let memory = TestMemory(scope: scope)
-        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
-        let model = CountingModel(finishAt: 1)
-        let frozen = try XCTUnwrap(model.memoryCapabilitySnapshot)
-
-        let completed = try await AgentRuntime().run(
-            checkpoint: provider.bind(initial),
-            scope: initial.scope,
-            policy: .init(),
-            model: model,
-            tools: tools,
-            execute: { _ in .init("done") },
-            contextProvider: provider
-        )
-        XCTAssertEqual(completed.memory?.modelCapability, frozen)
-
-        var changed = try provider.bind(initial)
-        changed.memory?.modelCapability = try AgentModelCapabilitySnapshot(
-            revision: "different-capability-v1",
-            contextWindowTokens: frozen.contextWindowTokens,
-            outputReserveTokens: frozen.outputReserveTokens,
-            protocolOverheadEstimatorID: frozen.protocolOverheadEstimatorID,
-            tokenizerID: frozen.tokenizerID
-        )
-        do {
-            _ = try await AgentRuntime().run(
-                checkpoint: changed,
-                scope: changed.scope,
+    func testResumeAdoptsCurrentPublishedCapacityAndKeepsExecutionHistory() async throws {
+        for hasOldPolicy in [true, false] {
+            let (initial, scope) = try fixture()
+            let memory = TestMemory(scope: scope)
+            let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+            let model = CountingModel(finishAt: 1)
+            let current = try XCTUnwrap(model.memoryCapabilitySnapshot)
+            var checkpoint = try provider.bind(initial)
+            checkpoint.status = .paused
+            checkpoint.modelCalls = 1
+            if hasOldPolicy {
+                checkpoint.memory?.modelCapability = try AgentModelCapabilitySnapshot(
+                    revision: "retired-capacity-v1",
+                    contextWindowTokens: current.contextWindowTokens - 1000,
+                    outputReserveTokens: current.outputReserveTokens,
+                    protocolOverheadEstimatorID: current.protocolOverheadEstimatorID,
+                    tokenizerID: current.tokenizerID
+                )
+            }
+            let recovered = try await AgentRuntime().run(
+                checkpoint: checkpoint,
+                scope: checkpoint.scope,
                 policy: .init(),
                 model: model,
                 tools: tools,
-                execute: { _ in .init("not reached") },
+                execute: { _ in .init("done") },
                 contextProvider: provider
             )
-            XCTFail("Changed model capability must be rejected")
-        } catch AgentRuntimeError.modelConfigurationUnavailable {
-            // Expected.
-        }
-
-        var legacy = try provider.bind(initial)
-        legacy.modelCalls = 1
-        do {
-            _ = try await AgentRuntime().run(
-                checkpoint: legacy,
-                scope: legacy.scope,
-                policy: .init(),
-                model: model,
-                tools: tools,
-                execute: { _ in .init("not reached") },
-                contextProvider: provider
-            )
-            XCTFail("A used legacy checkpoint cannot adopt current model limits")
-        } catch AgentRuntimeError.modelConfigurationUnavailable {
-            // Expected.
+            XCTAssertEqual(recovered.id, checkpoint.id)
+            XCTAssertEqual(recovered.status, .completed, recovered.stopReason ?? "")
+            XCTAssertEqual(recovered.memory?.modelCapability, current)
+            XCTAssertGreaterThan(recovered.modelCalls, checkpoint.modelCalls)
+            XCTAssertEqual(Array(recovered.messages.prefix(checkpoint.messages.count)), checkpoint.messages)
         }
     }
 
-    private var contextPolicy: AgentContextPolicy {
-        var policy = AgentContextPolicy(); policy.windowTokens = 2_048; policy.outputReserveTokens = 512
-        return policy
-    }
     private func modelCapability() throws -> AgentModelCapabilitySnapshot {
         try AgentModelCapabilitySnapshot(
             revision: "test-capability-v1",
@@ -569,6 +636,56 @@ actor CountingModel: AgentModelClient {
     }
 }
 
+private actor BudgetRecoveryModel: AgentModelClient {
+    nonisolated let usesServerSideCompaction = true
+    nonisolated let memoryCapabilitySnapshot = try? AgentModelCapabilitySnapshot(
+        revision: "budget-recovery-v1",
+        contextWindowTokens: 4_096,
+        outputReserveTokens: 512,
+        protocolOverheadEstimatorID: "responses-json-v1",
+        tokenizerID: nil
+    )
+    var count = 0
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        count += 1
+        let finish = count == 2
+        return .init(role: .assistant, toolCalls: [
+            .init(
+                id: "budget-call-\(count)",
+                name: finish ? "finish" : "work",
+                arguments: finish ? "{}" : "{\"step\":1}"
+            ),
+        ])
+    }
+}
+
+private actor FixedTurnCompactionModel: AgentModelClient {
+    nonisolated let usesServerSideCompaction = true
+    nonisolated let memoryCapabilitySnapshot = try? AgentModelCapabilitySnapshot(
+        revision: "fixed-turn-compaction-v1",
+        contextWindowTokens: 20_000,
+        outputReserveTokens: 10_000,
+        protocolOverheadEstimatorID: "responses-json-v1",
+        tokenizerID: nil
+    )
+    private(set) var count = 0
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        count += 1
+        return .init(role: .assistant, toolCalls: [
+            .init(id: "fixed-turn-finish", name: "finish", arguments: "{}"),
+        ])
+    }
+}
+
 private actor TestMemory: AgentMemoryServicing {
     let scope: AgentMemoryScope
     var loseSyncAck: Bool
@@ -578,8 +695,23 @@ private actor TestMemory: AgentMemoryServicing {
     var writes = 0
     var reconciliations = 0
     var flushes = 0
-    init(scope: AgentMemoryScope, loseSyncAck: Bool = false, failWriteNumber: Int? = nil) {
-        self.scope = scope; self.loseSyncAck = loseSyncAck; self.failWriteNumber = failWriteNumber
+    let requiresCompaction: Bool
+    let compactionFailure: Bool
+    let firstComposeBlockCharacters: Int
+    init(
+        scope: AgentMemoryScope,
+        loseSyncAck: Bool = false,
+        failWriteNumber: Int? = nil,
+        requiresCompaction: Bool = false,
+        compactionFailure: Bool = false,
+        firstComposeBlockCharacters: Int = 0
+    ) {
+        self.scope = scope
+        self.loseSyncAck = loseSyncAck
+        self.failWriteNumber = failWriteNumber
+        self.requiresCompaction = requiresCompaction
+        self.compactionFailure = compactionFailure
+        self.firstComposeBlockCharacters = firstComposeBlockCharacters
     }
     func ensureThread() {}
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) throws {
@@ -596,10 +728,20 @@ private actor TestMemory: AgentMemoryServicing {
     func compose(_ request: AgentMemoryComposeRequest) -> AgentMemoryContext {
         composeCalls += 1
         return .init(
-            blocks: [],
+            blocks: composeCalls == 1 && firstComposeBlockCharacters > 0
+                ? [.init(blockType: "history", text: String(repeating: "h", count: firstComposeBlockCharacters))]
+                : [],
             recentRecords: entries.filter { $0.conversationTurnID != request.currentTurnID }
-                .map { .init(id: $0.id, message: $0.message) }
+                .map { .init(id: $0.id, message: $0.message) },
+            needsCompaction: requiresCompaction && flushes == 0,
+            budgetUsedTokens: requiresCompaction && flushes == 0 ? 1_000 : 100,
+            pendingRecordCount: requiresCompaction && flushes == 0 ? 10 : 1
         )
     }
-    func flushSummary() { flushes += 1 }
+    func flushSummary() throws {
+        flushes += 1
+        if compactionFailure {
+            throw AgentMemoryCompactionFailure(reason: "stream closed before response.completed")
+        }
+    }
 }

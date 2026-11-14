@@ -5,8 +5,6 @@ use std::collections::VecDeque;
 
 use sha2::{Digest, Sha256};
 
-use super::MIN_TOKEN_LIMIT;
-
 const CHUNK_DIGEST_PREFIX: &str = "sha256:";
 const SECTION_MARKERS: [&str; 4] = [
     "[tool_calls]",
@@ -16,10 +14,7 @@ const SECTION_MARKERS: [&str; 4] = [
 ];
 
 pub fn estimate_tokens_text(text: &str) -> i64 {
-    let char_count = text.chars().count() as i64;
-    let byte_count = text.len() as i64;
-    let extra_bytes = byte_count.saturating_sub(char_count);
-    ((char_count * 3 + extra_bytes * 4 + 11) / 12).max(1)
+    i64::try_from(memory_engine_sdk::estimate_text_tokens(text).max(1)).unwrap_or(i64::MAX)
 }
 
 pub(crate) fn split_chunks_by_token_limit(
@@ -34,9 +29,7 @@ pub(crate) fn split_chunks_by_token_limit(
     let normalized = if split_oversized_items {
         items
             .iter()
-            .flat_map(|item| {
-                split_text_by_token_limit(item.as_str(), token_limit.max(MIN_TOKEN_LIMIT))
-            })
+            .flat_map(|item| split_text_by_token_limit(item.as_str(), token_limit))
             .collect::<Vec<_>>()
     } else {
         items.to_vec()
@@ -99,7 +92,6 @@ fn json_contains_source_ref(value: &serde_json::Value, source_ref: &str) -> bool
 }
 
 pub(super) fn split_text_by_token_limit(text: &str, token_limit: i64) -> Vec<String> {
-    let token_limit = token_limit.max(MIN_TOKEN_LIMIT);
     if estimate_tokens_text(text) <= token_limit {
         return vec![text.to_string()];
     }
@@ -118,7 +110,7 @@ pub(super) fn split_text_by_token_limit(text: &str, token_limit: i64) -> Vec<Str
     );
     let body_limit = token_limit
         .saturating_sub(estimate_tokens_text(envelope_probe.as_str()))
-        .max(16);
+        .max(1);
     let semantic = semantic_fragments(text);
     let mut atoms = Vec::new();
     for fragment in semantic {

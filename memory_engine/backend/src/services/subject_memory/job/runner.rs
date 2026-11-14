@@ -26,7 +26,7 @@ pub(crate) async fn run_subject_memory_job_internal(
     req: RunSubjectMemoryJobRequest,
     from_scope_runner: bool,
 ) -> Result<RunSubjectMemoryJobResponse, String> {
-    let initial_prep = prepare_subject_memory_job(db, &req).await?;
+    let initial_prep = prepare_subject_memory_job(config, db, &req).await?;
     if initial_prep.summary_selection.is_none() && initial_prep.rollup_selection.is_none() {
         log_noop(&req);
         return Ok(empty_subject_memory_response(req.subject_id.clone()));
@@ -202,7 +202,7 @@ pub(crate) async fn resume_subject_memory_job(
                 .ok_or_else(|| "subject memory frozen source id is invalid".to_string())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let settings = super::super::settings::build_settings_with_policy(db, &req).await?;
+    let settings = super::super::settings::build_settings_with_policy(config, &req).await?;
     let mut progress = SubjectMemoryJobProgress::new();
     let input_count = source_ids.len();
     let relation_subject_id = settings.relation_subject_id.clone();
@@ -347,9 +347,10 @@ pub(crate) async fn resume_subject_memory_job(
 }
 
 pub(crate) async fn subject_memory_job_has_work(
+    config: &AppConfig,
     db: &Db,
     req: &RunSubjectMemoryJobRequest,
 ) -> Result<bool, String> {
-    let prep = prepare_subject_memory_job(db, req).await?;
+    let prep = prepare_subject_memory_job(config, db, req).await?;
     Ok(prep.summary_selection.is_some() || prep.rollup_selection.is_some())
 }

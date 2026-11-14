@@ -83,7 +83,10 @@ fn managed_browser_host_selected_end_to_end() {
     assert_eq!(clicked["structuredContent"]["navigated"], false);
     assert_eq!(clicked["structuredContent"]["after"]["url"], url);
     let stale = mcp.call_tool_result("browser_click", json!({"ref":reference}));
-    assert_eq!(stale["isError"], true, "click invalidates refs even without navigation");
+    assert_eq!(
+        stale["isError"], true,
+        "click invalidates refs even without navigation"
+    );
     mcp.call_tool("browser_wait", json!({"text":"clicked","timeout_ms":5000}));
     mcp.call_tool("browser_wait", json!({"text":"mock","timeout_ms":5000}));
 
@@ -397,29 +400,69 @@ fn managed_browser_host_selected_end_to_end() {
 
     let links = mcp.call_tool("browser_snapshot", json!({}));
     let nodes = links["structuredContent"]["nodes"].as_array().unwrap();
-    assert!(nodes.iter().filter(|node| node["name"] == "Unsafe link" || node["name"] == "Credential link")
-        .all(|node| node["href"].is_null()));
-    let article_link = nodes.iter().find(|node| node["name"] == "Official research article").unwrap();
+    assert!(
+        nodes
+            .iter()
+            .filter(|node| node["name"] == "Unsafe link" || node["name"] == "Credential link")
+            .all(|node| node["href"].is_null())
+    );
+    let article_link = nodes
+        .iter()
+        .find(|node| node["name"] == "Official research article")
+        .unwrap();
     assert_eq!(article_link["href"], format!("{url}redirect"));
     let article_click = mcp.call_tool("browser_click", json!({"ref":article_link["reference"]}));
     assert_eq!(article_click["structuredContent"]["navigated"], true);
-    assert_eq!(article_click["structuredContent"]["after"]["url"], format!("{url}article"), "{article_click}");
+    assert_eq!(
+        article_click["structuredContent"]["after"]["url"],
+        format!("{url}article"),
+        "{article_click}"
+    );
     let article = mcp.call_tool("browser_snapshot", json!({}));
     assert_eq!(article["structuredContent"]["title"], "Verified research");
-    assert!(article["structuredContent"]["text"].as_str().unwrap().contains("not a search snippet"));
-    assert!(article["structuredContent"]["nodes"].as_array().unwrap().iter()
-        .any(|node| node["name"] == "2026-07-31"));
+    assert!(
+        article["structuredContent"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("not a search snippet")
+    );
+    assert!(
+        article["structuredContent"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|node| node["name"] == "2026-07-31")
+    );
     let tabs = mcp.call_tool("browser_tabs", json!({}));
-    assert!(tabs["structuredContent"].as_array().unwrap().iter().any(|tab| tab["url"] == format!("{url}article")));
+    assert!(
+        tabs["structuredContent"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tab| tab["url"] == format!("{url}article"))
+    );
     let nav = mcp.call_tool("browser_navigate", json!({"url":format!("{url}redirect")}));
-    assert_eq!(nav["structuredContent"]["page"]["url"], format!("{url}article"));
+    assert_eq!(
+        nav["structuredContent"]["page"]["url"],
+        format!("{url}article")
+    );
     // Page with no interactive controls still has authoritative visible text.
     mcp.call_tool("browser_cdp_send", json!({"method":"Runtime.evaluate", "params":{
         "expression":"document.body.innerHTML = '<div>Plain research text without interactive nodes</div>'", "returnByValue":true
     }}));
     let plain = mcp.call_tool("browser_snapshot", json!({}));
-    assert!(plain["structuredContent"]["nodes"].as_array().unwrap().is_empty());
-    assert!(plain["structuredContent"]["text"].as_str().unwrap().contains("Plain research text"));
+    assert!(
+        plain["structuredContent"]["nodes"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        plain["structuredContent"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Plain research text")
+    );
 
     mcp.call_tool("browser_session_close", json!({}));
     mcp.shutdown();
@@ -563,20 +606,28 @@ fetch('/api/data', {headers: {Authorization: 'Bearer top-secret'}}).then(r => r.
         while !stop_for_thread.load(Ordering::Relaxed) {
             match listener.accept() {
                 Ok((mut stream, _)) => {
-                    stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .unwrap();
                     let mut reader = BufReader::new(&mut stream);
                     let mut request = String::new();
-                    if reader.read_line(&mut request).unwrap_or(0) == 0 { continue; }
+                    if reader.read_line(&mut request).unwrap_or(0) == 0 {
+                        continue;
+                    }
                     loop {
                         let mut header = String::new();
-                        if reader.read_line(&mut header).unwrap_or(0) == 0 || header == "\r\n" { break; }
+                        if reader.read_line(&mut header).unwrap_or(0) == 0 || header == "\r\n" {
+                            break;
+                        }
                     }
                     drop(reader);
                     let request_target = request.split_whitespace().nth(1).unwrap_or("");
                     // Chrome may use absolute-form requests with the machine's
                     // proxy configuration. Normalize only this fixture origin.
                     let origin = format!("http://{address}");
-                    let path = request_target.strip_prefix(&origin).unwrap_or(request_target);
+                    let path = request_target
+                        .strip_prefix(&origin)
+                        .unwrap_or(request_target);
                     if path == "/redirect" {
                         let _ = stream.write_all(b"HTTP/1.1 302 Found\r\nLocation: /article\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
                         continue;
@@ -589,7 +640,11 @@ fetch('/api/data', {headers: {Authorization: 'Bearer top-secret'}}).then(r => r.
                             "download fixture",
                         )
                     } else if path == "/article" {
-                        ("text/html; charset=utf-8", "", "<!doctype html><title>Verified research</title><main><article><h1>Official article</h1><time>2026-07-31</time><p>Published research body, not a search snippet.</p></article></main>")
+                        (
+                            "text/html; charset=utf-8",
+                            "",
+                            "<!doctype html><title>Verified research</title><main><article><h1>Official article</h1><time>2026-07-31</time><p>Published research body, not a search snippet.</p></article></main>",
+                        )
                     } else {
                         ("text/html; charset=utf-8", "", body)
                     };

@@ -494,16 +494,23 @@ impl LocalAgentRunStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut connection, command).await.db()? {
                 return Ok(replay);
             }
+            let current = Self::fetch_run_on(&mut connection, run_id)
+                .await
+                .db()?
+                .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
             if expected_status == LocalAgentRunStatus::WaitingUser {
                 requirement_survey_store::reject_resume_with_open_survey(&mut connection, run_id)
                     .await?;
             }
+            let continuation_input =
+                super::run_continuation::for_resume(&mut connection, &current, continuation_input)
+                    .await?;
             let updated = sqlx::query(
                 "UPDATE local_agent_runs SET status = 'continuation_ready', \
                  version = version + 1, continuation_input_json = ?, updated_at_unix_ms = ? \
                  WHERE run_id = ? AND status = ? AND version = ?",
             )
-            .bind(serde_json::to_string(continuation_input)?)
+            .bind(serde_json::to_string(&continuation_input)?)
             .bind(now_unix_ms)
             .bind(run_id)
             .bind(expected_status.as_str())
@@ -521,7 +528,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 event_id,
                 run_id,
                 "run_resumed",
-                continuation_input,
+                &continuation_input,
                 now_unix_ms,
             )
             .await

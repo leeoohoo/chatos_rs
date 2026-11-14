@@ -44,10 +44,15 @@ class MemoryTenantKeyContractTests(unittest.TestCase):
     def test_repository_writes_and_worker_claims_use_composite_identity(self) -> None:
         threads = (MEMORY / "src/repositories/threads/writes.rs").read_text()
         records = (MEMORY / "src/repositories/records/writes.rs").read_text()
-        summaries = (MEMORY / "src/repositories/summaries/writes.rs").read_text()
+        summary_commits = (
+            MEMORY / "src/repositories/generation_output_commits.rs"
+        ).read_text()
         self.assertIn("ON CONFLICT(tenant_id,source_id,id)", threads)
         self.assertIn("ON CONFLICT(tenant_id,source_id,id)", records)
-        self.assertIn("ON CONFLICT(tenant_id,source_id,id)", summaries)
+        self.assertIn(
+            "INSERT INTO engine_summaries(id,tenant_id,source_id",
+            summary_commits,
+        )
 
         for relative in (
             "src/repositories/subject_memory_scopes.rs",

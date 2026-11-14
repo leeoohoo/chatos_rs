@@ -8,8 +8,8 @@ use sqlx::Row;
 use tracing::{info, warn};
 
 use crate::repositories::{
-    control_plane, derived_events, partition_rebuilds, subject_memory_scopes, summaries,
-    thread_partitions, threads,
+    derived_events, partition_rebuilds, subject_memory_scopes, summaries, thread_partitions,
+    threads,
 };
 use crate::services::{control_plane as cp_service, subject_memory, summary};
 use crate::state::AppState;
@@ -180,8 +180,7 @@ async fn reconcile_thread_rollup(
     state: &AppState,
     claim: &partition_rebuilds::PartitionRebuildClaim,
 ) -> Result<RebuildOutcome, String> {
-    let policy = control_plane::get_effective_job_policy(&state.pool, "rollup").await?;
-    let settings = cp_service::build_rollup_settings_from_policy(&policy)?;
+    let settings = cp_service::load_rollup_settings(&state.config)?;
     let prepared = summary::prepare_thread_rollup(
         &state.pool,
         &claim.tenant_id,
@@ -193,7 +192,6 @@ async fn reconcile_thread_rollup(
     let Some(prepared) = prepared else {
         return Ok(RebuildOutcome::Completed(json!({
             "phase": "thread_rollup_complete",
-            "max_level": settings.max_level,
         })));
     };
     summaries::rearm_rollup_dispatch_if_eligible(
@@ -201,7 +199,6 @@ async fn reconcile_thread_rollup(
         &claim.tenant_id,
         &claim.source_id,
         &claim.thread_id,
-        settings.max_level,
     )
     .await?;
     Ok(RebuildOutcome::Waiting(json!({
@@ -261,7 +258,7 @@ async fn reconcile_subject_memory(
     )
     .await?
     .ok_or_else(|| "subject_memory_rebuild_scope_missing".to_string())?;
-    if subject_memory::scope_has_pending_work(&state.pool, &scope).await? {
+    if subject_memory::scope_has_pending_work(&state.config, &state.pool, &scope).await? {
         subject_memory_scopes::rearm_subject_memory_dispatch(
             &state.pool,
             &claim.tenant_id,

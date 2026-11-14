@@ -28,6 +28,7 @@ struct AgentGroupChatWorkspaceView: View {
     @State private var teamPageSize = 10
     @State private var directPage = 0
     @State private var directPageSize = 10
+    @State private var activityNavigation: AgentTeamNavigationTarget?
 
     private let ownerUserID: String
     private let service: NativeAgentGroupChatService
@@ -61,7 +62,13 @@ struct AgentGroupChatWorkspaceView: View {
         }
         .workspaceFill()
         .navigationTitle("Agent")
-        .task { await viewModel.activate() }
+        .task {
+            await viewModel.activate()
+            applyRequestedNavigation()
+        }
+        .onChange(of: model.requestedAgentTeamNavigation) { _, _ in
+            applyRequestedNavigation()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .agentGroupChatRoomsDidChange)) { _ in
             Task { await viewModel.load() }
         }
@@ -386,15 +393,18 @@ struct AgentGroupChatWorkspaceView: View {
             )
             .id(conversation.id)
         } else if let room = selectedRoom {
+            let navigation = activityNavigation
+                .flatMap { $0.roomID == room.id ? $0 : nil }
             ProjectAgentGroupChatView(
                 projectID: room.projectID,
                 ownerUserID: ownerUserID,
                 service: service,
                 scheduler: scheduler,
                 builderService: builderService,
-                projectsService: model.localProjectsService
+                projectsService: model.localProjectsService,
+                focusedTodoID: navigation?.todoID
             )
-            .id(room.id)
+            .id("\(room.id):\(navigation?.id.uuidString ?? "default")")
         } else {
             ContentUnavailableView {
                 Label("团队不存在", systemImage: "person.3.sequence.fill")
@@ -407,6 +417,13 @@ struct AgentGroupChatWorkspaceView: View {
     private func projectName(for projectID: String) -> String {
         model.projects.first(where: { $0.id == projectID })?.title
             ?? model.localized("项目已移除", english: "Project Removed")
+    }
+
+    private func applyRequestedNavigation() {
+        guard let target = model.requestedAgentTeamNavigation else { return }
+        activityNavigation = target
+        destination = .room(target.roomID)
+        model.requestedAgentTeamNavigation = nil
     }
 }
 

@@ -75,8 +75,7 @@ fi
 
 for RESOURCE_BUNDLE in \
   ChatOSSwift_ChatOSCore.bundle \
-  ChatOSSwift_ChatOSModelCapabilities.bundle \
-  SwiftTerm_SwiftTerm.bundle
+  ChatOSSwift_ChatOSModelCapabilities.bundle
 do
   if [[ ! -d "$APP_PATH/Contents/Resources/$RESOURCE_BUNDLE" ]]; then
     echo "Missing Swift resource bundle: $APP_PATH/Contents/Resources/$RESOURCE_BUNDLE" >&2

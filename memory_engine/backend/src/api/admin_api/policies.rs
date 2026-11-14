@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::error::internal_error;
 use crate::api::memory_auth::MemoryAuthContext;
-use crate::repositories::control_plane;
+use crate::services::control_plane;
 use crate::state::AppState;
 
 pub async fn list_job_policies(
@@ -17,19 +17,23 @@ pub async fn list_job_policies(
     auth: MemoryAuthContext,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     auth.require_super_admin_or_operator()?;
-    control_plane::list_job_policies(&state.pool)
-        .await
-        .map(|items| Json(json!({ "items": items })))
-        .map_err(internal_error)
+    let mut items = Vec::new();
+    for job_type in ["summary", "rollup", "subject_memory"] {
+        items.push(
+            control_plane::get_effective_job_policy(&state.config, job_type)
+                .map_err(internal_error)?,
+        );
+    }
+    Ok(Json(json!({"items": items})))
 }
+
 pub async fn get_job_policy(
     State(state): State<Arc<AppState>>,
     auth: MemoryAuthContext,
     Path(job_type): Path<String>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     auth.require_super_admin_or_operator()?;
-    control_plane::get_effective_job_policy(&state.pool, job_type.as_str())
-        .await
+    control_plane::get_effective_job_policy(&state.config, job_type.as_str())
         .map(|item| Json(json!(item)))
         .map_err(internal_error)
 }

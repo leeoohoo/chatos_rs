@@ -38,7 +38,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             }
         }
         let arguments = try Self.object(invocation.arguments)
-        let replacingID = Self.optionalString(arguments, "replacing_plugin_id")
+        let replacingID = try Self.replacementPluginID(arguments)
         let isCustomInstall = invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallNPMToolName
             || invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallSourceToolName
         let isUpdateRequest = Self.matches(#"更新|升级|\b(?:update|upgrade)\b"#, in: authorizedUserMessage.lowercased())
@@ -48,6 +48,18 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             )
         }
         switch invocation.toolName {
+        case NativeLocalAgentPlatformToolCatalog.pluginInstallerDiscoverRepositoryToolName:
+            return try await connector.discoverInstallerRepository(
+                url: Self.string(arguments, "repository_url"),
+                documentPath: Self.optionalString(arguments, "document_path"),
+                reference: Self.optionalString(arguments, "reference")
+            )
+        case NativeLocalAgentPlatformToolCatalog.pluginInstallerResolveReleaseToolName:
+            return try await connector.resolveInstallerRelease(
+                url: Self.string(arguments, "repository_url"),
+                tag: Self.string(arguments, "release_tag"),
+                asset: Self.string(arguments, "asset_name")
+            )
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerListInstalledToolName:
             return .object(["plugins": .array(await connector.installerInstalledPlugins(
                 query: Self.optionalString(arguments, "query")
@@ -233,8 +245,10 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
     static func authorizedInstallerRequest(current: String, previous: [String]) -> String {
         func isContinuation(_ message: String) -> Bool {
             let value = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if let url = URL(string: value), url.scheme == "https", url.host == "github.com",
+               url.user == nil, url.password == nil, !value.contains(where: \.isWhitespace) { return true }
             return value.isEmpty || matches(
-                #"^(?:继续|好的?|可以|确认|就这个|就是这个|看不到[吗么]?|能看到[吗么]?|这[张个]图|截图|yes|ok|continue)[\s。.!！?？]*$"#,
+                #"^(?:继续|好的?|可以|确认|就这个|就是这个|重新试试[呢吧]?|再试[试一遍下]*|重试|看不到[吗么]?|能看到[吗么]?|这[张个]图|截图|yes|ok|continue|retry|try again)[\s。.!！?？]*$"#,
                 in: value
             )
         }
@@ -416,7 +430,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         )
     }
 
-    private static func pluginSource(
+    static func pluginSource(
         _ arguments: [String: LocalAgentJSONValue]
     ) throws -> LocalConnectorPluginSourceDraft {
         guard let kind = LocalConnectorPluginSourceDraft.Kind(
@@ -424,16 +438,30 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         ) else {
             throw NativeLocalAgentPluginInstallerToolError.invalidField("source_kind")
         }
+        let program: LocalConnectorProgramMCPConfiguration?
+        if let value = arguments["program"] {
+            let fields = try object(value)
+            guard let profile = LocalConnectorCustomMCPDraft.AccessProfile(rawValue: try string(fields, "access_profile")) else {
+                throw NativeLocalAgentPluginInstallerToolError.invalidField("program.access_profile")
+            }
+            program = .init(
+                displayName: try string(fields, "display_name"), componentKey: try string(fields, "component_key"),
+                executablePath: try string(fields, "executable_path"), arguments: try stringArray(fields, "arguments"),
+                accessProfile: profile, assetName: optionalString(fields, "asset_name"),
+                archiveSHA256: optionalString(fields, "archive_sha256")
+            )
+        } else { program = nil }
         return .init(
             kind: kind,
             location: try string(arguments, "location"),
             exactVersion: optionalString(arguments, "exact_version"),
             gitReference: optionalString(arguments, "git_reference"),
-            subdirectory: optionalString(arguments, "subdirectory")
+            subdirectory: optionalString(arguments, "subdirectory"),
+            program: program
         )
     }
 
-    private static func inspectionResult(
+    static func inspectionResult(
         _ inspection: LocalConnectorPluginInspection,
         draft: LocalConnectorCustomMCPDraft? = nil,
         source: LocalConnectorPluginSourceDraft? = nil,
@@ -455,7 +483,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
                 ])
             }),
         ]
-        if let replacingID { value["replacing_plugin_id"] = .string(replacingID) }
+        value["replacing_plugin_id"] = replacingID.map(LocalAgentJSONValue.string) ?? .null
         if let draft {
             value["resolved_install_request"] = NativePluginInstallerMetadata.npm(draft)
         }
@@ -500,6 +528,15 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             throw NativeLocalAgentPluginInstallerToolError.invalidField(field)
         }
         return value
+    }
+
+    static func replacementPluginID(_ arguments: [String: LocalAgentJSONValue]) throws -> String? {
+        guard let value = arguments["replacing_plugin_id"], value != .null else { return nil }
+        guard case let .string(id) = value else {
+            throw NativeLocalAgentPluginInstallerToolError.invalidField("replacing_plugin_id")
+        }
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func optionalString(

@@ -21,6 +21,12 @@ struct RequirementSurveyNavigationTarget: Equatable {
     let surveyID: String
 }
 
+struct AgentTeamNavigationTarget: Equatable {
+    let id = UUID()
+    let roomID: String
+    let todoID: String?
+}
+
 enum ProjectWorkspaceTab: String, CaseIterable, Identifiable {
     case directory = "项目目录"
     case messages = "用户消息"

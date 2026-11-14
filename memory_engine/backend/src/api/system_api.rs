@@ -122,6 +122,7 @@ pub async fn prometheus_metrics(State(state): State<Arc<AppState>>) -> impl Into
             tenant_id: None,
             source_id: None,
         },
+        false, // Prometheus scrapes must not run the source-readiness full scan.
     )
     .await
     {
@@ -139,15 +140,36 @@ pub async fn prometheus_metrics(State(state): State<Arc<AppState>>) -> impl Into
             for (kind, value) in [
                 ("pending_records", report.baseline.pending_records),
                 ("pending_tokens", report.baseline.pending_tokens),
-                ("summary_dispatch_pending", report.baseline.summary_dispatch_pending),
-                ("summary_dispatch_dead_lettered", report.baseline.summary_dispatch_dead_lettered),
-                ("rollup_inputs_pending", report.baseline.rollup_inputs_pending),
-                ("rollup_dispatch_pending", report.baseline.rollup_dispatch_pending),
-                ("subject_memory_source_dispatch_pending", report.baseline.subject_memory_source_dispatch_pending),
-                ("subject_memory_rollup_pending", report.baseline.subject_memory_rollup_pending),
+                (
+                    "summary_dispatch_pending",
+                    report.baseline.summary_dispatch_pending,
+                ),
+                (
+                    "summary_dispatch_dead_lettered",
+                    report.baseline.summary_dispatch_dead_lettered,
+                ),
+                (
+                    "rollup_inputs_pending",
+                    report.baseline.rollup_inputs_pending,
+                ),
+                (
+                    "rollup_dispatch_pending",
+                    report.baseline.rollup_dispatch_pending,
+                ),
+                (
+                    "subject_memory_source_dispatch_pending",
+                    report.baseline.subject_memory_source_dispatch_pending,
+                ),
+                (
+                    "subject_memory_rollup_pending",
+                    report.baseline.subject_memory_rollup_pending,
+                ),
                 ("running_jobs", report.baseline.running_jobs),
                 ("failed_jobs_last_24h", report.baseline.failed_jobs_last_24h),
-                ("provider_overflow_outputs", report.baseline.outputs_with_provider_overflow_retry),
+                (
+                    "provider_overflow_outputs",
+                    report.baseline.outputs_with_provider_overflow_retry,
+                ),
             ] {
                 body.push_str(
                     format!("chatos_memory_reliability_backlog{{kind=\"{kind}\"}} {value}\n")

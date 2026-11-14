@@ -115,31 +115,7 @@ let response = client
 
 ## 4. Compose 上下文
 
-`ComposeContextPolicy` 的五个字段都是 token 硬预算，不接受条数限制或 `include_*` 开关：
-
-```rust
-use memory_engine_sdk::{ComposeContextPolicy, SdkComposeContextRequest};
-
-let context = client
-    .compose_context(&SdkComposeContextRequest {
-        tenant_id: "tenant_001".to_string(),
-        subject_id: Some("agent:assistant_001".to_string()),
-        context_project_subject_id: Some("project:project_001".to_string()),
-        thread_id: "thread_001".to_string(),
-        query_text: Some("memory reliability remaining work".to_string()),
-        current_turn_id: Some("turn_002".to_string()),
-        model_capability_revision: "model-capability-200k-v1".to_string(),
-        runtime_context_assertion: assertion.clone(),
-        policy: ComposeContextPolicy {
-            max_memory_tokens: 24_000,
-            max_recent_record_tokens: 8_000,
-            max_thread_summary_tokens: 8_000,
-            max_project_memory_tokens: 5_000,
-            max_agent_memory_tokens: 3_000,
-        },
-    })
-    .await?;
-```
+`ComposeContextPolicy` 的五个字段都是 token 硬预算，不接受条数限制或 `include_*` 开关。
 
 调用方必须传已发布的 `model_capability_revision`。服务端按冻结的 context window、output reserve、tokenizer/estimator 和 compose policy 计算预算；必需内容超硬上限或检索前置条件不完整时直接失败。
 

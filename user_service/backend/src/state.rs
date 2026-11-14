@@ -38,10 +38,7 @@ impl AppState {
         }
         let repaired_model_count = store.reconcile_provider_model_catalog().await?;
         if repaired_model_count > 0 {
-            info!(
-                repaired_model_count,
-                "reconciled provider availability and published chat budgets"
-            );
+            info!(repaired_model_count, "reconciled provider availability");
         }
         store.ensure_default_super_admin(&config).await?;
         let wechat_mini_program = WeChatMiniProgramClient::from_config(&config)?;

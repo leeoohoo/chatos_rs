@@ -98,9 +98,10 @@ final class NativeLocalTerminalViewModel: ObservableObject {
             self.session = session
             shellName = session.shellName
             observe(session: session, token: token)
+            let dimensions = terminalView.terminalDimensions
             session.start(
-                columns: max(terminalView.terminal.cols, 1),
-                rows: max(terminalView.terminal.rows, 1)
+                columns: max(dimensions.cols, 1),
+                rows: max(dimensions.rows, 1)
             )
             guard session.isRunning else {
                 eventTask?.cancel()
@@ -128,7 +129,7 @@ final class NativeLocalTerminalViewModel: ObservableObject {
     }
 
     func clear() {
-        terminalView.terminal.clearScrollback()
+        terminalView.clearScrollback()
         terminalView.feed(text: "\u{1B}[2J\u{1B}[H")
     }
 

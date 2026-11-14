@@ -23,7 +23,7 @@ OLD_FRONTEND_SERVICES = (
 
 
 class UnifiedAdminTopologyTests(unittest.TestCase):
-    def test_connector_service_deploy_runs_its_migration_before_cutover(self) -> None:
+    def test_each_selected_backend_runs_its_migration_before_cutover(self) -> None:
         deploy = (ROOT / "scripts/deploy-production.sh").read_text()
         start = deploy.index("  selected_migration_services=()")
         end = deploy.index('  if [[ ${#selected_migration_services[@]}', start)
@@ -38,6 +38,9 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
             ("local-connector-service-backend", "local-connector-migrate"),
             ("memory-engine-backend", "memory-engine-migrate"),
             ("configuration-center-backend", "configuration-center-migrate"),
+            ("user-service-backend", "user-service-migrate"),
+            ("plugin-management-backend", "plugin-management-migrate"),
+            ("admin-console-frontend", ""),
             ("gateway-config", ""),
         ):
             with self.subTest(service=service):
@@ -46,6 +49,10 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
                     check=True, capture_output=True, text=True,
                 )
                 self.assertEqual(result.stdout.strip(), expected)
+
+        migrations = deploy.index('    for migration_service in "${selected_migration_services[@]}"')
+        cutover = deploy.index('ln -sfn "$release_dir" "$deploy_root/current.next"')
+        self.assertLess(migrations, cutover)
 
     def test_old_frontend_projects_are_removed(self) -> None:
         for relative_path in OLD_FRONTEND_DIRS:

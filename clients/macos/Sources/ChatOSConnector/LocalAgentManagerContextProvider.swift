@@ -15,7 +15,6 @@ struct LocalAgentManagerContextProvider: AgentContextProviding {
     func prepare(
         checkpoint initial: AgentRunCheckpoint,
         tools: [AgentToolDefinition],
-        policy: AgentContextPolicy,
         modelCapability: AgentModelCapabilitySnapshot,
         deadline: Date,
         synchronizeOnly: Bool,
@@ -44,7 +43,7 @@ struct LocalAgentManagerContextProvider: AgentContextProviding {
             """))
         }
         return try await base.prepare(
-            checkpoint: checkpoint, tools: tools, policy: policy, modelCapability: modelCapability,
+            checkpoint: checkpoint, tools: tools, modelCapability: modelCapability,
             deadline: deadline, synchronizeOnly: synchronizeOnly, shouldPause: shouldPause, record: record
         )
     }

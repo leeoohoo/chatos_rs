@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-pub const MIN_TOKEN_LIMIT: i64 = 128;
+#[cfg(test)]
+pub const CHUNK_TEST_CAPACITY: i64 = 128;
 pub(crate) const MAX_OVERFLOW_RETRIES: usize = 4;
 
 #[derive(Debug, Clone)]

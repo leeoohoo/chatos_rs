@@ -90,6 +90,7 @@ pub struct SubjectMemoryGenerationFinalization<'a> {
     pub job_result: FinishEngineJobRunRequest,
 }
 
+#[cfg(test)]
 pub async fn commit_thread_summary_generation(
     db: &Db,
     generation: &GenerationCommit,
@@ -317,6 +318,7 @@ async fn commit_thread_summary_generation_inner(
     Ok(summary)
 }
 
+#[cfg(test)]
 pub async fn commit_subject_memory_generation(
     db: &Db,
     generation: &GenerationCommit,

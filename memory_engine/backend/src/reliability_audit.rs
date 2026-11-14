@@ -104,11 +104,16 @@ pub fn runtime_readiness_inventory() -> Result<RuntimeReadinessInventory, String
 pub async fn run_reliability_audit(
     db: &chatos_postgres::PgPool,
     scope: ReliabilityAuditScope,
+    include_source_contract_readiness: bool,
 ) -> Result<ReliabilityAuditReport, String> {
     let findings = load_findings(db, &scope).await?;
     let alerts = build_alerts(&findings);
     let baseline = load_baseline(db, &scope).await?;
-    let source_contract_readiness = load_source_contract_readiness(db, &scope).await?;
+    let source_contract_readiness = if include_source_contract_readiness {
+        load_source_contract_readiness(db, &scope).await?
+    } else {
+        Vec::new()
+    };
     Ok(ReliabilityAuditReport {
         schema_version: "memory_reliability_audit_v1",
         generated_at: chrono::Utc::now().to_rfc3339(),

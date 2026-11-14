@@ -55,27 +55,16 @@ public struct AgentRuntime: Sendable {
             guard var memory = state.memory, let modelCapability else {
                 throw AgentRuntimeError.modelConfigurationUnavailable
             }
-            if let frozen = memory.modelCapability {
-                guard frozen == modelCapability else {
-                    throw AgentRuntimeError.modelConfigurationUnavailable
-                }
-            } else {
-                guard state.modelCalls == 0 else {
-                    throw AgentRuntimeError.modelConfigurationUnavailable
-                }
-                memory.modelCapability = modelCapability
-                state.memory = memory
-            }
+            // Capacity is live Configuration Center policy. Resume recomposes Memory
+            // against the current policy while preserving the execution checkpoint.
+            memory.modelCapability = modelCapability
+            state.memory = memory
         }
-        var contextPolicy = policy.context ?? AgentContextPolicy()
-        if let modelCapability {
-            contextPolicy.windowTokens = modelCapability.contextWindowTokens
-            contextPolicy.outputReserveTokens = modelCapability.outputReserveTokens
-        }
-        // Memory Engine is composed once at the start of this run/resume. New
-        // messages are appended locally for the rest of the model/tool loop so
-        // official OpenAI Responses can keep one stable continuation and let
-        // server-side compaction own in-run context management.
+        // Keep one stable model continuation during normal tool-loop growth. If newly appended
+        // messages consume the reserved Memory headroom, the preflight path below re-composes
+        // Memory (and runs its required summary) before it pauses. Responses server compaction is
+        // still preserved when the configured provider supports it, but it is not the only
+        // overflow recovery mechanism.
         var activeModelMessages: [AgentMessage]?
         var activeCheckpointMessageCount = state.messages.count
         let deadline = started.addingTimeInterval(Double(policy.runTimeoutSeconds) - elapsedBefore)
@@ -112,7 +101,7 @@ public struct AgentRuntime: Sendable {
                 if let contextProvider, let memory = state.memory,
                    memory.syncedMessageCount < state.messages.count {
                     let synced = try await contextProvider.prepare(
-                        checkpoint: snapshot(state), tools: modelTools, policy: contextPolicy,
+                        checkpoint: snapshot(state), tools: modelTools,
                         modelCapability: modelCapability!,
                         deadline: deadline, synchronizeOnly: true,
                         shouldPause: { false }, record: record
@@ -142,7 +131,7 @@ public struct AgentRuntime: Sendable {
                 }
                 if let completion = state.completionResult {
                     if let contextProvider {
-                        let synced = try await contextProvider.prepare(checkpoint: snapshot(state), tools: modelTools, policy: contextPolicy,
+                        let synced = try await contextProvider.prepare(checkpoint: snapshot(state), tools: modelTools,
                             modelCapability: modelCapability!,
                             deadline: deadline, synchronizeOnly: true, shouldPause: shouldPause, record: record)
                         state = synced.checkpoint
@@ -237,10 +226,11 @@ public struct AgentRuntime: Sendable {
                     return snapshot(state)
                 }
                 var messages: [AgentMessage]
+                let reusedActiveContext = activeModelMessages != nil
                 if let contextProvider {
                     if activeModelMessages == nil {
                         let prepared = try await contextProvider.prepare(
-                            checkpoint: snapshot(state), tools: modelTools, policy: contextPolicy,
+                            checkpoint: snapshot(state), tools: modelTools,
                             modelCapability: modelCapability!,
                             deadline: deadline, synchronizeOnly: false,
                             shouldPause: shouldPause, record: record
@@ -253,6 +243,45 @@ public struct AgentRuntime: Sendable {
                 } else {
                     guard state.memory == nil else { throw AgentContextError.unavailable }
                     messages = state.messages
+                }
+                if let modelCapability {
+                    let softLimit = modelCapability.contextWindowTokens - modelCapability.outputReserveTokens
+                    let hardLimit = modelCapability.contextWindowTokens
+                    var inputTokens = try AgentContextBudget.estimate(messages: messages, tools: modelTools)
+                    // The active projection is intentionally stable throughout a tool loop, but
+                    // newly appended tool results can consume the headroom reserved for recalled
+                    // history. Before pausing, ask Memory Engine for a smaller projection. Its
+                    // compose path owns any required summary/compaction and preserves the exact
+                    // live turn from the durable checkpoint.
+                    if inputTokens > softLimit, reusedActiveContext, let contextProvider {
+                        try await emit(
+                            "memory_recomposing",
+                            "当前运行上下文接近窗口预算，正在重新组合 Memory Engine 上下文"
+                        )
+                        let prepared = try await contextProvider.prepare(
+                            checkpoint: snapshot(state), tools: modelTools,
+                            modelCapability: modelCapability,
+                            deadline: deadline, synchronizeOnly: false,
+                            shouldPause: shouldPause, record: record
+                        )
+                        state = prepared.checkpoint
+                        activeModelMessages = prepared.messages
+                        activeCheckpointMessageCount = state.messages.count
+                        messages = prepared.messages
+                        inputTokens = try AgentContextBudget.estimate(
+                            messages: messages,
+                            tools: modelTools
+                        )
+                    }
+                    if inputTokens > softLimit {
+                        guard model.usesServerSideCompaction, inputTokens <= hardLimit else {
+                            throw AgentContextError.budgetExceeded
+                        }
+                        try await emit(
+                            "responses_compaction_pending",
+                            "输入已超过 Memory 软预算（\(inputTokens)/\(softLimit) tokens），正在交由 Responses compaction 处理"
+                        )
+                    }
                 }
                 var response: AgentMessage?
                 for attempt in 0...policy.maximumRequestRetries {

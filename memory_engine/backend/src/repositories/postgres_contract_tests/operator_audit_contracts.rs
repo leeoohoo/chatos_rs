@@ -100,7 +100,9 @@ async fn operator_audit_failure_rolls_back_record_restore_and_dispatch() {
     .execute(&mut *tx)
     .await;
     assert!(audit_error.is_err());
-    tx.rollback().await.expect("rollback failed audit transaction");
+    tx.rollback()
+        .await
+        .expect("rollback failed audit transaction");
 
     let state: (String, Option<String>) = sqlx::query_as(
         "SELECT summary_status,summary_id FROM engine_records \
@@ -113,7 +115,10 @@ async fn operator_audit_failure_rolls_back_record_restore_and_dispatch() {
     .await
     .expect("load record after rollback");
     assert_eq!(state.0, "summarized");
-    assert_eq!(state.1.as_deref(), Some(format!("missing-summary-{suffix}").as_str()));
+    assert_eq!(
+        state.1.as_deref(),
+        Some(format!("missing-summary-{suffix}").as_str())
+    );
     let partition_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM engine_thread_summary_partitions \
          WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3",
@@ -210,7 +215,10 @@ async fn resummarize_claim_job_and_operator_audit_commit_together() {
     .await
     .expect("insert resummarize fixture summary");
 
-    let mut tx = pool.begin().await.expect("begin resummarize durable initiation");
+    let mut tx = pool
+        .begin()
+        .await
+        .expect("begin resummarize durable initiation");
     sqlx::query(
         "INSERT INTO engine_covered_range_resummarization_claims(tenant_id,source_id,summary_id, \
          status,lease_token,lease_expires_at,reason) \
@@ -261,7 +269,9 @@ async fn resummarize_claim_job_and_operator_audit_commit_together() {
     .bind(&tenant)
     .bind(&source)
     .bind(&summary.id)
-    .bind(sqlx::types::Json(json!({"job_run_id":job.id,"claim_status":"running"})))
+    .bind(sqlx::types::Json(
+        json!({"job_run_id":job.id,"claim_status":"running"}),
+    ))
     .execute(&mut *tx)
     .await
     .expect("insert resummarization operator audit");

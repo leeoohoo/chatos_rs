@@ -13,13 +13,7 @@ pub struct RuntimeContextAssertionVerificationKey {
     pub secret: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct PublishedModelCapability {
-    pub context_window_tokens: usize,
-    pub output_reserve_tokens: usize,
-    pub protocol_overhead_estimator_id: String,
-    pub tokenizer_id: Option<String>,
-}
+pub use chatos_service_runtime::model_capability::PublishedModelCapability;
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -53,6 +47,7 @@ pub struct AppConfig {
     pub require_signed_internal_requests: bool,
     pub runtime_context_assertion_keys: HashMap<String, RuntimeContextAssertionVerificationKey>,
     pub model_capabilities: HashMap<String, PublishedModelCapability>,
+    pub active_model_capability_revision: String,
     pub user_service_base_url: String,
     pub user_service_internal_base_url: String,
     pub user_service_internal_http: reqwest::Client,
@@ -161,12 +156,20 @@ impl AppConfig {
             )?,
             runtime_context_assertion_keys: runtime_context_assertion_keys()?,
             model_capabilities: published_model_capabilities()?,
+            active_model_capability_revision: required_text(
+                "CHATOS_ACTIVE_MODEL_CAPABILITY_REVISION",
+            )?,
             user_service_base_url,
             user_service_internal_base_url,
             user_service_internal_http,
             user_service_request_timeout_ms,
         };
 
+        config
+            .model_capabilities
+            .get(&config.active_model_capability_revision)
+            .ok_or("active common model capability is not published in Configuration Center")?
+            .input_limit()?;
         if !config.require_signed_internal_requests {
             return Err("MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true".to_string());
         }
@@ -204,23 +207,7 @@ impl AppConfig {
 }
 
 fn published_model_capabilities() -> Result<HashMap<String, PublishedModelCapability>, String> {
-    let raw = required_text("MEMORY_ENGINE_MODEL_CAPABILITIES_JSON")?;
-    let values: HashMap<String, PublishedModelCapability> = serde_json::from_str(raw.as_str())
-        .map_err(|error| format!("MEMORY_ENGINE_MODEL_CAPABILITIES_JSON is invalid: {error}"))?;
-    if values.is_empty() {
-        return Err("MEMORY_ENGINE_MODEL_CAPABILITIES_JSON must not be empty".to_string());
-    }
-    for (revision, capability) in &values {
-        if revision.trim().is_empty()
-            || capability.context_window_tokens < 2_048
-            || capability.output_reserve_tokens < 256
-            || capability.output_reserve_tokens >= capability.context_window_tokens
-            || capability.protocol_overhead_estimator_id.trim().is_empty()
-        {
-            return Err(format!("invalid published model capability: {revision}"));
-        }
-    }
-    Ok(values)
+    chatos_service_runtime::model_capability::catalog_from_env()
 }
 
 #[cfg(test)]
@@ -228,8 +215,8 @@ pub(crate) fn test_model_capabilities() -> HashMap<String, PublishedModelCapabil
     HashMap::from([(
         "test-model-capability-v1".to_string(),
         PublishedModelCapability {
-            context_window_tokens: 200_000,
-            output_reserve_tokens: 30_000,
+            context_window_tokens: 117_031,
+            output_reserve_tokens: 17_031,
             protocol_overhead_estimator_id: "responses-json-v1".to_string(),
             tokenizer_id: Some("o200k_base".to_string()),
         },

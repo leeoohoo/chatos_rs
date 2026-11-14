@@ -118,6 +118,7 @@ final class NativeLocalAgentPetActivityServiceTests: XCTestCase {
         XCTAssertEqual(chat.route.turnID, "turn-1")
         XCTAssertEqual(chat.route.runID, "run-chat")
         XCTAssertEqual(chat.route.promptID, "local-ask:run-chat")
+        XCTAssertEqual(chat.title, "等待用户补充部署范围")
 
         let task = try XCTUnwrap(activities.first(where: { $0.source == .taskExecution }))
         XCTAssertEqual(task.kind, .failed)
@@ -148,6 +149,23 @@ final class NativeLocalAgentPetActivityServiceTests: XCTestCase {
             XCTAssertEqual(waiting.route.taskID, taskSurvey ? "task-survey" : nil)
             XCTAssertEqual(waiting.title, "明确项目目标")
         }
+    }
+
+    func testTeamExecutorActivityUsesSpecificTitleAndTeamTodoRoute() async throws {
+        let service = NativeLocalAgentPetActivityService(
+            host: PetActivityHostStub(includesTeamExecutorRun: true)
+        )
+        await service.configure(ownerUserID: "user-1")
+
+        let activities = try await service.fetchOpenActivities()
+        let activity = try XCTUnwrap(activities.first(where: {
+            $0.route.runID == "run-team-todo"
+        }))
+
+        XCTAssertEqual(activity.title, "小说创作群 · B古今悬疑策划")
+        XCTAssertEqual(activity.route.agentTeamRoomID, "team-room-1")
+        XCTAssertEqual(activity.route.agentTodoID, "todo-1")
+        XCTAssertNil(activity.route.taskID)
     }
 
     func testLocalEventStreamUsesHostLongPolling() async throws {
@@ -181,17 +199,20 @@ private actor PetActivityHostStub: LocalAgentHostClientServicing {
     private let taskSurvey: Bool
     private let interruptedTask: Bool
     private let terminalRunVersion: Int
+    private let includesTeamExecutorRun: Bool
 
     init(
         hasSurvey: Bool = false,
         taskSurvey: Bool = false,
         interruptedTask: Bool = false,
-        terminalRunVersion: Int = 4
+        terminalRunVersion: Int = 4,
+        includesTeamExecutorRun: Bool = false
     ) {
         self.hasSurvey = hasSurvey
         self.taskSurvey = taskSurvey
         self.interruptedTask = interruptedTask
         self.terminalRunVersion = terminalRunVersion
+        self.includesTeamExecutorRun = includesTeamExecutorRun
     }
 
     func start(ownerUserID: String) async throws {}
@@ -232,8 +253,7 @@ private actor PetActivityHostStub: LocalAgentHostClientServicing {
         }
 
         let scope = object?["scope"] as? String
-        let runs: [[String: Any]] = scope == "active"
-            ? [[
+        var activeRuns: [[String: Any]] = [[
                 "run_id": "run-chat",
                 "owner_user_id": "user-1",
                 "owner_entity_type": taskSurvey ? "task" : "conversation_turn",
@@ -243,12 +263,36 @@ private actor PetActivityHostStub: LocalAgentHostClientServicing {
                 "input": [
                     taskSurvey ? "source_conversation_id" : "conversation_id": "conversation-1",
                     taskSurvey ? "source_turn_id" : "turn_id": "turn-1",
+                    "message": "等待用户补充部署范围\n请确认目标环境。",
                 ],
                 "status": "waiting_user",
                 "version": 3,
                 "created_at_unix_ms": Self.now - 1_000,
                 "updated_at_unix_ms": Self.now,
             ]]
+        if includesTeamExecutorRun {
+            activeRuns.append([
+                "run_id": "run-team-todo",
+                "owner_user_id": "user-1",
+                "owner_entity_type": "conversation_turn",
+                "owner_entity_id": "team-turn-1",
+                "profile_key": "task_execution",
+                "capability_policy_revision": "policy-1",
+                "input": [
+                    "conversation_id": "agent-team-executor-delivery-1",
+                    "conversation_title": "小说创作群 · B古今悬疑策划",
+                    "todo_id": "todo-1",
+                    "agent_execution_context": ["room_id": "team-room-1"],
+                    "team_executor_context": ["todo_id": "todo-1"],
+                ],
+                "status": "model_running",
+                "version": 8,
+                "created_at_unix_ms": Self.now - 500,
+                "updated_at_unix_ms": Self.now,
+            ])
+        }
+        let runs: [[String: Any]] = scope == "active"
+            ? activeRuns
             : [[
                 "run_id": "run-task",
                 "owner_user_id": "user-1",

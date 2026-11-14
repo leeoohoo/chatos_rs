@@ -5,7 +5,8 @@ use super::*;
 use chatos_local_agent_ports::{LocalAgentRunStore, RunTransition};
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, GuideConversationTurnCommand, LocalAgentRunStatus,
-    LocalConversationAttachmentSpec, ResumeConversationTurnCommand,
+    LocalConversationAttachmentSpec, LocalConversationResourceBinding,
+    LocalConversationResourceKind, ResumeConversationTurnCommand,
 };
 use serde_json::{json, Value};
 
@@ -974,4 +975,302 @@ async fn guidance_interrupts_an_active_claim_and_is_delivered_once() {
         guided_claim.run.continuation_input.as_ref().expect("input")["guidance"][0]["message"],
         "also inspect the tests"
     );
+}
+
+#[tokio::test]
+async fn reviewed_turn_resumes_and_can_fail_again_then_finish_without_stale_terminal_state() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    create(&storage, "conversation-recover").await;
+    storage
+        .configure_memory_projection("user-1", "chatos", 1_500)
+        .await
+        .unwrap();
+    let initial = turn("conversation-recover", 1, "recover");
+    let mut record = run(&initial, 2_000);
+    record.input["agent_id"] = json!("agent-1");
+    storage
+        .start_conversation_turn(
+            &idempotency("recover-start"),
+            &initial,
+            &record,
+            "recover-started",
+            2_000,
+        )
+        .await
+        .unwrap();
+    for attempt in 0..3 {
+        let now = 3_000 + attempt * 10_000;
+        let claim = storage
+            .claim_next_run(
+                &idempotency(&format!("recover-claim-{attempt}")),
+                "user-1",
+                "worker-1",
+                &format!("recover-token-{attempt}"),
+                now,
+                now + 10_000,
+                &format!("recover-claimed-{attempt}"),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(claim.run.run_id, initial.run_id);
+        let succeeded = attempt == 2;
+        let result = storage
+            .apply_transition(
+                &idempotency(&format!("recover-commit-{attempt}")),
+                &RunTransition {
+                    run_id: claim.run.run_id,
+                    claim_token: claim.claim_token,
+                    expected_version: claim.run.version,
+                    expected_status: LocalAgentRunStatus::ModelRunning,
+                    next_status: if succeeded {
+                        LocalAgentRunStatus::Succeeded
+                    } else {
+                        LocalAgentRunStatus::NeedsReview
+                    },
+                    next_model_attempt: 1,
+                    next_attempt_at_unix_ms: None,
+                    pending_tool_batch: None,
+                    tool_batch: None,
+                    checkpoint: Some(json!({"saved_progress": attempt})),
+                    clear_continuation_input: true,
+                    terminal_outcome: Some(if succeeded {
+                        json!({"content":"recovered result"})
+                    } else {
+                        json!({"error":"summary wait interrupted"})
+                    }),
+                    event_id: format!("recover-result-{attempt}"),
+                    event_type: "run_result".into(),
+                    event_payload: json!({"attempt":attempt}),
+                    occurred_at_unix_ms: now + 1,
+                },
+            )
+            .await
+            .unwrap();
+        let detail = storage
+            .get_conversation("user-1", "conversation-recover")
+            .await
+            .unwrap()
+            .unwrap();
+        if succeeded {
+            assert_eq!(
+                detail.turns[0].status,
+                LocalConversationTurnStatus::Succeeded
+            );
+            let outputs: Vec<_> = detail
+                .messages
+                .iter()
+                .filter(|m| m.message_id == format!("assistant:{}", initial.run_id))
+                .collect();
+            assert_eq!(outputs.len(), 1);
+            assert_eq!(outputs[0].content["content"], "recovered result");
+            break;
+        }
+        assert_eq!(detail.turns[0].status, LocalConversationTurnStatus::Failed);
+        let command = ResumeConversationTurnCommand {
+            owner_user_id: "user-1".into(),
+            conversation_id: "conversation-recover".into(),
+            expected_conversation_version: detail.conversation.version,
+            turn_id: initial.turn_id.clone(),
+            expected_run_version: result.version,
+            expected_run_status: LocalAgentRunStatus::NeedsReview,
+            message_id: format!("recover-message-{attempt}"),
+            message: "continue".into(),
+            message_metadata: json!({}),
+            attachments: vec![],
+            reason: "Human retry".into(),
+        };
+        let receipt = idempotency(&format!("recover-resume-{attempt}"));
+        let resumed = storage
+            .resume_conversation_turn(
+                &receipt,
+                &command,
+                &json!({"type":"resume"}),
+                &format!("recover-resumed-{attempt}"),
+                now + 2,
+            )
+            .await
+            .unwrap();
+        assert_eq!(resumed.turn.status, LocalConversationTurnStatus::Running);
+        assert_eq!(resumed.run.status, LocalAgentRunStatus::ContinuationReady);
+        assert!(resumed.run.terminal_outcome.is_none());
+        assert_eq!(resumed.run.checkpoint, json!({"saved_progress":attempt}));
+        let replay = storage
+            .resume_conversation_turn(
+                &receipt,
+                &command,
+                &json!({"type":"resume"}),
+                "unused",
+                now + 3,
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay, resumed);
+    }
+}
+
+#[tokio::test]
+async fn expired_legacy_contact_run_projects_recovery_without_input_agent_id() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    let mut contact = conversation("legacy-plugin-installer");
+    contact.title = "插件安装助手".to_string();
+    contact.resource = Some(LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Contact,
+        resource_id: "plugin-installer".to_string(),
+    });
+    storage
+        .create_conversation(&idempotency("create-legacy-contact"), &contact, 1_000)
+        .await
+        .unwrap();
+    storage
+        .configure_memory_projection("user-1", "chatos", 1_500)
+        .await
+        .unwrap();
+    let initial = turn("legacy-plugin-installer", 1, "legacy-contact-recovery");
+    storage
+        .start_conversation_turn(
+            &idempotency("start-legacy-contact"),
+            &initial,
+            &run(&initial, 2_000),
+            "legacy-contact-started",
+            2_000,
+        )
+        .await
+        .unwrap();
+    let claim = storage
+        .claim_next_run(
+            &idempotency("claim-legacy-contact"),
+            "user-1",
+            "worker-1",
+            "legacy-contact-token",
+            3_000,
+            4_000,
+            "legacy-contact-claimed",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO local_agent_tool_invocations(\
+         invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
+         side_effecting, status, result_json, error_text, version, claim_token, \
+         claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms) \
+         VALUES('legacy-contact-invocation', ?, 'legacy-contact-batch', \
+         'legacy-contact-call', 'plugin_installer_install_npm', '{}', 1, \
+         'needs_review', NULL, 'result unknown', 1, NULL, NULL, 3000, 3000)",
+    )
+    .bind(&claim.run.run_id)
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        storage
+            .recover_expired_claims("user-1", 4_001)
+            .await
+            .expect("recover legacy Contact Run"),
+        1
+    );
+    let recovered = storage
+        .get_run(&initial.run_id)
+        .await
+        .unwrap()
+        .expect("recovered Run");
+    assert_eq!(recovered.status, LocalAgentRunStatus::NeedsReview);
+    let turn = storage
+        .get_conversation("user-1", "legacy-plugin-installer")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(turn.turns[0].status, LocalConversationTurnStatus::Failed);
+    let payload: String =
+        sqlx::query_scalar("SELECT payload_json FROM local_memory_outbox WHERE record_id LIKE ?")
+            .bind(format!("assistant:{}:diagnostic:%", initial.run_id))
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
+    let payload: Value = serde_json::from_str(&payload).unwrap();
+    assert_eq!(payload["metadata"]["agent_id"], "plugin-installer");
+    assert_eq!(payload["metadata"]["agent_name"], "插件安装助手");
+    assert_eq!(payload["metadata"]["thread_kind"], "agent_conversation");
+}
+
+#[tokio::test]
+async fn missing_tool_output_failure_is_requeued_from_durable_invocation() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    create(&storage, "conversation-tool-recovery").await;
+    let initial = turn("conversation-tool-recovery", 1, "tool-recovery");
+    start(&storage, &initial, 2_000).await.expect("start Turn");
+    let checkpoint = json!({"response":{"response_output_items":[{
+        "type":"function_call",
+        "call_id":"call-stage",
+        "name":"stage_edit_batch",
+        "arguments":"{}"
+    }]}});
+    sqlx::query(
+        "UPDATE local_agent_runs SET status = 'failed', iteration = 2, version = 4, \
+         checkpoint_json = ?, continuation_input_json = NULL, terminal_outcome_json = ? \
+         WHERE run_id = ?",
+    )
+    .bind(serde_json::to_string(&checkpoint).unwrap())
+    .bind(
+        serde_json::to_string(&json!({
+            "error":"status 400 Bad Request: No tool output found for function call call-stage",
+            "detail":{"phase":"model_step"}
+        }))
+        .unwrap(),
+    )
+    .bind(&initial.run_id)
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE local_conversation_turns SET status = 'failed' WHERE turn_id = ?")
+        .bind(&initial.turn_id)
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO local_agent_tool_invocations(\
+         invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
+         side_effecting, status, result_json, error_text, version, claim_token, \
+         claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms) \
+         VALUES('invocation-stage', ?, 'batch-stage', 'call-stage', \
+         'stage_edit_batch', '{}', 1, 'succeeded', ?, NULL, 3, NULL, NULL, 2500, 2600)",
+    )
+    .bind(&initial.run_id)
+    .bind(r#"{"changed":true,"path":"plan.md"}"#)
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        storage
+            .recover_expired_claims("user-1", 3_000)
+            .await
+            .expect("recover missing output"),
+        1
+    );
+    let recovered = storage
+        .get_run(&initial.run_id)
+        .await
+        .unwrap()
+        .expect("recovered Run");
+    assert_eq!(recovered.status, LocalAgentRunStatus::ContinuationReady);
+    assert!(recovered.terminal_outcome.is_none());
+    let continuation = recovered.continuation_input.expect("tool continuation");
+    assert_eq!(continuation["type"], "tool_results");
+    assert_eq!(continuation["invocations"][0]["call_id"], "call-stage");
+    let detail = storage
+        .get_conversation("user-1", "conversation-tool-recovery")
+        .await
+        .unwrap()
+        .expect("conversation");
+    assert_eq!(detail.turns[0].status, LocalConversationTurnStatus::Running);
+    let invocation_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM local_agent_tool_invocations WHERE run_id = ?")
+            .bind(&initial.run_id)
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
+    assert_eq!(invocation_count, 1, "recovery must not duplicate the tool");
 }

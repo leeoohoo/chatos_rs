@@ -103,7 +103,5 @@ pub(crate) fn estimate_pending_record_tokens(record: &EngineRecord) -> i64 {
 }
 
 fn estimate_tokens_text(text: &str) -> i64 {
-    let chars = text.chars().count() as i64;
-    let bytes = text.len() as i64;
-    ((chars * 3 + bytes.saturating_sub(chars) * 4 + 11) / 12).max(1)
+    i64::try_from(memory_engine_sdk::estimate_text_tokens(text).max(1)).unwrap_or(i64::MAX)
 }

@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 use crate::config::AppConfig;
 use crate::models::now_rfc3339;
-use crate::repositories::{control_plane, summaries};
+use crate::repositories::summaries;
 use crate::services::{control_plane as cp_service, summary};
 use crate::state::AppState;
 
@@ -161,9 +161,8 @@ async fn process_rollup_event(
         return Ok(());
     }
 
-    let policy = control_plane::get_effective_job_policy(&state.pool, "rollup").await?;
     let event = envelope.as_outbox();
-    let settings = cp_service::build_rollup_settings_from_policy(&policy)?;
+    let settings = cp_service::load_rollup_settings(&state.config)?;
     let Some(prepared) = summary::prepare_thread_rollup(
         &state.pool,
         envelope.tenant_id.as_str(),
@@ -205,7 +204,6 @@ async fn process_rollup_event(
             envelope.tenant_id.as_str(),
             envelope.source_id.as_str(),
             envelope.thread_id.as_str(),
-            settings.max_level,
         )
         .await?;
     }
@@ -214,14 +212,7 @@ async fn process_rollup_event(
 
 async fn run_reconciler(state: Arc<AppState>) {
     loop {
-        let scan_interval = match control_plane::get_effective_job_policy(&state.pool, "rollup").await {
-            Ok(_) => state.config.rollup_outbox_reconcile_interval,
-            Err(error) => {
-                warn!(error, "Memory Engine rollup scan policy is invalid");
-                tokio::time::sleep(state.config.rollup_outbox_reconcile_interval).await;
-                continue;
-            }
-        };
+        let scan_interval = state.config.rollup_outbox_reconcile_interval;
         let stale_before = (chrono::Utc::now()
             - chrono::Duration::seconds(ROLLUP_DISPATCH_CLAIM_LEASE_SECS))
         .to_rfc3339();
@@ -253,19 +244,12 @@ async fn run_reconciler(state: Arc<AppState>) {
 }
 
 async fn arm_rollup_dispatches(state: &AppState) -> Result<usize, String> {
-    let policy = control_plane::get_effective_job_policy(&state.pool, "rollup").await?;
-    let settings = cp_service::build_rollup_settings_from_policy(&policy)?;
     let scan_limit = state.config.rollup_outbox_batch_size.max(1);
-    let candidates = summaries::list_threads_with_pending_rollups(
-        &state.pool,
-        None,
-        None,
-        settings.max_level,
-        scan_limit,
-    )
-    .await?;
+    let candidates =
+        summaries::list_threads_with_pending_rollups(&state.pool, None, None, scan_limit).await?;
     let mut armed = 0usize;
     for (tenant_id, source_id, thread_id) in candidates {
+        let settings = cp_service::load_rollup_settings(&state.config)?;
         if summary::prepare_thread_rollup(
             &state.pool,
             tenant_id.as_str(),
@@ -283,7 +267,6 @@ async fn arm_rollup_dispatches(state: &AppState) -> Result<usize, String> {
             tenant_id.as_str(),
             source_id.as_str(),
             thread_id.as_str(),
-            settings.max_level,
         )
         .await?
         .is_some()

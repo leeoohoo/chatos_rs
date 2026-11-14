@@ -12,6 +12,11 @@ use crate::models::{EngineSubjectMemory, EngineSummary, EngineThread};
 use serde_json::json;
 use uuid::Uuid;
 
+#[test]
+fn compose_estimator_does_not_undercount_cjk() {
+    assert_eq!(super::estimate_tokens("你好世界"), 4);
+}
+
 fn summary(id: &str, level: i64, created_at: &str, text: &str) -> EngineSummary {
     EngineSummary {
         id: id.to_string(),
@@ -467,7 +472,7 @@ fn thread_agent_subject_id_ignores_legacy_and_metadata_identity() {
 }
 
 #[test]
-fn compose_context_policy_enforces_server_caps() {
+fn compose_context_policy_uses_requested_model_capacity() {
     let requested = crate::models::ComposeContextPolicy {
         max_memory_tokens: usize::MAX,
         max_recent_record_tokens: usize::MAX,
@@ -476,13 +481,13 @@ fn compose_context_policy_enforces_server_caps() {
         max_agent_memory_tokens: usize::MAX,
     };
     let policy = ResolvedComposeContextPolicy::from_request(&requested)
-        .expect("resolve capped compose policy");
+        .expect("resolve explicit compose policy");
 
-    assert_eq!(policy.max_memory_tokens, 32_768);
-    assert_eq!(policy.max_recent_record_tokens, 16_384);
-    assert_eq!(policy.max_thread_summary_tokens, 8_192);
-    assert_eq!(policy.max_project_memory_tokens, 8_192);
-    assert_eq!(policy.max_agent_memory_tokens, 8_192);
+    assert_eq!(policy.max_memory_tokens, usize::MAX);
+    assert_eq!(policy.max_recent_record_tokens, usize::MAX);
+    assert_eq!(policy.max_thread_summary_tokens, usize::MAX);
+    assert_eq!(policy.max_project_memory_tokens, usize::MAX);
+    assert_eq!(policy.max_agent_memory_tokens, usize::MAX);
 }
 
 #[test]

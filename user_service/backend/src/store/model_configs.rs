@@ -27,8 +27,7 @@ impl AppStore {
             };
             let changed = config.enabled != provider.enabled;
             config.enabled = provider.enabled;
-            let published = crate::model_policy::publish_missing_chat_budget(&mut config);
-            if changed || published {
+            if changed {
                 config.updated_at = now_rfc3339();
                 self.save_user_model_config(&config).await?;
                 repaired += 1;
@@ -56,12 +55,14 @@ impl AppStore {
         config.api_key =
             Self::decrypt_model_secret(config.api_key, "user_model_config", &config.id)?;
         config.has_api_key = Self::has_usable_api_key(config.api_key.as_deref());
+        apply_published_capability(&mut config)?;
         Ok(config)
     }
 
     fn encrypt_user_model_config(
         mut config: UserModelConfigRecord,
     ) -> Result<UserModelConfigRecord, String> {
+        clear_model_capability(&mut config);
         let has_api_key = Self::has_usable_api_key(config.api_key.as_deref());
         config.api_key = encrypt_optional_secret(config.api_key)?;
         config.has_api_key = has_api_key;
@@ -269,6 +270,49 @@ fn normalized_base_url(value: Option<&str>) -> String {
         .unwrap_or_default()
         .trim_end_matches('/')
         .to_string()
+}
+
+fn clear_model_capability(model: &mut UserModelConfigRecord) {
+    model.model_capability_revision = None;
+    model.context_window_tokens = None;
+    model.output_reserve_tokens = None;
+    model.protocol_overhead_estimator_id = None;
+    model.tokenizer_id = None;
+    model.responses_compaction_threshold = None;
+}
+
+fn apply_published_capability(model: &mut UserModelConfigRecord) -> Result<(), String> {
+    clear_model_capability(model);
+    if !crate::model_catalog::is_selectable_model(&model.model) {
+        model.enabled = false;
+        return Ok(());
+    }
+    if chatos_service_runtime::model_workload::ModelWorkload::for_model(&model.model)
+        != chatos_service_runtime::model_workload::ModelWorkload::Chat
+    {
+        return Ok(());
+    }
+    if let Some((revision, capability)) =
+        chatos_service_runtime::model_capability::active_from_env()?
+    {
+        let compaction_threshold = capability.input_limit()?;
+        model.model_capability_revision = Some(revision);
+        model.context_window_tokens = Some(
+            i64::try_from(capability.context_window_tokens)
+                .map_err(|_| "model context budget exceeds supported integer range")?,
+        );
+        model.output_reserve_tokens = Some(
+            i64::try_from(capability.output_reserve_tokens)
+                .map_err(|_| "model output budget exceeds supported integer range")?,
+        );
+        model.protocol_overhead_estimator_id = Some(capability.protocol_overhead_estimator_id);
+        model.tokenizer_id = capability.tokenizer_id;
+        model.responses_compaction_threshold = Some(
+            i64::try_from(compaction_threshold)
+                .map_err(|_| "model compaction threshold exceeds supported integer range")?,
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]

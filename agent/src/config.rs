@@ -10,14 +10,10 @@ pub const AGENT_MAX_REQUEST_RETRIES_CONFIG_KEY: &str = "agent.runtime.max_reques
 pub const AGENT_REQUEST_TIMEOUT_SECONDS_CONFIG_KEY: &str = "agent.runtime.request_timeout_seconds";
 pub const AGENT_RUN_TIMEOUT_SECONDS_CONFIG_KEY: &str = "agent.runtime.run_timeout_seconds";
 pub const AGENT_MAX_NO_PROGRESS_ROUNDS_CONFIG_KEY: &str = "agent.runtime.max_no_progress_rounds";
-pub const AGENT_CONTEXT_WINDOW_TOKENS_CONFIG_KEY: &str = "agent.runtime.context_window_tokens";
-pub const AGENT_OUTPUT_RESERVE_TOKENS_CONFIG_KEY: &str = "agent.runtime.output_reserve_tokens";
 pub const DEFAULT_AGENT_MAX_REQUEST_RETRIES: usize = 2;
 pub const DEFAULT_AGENT_REQUEST_TIMEOUT_SECONDS: usize = 180;
 pub const DEFAULT_AGENT_RUN_TIMEOUT_SECONDS: usize = 7_200;
 pub const DEFAULT_AGENT_MAX_NO_PROGRESS_ROUNDS: usize = 8;
-pub const DEFAULT_AGENT_CONTEXT_WINDOW_TOKENS: usize = 200_000;
-pub const DEFAULT_AGENT_OUTPUT_RESERVE_TOKENS: usize = 30_000;
 pub const LOCAL_TASK_EXECUTION_MAX_ITERATIONS_CONFIG_KEY: &str =
     "local_agent.task_execution.max_iterations";
 pub const LOCAL_TASK_EXECUTION_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY: &str =
@@ -56,8 +52,6 @@ pub struct NativeAgentRuntimeSettings {
     pub request_timeout_seconds: usize,
     pub run_timeout_seconds: usize,
     pub maximum_no_progress_rounds: usize,
-    pub context_window_tokens: usize,
-    pub output_reserve_tokens: usize,
 }
 
 impl Default for NativeAgentRuntimeSettings {
@@ -68,8 +62,6 @@ impl Default for NativeAgentRuntimeSettings {
             request_timeout_seconds: DEFAULT_AGENT_REQUEST_TIMEOUT_SECONDS,
             run_timeout_seconds: DEFAULT_AGENT_RUN_TIMEOUT_SECONDS,
             maximum_no_progress_rounds: DEFAULT_AGENT_MAX_NO_PROGRESS_ROUNDS,
-            context_window_tokens: DEFAULT_AGENT_CONTEXT_WINDOW_TOKENS,
-            output_reserve_tokens: DEFAULT_AGENT_OUTPUT_RESERVE_TOKENS,
         }
     }
 }
@@ -100,16 +92,6 @@ impl NativeAgentRuntimeSettings {
         if !(1..=100).contains(&self.maximum_no_progress_rounds) {
             return Err(format!(
                 "{AGENT_MAX_NO_PROGRESS_ROUNDS_CONFIG_KEY} must be between 1 and 100"
-            ));
-        }
-        if !(2_048..=2_000_000).contains(&self.context_window_tokens) {
-            return Err(format!(
-                "{AGENT_CONTEXT_WINDOW_TOKENS_CONFIG_KEY} must be between 2048 and 2000000"
-            ));
-        }
-        if !(256..self.context_window_tokens).contains(&self.output_reserve_tokens) {
-            return Err(format!(
-                "{AGENT_OUTPUT_RESERVE_TOKENS_CONFIG_KEY} must be between 256 and the context window"
             ));
         }
         Ok(self)
@@ -159,12 +141,6 @@ pub fn resolve_native_agent_runtime_settings(
         maximum_no_progress_rounds: snapshot
             .usize(AGENT_MAX_NO_PROGRESS_ROUNDS_CONFIG_KEY)
             .unwrap_or(defaults.maximum_no_progress_rounds),
-        context_window_tokens: snapshot
-            .usize(AGENT_CONTEXT_WINDOW_TOKENS_CONFIG_KEY)
-            .unwrap_or(defaults.context_window_tokens),
-        output_reserve_tokens: snapshot
-            .usize(AGENT_OUTPUT_RESERVE_TOKENS_CONFIG_KEY)
-            .unwrap_or(defaults.output_reserve_tokens),
     }
     .validate()
 }
@@ -426,14 +402,6 @@ mod tests {
                     AGENT_MAX_NO_PROGRESS_ROUNDS_CONFIG_KEY.to_string(),
                     json!(9),
                 ),
-                (
-                    AGENT_CONTEXT_WINDOW_TOKENS_CONFIG_KEY.to_string(),
-                    json!(1_500_000),
-                ),
-                (
-                    AGENT_OUTPUT_RESERVE_TOKENS_CONFIG_KEY.to_string(),
-                    json!(40_000),
-                ),
             ]),
             env: BTreeMap::new(),
             generated_at: "now".to_string(),
@@ -449,8 +417,6 @@ mod tests {
         assert_eq!(settings.request_timeout_seconds, 240);
         assert_eq!(settings.run_timeout_seconds, 8_000);
         assert_eq!(settings.maximum_no_progress_rounds, 9);
-        assert_eq!(settings.context_window_tokens, 1_500_000);
-        assert_eq!(settings.output_reserve_tokens, 40_000);
     }
 
     #[test]

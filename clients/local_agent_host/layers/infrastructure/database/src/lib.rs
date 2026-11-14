@@ -65,6 +65,7 @@ mod remote_connection_store;
 mod requirement_plan_store;
 mod requirement_survey_store;
 mod run_commands;
+mod run_continuation;
 mod run_owner_store;
 mod run_query_store;
 mod run_record;

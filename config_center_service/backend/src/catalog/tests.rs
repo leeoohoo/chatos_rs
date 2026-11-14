@@ -4,6 +4,20 @@
 use super::*;
 
 #[test]
+fn structured_secret_uses_json_schema_and_retains_secret_sensitivity() {
+    let definitions = builtin_definitions();
+    let definition = definitions
+        .iter()
+        .find(|definition| {
+            definition.key == MEMORY_ENGINE_RUNTIME_CONTEXT_ASSERTION_KEYS_CONFIG_KEY
+        })
+        .unwrap();
+    assert_eq!(definition.value_type, "json");
+    assert_eq!(definition.sensitivity, "secret");
+    assert!(definition.default_value.is_object());
+}
+
+#[test]
 fn catalog_exposes_managed_postgres_pool_profiles() {
     let definitions = builtin_definitions();
     let max_connections = definitions
@@ -70,18 +84,6 @@ fn catalog_exposes_native_agent_runtime_policy() {
             json!(DEFAULT_AGENT_MAX_NO_PROGRESS_ROUNDS),
             1,
             100,
-        ),
-        (
-            AGENT_CONTEXT_WINDOW_TOKENS_CONFIG_KEY,
-            json!(DEFAULT_AGENT_CONTEXT_WINDOW_TOKENS),
-            2_048,
-            2_000_000,
-        ),
-        (
-            AGENT_OUTPUT_RESERVE_TOKENS_CONFIG_KEY,
-            json!(DEFAULT_AGENT_OUTPUT_RESERVE_TOKENS),
-            256,
-            1_999_999,
         ),
     ] {
         let definition = definitions
@@ -347,94 +349,11 @@ fn catalog_exposes_plugin_management_pressure_controls_without_env_aliases() {
 }
 
 #[test]
-fn catalog_exposes_shared_memory_policies_for_server_and_client() {
-    let definitions = builtin_definitions();
-    let memory_definitions = definitions
+fn memory_generation_has_no_independent_numeric_policy_defaults() {
+    assert!(builtin_definitions()
         .iter()
-        .filter(|definition| definition.key.starts_with("memory_engine.policy."))
-        .collect::<Vec<_>>();
-
-    assert!(!memory_definitions.is_empty());
-    assert!(memory_definitions
-        .iter()
-        .all(|definition| definition.scope == "shared"));
-    assert!(memory_definitions
-        .iter()
-        .all(|definition| !definition.key.ends_with("model_profile_id")));
-    for (key, expected_default) in [
-        (
-            "memory_engine.policy.summary.dispatch_threshold_tokens",
-            json!(4_000),
-        ),
-        (
-            "memory_engine.policy.summary.max_source_batch_tokens",
-            json!(16_000),
-        ),
-        (
-            "memory_engine.policy.summary.max_model_input_tokens",
-            json!(32_000),
-        ),
-        ("memory_engine.policy.summary.max_leaf_tokens", json!(6_000)),
-        ("memory_engine.policy.summary.max_merge_rounds", json!(8)),
-        (
-            "memory_engine.policy.rollup.dispatch_threshold_tokens",
-            json!(12_000),
-        ),
-        (
-            "memory_engine.policy.rollup.max_source_batch_tokens",
-            json!(48_000),
-        ),
-        (
-            "memory_engine.policy.rollup.max_model_input_tokens",
-            json!(32_000),
-        ),
-        ("memory_engine.policy.rollup.count_limit", json!(12)),
-        ("memory_engine.policy.rollup.keep_level0_count", json!(4)),
-        ("memory_engine.policy.rollup.max_level", json!(4)),
-        (
-            "memory_engine.policy.subject_memory.dispatch_threshold_tokens",
-            json!(8_000),
-        ),
-        (
-            "memory_engine.policy.subject_memory.max_source_batch_tokens",
-            json!(32_000),
-        ),
-        (
-            "memory_engine.policy.subject_memory.max_model_input_tokens",
-            json!(32_000),
-        ),
-        ("memory_engine.policy.subject_memory.count_limit", json!(12)),
-        (
-            "memory_engine.policy.subject_memory.keep_level0_count",
-            json!(4),
-        ),
-        ("memory_engine.policy.subject_memory.max_level", json!(4)),
-    ] {
-        let definition = memory_definitions
-            .iter()
-            .find(|definition| definition.key == key)
-            .unwrap_or_else(|| panic!("missing Memory policy definition for {key}"));
-        assert_eq!(definition.default_value, expected_default, "{key}");
-        assert!(definition.nullable, "{key}");
-    }
-    for unused_key in [
-        "memory_engine.policy.summary.count_limit",
-        "memory_engine.policy.summary.keep_level0_count",
-        "memory_engine.policy.summary.max_level",
-        "memory_engine.policy.thread_repair.interval_seconds",
-        "memory_engine.policy.thread_repair.max_threads_per_tick",
-        "memory_engine.policy.thread_repair.count_limit",
-        "memory_engine.policy.thread_repair.keep_level0_count",
-        "memory_engine.policy.thread_repair.max_level",
-        "memory_engine.policy.thread_repair.token_limit",
-    ] {
-        assert!(
-            memory_definitions
-                .iter()
-                .all(|definition| definition.key != unused_key),
-            "unused policy field must not be exposed: {unused_key}"
-        );
-    }
+        .all(|definition| !definition.key.starts_with("memory_engine.policy.")));
+    assert!(RETIRED_CONFIG_KEY_PREFIXES.contains(&"memory_engine.policy."));
 }
 
 #[test]
@@ -1132,4 +1051,34 @@ fn catalog_exposes_user_service_smtp_controls_via_nullable_env_projection() {
         .find(|definition| definition.key == USER_SERVICE_SMTP_PASSWORD_CONFIG_KEY)
         .expect("smtp password definition");
     assert_eq!(smtp_password.sensitivity, "secret");
+}
+
+#[test]
+fn model_budgets_have_no_builtin_numeric_fallback() {
+    use chatos_service_runtime::model_capability::{
+        ACTIVE_MODEL_CAPABILITY_CONFIG_KEY, MODEL_CAPABILITIES_CONFIG_KEY,
+    };
+    let definitions = builtin_definitions();
+    let catalog = definitions
+        .iter()
+        .find(|definition| definition.key == MODEL_CAPABILITIES_CONFIG_KEY)
+        .unwrap();
+    assert_eq!(catalog.scope, "shared");
+    assert_eq!(catalog.default_value, json!({}));
+    let active = definitions
+        .iter()
+        .find(|definition| definition.key == ACTIVE_MODEL_CAPABILITY_CONFIG_KEY)
+        .unwrap();
+    assert_eq!(active.default_value, json!(""));
+    assert!(definitions
+        .iter()
+        .all(|definition| !definition.key.starts_with("memory_engine.policy.")));
+    for key in [
+        "agent.runtime.context_window_tokens",
+        "agent.runtime.output_reserve_tokens",
+        "memory_engine.compose.model_capabilities",
+    ] {
+        assert!(!definitions.iter().any(|definition| definition.key == key));
+        assert!(RETIRED_CONFIG_KEYS.contains(&key));
+    }
 }

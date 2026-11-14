@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use crate::config::AppConfig;
 use crate::db::Db;
 use crate::models::{FinishEngineJobRunRequest, RunPendingRollupsResponse};
-use crate::repositories::{control_plane, summaries};
+use crate::repositories::summaries;
 use crate::services::{control_plane as cp_service, summary};
 
 use super::common::{create_scheduler_job_run, finish_job_run};
@@ -34,10 +34,8 @@ pub async fn run_pending_thread_rollups(
     tenant_id: Option<&str>,
     source_id: Option<&str>,
     max_threads: i64,
-    settings: &summary::RollupSettings,
 ) -> Result<RunPendingRollupsResponse, String> {
-    run_pending_thread_rollups_internal(db, config, tenant_id, source_id, max_threads, settings)
-        .await
+    run_pending_thread_rollups_internal(db, config, tenant_id, source_id, max_threads).await
 }
 
 async fn run_pending_thread_rollups_internal(
@@ -46,25 +44,19 @@ async fn run_pending_thread_rollups_internal(
     tenant_id: Option<&str>,
     source_id: Option<&str>,
     max_threads: i64,
-    settings: &summary::RollupSettings,
 ) -> Result<RunPendingRollupsResponse, String> {
     let mut out = empty_response();
-    let candidate_threads = summaries::list_threads_with_pending_rollups(
-        db,
-        tenant_id,
-        source_id,
-        settings.max_level,
-        max_threads,
-    )
-    .await?;
+    let candidate_threads =
+        summaries::list_threads_with_pending_rollups(db, tenant_id, source_id, max_threads).await?;
     let mut pending_threads = Vec::new();
     for (tenant_id, source_id, thread_id) in candidate_threads {
+        let settings = cp_service::load_rollup_settings(config)?;
         if summary::prepare_thread_rollup(
             db,
             tenant_id.as_str(),
             source_id.as_str(),
             thread_id.as_str(),
-            settings,
+            &settings,
         )
         .await?
         .is_some()
@@ -77,26 +69,20 @@ async fn run_pending_thread_rollups_internal(
     }
 
     let concurrency = rollup_execution_concurrency(config, max_threads);
-    let policy = control_plane::get_effective_job_policy(db, "rollup").await?;
-    let job_run = create_scheduler_job_run(
-        db,
-        "rollup",
-        tenant_id,
-        source_id,
-        cp_service::merge_metadata(None, cp_service::policy_meta(&policy)),
-    )
-    .await?;
+    let job_run = create_scheduler_job_run(db, "rollup", tenant_id, source_id, None).await?;
     let result: Result<RunPendingRollupsResponse, String> = async {
         out.processed_threads = pending_threads.len();
         let db = db.clone();
         let config = config.clone();
-        let settings = settings.clone();
         let execution_results = stream::iter(pending_threads.into_iter().map(
             |(tenant_id, source_id, thread_id)| {
                 let db = db.clone();
                 let config = config.clone();
-                let settings = settings.clone();
-                async move {
+                        async move {
+                    let settings = match cp_service::load_rollup_settings(&config) {
+                        Ok(settings) => settings,
+                        Err(error) => return RollupExecutionOutcome::Failed { thread_id, batches: 0, generated: 0, marked: 0, error },
+                    };
                     match summary::run_thread_rollups_until_drained(
                         &config,
                         &db,

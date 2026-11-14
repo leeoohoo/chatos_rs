@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use memory_engine_sdk::{ComposeContextPolicy, ComposeContextResponse, EngineRecord};
+use memory_engine_sdk::{ComposeContextResponse, EngineRecord};
 use serde_json::Value;
 
 use super::MEMORY_CONTEXT_ITEM_PREFIX;
@@ -55,16 +55,6 @@ pub fn compose_response_to_input_items_with_budget(
     }
 
     items
-}
-
-pub(super) fn standard_compose_policy() -> ComposeContextPolicy {
-    ComposeContextPolicy {
-        max_memory_tokens: 24_000,
-        max_recent_record_tokens: 12_000,
-        max_thread_summary_tokens: 6_000,
-        max_project_memory_tokens: 4_000,
-        max_agent_memory_tokens: 4_000,
-    }
 }
 
 fn engine_record_to_input_items(

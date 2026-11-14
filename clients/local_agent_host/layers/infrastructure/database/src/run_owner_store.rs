@@ -81,7 +81,7 @@ pub(super) async fn resume_run(
         .await
         .db()?;
     let result = async {
-        fetch_run(&mut connection, owner_user_id, run_id)
+        let current = fetch_run(&mut connection, owner_user_id, run_id)
             .await?
             .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
         if let Some(replay) = SqliteClientStorage::replay(&mut connection, command)
@@ -97,12 +97,15 @@ pub(super) async fn resume_run(
             )
             .await?;
         }
+        let continuation_input =
+            super::run_continuation::for_resume(&mut connection, &current, continuation_input)
+                .await?;
         let updated = sqlx::query(
             "UPDATE local_agent_runs SET status = 'continuation_ready', \
              version = version + 1, continuation_input_json = ?, updated_at_unix_ms = ? \
              WHERE run_id = ? AND owner_user_id = ? AND status = ? AND version = ?",
         )
-        .bind(serde_json::to_string(continuation_input)?)
+        .bind(serde_json::to_string(&continuation_input)?)
         .bind(now_unix_ms)
         .bind(run_id)
         .bind(owner_user_id)
@@ -121,7 +124,7 @@ pub(super) async fn resume_run(
             event_id,
             run_id,
             "run_resumed",
-            continuation_input,
+            &continuation_input,
             now_unix_ms,
         )
         .await

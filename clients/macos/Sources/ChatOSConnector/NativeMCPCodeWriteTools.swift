@@ -70,7 +70,7 @@ actor NativeMCPCodeWriteStore {
             ),
             definition(
                 name: "stage_edit_batch",
-                description: "向编辑会话暂存一组有序的文件修改。",
+                description: "向编辑会话暂存一组有序的文件修改。每个路径首次修改时，现有文件须传读取所得 SHA-256，新文件须传 null；同一路径后续操作无需重复基线。",
                 properties: [
                     "session_id": .object(["type": .string("string"), "minLength": .number(1)]),
                     "operations": .object([
@@ -95,6 +95,7 @@ actor NativeMCPCodeWriteStore {
                                 "expected_sha256": .object([
                                     "type": .array([.string("string"), .string("null")]),
                                     "pattern": .string("^[0-9a-f]{64}$"),
+                                    "description": .string("该路径首次操作的读取基线：现有文件传 SHA-256，新文件传 null。同一路径后续操作可省略；为兼容批量调用，后续 null 等同省略。"),
                                 ]),
                             ]),
                             "required": .array(["kind", "path"].map(NativeJSONValue.string)),
@@ -425,6 +426,7 @@ actor NativeMCPCodeWriteStore {
     ) throws -> FileState {
         if let state = session.files[path] {
             if let expected = expectedSHA(operation),
+               case .hash = expected,
                !expected.matches(state.base), !expected.matches(state.working) {
                 throw NativeMCPCodeWriteError.staleContext(path)
             }
@@ -440,6 +442,12 @@ actor NativeMCPCodeWriteStore {
         if !isNoOpWrite {
             guard operation.keys.contains("expected_sha256") else {
                 throw NativeMCPCodeWriteError.invalidArguments("首次修改 \(path) 时必须提供 expected_sha256")
+            }
+            if let expected = expectedSHA(operation),
+               case .missing = expected, snapshot.kind != .missing {
+                throw NativeMCPCodeWriteError.invalidArguments(
+                    "expected_sha256 为 null 仅用于新文件；现有文件 \(path) 须使用读取所得 SHA-256"
+                )
             }
             guard let expected = expectedSHA(operation), expected.matches(snapshot) else {
                 throw NativeMCPCodeWriteError.staleContext(path)
@@ -873,7 +881,7 @@ private enum ExpectedSHA {
 
     func matches(_ snapshot: FileSnapshot) -> Bool {
         switch self {
-        case .missing: snapshot.kind != .file
+        case .missing: snapshot.kind == .missing
         case let .hash(value): snapshot.kind == .file && snapshot.sha256 == value
         }
     }

@@ -7,13 +7,11 @@ import {
   Empty,
   Form,
   Input,
-  InputNumber,
   Modal,
   Row,
   Select,
   Space,
   Spin,
-  Switch,
   Tabs,
   Tag,
   Typography,
@@ -23,7 +21,9 @@ import {
   SaveOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { api } from './api';
+import { ConfigInput, parseJsonConfigInput } from './ConfigInput';
 import type {
   ConfigDefinition,
   ConfigValue,
@@ -76,12 +76,14 @@ export function ConfigEditor({ environment }: { environment: string }) {
     queryFn: () => api.draft(environment),
   });
   const [changes, setChanges] = useState<Record<string, ConfigValue>>({});
+  const [jsonDrafts, setJsonDrafts] = useState<Record<string, string>>({});
   const [publishMessage, setPublishMessage] = useState('');
   const [customOpen, setCustomOpen] = useState(false);
-  const [activeArea, setActiveArea] = useState(
-    localStorage.getItem('chatos.configuration-center.config-area') || 'memory-engine',
-  );
-  const [configSearch, setConfigSearch] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeArea = searchParams.get('area')
+    || localStorage.getItem('chatos.configuration-center.config-area') || 'memory-engine';
+  const configSearch = searchParams.get('search') || '';
+  const hasInvalidJson = Object.values(jsonDrafts).some((text) => Boolean(parseJsonConfigInput(text).error));
   const [customForm] = Form.useForm<{
     key: string;
     display_name: string;
@@ -94,7 +96,8 @@ export function ConfigEditor({ environment }: { environment: string }) {
 
   useEffect(() => {
     setChanges(draft.data?.draft?.changes || {});
-  }, [draft.data?.draft?.id, draft.data?.draft?.updated_at]);
+    setJsonDrafts({});
+  }, [environment, draft.data?.draft?.id, draft.data?.draft?.updated_at]);
 
   const save = useMutation({
     mutationFn: () => api.saveDraft(environment, changes),
@@ -135,7 +138,9 @@ export function ConfigEditor({ environment }: { environment: string }) {
         ? values.default_value.trim().toLowerCase() === 'true'
         : ['integer', 'duration_ms', 'bytes'].includes(values.value_type)
           ? Number(values.default_value)
-          : values.default_value;
+          : values.value_type === 'json'
+            ? JSON.parse(values.default_value) as ConfigValue
+            : values.default_value;
       return api.createCustomDefinition({
         environment,
         key: values.key,
@@ -225,8 +230,12 @@ export function ConfigEditor({ environment }: { environment: string }) {
 
   const selectArea = (key: string) => {
     localStorage.setItem('chatos.configuration-center.config-area', key);
-    setActiveArea(key);
-    setConfigSearch('');
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set('area', key);
+      next.delete('search');
+      return next;
+    }, { replace: true });
   };
 
   const confirmPublish = () => {
@@ -256,7 +265,7 @@ export function ConfigEditor({ environment }: { environment: string }) {
         <Space wrap>
           <Tag color="blue">Revision {effective.data?.revision || 0}</Tag>
           <Typography.Text>草稿变更 {Object.keys(changes).length} 项</Typography.Text>
-          <Button icon={<SaveOutlined />} onClick={() => save.mutate()} loading={save.isPending}>
+          <Button icon={<SaveOutlined />} onClick={() => save.mutate()} loading={save.isPending} disabled={hasInvalidJson}>
             保存草稿
           </Button>
           <Button icon={<PlusOutlined />} onClick={() => setCustomOpen(true)}>
@@ -264,7 +273,7 @@ export function ConfigEditor({ environment }: { environment: string }) {
           </Button>
           <Button
             type="primary"
-            disabled={Object.keys(changes).length === 0}
+            disabled={Object.keys(changes).length === 0 || hasInvalidJson}
             onClick={confirmPublish}
             loading={publish.isPending}
           >
@@ -283,7 +292,15 @@ export function ConfigEditor({ environment }: { environment: string }) {
           <Input.Search
             allowClear
             value={configSearch}
-            onChange={(event) => setConfigSearch(event.target.value)}
+            onChange={(event) => {
+              const value = event.target.value;
+              setSearchParams((previous) => {
+                const next = new URLSearchParams(previous);
+                if (value) next.set('search', value);
+                else next.delete('search');
+                return next;
+              }, { replace: true });
+            }}
             placeholder={`搜索${selectedArea?.label || ''}配置`}
             className="config-search"
           />
@@ -329,6 +346,8 @@ export function ConfigEditor({ environment }: { environment: string }) {
                     definition={definition}
                     value={currentValue(definition)}
                     onChange={(value) => update(definition, value)}
+                    jsonDraft={jsonDrafts[definition.key]}
+                    onJsonDraftChange={(text) => setJsonDrafts((previous) => ({ ...previous, [definition.key]: text }))}
                   />
                   <Typography.Text type="secondary" className="field-key">
                     {definition.key}
@@ -400,47 +419,5 @@ export function ConfigEditor({ environment }: { environment: string }) {
         </Form>
       </Modal>
     </Space>
-  );
-}
-
-function ConfigInput({
-  definition,
-  value,
-  onChange,
-}: {
-  definition: ConfigDefinition;
-  value: ConfigValue;
-  onChange: (value: ConfigValue) => void;
-}) {
-  if (definition.value_type === 'boolean') {
-    return <Switch checked={value === true} onChange={onChange} />;
-  }
-  if (definition.value_type === 'enum') {
-    return (
-      <Select
-        value={typeof value === 'string' ? value : undefined}
-        onChange={onChange}
-        style={{ width: '100%' }}
-        options={definition.enum_options.map((item) => ({ value: item, label: item }))}
-      />
-    );
-  }
-  if (['integer', 'duration_ms', 'bytes'].includes(definition.value_type)) {
-    return (
-      <InputNumber
-        value={typeof value === 'number' ? value : null}
-        min={definition.min ?? undefined}
-        max={definition.max ?? undefined}
-        onChange={(next) => onChange(next)}
-        style={{ width: '100%' }}
-        addonAfter={definition.value_type === 'duration_ms' ? 'ms' : definition.value_type === 'bytes' ? 'bytes' : undefined}
-      />
-    );
-  }
-  return (
-    <Input
-      value={typeof value === 'string' ? value : ''}
-      onChange={(event) => onChange(event.target.value)}
-    />
   );
 }

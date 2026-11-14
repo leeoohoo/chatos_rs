@@ -8,7 +8,7 @@ use chatos_agent::{MEMORY_ENGINE_ROLLUP_AGENT, MEMORY_ENGINE_SUMMARY_AGENT};
 use crate::models::EngineRecord;
 use crate::services::ai_pipeline::cloud_agent::CloudSummaryPipelineSpec;
 use crate::services::ai_pipeline::profiles;
-use crate::services::ai_pipeline::{SummaryBuildResult, MIN_TOKEN_LIMIT};
+use crate::services::ai_pipeline::SummaryBuildResult;
 
 use super::render::record_to_summary_block;
 use super::{RollupSettings, SummaryJobSettings};
@@ -47,7 +47,7 @@ pub(crate) async fn build_summary_text(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "summary Cloud Agent resume_kind is required".to_string())?;
-    let pipeline = profiles::thread_summary(settings.max_merge_rounds);
+    let pipeline = profiles::thread_summary();
     crate::services::memory_cloud_agent::generate_or_defer_from_config(
         config,
         db,
@@ -63,9 +63,6 @@ pub(crate) async fn build_summary_text(
             leaf_directive: pipeline.leaf_directive,
             merge_directive: pipeline.merge_directive,
             token_limit: settings.token_limit,
-            max_leaf_tokens: settings.max_leaf_tokens,
-            max_merge_rounds: pipeline.max_merge_rounds,
-            initial_token_limit_floor: MIN_TOKEN_LIMIT,
             split_oversized_items: true,
             log_label: "summary".to_string(),
             items,
@@ -124,9 +121,6 @@ pub(crate) async fn build_rollup_summary_text(
             leaf_directive: pipeline.leaf_directive,
             merge_directive: pipeline.merge_directive,
             token_limit: settings.token_limit,
-            max_leaf_tokens: settings.token_limit,
-            max_merge_rounds: pipeline.max_merge_rounds,
-            initial_token_limit_floor: MIN_TOKEN_LIMIT,
             split_oversized_items: true,
             log_label: "rollup".to_string(),
             items: items.to_vec(),

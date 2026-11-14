@@ -41,3 +41,36 @@ fn task_availability_is_independent_from_chat_availability() {
     assert!(model(true, None).enabled_for_tasks());
     assert!(!model(false, None).enabled_for_tasks());
 }
+
+#[test]
+fn published_capability_view_is_never_serialized_into_model_storage() {
+    let value = serde_json::to_value(model(true, Some(true))).unwrap();
+    for key in [
+        "model_capability_revision",
+        "context_window_tokens",
+        "output_reserve_tokens",
+        "protocol_overhead_estimator_id",
+        "tokenizer_id",
+        "responses_compaction_threshold",
+    ] {
+        assert!(
+            value.get(key).is_none(),
+            "independent budget field survived: {key}"
+        );
+    }
+    assert_eq!(value["id"], "model-1");
+    assert_eq!(value["task_enabled"], true);
+}
+
+#[test]
+fn model_update_cannot_write_an_independent_budget() {
+    for key in [
+        "context_window_tokens",
+        "output_reserve_tokens",
+        "model_capability_revision",
+        "responses_compaction_threshold",
+    ] {
+        let value = serde_json::json!({key: "independent-value"});
+        assert!(serde_json::from_value::<super::UpdateUserModelConfigRequest>(value).is_err());
+    }
+}

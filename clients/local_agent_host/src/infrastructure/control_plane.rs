@@ -171,6 +171,34 @@ impl LocalControlPlaneSnapshot {
             .is_some())
     }
 
+    async fn apply_current_capacity(
+        &self,
+        owner_user_id: &str,
+        model_config_ref: &str,
+        mut runtime: TransientLocalModelRuntime,
+    ) -> Result<TransientLocalModelRuntime, String> {
+        if let Some(store) = &self.model_store {
+            // These fields transport Configuration Center's shared capacity. They are
+            // live policy, not frozen model parameters: an old Run must not keep sending
+            // a retired policy revision after the authenticated control plane refreshes.
+            let current = store
+                .get_latest_model_config_snapshot(owner_user_id, model_config_ref)
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "current published capacity is not synchronized".to_string())?;
+            let config = &mut runtime.model_config;
+            config.model_capability_revision = current.model_capability_revision;
+            config.context_window_tokens = usize::try_from(current.context_window_tokens)
+                .map_err(|_| "context_window_tokens does not fit this platform".to_string())?;
+            config.output_reserve_tokens = usize::try_from(current.output_reserve_tokens)
+                .map_err(|_| "output_reserve_tokens does not fit this platform".to_string())?;
+            config.protocol_overhead_estimator_id = current.protocol_overhead_estimator_id;
+            config.tokenizer_id = current.tokenizer_id;
+            config.validate_model_capability()?;
+        }
+        Ok(runtime)
+    }
+
     /// Removes only the process-local cache entry. A configured durable store
     /// remains authoritative so active Runs can still resolve the revision.
     pub fn evict_capabilities(
@@ -210,16 +238,20 @@ impl LocalModelRuntimeResolver for LocalControlPlaneSnapshot {
             "model_config_revision",
             model_config_revision.to_string(),
         )?;
-        if let Some(runtime) = self
-            .models
-            .read()
-            .map_err(|_| "model control-plane snapshot lock is poisoned".to_string())?
-            .get(&key)
-        {
-            return Ok(TransientLocalModelRuntime {
-                runner: Arc::clone(&runtime.runner),
-                model_config: runtime.model_config.clone(),
-            });
+        let cached = {
+            self.models
+                .read()
+                .map_err(|_| "model control-plane snapshot lock is poisoned".to_string())?
+                .get(&key)
+                .map(|runtime| TransientLocalModelRuntime {
+                    runner: Arc::clone(&runtime.runner),
+                    model_config: runtime.model_config.clone(),
+                })
+        };
+        if let Some(runtime) = cached {
+            return self
+                .apply_current_capacity(owner_user_id, model_config_ref, runtime)
+                .await;
         }
         let (Some(store), Some(runner), Some(credentials)) = (
             &self.model_store,
@@ -242,10 +274,15 @@ impl LocalModelRuntimeResolver for LocalControlPlaneSnapshot {
         let api_key = credentials
             .resolve_model_api_key(owner_user_id, &snapshot.credential_ref)
             .await?;
-        Ok(TransientLocalModelRuntime {
-            runner: Arc::clone(runner),
-            model_config: decode_model_config(snapshot, api_key)?,
-        })
+        self.apply_current_capacity(
+            owner_user_id,
+            model_config_ref,
+            TransientLocalModelRuntime {
+                runner: Arc::clone(runner),
+                model_config: decode_model_config(snapshot, api_key)?,
+            },
+        )
+        .await
     }
 }
 

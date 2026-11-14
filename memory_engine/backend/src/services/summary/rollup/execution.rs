@@ -81,9 +81,6 @@ pub(crate) async fn prepare_thread_rollup(
         source_id,
         thread_id,
         settings.source_batch_token_limit.max(500),
-        settings.count_limit.max(0),
-        settings.keep_level0_count.max(0),
-        settings.max_level.max(1),
     )
     .await?;
     let Some((level, project_partition_key, selected, trigger_reason)) = selection else {

@@ -188,7 +188,7 @@ fn imported_model_record(
     target_id: String,
     now: &str,
 ) -> UserModelConfigRecord {
-    let mut record = UserModelConfigRecord {
+    UserModelConfigRecord {
         id: target_id,
         owner_user_id: provider_record.owner_user_id.clone(),
         source_provider_id: Some(provider_record.id.clone()),
@@ -224,9 +224,7 @@ fn imported_model_record(
             .map(|item| item.created_at.clone())
             .unwrap_or_else(|| now.to_string()),
         updated_at: now.to_string(),
-    };
-    crate::model_policy::publish_missing_chat_budget(&mut record);
-    record
+    }
 }
 
 pub(super) async fn refresh_provider_models_from_record(
@@ -474,11 +472,10 @@ mod tests {
             assert!(record.enabled, "{name}");
             assert_eq!(record.id, "stable-id");
             assert_eq!(record.task_enabled, Some(true));
-            assert_eq!(
-                record.model_capability_revision.is_some(),
-                name == "gpt-6-luna"
-            );
-            assert!(record.context_window_tokens.is_some() == (name == "gpt-6-luna"));
+            assert!(record.model_capability_revision.is_none());
+            assert!(record.context_window_tokens.is_none());
+            assert!(record.output_reserve_tokens.is_none());
+            assert!(record.protocol_overhead_estimator_id.is_none());
             let disabled =
                 imported_model_record(&provider(false), name, None, "stable-id".into(), "now");
             assert!(!disabled.enabled);
@@ -501,14 +498,8 @@ mod tests {
         );
         assert!(repaired.enabled);
         assert_eq!(repaired.task_enabled, Some(false));
-        assert_eq!(
-            repaired.model_capability_revision.as_deref(),
-            Some(
-                chatos_service_runtime::model_workload::default_chat_budget()
-                    .revision
-                    .as_str()
-            )
-        );
+        assert!(repaired.model_capability_revision.is_none());
+        assert!(repaired.context_window_tokens.is_none());
         assert_eq!(repaired.created_at, existing.created_at);
         let configured = model(true);
         let refreshed = imported_model_record(

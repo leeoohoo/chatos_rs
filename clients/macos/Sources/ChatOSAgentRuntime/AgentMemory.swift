@@ -221,8 +221,8 @@ public struct AgentModelCapabilitySnapshot: Codable, Equatable, Sendable {
                 protocolOverheadEstimatorID: String, tokenizerID: String?) throws {
         guard !revision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !protocolOverheadEstimatorID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              contextWindowTokens >= 2_048,
-              outputReserveTokens >= 256,
+              contextWindowTokens > 0,
+              outputReserveTokens > 0,
               outputReserveTokens < contextWindowTokens else {
             throw AgentRuntimeError.modelConfigurationUnavailable
         }
@@ -238,13 +238,19 @@ public struct AgentMemoryComposeRequest: Equatable, Sendable {
     public let modelCapability: AgentModelCapabilitySnapshot
     public let queryText: String
     public let currentTurnID: String
+    public let availableMemoryTokens: Int
 
     public init(modelCapability: AgentModelCapabilitySnapshot, queryText: String,
-                currentTurnID: String) throws {
+                currentTurnID: String, availableMemoryTokens: Int) throws {
         guard !queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !currentTurnID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AgentContextError.invalidHistory
         }
+        guard availableMemoryTokens > 0,
+              availableMemoryTokens <= modelCapability.contextWindowTokens - modelCapability.outputReserveTokens else {
+            throw AgentContextError.budgetExceeded
+        }
+        self.availableMemoryTokens = availableMemoryTokens
         self.modelCapability = modelCapability
         self.queryText = queryText
         self.currentTurnID = currentTurnID
@@ -269,8 +275,24 @@ public struct AgentMemoryContextRecord: Equatable, Sendable {
 public struct AgentMemoryContext: Sendable {
     public let blocks: [AgentMemoryContextBlock]
     public let recentRecords: [AgentMemoryContextRecord]
-    public init(blocks: [AgentMemoryContextBlock], recentRecords: [AgentMemoryContextRecord]) {
-        self.blocks = blocks; self.recentRecords = recentRecords
+    /// Memory Engine sets this when the requested projection cannot fit until raw records are
+    /// summarized. Callers must compact and re-compose instead of forwarding the oversized
+    /// projection to a model.
+    public let needsCompaction: Bool
+    public let budgetUsedTokens: Int?
+    public let pendingRecordCount: Int?
+    public init(
+        blocks: [AgentMemoryContextBlock],
+        recentRecords: [AgentMemoryContextRecord],
+        needsCompaction: Bool = false,
+        budgetUsedTokens: Int? = nil,
+        pendingRecordCount: Int? = nil
+    ) {
+        self.blocks = blocks
+        self.recentRecords = recentRecords
+        self.needsCompaction = needsCompaction
+        self.budgetUsedTokens = budgetUsedTokens
+        self.pendingRecordCount = pendingRecordCount
     }
 }
 
@@ -278,10 +300,14 @@ public protocol AgentMemoryServicing: Sendable {
     func ensureThread() async throws
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws
     func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext
+    /// Runs the active summary required by a compose response with `needsCompaction=true` and
+    /// returns only after that job reaches a terminal state.
+    func compactSummary() async throws
     func flushSummary() async throws
 }
 
 public extension AgentMemoryServicing {
+    func compactSummary() async throws { try await flushSummary() }
     func flushSummary() async throws {}
 }
 
@@ -310,21 +336,6 @@ public struct AgentMemoryCheckpoint: Codable, Equatable, Sendable {
     }
 }
 
-public struct AgentContextPolicy: Codable, Equatable, Sendable {
-    /// The first request in a run/resume must fit this local safety budget.
-    /// Official OpenAI Responses owns subsequent in-run compaction.
-    public var windowTokens = 200_000
-    public var outputReserveTokens = 30_000
-    public init() {}
-    public var hardInputLimit: Int { windowTokens }
-    public func validate() throws {
-        guard (2_048...2_000_000).contains(windowTokens),
-              (256..<windowTokens).contains(outputReserveTokens) else {
-            throw AgentRuntimeError.invalidPolicy
-        }
-    }
-}
-
 public enum AgentContextError: LocalizedError, Sendable {
     case unavailable, invalidHistory, syncUncertain, budgetExceeded
     public var errorDescription: String? {
@@ -334,6 +345,18 @@ public enum AgentContextError: LocalizedError, Sendable {
         case .syncUncertain: "部分运行记录尚未确认写入，已暂停。请稍后恢复核对；不会自动重发并重置已有摘要。"
         case .budgetExceeded: "上下文仍超过设置的窗口预算，已暂停，未继续调用模型。"
         }
+    }
+}
+
+public struct AgentMemoryCompactionFailure: LocalizedError, Sendable {
+    public let reason: String
+
+    public init(reason: String) {
+        self.reason = reason
+    }
+
+    public var errorDescription: String? {
+        "Memory Engine 历史压缩暂时失败：\(reason)"
     }
 }
 

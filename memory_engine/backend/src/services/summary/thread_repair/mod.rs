@@ -61,7 +61,8 @@ pub async fn run_pending_summary_rebuild(
 }
 
 pub(crate) async fn prepare_covered_range_resummarize(
-    db: &Db,
+    config: &AppConfig,
+    _db: &Db,
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: &str,
     source_id: &str,
@@ -102,7 +103,7 @@ pub(crate) async fn prepare_covered_range_resummarize(
         return Err("covered range already has an active resummarization".to_string());
     }
 
-    let settings = load_summary_job_settings(db, "summary").await?;
+    let settings = load_summary_job_settings(config)?;
     let job = control_plane::create_job_run_in_tx(
         tx,
         CreateEngineJobRunRequest {
@@ -117,10 +118,8 @@ pub(crate) async fn prepare_covered_range_resummarize(
                 "previous_summary_id": summary_id,
                 "project_partition_key": project_partition_key,
                 "frozen_record_ids": record_ids,
-                "policy_max_source_batch_tokens": settings.source_batch_token_limit,
-                "policy_max_model_input_tokens": settings.token_limit,
-                "policy_max_leaf_tokens": settings.max_leaf_tokens,
-                "policy_max_merge_rounds": settings.max_merge_rounds,
+                "source_batch_capacity_tokens": settings.source_batch_token_limit,
+                "model_input_limit_tokens": settings.token_limit,
                 "reason": reason,
             })),
         },
@@ -276,22 +275,13 @@ pub(crate) async fn resume_covered_range_resummarize(
         .collect::<Result<Vec<_>, _>>()?;
     let settings = super::SummaryJobSettings {
         source_batch_token_limit: metadata
-            .get("policy_max_source_batch_tokens")
+            .get("source_batch_capacity_tokens")
             .and_then(serde_json::Value::as_i64)
             .ok_or_else(|| "resummarization max source batch tokens are missing".to_string())?,
         token_limit: metadata
-            .get("policy_max_model_input_tokens")
+            .get("model_input_limit_tokens")
             .and_then(serde_json::Value::as_i64)
             .ok_or_else(|| "resummarization max model input tokens are missing".to_string())?,
-        max_leaf_tokens: metadata
-            .get("policy_max_leaf_tokens")
-            .and_then(serde_json::Value::as_i64)
-            .ok_or_else(|| "resummarization max leaf tokens are missing".to_string())?,
-        max_merge_rounds: metadata
-            .get("policy_max_merge_rounds")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| usize::try_from(value).ok())
-            .ok_or_else(|| "resummarization max merge rounds are missing".to_string())?,
         cloud_owner_entity_id: None,
         cloud_resume_kind: None,
     };
@@ -504,10 +494,8 @@ async fn execute_resummarization(
                     "previous_summary_id": previous_summary_id,
                     "project_partition_key": project_partition_key,
                     "frozen_record_ids": record_ids,
-                    "policy_max_source_batch_tokens": settings.source_batch_token_limit,
-                    "policy_max_model_input_tokens": settings.token_limit,
-                    "policy_max_leaf_tokens": settings.max_leaf_tokens,
-                    "policy_max_merge_rounds": settings.max_merge_rounds,
+                    "source_batch_capacity_tokens": settings.source_batch_token_limit,
+                    "model_input_limit_tokens": settings.token_limit,
                 })),
                 error_message: None,
             },
@@ -664,10 +652,8 @@ fn resummarization_descriptor(
         manifest,
         digest,
         serde_json::json!({
-            "max_source_batch_tokens": settings.source_batch_token_limit,
-            "max_model_input_tokens": settings.token_limit,
-            "max_leaf_tokens": settings.max_leaf_tokens,
-            "max_merge_rounds": settings.max_merge_rounds,
+            "source_batch_capacity_tokens": settings.source_batch_token_limit,
+            "model_input_limit_tokens": settings.token_limit,
             "previous_summary_id": previous_summary_id,
             "generation_reason": "resummarize",
         }),

@@ -83,7 +83,7 @@ impl AiRequestHandler {
     pub(crate) fn isolated_retry_handler(&self) -> Self {
         self.read_timeout
             .map(Self::new_with_read_timeout)
-            .unwrap_or_else(Self::new)
+            .unwrap_or_default()
     }
 
     #[allow(clippy::too_many_arguments)]

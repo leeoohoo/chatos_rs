@@ -71,9 +71,11 @@ pub(crate) async fn generate_or_defer(
         pipeline: CloudSummaryPipelineState::new(
             CloudSummaryPipelineSpec {
                 managed_prompt: Some(runtime.prompt),
+                token_limit: runtime.budget.input_limit()?,
                 ..spec
             },
             payload_contract,
+            runtime.budget,
         )?,
         terminal_context,
     };
@@ -168,6 +170,7 @@ async fn prepare_generation_from_terminal_context(
         "model_provider": runtime.model_provider,
         "model_id": runtime.model_id,
         "model_config_id": runtime.model_config_id,
+        "model_budget": runtime.budget,
         "tokenizer_id": crate::services::generation_identity::TOKENIZER_ID,
         "policy_checksum": policy_checksum,
         "policy_snapshot": policy_snapshot,
@@ -497,7 +500,9 @@ pub(crate) async fn finalize_terminal(
             let job_run_id = terminal_context
                 .get("job_run_id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Memory resummarization terminal context has no job_run_id".to_string())?;
+                .ok_or_else(|| {
+                    "Memory resummarization terminal context has no job_run_id".to_string()
+                })?;
             crate::services::summary::fail_covered_range_resummarize(
                 &state.pool,
                 tenant_id,
@@ -542,7 +547,9 @@ pub(crate) async fn finalize_terminal(
             let job_run_id = terminal_context
                 .get("job_run_id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Memory resummarization terminal context has no job_run_id".to_string())?;
+                .ok_or_else(|| {
+                    "Memory resummarization terminal context has no job_run_id".to_string()
+                })?;
             let result = crate::services::summary::resume_covered_range_resummarize(
                 &state.config,
                 &state.pool,
@@ -636,11 +643,7 @@ pub(crate) async fn finalize_terminal(
                 .get("job_run_id")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "rollup terminal job_run_id is missing".to_string())?;
-            let policy =
-                crate::repositories::control_plane::get_effective_job_policy(&state.pool, "rollup")
-                    .await?;
-            let settings =
-                crate::services::control_plane::build_rollup_settings_from_policy(&policy)?;
+            let settings = crate::services::control_plane::load_rollup_settings(&state.config)?;
             let descriptor = terminal_context
                 .get("generation")
                 .ok_or_else(|| "rollup terminal generation descriptor is missing".to_string())?;
@@ -714,71 +717,6 @@ pub(crate) async fn finalize_terminal(
 
 fn is_thread_summary_resume_kind(resume_kind: &str) -> bool {
     resume_kind == THREAD_SUMMARY_JOB_RESUME_KIND
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::{
-        collect_matching_scope_fact_ids, is_thread_summary_resume_kind,
-        THREAD_SUMMARY_JOB_RESUME_KIND,
-    };
-
-    #[test]
-    fn thread_summary_resume_route_is_not_a_scheduler_trigger() {
-        assert!(is_thread_summary_resume_kind(
-            THREAD_SUMMARY_JOB_RESUME_KIND
-        ));
-        assert!(!is_thread_summary_resume_kind("database_worker"));
-        assert!(!is_thread_summary_resume_kind("scheduler"));
-        assert!(!is_thread_summary_resume_kind("thread_direct"));
-    }
-
-    #[test]
-    fn supersession_candidates_are_restricted_to_the_output_scope() {
-        let input = json!({
-            "inputs": [{
-                "fact_id": "untrusted-recursive-id",
-                "structured_payload": {
-                    "schema_version": "memory_payload_v1",
-                    "scope": {
-                        "kind": "thread",
-                        "subject_id": "agent:test",
-                        "project_partition_key": "project:alpha"
-                    },
-                    "completed": [{"fact_id": "thread-fact"}],
-                    "decisions": [], "open_items": [], "blockers": [],
-                    "artifacts": [], "constraints": [],
-                    "stable_preferences": [], "uncertainties": []
-                }
-            }, {
-                "structured_payload": {
-                    "schema_version": "memory_payload_v1",
-                    "scope": {
-                        "kind": "project",
-                        "subject_id": "project:alpha",
-                        "project_partition_key": "project:alpha"
-                    },
-                    "completed": [],
-                    "decisions": [{"fact_id": "project-fact"}],
-                    "open_items": [], "blockers": [], "artifacts": [],
-                    "constraints": [], "stable_preferences": [], "uncertainties": []
-                }
-            }]
-        });
-        let mut candidates = Vec::new();
-
-        collect_matching_scope_fact_ids(
-            &input,
-            "project",
-            "project:alpha",
-            Some("project:alpha"),
-            &mut candidates,
-        );
-
-        assert_eq!(candidates, vec!["project-fact"]);
-    }
 }
 
 async fn settle_summary_dispatch(
@@ -872,4 +810,69 @@ async fn release_subject_scope_slot(
         lock_owner,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{
+        collect_matching_scope_fact_ids, is_thread_summary_resume_kind,
+        THREAD_SUMMARY_JOB_RESUME_KIND,
+    };
+
+    #[test]
+    fn thread_summary_resume_route_is_not_a_scheduler_trigger() {
+        assert!(is_thread_summary_resume_kind(
+            THREAD_SUMMARY_JOB_RESUME_KIND
+        ));
+        assert!(!is_thread_summary_resume_kind("database_worker"));
+        assert!(!is_thread_summary_resume_kind("scheduler"));
+        assert!(!is_thread_summary_resume_kind("thread_direct"));
+    }
+
+    #[test]
+    fn supersession_candidates_are_restricted_to_the_output_scope() {
+        let input = json!({
+            "inputs": [{
+                "fact_id": "untrusted-recursive-id",
+                "structured_payload": {
+                    "schema_version": "memory_payload_v1",
+                    "scope": {
+                        "kind": "thread",
+                        "subject_id": "agent:test",
+                        "project_partition_key": "project:alpha"
+                    },
+                    "completed": [{"fact_id": "thread-fact"}],
+                    "decisions": [], "open_items": [], "blockers": [],
+                    "artifacts": [], "constraints": [],
+                    "stable_preferences": [], "uncertainties": []
+                }
+            }, {
+                "structured_payload": {
+                    "schema_version": "memory_payload_v1",
+                    "scope": {
+                        "kind": "project",
+                        "subject_id": "project:alpha",
+                        "project_partition_key": "project:alpha"
+                    },
+                    "completed": [],
+                    "decisions": [{"fact_id": "project-fact"}],
+                    "open_items": [], "blockers": [], "artifacts": [],
+                    "constraints": [], "stable_preferences": [], "uncertainties": []
+                }
+            }]
+        });
+        let mut candidates = Vec::new();
+
+        collect_matching_scope_fact_ids(
+            &input,
+            "project",
+            "project:alpha",
+            Some("project:alpha"),
+            &mut candidates,
+        );
+
+        assert_eq!(candidates, vec!["project-fact"]);
+    }
 }

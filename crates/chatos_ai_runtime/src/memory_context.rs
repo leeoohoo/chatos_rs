@@ -12,7 +12,7 @@ use memory_engine_sdk::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::time::{sleep, Instant};
+use tokio::time::sleep;
 use tracing::warn;
 
 use crate::tool_runtime::ToolResultModelBudgetLimits;
@@ -20,7 +20,6 @@ use crate::traits::SaveRecordInput;
 
 pub(crate) const MEMORY_CONTEXT_ITEM_PREFIX: &str = "[memory_engine_context]";
 const REQUIRED_COMPACTION_POLL_INTERVAL: Duration = Duration::from_millis(250);
-const REQUIRED_COMPACTION_POLL_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_REQUIRED_COMPACTION_ROUNDS: usize = 128;
 
 #[path = "memory_context/compose_items.rs"]
@@ -34,8 +33,6 @@ pub use compose_items::{
     compose_response_to_input_items, compose_response_to_input_items_with_budget,
 };
 pub use record_writer::{MemoryEngineRecordWriter, MemoryRecordScope};
-
-use compose_items::standard_compose_policy;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeContextAssertionRequest<'a> {
@@ -253,7 +250,6 @@ impl MemoryContextComposer {
                     scope,
                     initial,
                     REQUIRED_COMPACTION_POLL_INTERVAL,
-                    REQUIRED_COMPACTION_POLL_TIMEOUT,
                 )
                 .await?;
             if status.failed || (!status.generated && !status.compacted) {
@@ -293,7 +289,9 @@ impl MemoryContextComposer {
                 query_text: scope.query_text.clone(),
                 current_turn_id: scope.current_turn_id.clone(),
                 model_capability_revision: scope.model_capability_revision.clone(),
-                policy: scope.policy.clone().unwrap_or_else(standard_compose_policy),
+                policy: scope.policy.clone().ok_or_else(|| {
+                    "Memory compose requires an explicit model-derived request budget".to_string()
+                })?,
                 runtime_context_assertion,
             })
             .await
@@ -421,30 +419,14 @@ impl MemoryContextComposer {
         scope: &MemoryScope,
         initial: RunThreadActiveSummaryResponse,
         poll_interval: Duration,
-        poll_timeout: Duration,
     ) -> Result<RunThreadActiveSummaryResponse, String> {
-        if initial.completed || initial.failed || !initial.running {
-            return Ok(initial);
-        }
-
-        let deadline = Instant::now() + poll_timeout;
-        let job_run_id = initial.job_run_id.clone();
-        loop {
-            if Instant::now() >= deadline {
-                return Err(format!(
-                    "active summary poll timed out after {} ms",
-                    poll_timeout.as_millis()
-                ));
-            }
-
-            sleep(poll_interval).await;
-            let status = self
-                .get_active_summary_status(scope, job_run_id.as_deref())
-                .await?;
-            if status.completed || status.failed || !status.running {
-                return Ok(status);
-            }
-        }
+        // The Memory service owns the job deadline and lease recovery. A successful status
+        // response with running=true is progress, even when summarization takes minutes.
+        wait_for_summary_job(initial, poll_interval, |job_run_id| async move {
+            self.get_active_summary_status(scope, job_run_id.as_deref())
+                .await
+        })
+        .await
     }
 
     fn validate_scope_source(&self, scope: &MemoryScope) -> Result<(), String> {
@@ -552,6 +534,23 @@ fn normalized(value: &str) -> Option<String> {
     } else {
         Some(value.to_string())
     }
+}
+
+async fn wait_for_summary_job<F, Fut>(
+    mut status: RunThreadActiveSummaryResponse,
+    poll_interval: Duration,
+    mut poll: F,
+) -> Result<RunThreadActiveSummaryResponse, String>
+where
+    F: FnMut(Option<String>) -> Fut,
+    Fut: std::future::Future<Output = Result<RunThreadActiveSummaryResponse, String>>,
+{
+    let job_run_id = status.job_run_id.clone();
+    while status.running && !status.completed && !status.failed {
+        sleep(poll_interval).await;
+        status = poll(job_run_id.clone()).await?;
+    }
+    Ok(status)
 }
 
 #[cfg(test)]

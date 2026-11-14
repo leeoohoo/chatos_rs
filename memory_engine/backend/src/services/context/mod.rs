@@ -21,8 +21,6 @@ use self::blocks::{
 };
 use self::policy::{ResolvedComposeContextPolicy, CONTEXT_POLICY_REVISION};
 
-const CONTEXT_ESTIMATOR_ID: &str = "unicode-chars-div3-conservative-v1";
-
 pub async fn compose_context(
     db: &Db,
     req: ComposeContextRequest,
@@ -157,7 +155,7 @@ pub async fn compose_context(
             budget_requested,
             budget_effective,
             budget_used,
-            estimator_id: CONTEXT_ESTIMATOR_ID.to_string(),
+            estimator_id: memory_engine_sdk::CONSERVATIVE_TOKEN_ESTIMATOR_ID.to_string(),
             tokenizer_id: None,
             candidate_count_by_pool,
             selected_count_by_pool,
@@ -288,7 +286,7 @@ fn used_budget(
 }
 
 pub(crate) fn estimate_tokens(text: &str) -> usize {
-    text.chars().count().saturating_add(2) / 3 + 1
+    memory_engine_sdk::estimate_text_tokens(text).max(1)
 }
 
 fn validate_requested_project(

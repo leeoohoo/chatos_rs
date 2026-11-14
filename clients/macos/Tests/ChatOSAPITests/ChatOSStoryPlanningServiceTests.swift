@@ -7,7 +7,7 @@ import XCTest
 final class ChatOSStoryPlanningServiceTests: XCTestCase {
     func testAgentFactoryUsesAutomaticFunctionChoiceAndVisibleOutputReserve() async throws {
         let transport = StoryPlanningTransport()
-        var policy = AgentRunPolicy(); var context = AgentContextPolicy(); context.outputReserveTokens = 2_048; policy.context = context
+        let policy = AgentRunPolicy()
         let model = try await makeService(transport).makeAgentModel(configID: "text-model", policy: policy)
         let definition = AgentToolDefinition(name: request.toolName, description: "test", schema: request.schema)
         _ = try await model.complete(messages: [.init(role: .user, content: "story")], tools: [definition], timeout: 42)

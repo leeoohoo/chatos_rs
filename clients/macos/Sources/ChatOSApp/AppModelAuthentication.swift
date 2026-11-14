@@ -172,17 +172,7 @@ extension AppModel {
             return
         }
         let pendingShutdown = localAgentHostShutdownTask
-        let serviceConfigurationFactory = NativeLocalAgentServiceConfigurationFactory(
-            localConnectorService: localConnectorService,
-            runtimeSettingsService: runtimeSettingsService,
-            petActivityService: petActivityService,
-            commandService: commandService,
-            messageTaskGraphService: messageTaskGraphService,
-            askUserPromptService: askUserPromptService,
-            turnProcessService: turnProcessService,
-            platformToolWorker: platformToolWorker,
-            teamExecutor: localAgentTeamExecutor
-        )
+        let serviceConfigurationFactory = makeLocalAgentServiceConfigurationFactory()
         let launchPort = AppLocalAgentHostLaunchAdapter(
             host: localAgentHost,
             eventHub: localAgentEventHub,
@@ -480,16 +470,7 @@ extension AppModel {
             accountGeneration: workspaceAccountGeneration,
             lifecycleGeneration: expectedLifecycleGeneration
         )
-        let serviceConfigurationFactory = NativeLocalAgentServiceConfigurationFactory(
-            localConnectorService: localConnectorService,
-            runtimeSettingsService: runtimeSettingsService,
-            petActivityService: petActivityService,
-            commandService: commandService,
-            messageTaskGraphService: messageTaskGraphService,
-            askUserPromptService: askUserPromptService,
-            turnProcessService: turnProcessService,
-            platformToolWorker: platformToolWorker
-        )
+        let serviceConfigurationFactory = makeLocalAgentServiceConfigurationFactory()
         let bootstrapPort = AppLocalAgentControlPlaneBootstrapAdapter(
             host: host,
             apiClient: apiClient,
@@ -531,6 +512,20 @@ extension AppModel {
     ) -> Bool {
         authenticatedUserID == ownerUserID
             && localAgentHostLifecycleGeneration == generation
+    }
+
+    private func makeLocalAgentServiceConfigurationFactory() -> NativeLocalAgentServiceConfigurationFactory {
+        NativeLocalAgentServiceConfigurationFactory(
+            localConnectorService: localConnectorService,
+            runtimeSettingsService: runtimeSettingsService,
+            petActivityService: petActivityService,
+            commandService: commandService,
+            messageTaskGraphService: messageTaskGraphService,
+            askUserPromptService: askUserPromptService,
+            turnProcessService: turnProcessService,
+            platformToolWorker: platformToolWorker,
+            teamExecutor: localAgentTeamExecutor
+        )
     }
 
     private func localAgentControlPlaneBootstrapAccepts(

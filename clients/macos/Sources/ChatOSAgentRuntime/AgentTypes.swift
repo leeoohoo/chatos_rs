@@ -136,13 +136,11 @@ public struct AgentRunPolicy: Codable, Equatable, Sendable {
     public var runTimeoutSeconds = 7_200
     public var maximumRequestRetries = 2
     public var maximumNoProgressRounds = 8
-    public var context: AgentContextPolicy? = nil
     public init() {}
     public func validate() throws {
         guard (1...10_000).contains(maximumModelCalls), (5...1_800).contains(requestTimeoutSeconds),
               (10...86_400).contains(runTimeoutSeconds), (0...10).contains(maximumRequestRetries),
               (1...100).contains(maximumNoProgressRounds) else { throw AgentRuntimeError.invalidPolicy }
-        try (context ?? AgentContextPolicy()).validate()
     }
 }
 

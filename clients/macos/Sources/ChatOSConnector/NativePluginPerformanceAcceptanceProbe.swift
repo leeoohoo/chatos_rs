@@ -86,7 +86,7 @@ public actor NativePluginPerformanceAcceptanceProbe {
               "type": "local_http",
               "bin": "chatos-acceptance-plugin",
               "healthPath": "/",
-              "launchTimeoutMs": 5000
+              "launchTimeoutMs": 15000
             }
           }],
           "permissions": [{

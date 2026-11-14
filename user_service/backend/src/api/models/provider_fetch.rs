@@ -130,7 +130,7 @@ fn extract_model_names(payload: &Value) -> Vec<String> {
                 .or_else(|| item.as_str())
                 .map(str::trim)
                 .filter(|value| !value.is_empty());
-            if let Some(id) = id {
+            if let Some(id) = id.filter(|name| crate::model_catalog::is_selectable_model(name)) {
                 let id = id.to_string();
                 if !out.iter().any(|existing| existing == &id) {
                     out.push(id);
@@ -162,6 +162,17 @@ mod tests {
                 "data": [{"id": "gpt-5"}, {"id": "gpt-5"}, {"id": "gpt-4.1"}]
             })),
             vec!["gpt-5".to_string(), "gpt-4.1".to_string()]
+        );
+    }
+
+    #[test]
+    fn provider_import_excludes_removed_aliases_without_reading_capacity_configuration() {
+        assert_eq!(
+            extract_model_names(&json!({"data": [
+                {"id": "gpt-5.3-codex-spark"}, {"id": "codex-auto-review"},
+                {"id": "gpt-6.1-sol"}, {"id": "gpt-image-2"}
+            ]})),
+            vec!["gpt-6.1-sol", "gpt-image-2"]
         );
     }
 }

@@ -40,15 +40,8 @@ mod tests {
             "items": [
                 {
                     "job_type": "summary",
-                    "dispatch_threshold_tokens": 1200,
-                    "max_source_batch_tokens": 8000,
-                    "max_model_input_tokens": 32000,
-                    "max_leaf_tokens": 6000,
-                    "max_merge_rounds": 8,
-                    "count_limit": 12,
-                    "keep_level0_count": 3,
-                    "max_level": 2,
-                    "updated_at": "2026-05-20T00:00:00Z"
+                    "model_capability_revision": "published-fixture", "context_window_tokens": 100000,
+                    "output_reserve_tokens": 10000, "max_model_input_tokens": 90000
                 }
             ]
         }))

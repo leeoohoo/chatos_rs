@@ -261,3 +261,68 @@ fn model_snapshot() -> LocalModelConfigSnapshot {
         output_format: None,
     }
 }
+
+#[tokio::test]
+async fn old_runs_use_current_published_capacity_without_changing_the_frozen_model() {
+    let storage = Arc::new(SqliteClientStorage::connect_memory().await.unwrap());
+    let runner = Arc::new(ContextualTurnRunner::new(AiRuntime::new(None), None));
+    let credentials = Arc::new(Credentials {
+        resolutions: AtomicUsize::new(0),
+    });
+    let control = LocalControlPlaneSnapshot::new().with_model_store(
+        storage.clone(),
+        runner.clone(),
+        credentials.clone(),
+    );
+    let old = model_snapshot();
+    control.publish_model_config(&old).await.unwrap();
+    let runtime = control
+        .resolve_model_runtime(OWNER, "default", "revision-1")
+        .await
+        .unwrap();
+    control
+        .publish_model_runtime(OWNER, "default", "cached-old", runtime)
+        .unwrap();
+    let mut current = old.clone();
+    current.model_config_revision = "revision-2".into();
+    current.model_capability_revision = "current-shared-capacity".into();
+    current.context_window_tokens = 913_777;
+    current.output_reserve_tokens = 113_777;
+    current.tokenizer_id = None;
+    current.model = "other-model-settings".into();
+    control.publish_model_config(&current).await.unwrap();
+    for revision in ["revision-1", "cached-old"] {
+        let runtime = control
+            .resolve_model_runtime(OWNER, "default", revision)
+            .await
+            .unwrap();
+        assert_eq!(runtime.model_config.model, old.model);
+        assert_eq!(
+            runtime.model_config.max_output_tokens,
+            old.max_output_tokens
+        );
+        assert_eq!(
+            runtime.model_config.model_capability_revision,
+            current.model_capability_revision
+        );
+        assert_eq!(
+            runtime.model_config.context_window_tokens as u64,
+            current.context_window_tokens
+        );
+        assert_eq!(
+            runtime.model_config.output_reserve_tokens as u64,
+            current.output_reserve_tokens
+        );
+        assert_eq!(runtime.model_config.tokenizer_id, None);
+    }
+    let restarted = LocalControlPlaneSnapshot::new().with_model_store(storage, runner, credentials);
+    let runtime = restarted
+        .resolve_model_runtime(OWNER, "default", "revision-1")
+        .await
+        .unwrap();
+    assert_eq!(
+        runtime.model_config.model_capability_revision,
+        current.model_capability_revision
+    );
+    assert_eq!(runtime.model_config.model, old.model);
+}

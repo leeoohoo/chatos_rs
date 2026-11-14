@@ -126,11 +126,9 @@ pub async fn list_threads_with_pending_rollups(
     db: &Db,
     tenant_id: Option<&str>,
     source_id: Option<&str>,
-    max_level: i64,
     limit: i64,
 ) -> Result<Vec<(String, String, String)>, String> {
-    let mut q=QueryBuilder::<Postgres>::new("SELECT tenant_id,source_id,thread_id FROM engine_summaries WHERE recall_eligible AND summary_type='thread_incremental' AND status='done' AND rollup_status='pending' AND level<=");
-    q.push_bind(max_level.max(0));
+    let mut q=QueryBuilder::<Postgres>::new("SELECT tenant_id,source_id,thread_id FROM engine_summaries WHERE recall_eligible AND summary_type='thread_incremental' AND status='done' AND rollup_status='pending'");
     if let Some(v) = tenant_id.map(str::trim).filter(|v| !v.is_empty()) {
         q.push(" AND tenant_id=").push_bind(v);
     }
@@ -143,4 +141,14 @@ pub async fn list_threads_with_pending_rollups(
         .fetch_all(db)
         .await
         .map_err(|e| e.to_string())
+}
+
+pub async fn list_pending_summary_levels(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+) -> Result<Vec<i64>, String> {
+    sqlx::query_scalar("SELECT DISTINCT level FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND recall_eligible AND summary_type='thread_incremental' AND status='done' AND rollup_status='pending' ORDER BY level")
+        .bind(tenant_id).bind(source_id).bind(thread_id).fetch_all(db).await.map_err(|e| e.to_string())
 }

@@ -3,6 +3,27 @@ import Foundation
 
 @MainActor
 extension LocalConnectorControlCenterViewModel {
+    func resolveProgramRelease(
+        repositoryURL: String, tag: String, assetName: String,
+        completion: @escaping @MainActor (Result<LocalConnectorProgramRelease, Error>) -> Void
+    ) {
+        customPluginTask?.cancel()
+        isInspectingCustomPlugin = true
+        let service = service
+        customPluginTask = Task { [weak self] in
+            do {
+                let resolved = try await service.resolveProgramRelease(repositoryURL: repositoryURL, tag: tag, assetName: assetName)
+                try Task.checkCancellation()
+                self?.isInspectingCustomPlugin = false
+                completion(.success(resolved))
+            } catch is CancellationError {
+                self?.isInspectingCustomPlugin = false
+            } catch {
+                self?.isInspectingCustomPlugin = false
+                completion(.failure(error))
+            }
+        }
+    }
     func loadPluginHookHistory(id: String, reset: Bool = false) {
         if !reset, pluginHookHistoryLoadingIDs.contains(id) { return }
         if reset {

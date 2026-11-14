@@ -183,3 +183,15 @@ pub async fn list_subject_memories_by_ids(
 fn normalized(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
+
+pub async fn list_pending_subject_memory_levels(
+    db: &Db,
+    tenant: &str,
+    source: &str,
+    subject: &str,
+    relation: &str,
+    memory_type: &str,
+) -> Result<Vec<i64>, String> {
+    sqlx::query_scalar("SELECT DISTINCT level FROM engine_subject_memories WHERE tenant_id=$1 AND source_id=$2 AND subject_id=$3 AND relation_subject_id=$4 AND memory_type=$5 AND recall_eligible AND status='active' AND rollup_status='pending' ORDER BY level")
+        .bind(tenant).bind(source).bind(subject).bind(relation).bind(memory_type).fetch_all(db).await.map_err(|e|e.to_string())
+}

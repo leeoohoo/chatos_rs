@@ -2,6 +2,16 @@ import ChatOSCore
 import Foundation
 
 extension NativeLocalConnectorService {
+    public func resolveProgramRelease(repositoryURL: String, tag: String, assetName: String) async throws -> LocalConnectorProgramRelease {
+        try await pluginInstaller.repositoryClient.resolveArchive(repositoryURL: repositoryURL, tag: tag, assetName: assetName)
+    }
+    func discoverInstallerRepository(url: String, documentPath: String?, reference: String?) async throws -> LocalAgentJSONValue {
+        try await pluginInstaller.repositoryClient.discover(repositoryURL: url, documentPath: documentPath, reference: reference)
+    }
+
+    func resolveInstallerRelease(url: String, tag: String, asset: String) async throws -> LocalAgentJSONValue {
+        try await pluginInstaller.repositoryClient.resolveRelease(repositoryURL: url, tag: tag, assetName: asset)
+    }
     /// Reads local records without starting MCP servers or depending on Marketplace availability.
     func installerInstalledPlugins(query: String?) -> [LocalAgentJSONValue] {
         (state.installedPluginRecords ?? [:]).values.sorted { $0.pluginID < $1.pluginID }
@@ -105,13 +115,22 @@ extension NativeLocalConnectorService {
         )
     }
 
+    func installedCustomPluginReplacement(_ pluginID: String?) throws -> NativeInstalledPluginRecord? {
+        guard let pluginID else { return nil }
+        guard let record = state.installedPluginRecords?[pluginID] else {
+            throw NativeConnectorError.pluginInstallation(
+                "replacing_plugin_id 指向的插件尚未安装。新安装请删除 replacing_plugin_id 字段或传 null 后重新预检；不要填写 REPLACE 等占位符。更新请先调用 plugin_installer_list_installed，使用实际返回的 plugin_id。不要重复提交相同的无效参数。"
+            )
+        }
+        return record
+    }
+
     func customPluginUpdate(
         _ prepared: NativePreparedCustomPlugin,
         replacing pluginID: String?
     ) throws -> NativePreparedCustomPlugin {
-        guard let pluginID else { return prepared }
-        guard let previous = state.installedPluginRecords?[pluginID],
-              previous.source != nil, previous.source == prepared.record.source else {
+        guard let previous = try installedCustomPluginReplacement(pluginID) else { return prepared }
+        guard previous.source != nil, previous.source == prepared.record.source else {
             throw NativeConnectorError.pluginInstallation("更新必须使用已安装插件的原来源类型，不能把完整 Plugin 替换为 MCP 包装器")
         }
         let oldManifest = try NativePluginManifestLoader.loadManifest(
@@ -138,6 +157,17 @@ enum NativePluginInstallerMetadata {
         if let value = source.exactVersion { result["exact_version"] = .string(value) }
         if let value = source.gitReference { result["git_reference"] = .string(value) }
         if let value = source.subdirectory { result["subdirectory"] = .string(value) }
+        if let program = source.program {
+            var value: [String: LocalAgentJSONValue] = [
+                "display_name": .string(program.displayName), "component_key": .string(program.componentKey),
+                "executable_path": .string(program.executablePath),
+                "arguments": .array(program.arguments.map(LocalAgentJSONValue.string)),
+                "access_profile": .string(program.accessProfile.rawValue),
+            ]
+            if let asset = program.assetName { value["asset_name"] = .string(asset) }
+            if let digest = program.archiveSHA256 { value["archive_sha256"] = .string(digest) }
+            result["program"] = .object(value)
+        }
         return .object(result)
     }
 

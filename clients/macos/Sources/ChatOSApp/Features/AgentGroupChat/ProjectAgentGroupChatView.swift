@@ -45,7 +45,8 @@ struct ProjectAgentGroupChatView: View {
         service: NativeAgentGroupChatService,
         scheduler: LocalAgentGroupChatScheduler,
         builderService: LocalAgentBuilderService,
-        projectsService: NativeLocalProjectsService
+        projectsService: NativeLocalProjectsService,
+        focusedTodoID: String? = nil
     ) {
         _viewModel = StateObject(
             wrappedValue: AgentGroupChatViewModel(
@@ -57,6 +58,8 @@ struct ProjectAgentGroupChatView: View {
                 projectsService: projectsService
             )
         )
+        _selectedSection = State(initialValue: focusedTodoID == nil ? .overview : .tasks)
+        _focusedTodoID = State(initialValue: focusedTodoID)
     }
 
     var body: some View {

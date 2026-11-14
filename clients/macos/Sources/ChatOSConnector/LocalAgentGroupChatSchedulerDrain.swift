@@ -720,7 +720,6 @@ extension LocalAgentGroupChatScheduler {
             return .safeRetry
         }
         guard checkpoint.status == .paused,
-              checkpoint.pendingCalls.isEmpty,
               let reason = checkpoint.stopReason,
               [
                   AgentContextError.unavailable.localizedDescription,

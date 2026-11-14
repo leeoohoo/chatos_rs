@@ -38,11 +38,6 @@ impl AssertionServer {
                     }
                     Err(error) => panic!("accept request: {error}"),
                 };
-                // A socket accepted from a non-blocking listener remains
-                // non-blocking on Windows.  Restore blocking mode before
-                // reading the request so parallel auth tests cannot observe
-                // a transient WSAEWOULDBLOCK while the client is still
-                // writing headers/body bytes.
                 stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(2)))

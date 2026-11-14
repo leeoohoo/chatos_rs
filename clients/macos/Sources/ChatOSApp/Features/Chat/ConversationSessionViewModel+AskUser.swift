@@ -119,6 +119,19 @@ extension ConversationSessionViewModel {
         }
     }
 
+    /// Reconciles a prompt resolved through another client surface, such as
+    /// the desktop pet. Those surfaces share the prompt service but not this
+    /// view model's in-memory prompt snapshot.
+    func applyExternalAskUserPromptResolution(_ prompt: AskUserPrompt) {
+        guard prompt.sessionID == sessionID, !prompt.status.isPending else { return }
+        askUserPromptLifecycleState.invalidateRefresh()
+        askUserPromptRefreshTask?.cancel()
+        askUserPromptRefreshTask = nil
+        askUserPromptErrors.removeValue(forKey: prompt.id)
+        upsertAskUserPrompt(prompt)
+        refreshLatestSilently()
+    }
+
     private func startAskUserPromptAction(
         promptID: String,
         operation: @escaping @Sendable () async throws -> AskUserPrompt

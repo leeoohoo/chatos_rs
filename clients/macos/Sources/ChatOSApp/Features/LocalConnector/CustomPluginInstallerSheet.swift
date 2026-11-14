@@ -20,6 +20,8 @@ struct CustomPluginInstallerSheet: View {
         case pluginFolder
         case gitPlugin
         case npmPlugin
+        case releaseMCP
+        case localProgram
         var id: String { rawValue }
     }
 
@@ -38,6 +40,9 @@ struct CustomPluginInstallerSheet: View {
     @State private var folderPath = ""
     @State private var gitReference = ""
     @State private var subdirectory = ""
+    @State private var assetName = ""
+    @State private var archiveSHA256 = ""
+    @State private var archiveEntries: [String] = []
     @State private var inspection: LocalConnectorPluginInspection?
     @State private var errorMessage: String?
 
@@ -75,17 +80,23 @@ struct CustomPluginInstallerSheet: View {
                             .tag(InstallKind.npmMCP)
                         Text(model.localized("导入插件 / MCP 目录", english: "Plugin / MCP Folder"))
                             .tag(InstallKind.pluginFolder)
-                        Text(model.localized("Git 插件", english: "Git Plugin"))
+                        Text(model.localized("从仓库安装", english: "From Repository"))
                             .tag(InstallKind.gitPlugin)
                         Text(model.localized("npm 插件", english: "npm Plugin"))
                             .tag(InstallKind.npmPlugin)
+                        Text(model.localized("官方发行包 MCP", english: "Release MCP"))
+                            .tag(InstallKind.releaseMCP)
+                        Text(model.localized("接入已安装的 MCP 程序", english: "Installed MCP Program"))
+                            .tag(InstallKind.localProgram)
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
 
                     if kind == .npmMCP {
                         npmForm
                     } else if kind == .pluginFolder {
                         folderForm
+                    } else if kind == .releaseMCP || kind == .localProgram {
+                        programForm
                     } else {
                         remotePluginForm
                     }
@@ -129,6 +140,10 @@ struct CustomPluginInstallerSheet: View {
         .onChange(of: inputSignature) { _, _ in
             inspection = nil
             errorMessage = nil
+        }
+        .onChange(of: releaseIdentity) { _, _ in
+            archiveSHA256 = ""
+            archiveEntries = []
         }
     }
 
@@ -241,8 +256,8 @@ struct CustomPluginInstallerSheet: View {
                 : model.localized("从 npm 安装完整 Agent Plugin", english: "Complete Agent Plugin from npm"))
                 .font(.headline)
             Text(model.localized(
-                "适用于包含 Plugin 清单、SKILL.md 或 MCP 配置的完整包；如果 npm 包只是一个 MCP 命令，请改用“从 npm 安装 MCP”。",
-                english: "Use this for a complete package containing a plugin manifest, SKILL.md, or MCP configuration. If the npm package only exposes an MCP command, use “MCP from npm” instead."
+                "有 Plugin 清单、Skill 或 MCP 配置的仓库可直接预检。普通程序仓库可交给安装助手自动查文档和发行包，或选择“官方发行包 MCP”；已有程序请选择“接入已安装的 MCP 程序”。",
+                english: "Inspect repositories containing a Plugin, Skill, or MCP configuration directly. For program repositories, let the assistant find docs and releases, or choose Release MCP. For an existing executable, choose Installed MCP Program."
             ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -262,7 +277,72 @@ struct CustomPluginInstallerSheet: View {
         }
     }
 
+    private var programForm: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(model.localized(
+                "无需插件清单，ChatOS 会生成配置并实际验证 MCP 工具。也可以把仓库链接交给安装助手完成这些步骤。",
+                english: "No plugin manifest needed. ChatOS generates the configuration and verifies real MCP tools. You can also give the repository link to the installation assistant."
+            )).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                field(model.localized("显示名称", english: "Display Name"), text: $displayName)
+                field(model.localized("组件 Key", english: "Component Key"), text: $componentKey)
+                field(kind == .releaseMCP ? "Release Tag" : model.localized("程序版本", english: "Program Version"), text: $packageVersion)
+            }
+            if kind == .releaseMCP {
+                field(model.localized("GitHub 仓库 URL", english: "GitHub Repository URL"), text: $folderPath)
+                field(model.localized("适用于本机的发行包名称（zip / tar.gz）", english: "Release Asset for This Mac (zip / tar.gz)"), text: $assetName)
+                Button(model.localized("解析官方发行包", english: "Resolve Official Release")) { resolveRelease() }
+                    .disabled(isBusy || [folderPath, packageVersion, assetName].contains(where: { $0.isEmpty }))
+                if !archiveEntries.isEmpty {
+                    Text(model.localized("发行包已核验，请按官方文档选择 MCP 程序入口。", english: "Release verified. Select the MCP executable using the official docs."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Picker(model.localized("程序入口", english: "Executable"), selection: $binaryName) {
+                        Text(model.localized("请选择", english: "Choose")).tag("")
+                        ForEach(archiveEntries.filter { !$0.hasSuffix("/") }, id: \.self) { Text($0).tag($0) }
+                    }
+                }
+            } else {
+                field(model.localized("已安装程序的绝对路径", english: "Installed Executable Absolute Path"), text: $folderPath)
+                Text(model.localized("程序将复制到 ChatOS 管理目录。需要同目录资源的程序请使用完整发行包。", english: "The executable is copied into ChatOS managed storage. Use the complete release if it needs sibling resources."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text(model.localized("MCP 启动参数（每行一个）", english: "MCP Arguments (one per line)"))
+                .font(.caption.weight(.medium))
+            TextEditor(text: $argumentsText)
+                .font(.system(.body, design: .monospaced))
+                .frame(height: 64)
+            Picker(model.localized("访问级别", english: "Access Profile"), selection: $accessProfile) {
+                Text(model.localized("受限（仅本地）", english: "Restricted")).tag(LocalConnectorCustomMCPDraft.AccessProfile.restricted)
+                Text(model.localized("网络客户端", english: "Network Client")).tag(LocalConnectorCustomMCPDraft.AccessProfile.networkClient)
+                Text(model.localized("开发与逆向分析", english: "Developer Analysis")).tag(LocalConnectorCustomMCPDraft.AccessProfile.developerAnalysis)
+            }
+            Text(accessProfileDescription).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var releaseIdentity: String { [folderPath, packageVersion, assetName].joined(separator: "\u{0}") }
+
+    private func resolveRelease() {
+        let identity = releaseIdentity
+        archiveSHA256 = ""
+        archiveEntries = []
+        errorMessage = nil
+        viewModel.resolveProgramRelease(repositoryURL: folderPath, tag: packageVersion, assetName: assetName) { result in
+            guard releaseIdentity == identity else { return }
+            switch result {
+            case let .success(value):
+                archiveSHA256 = value.archiveSHA256
+                archiveEntries = value.archiveEntries
+                binaryName = ""
+            case let .failure(error): errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     private var preflightSafetyText: String {
+        if kind == .releaseMCP || kind == .localProgram {
+            return model.localized("会核验实际程序文件、MCP 握手和工具清单；安装时再次核对预检指纹。", english: "Verifies executable files, MCP initialization and tools, then rechecks the preflight fingerprint at install time.")
+        }
         if kind == .npmMCP {
             return model.localized(
                 "预检不会运行 npm install scripts；命令和参数不会作为 shell 字符串解析。",
@@ -374,6 +454,10 @@ struct CustomPluginInstallerSheet: View {
     }
 
     private var canInspect: Bool {
+        if kind == .releaseMCP || kind == .localProgram {
+            return [displayName, componentKey, packageVersion, folderPath].allSatisfy { !$0.isEmpty }
+                && (kind == .localProgram || (!archiveSHA256.isEmpty && !binaryName.isEmpty))
+        }
         if kind == .pluginFolder || kind == .gitPlugin {
             return !folderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
@@ -402,7 +486,7 @@ struct CustomPluginInstallerSheet: View {
     private var inputSignature: String {
         [kind.rawValue, displayName, description, componentKey, packageName, packageVersion,
          binaryName, argumentsText, accessProfile.rawValue, folderPath, gitReference,
-         subdirectory].joined(separator: "\u{0}")
+         subdirectory, assetName, archiveSHA256].joined(separator: "\u{0}")
     }
 
     private var accessProfileDescription: String {
@@ -427,6 +511,19 @@ struct CustomPluginInstallerSheet: View {
 
     private var sourceDraft: LocalConnectorPluginSourceDraft {
         switch kind {
+        case .releaseMCP, .localProgram:
+            .init(
+                kind: kind == .releaseMCP ? .githubRelease : .localExecutable,
+                location: folderPath, exactVersion: packageVersion,
+                program: .init(
+                    displayName: displayName, componentKey: componentKey,
+                    executablePath: kind == .releaseMCP ? binaryName : folderPath,
+                    arguments: argumentsText.split(whereSeparator: \.isNewline).map(String.init),
+                    accessProfile: accessProfile,
+                    assetName: kind == .releaseMCP ? assetName : nil,
+                    archiveSHA256: kind == .releaseMCP ? archiveSHA256 : nil
+                )
+            )
         case .pluginFolder:
             .init(kind: .localFolder, location: folderPath, subdirectory: nil)
         case .gitPlugin:

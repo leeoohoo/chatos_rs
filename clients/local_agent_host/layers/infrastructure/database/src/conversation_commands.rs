@@ -54,14 +54,17 @@ pub(super) async fn resume_conversation_turn(
                 current.run_id
             )));
         }
+        let continuation_input =
+            super::run_continuation::for_resume(&mut connection, &current, continuation_input)
+                .await?;
         let expected_run_version = i64::try_from(turn.expected_run_version)
             .map_err(|_| ClientStorageError::InvalidState("run version exceeds i64".to_string()))?;
         let updated = sqlx::query(
             "UPDATE local_agent_runs SET status = 'continuation_ready', version = version + 1, \
-             continuation_input_json = ?, updated_at_unix_ms = ? \
+             terminal_outcome_json = NULL, continuation_input_json = ?, updated_at_unix_ms = ? \
              WHERE run_id = ? AND status = ? AND version = ?",
         )
-        .bind(serde_json::to_string(continuation_input)?)
+        .bind(serde_json::to_string(&continuation_input)?)
         .bind(now_unix_ms)
         .bind(&current.run_id)
         .bind(turn.expected_run_status.as_str())
@@ -75,6 +78,18 @@ pub(super) async fn resume_conversation_turn(
                 current.run_id
             )));
         }
+        // needs_review closes the visible Turn as failed. Reopen it in this same
+        // transaction so the resumed Run can finish and publish its new result.
+        sqlx::query(
+            "UPDATE local_conversation_turns SET status = 'running', updated_at_unix_ms = ? \
+             WHERE turn_id = ? AND run_id = ?",
+        )
+        .bind(now_unix_ms)
+        .bind(&turn.turn_id)
+        .bind(&current.run_id)
+        .execute(&mut *connection)
+        .await
+        .db()?;
         insert_user_message_on(
             &mut connection,
             &turn.conversation_id,
@@ -118,7 +133,7 @@ pub(super) async fn resume_conversation_turn(
             event_id,
             &current.run_id,
             "conversation_turn_resumed",
-            continuation_input,
+            &continuation_input,
             now_unix_ms,
         )
         .await?;
@@ -533,12 +548,8 @@ pub(crate) async fn project_conversation_message_to_memory(
     let Some(source_id) = source_id else {
         return Ok(());
     };
-    let agent_id = consistent_run_identity(&run.input, "agent_id")?.ok_or_else(|| {
-        ClientStorageError::InvalidState(
-            "conversation Memory projection requires agent_id".to_string(),
-        )
-    })?;
-    let agent_name = consistent_run_identity(&run.input, "agent_name")?;
+    let (agent_id, agent_name) =
+        conversation_projection_agent_identity(connection, run, conversation_id).await?;
     let project_id = consistent_run_identity(&run.input, "project_id")?;
     let project_name = consistent_run_identity(&run.input, "project_name")?;
     let is_task_execution = run.profile_key == "task_execution";
@@ -652,6 +663,54 @@ pub(crate) async fn project_conversation_message_to_memory(
     )
     .await?;
     Ok(())
+}
+
+async fn conversation_projection_agent_identity(
+    connection: &mut SqliteConnection,
+    run: &LocalAgentRunRecord,
+    conversation_id: &str,
+) -> Result<(String, Option<String>), ClientStorageError> {
+    let agent_name = consistent_run_identity(&run.input, "agent_name")?;
+    if let Some(agent_id) = consistent_run_identity(&run.input, "agent_id")? {
+        return Ok((agent_id, agent_name));
+    }
+    if run.profile_key != "main_chat" {
+        return Err(ClientStorageError::InvalidState(
+            "conversation Memory projection requires agent_id".to_string(),
+        ));
+    }
+
+    // Runs created before Agent-bound conversations stored their identity in the
+    // durable conversation resource, but not in input_json. Recovery can still
+    // project their terminal message without weakening identity checks for new
+    // Runs: Contact resource IDs are Agent IDs, while project chat is Jiguli.
+    let resource = sqlx::query(
+        "SELECT resource_kind, resource_id, title FROM local_conversations \
+         WHERE conversation_id = ? AND owner_user_id = ?",
+    )
+    .bind(conversation_id)
+    .bind(&run.owner_user_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .db()?;
+    let Some(resource) = resource else {
+        return Err(ClientStorageError::InvalidState(
+            "conversation Memory projection requires agent_id".to_string(),
+        ));
+    };
+    let resource_kind: Option<String> = resource.try_get("resource_kind").db()?;
+    let resource_id: Option<String> = resource.try_get("resource_id").db()?;
+    match (resource_kind.as_deref(), resource_id) {
+        (Some("contact"), Some(agent_id)) if !agent_id.trim().is_empty() => {
+            let title: String = resource.try_get("title").db()?;
+            let agent_name = (!title.trim().is_empty()).then_some(title);
+            Ok((agent_id, agent_name))
+        }
+        (Some("project"), Some(_)) => Ok(("jiguli".to_string(), None)),
+        _ => Err(ClientStorageError::InvalidState(
+            "conversation Memory projection requires agent_id".to_string(),
+        )),
+    }
 }
 
 fn consistent_run_identity(input: &Value, key: &str) -> Result<Option<String>, ClientStorageError> {

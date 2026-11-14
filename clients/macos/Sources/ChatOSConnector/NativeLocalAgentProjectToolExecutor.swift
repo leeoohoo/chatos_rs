@@ -308,12 +308,11 @@ struct NativeLocalAgentProjectContextResolver: Sendable {
             ownerUserID: ownerUserID,
             conversationID: conversationID
         )
-        guard detail.conversation.ownerUserID == ownerUserID,
-              let resource = detail.conversation.resource else {
+        guard detail.conversation.ownerUserID == ownerUserID else {
             throw NativeLocalAgentPlatformToolError.invalidRunContext
         }
         let authorization = try NativeLocalAgentTaskToolAuthorization.resolve(input)
-        if resource.kind == .contact {
+        if detail.conversation.resource?.kind == .contact {
             let root = try await connector.taskExecutionConversationRoot(
                 ownerUserID: ownerUserID,
                 conversationID: conversationID
@@ -331,9 +330,20 @@ struct NativeLocalAgentProjectContextResolver: Sendable {
                 remoteConnectionID: Self.string("remote_connection_id", in: input)
             )
         }
+        let projectID: String
+        if let resource = detail.conversation.resource {
+            projectID = resource.resourceID
+        } else if let executorProjectID = Self.teamExecutorProjectID(
+            input,
+            conversationID: conversationID
+        ) {
+            projectID = executorProjectID
+        } else {
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
+        }
         let context = try await projects.pluginContext(
             ownerUserID: ownerUserID,
-            projectID: resource.resourceID
+            projectID: projectID
         )
         guard let projectRoot = context.projectRoot else {
             throw NativeLocalAgentPlatformToolError.projectUnavailable
@@ -341,7 +351,7 @@ struct NativeLocalAgentProjectContextResolver: Sendable {
         let resolvedPath = try await connector.resolveProjectPath(projectRoot)
         return .init(
             conversationID: conversationID,
-            projectID: resource.resourceID,
+            projectID: projectID,
             applicationContext: context,
             resolvedPath: resolvedPath,
             executionRootURL: resolvedPath.absoluteURL,
@@ -365,6 +375,34 @@ struct NativeLocalAgentProjectContextResolver: Sendable {
         in input: [String: LocalAgentJSONValue]
     ) -> String? {
         guard case let .string(value)? = input[key] else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func teamExecutorProjectID(
+        _ input: [String: LocalAgentJSONValue],
+        conversationID: String
+    ) -> String? {
+        guard case let .object(executor)? = input["team_executor_context"],
+              case let .object(identity)? = input["agent_execution_context"],
+              executor["schema_version"] == .number(1),
+              identity["schema_version"] == .number(2),
+              let deliveryID = string(executor["delivery_id"]),
+              let teamID = string(executor["team_id"]),
+              let agentID = string(executor["agent_id"]),
+              let projectID = string(executor["project_id"]),
+              string(input["project_id"]) == projectID,
+              string(identity["room_id"]) == teamID,
+              string(identity["agent_id"]) == agentID,
+              string(identity["project_id"]) == projectID,
+              conversationID == "agent-team-executor-\(deliveryID)" else {
+            return nil
+        }
+        return projectID
+    }
+
+    private static func string(_ value: LocalAgentJSONValue?) -> String? {
+        guard case let .string(value)? = value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }

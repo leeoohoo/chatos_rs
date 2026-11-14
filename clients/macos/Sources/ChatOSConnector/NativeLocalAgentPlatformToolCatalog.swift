@@ -64,6 +64,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
       pluginInstallerSearchNPMToolName, pluginInstallerResolveNPMToolName,
       pluginInstallerInspectNPMToolName, pluginInstallerInspectSourceToolName,
       pluginInstallerListInstalledToolName, pluginInstallerSearchMarketplaceToolName,
+      pluginInstallerDiscoverRepositoryToolName, pluginInstallerResolveReleaseToolName,
     ]
   public static let approvalExemptToolNames = [
     "open_edit_session", "stage_edit_batch", "abort_edit_session",

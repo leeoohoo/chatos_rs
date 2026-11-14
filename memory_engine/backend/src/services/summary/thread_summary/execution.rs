@@ -88,7 +88,7 @@ pub(crate) async fn run_thread_summary_partition_with_thread(
     requested_partition: &str,
     trigger_type: &str,
 ) -> Result<RunThreadSummaryResponse, String> {
-    let settings = load_summary_job_settings(db, "summary").await?;
+    let settings = load_summary_job_settings(config)?;
     let mut ctx =
         build_thread_summary_execution_context(db, thread, settings, Some(requested_partition))
             .await?;
@@ -146,6 +146,7 @@ pub async fn run_thread_summary(
 }
 
 pub(crate) async fn load_thread_summary_execution_context_for_partition(
+    config: &AppConfig,
     db: &Db,
     tenant_id: &str,
     source_id: &str,
@@ -155,7 +156,7 @@ pub(crate) async fn load_thread_summary_execution_context_for_partition(
     let thread = threads::get_thread_by_id(db, tenant_id, source_id, thread_id)
         .await?
         .ok_or_else(|| "thread not found".to_string())?;
-    let settings = load_summary_job_settings(db, "summary").await?;
+    let settings = load_summary_job_settings(config)?;
     build_thread_summary_execution_context(db, thread, settings, Some(project_partition_key)).await
 }
 
@@ -416,26 +417,17 @@ pub(crate) async fn resume_cloud_summary_job(
     let ctx = ThreadSummaryExecutionContext {
         thread,
         settings: SummaryJobSettings {
-            token_limit: metadata_i64(job_run.metadata.as_ref(), "policy_max_model_input_tokens")
+            token_limit: metadata_i64(job_run.metadata.as_ref(), "model_input_limit_tokens")
                 .ok_or_else(|| {
-                "summary job metadata policy_max_model_input_tokens is missing".to_string()
-            })?,
+                    "summary job metadata model_input_limit_tokens is missing".to_string()
+                })?,
             source_batch_token_limit: metadata_i64(
                 job_run.metadata.as_ref(),
-                "policy_max_source_batch_tokens",
+                "source_batch_capacity_tokens",
             )
             .ok_or_else(|| {
-                "summary job metadata policy_max_source_batch_tokens is missing".to_string()
+                "summary job metadata source_batch_capacity_tokens is missing".to_string()
             })?,
-            max_leaf_tokens: metadata_i64(job_run.metadata.as_ref(), "policy_max_leaf_tokens")
-                .ok_or_else(|| {
-                    "summary job metadata policy_max_leaf_tokens is missing".to_string()
-                })?,
-            max_merge_rounds: metadata_i64(job_run.metadata.as_ref(), "policy_max_merge_rounds")
-                .ok_or_else(|| {
-                    "summary job metadata policy_max_merge_rounds is missing".to_string()
-                })?
-                .max(1) as usize,
             cloud_owner_entity_id: Some(job_run_id.to_string()),
             cloud_resume_kind: Some(
                 crate::services::memory_cloud_agent::THREAD_SUMMARY_JOB_RESUME_KIND.to_string(),

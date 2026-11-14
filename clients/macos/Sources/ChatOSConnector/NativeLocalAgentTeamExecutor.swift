@@ -6,6 +6,7 @@ struct NativeLocalAgentTeamExecutorOutcome: Sendable, Equatable {
   enum State: Sendable, Equatable {
     case completed
     case suspended
+    case needsReview
     case failed
   }
 
@@ -68,7 +69,8 @@ public actor NativeLocalAgentTeamExecutor {
     member: ProjectAgentRoomMember,
     delivery: ProjectAgentDelivery,
     todo: LocalAgentTodo,
-    groupRun: LocalAgentGroupChatRun
+    groupRun: LocalAgentGroupChatRun,
+    resumeRequested: Bool = false
   ) async throws -> NativeLocalAgentTeamExecutorOutcome {
     let config = try configured(ownerUserID: room.ownerUserID)
     guard delivery.lane == .executor,
@@ -109,7 +111,12 @@ public actor NativeLocalAgentTeamExecutor {
         ownerUserID: room.ownerUserID,
         runID: hostRunID
       ) {
-        hostRun = existing
+        hostRun = try await resumeHostRunIfRequested(
+          ownerUserID: room.ownerUserID,
+          conversationID: conversationID,
+          run: existing,
+          resumeRequested: resumeRequested
+        )
       } else {
         let metadata = try messageMetadata(
           profile: profile,
@@ -210,7 +217,13 @@ public actor NativeLocalAgentTeamExecutor {
           state: .failed,
           detail: "Agent 已结束 Host Run，但没有通过 todo_complete 或 todo_block 结束绑定任务。"
         )
-      case "waiting_user", "paused", "needs_review":
+      case "needs_review":
+        return .init(
+          state: .needsReview,
+          detail: Self.nonempty(terminal.terminalOutcome?.conversationDisplayText)
+            ?? "团队 Executor 的当前步骤已中断，需要确认后重试。"
+        )
+      case "waiting_user", "paused":
         return .init(
           state: .suspended,
           detail: Self.nonempty(terminal.terminalOutcome?.conversationDisplayText)
@@ -237,6 +250,37 @@ public actor NativeLocalAgentTeamExecutor {
       throw NativeLocalAgentConversationServiceError.notConfigured
     }
     return configuration
+  }
+
+  /// Reconcile an existing Run on startup; only an explicit recovery action resumes it.
+  func resumeHostRunIfRequested(
+    ownerUserID: String,
+    conversationID: String,
+    run: LocalAgentRunRecord,
+    resumeRequested: Bool
+  ) async throws -> LocalAgentRunRecord {
+    guard resumeRequested, ["paused", "needs_review"].contains(run.status) else { return run }
+    let detail = try await conversations.context(
+      ownerUserID: ownerUserID, conversationID: conversationID
+    )
+    guard run.ownerUserID == ownerUserID,
+      run.ownerEntityType == "conversation_turn",
+      let turn = detail.turns.first(where: { $0.runID == run.runID }),
+      turn.turnID == run.ownerEntityID else {
+      throw NativeLocalAgentPlatformToolError.invalidRunContext
+    }
+    _ = try await conversations.resumeTurn(.init(
+      ownerUserID: ownerUserID,
+      conversationID: conversationID,
+      expectedConversationVersion: detail.conversation.version,
+      turnID: turn.turnID,
+      expectedRunVersion: run.version,
+      messageID: "agent-team-resume-\(UUID().uuidString.lowercased())",
+      message: "继续当前 Todo，从已保存的任务进度和工具结果恢复。",
+      messageMetadata: .object(["source": .string("human_team_run_resume")])
+    ), expectedRunStatus: run.status, reason: "human_team_run_resume")
+    await platformToolWorker?.wake()
+    return try await runtime.run(ownerUserID: ownerUserID, runID: run.runID)
   }
 
   private func ensureConversation(

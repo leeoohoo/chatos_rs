@@ -14,9 +14,6 @@ pub(crate) struct SubjectMemoryJobSettings {
     pub(crate) prompt_title: String,
     pub(crate) token_limit: i64,
     pub(crate) source_batch_token_limit: i64,
-    pub(crate) count_limit: i64,
-    pub(crate) keep_level0_count: i64,
-    pub(crate) max_level: i64,
     pub(crate) memory_metadata: Option<Value>,
 }
 

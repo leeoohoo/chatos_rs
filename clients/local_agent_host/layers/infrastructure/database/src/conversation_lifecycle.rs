@@ -81,7 +81,10 @@ pub(super) async fn reconcile_conversation_after_run(
         sqlx::query(
             "INSERT INTO local_conversation_messages(\
              message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json, \
-             created_at_unix_ms) VALUES(?, ?, ?, ?, 'assistant', ?, ?, ?)",
+             created_at_unix_ms) VALUES(?, ?, ?, ?, 'assistant', ?, ?, ?) \
+             ON CONFLICT(message_id) DO UPDATE SET ordinal=excluded.ordinal, \
+             content_json=excluded.content_json, metadata_json=excluded.metadata_json, \
+             created_at_unix_ms=excluded.created_at_unix_ms",
         )
         .bind(&message_id)
         .bind(&conversation_id)
@@ -97,12 +100,15 @@ pub(super) async fn reconcile_conversation_after_run(
             run.status,
             LocalAgentRunStatus::Failed | LocalAgentRunStatus::NeedsReview
         ) {
+            // Each interrupted attempt is an immutable historical fact in Memory. The
+            // visible terminal message above remains the current result for this Run.
+            let diagnostic_record_id = format!("{message_id}:diagnostic:{}", run.version);
             super::conversation_commands::project_conversation_message_to_memory(
                 connection,
                 run,
                 &conversation_id,
                 &turn_id,
-                &message_id,
+                &diagnostic_record_id,
                 "assistant",
                 &content,
                 &metadata,

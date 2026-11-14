@@ -12,8 +12,6 @@ pub const MEMORY_ENGINE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "memory_engine.downstream.plugin_management_internal_api_secret";
 pub const MEMORY_ENGINE_RUNTIME_CONTEXT_ASSERTION_KEYS_CONFIG_KEY: &str =
     "memory_engine.security.runtime_context_assertion_keys";
-pub const MEMORY_ENGINE_MODEL_CAPABILITIES_CONFIG_KEY: &str =
-    "memory_engine.compose.model_capabilities";
 pub const MEMORY_ENGINE_HOST_CONFIG_KEY: &str = "memory_engine.runtime.host";
 pub const MEMORY_ENGINE_PORT_CONFIG_KEY: &str = "memory_engine.runtime.port";
 pub const MEMORY_ENGINE_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =

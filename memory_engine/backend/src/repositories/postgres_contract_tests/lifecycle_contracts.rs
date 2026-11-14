@@ -435,19 +435,30 @@ async fn restore_pending_repairs_only_records_without_active_coverage_and_requeu
     ingest_record(&pool, &tenant, &source, &thread_id, &record_id).await;
     let data = sqlx::query_scalar::<_, sqlx::types::Json<serde_json::Value>>(
         "SELECT data FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
-    ).bind(&tenant).bind(&source).bind(&record_id).fetch_one(&pool).await
-        .expect("load restore-pending fixture record");
-    let mut stored: crate::models::EngineRecord = crate::repositories::postgres::decode(data)
-        .expect("decode restore-pending fixture record");
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&record_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load restore-pending fixture record");
+    let mut stored: crate::models::EngineRecord =
+        crate::repositories::postgres::decode(data).expect("decode restore-pending fixture record");
     stored.summary_status = "summarized".to_string();
     stored.summary_id = Some(format!("missing-summary-{suffix}"));
     stored.summarized_at = Some("2026-11-09T00:01:00Z".to_string());
     sqlx::query(
         "UPDATE engine_records SET summary_status='summarized',summary_id=$4,data=$5 \
          WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
-    ).bind(&tenant).bind(&source).bind(&record_id).bind(stored.summary_id.as_deref())
-        .bind(json(&stored).expect("encode restore-pending fixture"))
-        .execute(&pool).await.expect("break record coverage fixture");
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&record_id)
+    .bind(stored.summary_id.as_deref())
+    .bind(json(&stored).expect("encode restore-pending fixture"))
+    .execute(&pool)
+    .await
+    .expect("break record coverage fixture");
     sqlx::query(
         "UPDATE engine_thread_summary_partitions SET pending_record_count=0,pending_summary_tokens=0, \
          summary_status='idle',summary_dispatch_pending=false,summary_dispatch_consumed_version=summary_dispatch_version \
@@ -455,9 +466,10 @@ async fn restore_pending_repairs_only_records_without_active_coverage_and_requeu
     ).bind(&tenant).bind(&source).bind(&thread_id).execute(&pool).await
         .expect("settle restore-pending fixture partition");
 
-    let restored = crate::repositories::records::restore_record_pending(
-        &pool, &tenant, &source, &record_id,
-    ).await.expect("restore uncovered record pending");
+    let restored =
+        crate::repositories::records::restore_record_pending(&pool, &tenant, &source, &record_id)
+            .await
+            .expect("restore uncovered record pending");
     assert!(restored.changed);
     assert_eq!(restored.previous_status, "summarized");
     let state: (String, Option<String>, i64, bool) = sqlx::query_as(
@@ -467,7 +479,12 @@ async fn restore_pending_repairs_only_records_without_active_coverage_and_requeu
           AND partition.source_id=record.source_id AND partition.thread_id=record.thread_id \
           AND partition.project_partition_key=record.project_partition_key \
          WHERE record.tenant_id=$1 AND record.source_id=$2 AND record.id=$3",
-    ).bind(&tenant).bind(&source).bind(&record_id).fetch_one(&pool).await
-        .expect("load restored pending state");
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&record_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load restored pending state");
     assert_eq!(state, ("pending".to_string(), None, 1, true));
 }

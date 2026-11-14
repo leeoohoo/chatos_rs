@@ -50,16 +50,36 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
               entries.allSatisfy({ $0.index >= 0 && scope.acceptsRecord(id: $0.id, index: $0.index) }) else {
             throw AgentContextError.invalidHistory
         }
+        do {
+            try await syncOnce(entries, reconciling: reconciling)
+        } catch {
+            guard Self.isTransientSyncFailure(error) else { throw error }
+            guard !reconciling else { throw AgentContextError.syncUncertain }
+            do {
+                try await syncOnce(entries, reconciling: true)
+            } catch {
+                guard Self.isTransientSyncFailure(error) else { throw error }
+                throw AgentContextError.syncUncertain
+            }
+        }
+    }
+
+    private func syncOnce(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
         let assertion = try await runtimeAssertion(operation: "record_ingest")
         let records = try entries.map {
             try record($0, projectContextAssertionID: assertion.runtime_identity_revision)
         }
+        var recordsToWrite = records
         if reconciling {
             // Existing batch-sync overwrites summary_status, even for identical IDs. Never blindly
-            // resend an unacknowledged batch: it could turn summarized records back into pending.
+            // resend an unacknowledged batch: only ingest IDs proven to still be absent.
+            recordsToWrite = []
             for expected in records {
                 let result: MemoryRecordEnvelope = try await request("/records/\(encoded(expected.id))" + query(includeThread: true))
-                guard let stored = result.item else { throw AgentContextError.syncUncertain }
+                guard let stored = result.item else {
+                    recordsToWrite.append(expected)
+                    continue
+                }
                 try validate(tenant: stored.tenant_id, source: stored.source_id, thread: stored.thread_id)
                 guard stored.id == expected.id, stored.role == expected.role, stored.record_type == expected.record_type,
                       stored.content == expected.content, stored.structured_payload == expected.structured_payload,
@@ -67,18 +87,29 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
                     throw AgentContextError.invalidHistory
                 }
             }
-            return
+            guard !recordsToWrite.isEmpty else { return }
         }
         let body = MemorySyncRequest(
             tenant_id: scope.tenantID,
             source_id: scope.sourceID,
             project_partition_key: assertion.project_partition_key,
             runtime_context_assertion: assertion.runtime_context_assertion,
-            records: records
+            records: recordsToWrite
         )
         let result: MemorySyncResponse = try await request(threadPath + "/records/batch-sync", method: "PUT", body: body)
-        guard result.thread_id == scope.threadID, result.received_count == entries.count,
-              result.upserted_count == entries.count else { throw ChatOSAPIError.invalidResponse }
+        guard result.thread_id == scope.threadID, result.received_count == recordsToWrite.count,
+              result.upserted_count == recordsToWrite.count else { throw ChatOSAPIError.invalidResponse }
+    }
+
+    private static func isTransientSyncFailure(_ error: Error) -> Bool {
+        if AgentRuntimeError.isTransient(error) { return true }
+        guard let error = error as? ChatOSAPIError else { return false }
+        let statusCode: Int
+        switch error {
+        case let .server(code, _), let .serverDetail(code, _, _, _): statusCode = code
+        default: return false
+        }
+        return statusCode == 408 || statusCode == 429 || statusCode >= 500
     }
 
     public func compose(_ composeRequest: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
@@ -91,11 +122,11 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
             "model_capability_revision": .string(composeRequest.modelCapability.revision),
             "runtime_context_assertion": .string(assertion.runtime_context_assertion),
             "policy": .object([
-                "max_memory_tokens": .number(24_000),
-                "max_recent_record_tokens": .number(12_000),
-                "max_thread_summary_tokens": .number(6_000),
-                "max_project_memory_tokens": .number(4_000),
-                "max_agent_memory_tokens": .number(4_000),
+                "max_memory_tokens": .number(Double(composeRequest.availableMemoryTokens)),
+                "max_recent_record_tokens": .number(Double(composeRequest.availableMemoryTokens)),
+                "max_thread_summary_tokens": .number(Double(composeRequest.availableMemoryTokens)),
+                "max_project_memory_tokens": .number(Double(composeRequest.availableMemoryTokens)),
+                "max_agent_memory_tokens": .number(Double(composeRequest.availableMemoryTokens)),
             ]),
         ]
         if let projectSubjectID = scope.projectSubjectID {
@@ -110,18 +141,42 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
         }
         return try .init(
             blocks: result.blocks.map { .init(blockType: $0.block_type, text: $0.text) },
-            recentRecords: result.recent_records.map(contextRecord)
+            recentRecords: result.recent_records.map(contextRecord),
+            needsCompaction: result.meta.needs_compaction ?? false,
+            budgetUsedTokens: result.meta.budget_used?.total,
+            pendingRecordCount: result.meta.candidate_count_by_pool?["raw_tail"]
         )
     }
 
+    public func compactSummary() async throws {
+        var result = try await runSummary(triggerReason: "compose_budget_compaction")
+        while result.running {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .seconds(1))
+            result = try await activeSummaryStatus(jobRunID: result.job_run_id)
+        }
+        if result.failed {
+            throw AgentMemoryCompactionFailure(
+                reason: result.error_message ?? "summary generation failed"
+            )
+        }
+        guard result.completed, result.generated || result.compacted else {
+            throw AgentContextError.budgetExceeded
+        }
+    }
+
     public func flushSummary() async throws {
+        _ = try await runSummary(triggerReason: "agent_run_terminal")
+    }
+
+    private func runSummary(triggerReason: String) async throws -> MemorySummaryDTO {
         let assertion = try await runtimeAssertion(operation: "summarize")
         let body: [String: JSONValue] = [
             "tenant_id": .string(scope.tenantID),
             "source_id": .string(scope.sourceID),
             "project_partition_key": .string(assertion.project_partition_key),
             "runtime_context_assertion": .string(assertion.runtime_context_assertion),
-            "trigger_reason": .string("agent_run_terminal"),
+            "trigger_reason": .string(triggerReason),
         ]
         let result: MemorySummaryDTO = try await request(
             threadPath + "/active-summary/run", method: "POST", body: body
@@ -129,6 +184,26 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
         guard result.thread_id == scope.threadID, result.accepted else {
             throw AgentRuntimeError.scopeMismatch
         }
+        return result
+    }
+
+    private func activeSummaryStatus(jobRunID: String?) async throws -> MemorySummaryDTO {
+        let assertion = try await runtimeAssertion(operation: "summarize")
+        var body: [String: JSONValue] = [
+            "tenant_id": .string(scope.tenantID),
+            "source_id": .string(scope.sourceID),
+            "project_partition_key": .string(assertion.project_partition_key),
+            "runtime_context_assertion": .string(assertion.runtime_context_assertion),
+        ]
+        if let jobRunID { body["job_run_id"] = .string(jobRunID) }
+        let result: MemorySummaryDTO = try await request(
+            threadPath + "/active-summary/status", method: "POST", body: body
+        )
+        guard result.thread_id == scope.threadID,
+              jobRunID == nil || result.job_run_id == jobRunID else {
+            throw AgentRuntimeError.scopeMismatch
+        }
+        return result
     }
 
     private var threadPath: String { "/threads/" + encoded(scope.threadID) }

@@ -706,8 +706,7 @@ mod tests {
         invalid_payloads.push(wrong_supersession);
 
         let mut duplicate_supersession = valid_payload();
-        duplicate_supersession["decisions"][0]["supersedes"] =
-            json!(["fact-old", "fact-old"]);
+        duplicate_supersession["decisions"][0]["supersedes"] = json!(["fact-old", "fact-old"]);
         invalid_payloads.push(duplicate_supersession);
 
         let mut wrong_status = valid_payload();

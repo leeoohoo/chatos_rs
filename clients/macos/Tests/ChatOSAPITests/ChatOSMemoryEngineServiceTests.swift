@@ -61,7 +61,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual(toolMetadata["tool_result_count"] as? Int, 1)
         XCTAssertNil(records[0]["summary_status"])
         let policy = try XCTUnwrap(try object(calls[4].body)["policy"] as? [String: Any])
-        XCTAssertEqual(policy["max_memory_tokens"] as? Int, 24_000)
+        XCTAssertEqual(policy["max_memory_tokens"] as? Int, 43_219)
         XCTAssertEqual(try object(calls[4].body)["query_text"] as? String, "current query")
         XCTAssertEqual(try object(calls[4].body)["current_turn_id"] as? String, "turn-current")
         XCTAssertEqual(
@@ -73,7 +73,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
             try object(calls[4].body)["context_project_subject_id"] as? String,
             try XCTUnwrap(scope.projectSubjectID)
         )
-        XCTAssertEqual(policy["max_recent_record_tokens"] as? Int, 12_000)
+        XCTAssertEqual(policy["max_recent_record_tokens"] as? Int, 43_219)
         XCTAssertFalse(calls.contains { String(decoding: $0.body ?? Data(), as: UTF8.self).contains("user-token") })
     }
 
@@ -87,6 +87,33 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual(requests.count, 2)
         XCTAssertTrue(requests[1].url.path.hasSuffix("/active-summary/run"))
         XCTAssertEqual(try object(requests[1].body)["trigger_reason"] as? String, "agent_run_terminal")
+    }
+
+    func testBudgetCompactionWaitsForAUsableActiveSummary() async throws {
+        let (scope, transport, client) = try fixture()
+        let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
+
+        try await service.compactSummary()
+
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests[1].url.path.hasSuffix("/active-summary/run"))
+        XCTAssertEqual(
+            try object(requests[1].body)["trigger_reason"] as? String,
+            "compose_budget_compaction"
+        )
+    }
+
+    func testBudgetCompactionPreservesTerminalGenerationFailure() async throws {
+        let (scope, _, client) = try fixture(summaryError: "stream disconnected")
+        let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
+
+        do {
+            try await service.compactSummary()
+            XCTFail("Expected compaction failure")
+        } catch let error as AgentMemoryCompactionFailure {
+            XCTAssertEqual(error.reason, "stream disconnected")
+        }
     }
 
     func testTaskThreadRegistersBothAgentAndProjectAggregationScopes() async throws {
@@ -124,6 +151,20 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual(requests.filter { $0.method == "PUT" }.count, 1)
         XCTAssertEqual(requests.filter { $0.method == "GET" }.count, 2)
         XCTAssertTrue(requests.filter { $0.method == "GET" }.allSatisfy { $0.url.query?.contains("thread_id=") == true })
+    }
+
+    func testTransientSyncTimeoutReconcilesAndWritesOnlyMissingRecords() async throws {
+        let (scope, transport, client) = try fixture(failFirstBatchSync: true)
+        let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
+        let entries = try records(scope)
+
+        try await service.sync(entries, reconciling: false)
+
+        let requests = await transport.requests
+        XCTAssertEqual(requests.filter { $0.url.path.hasSuffix("/records/batch-sync") }.count, 2)
+        XCTAssertEqual(requests.filter { $0.method == "GET" }.count, entries.count)
+        let storedIDs = await transport.storedIDs()
+        XCTAssertEqual(storedIDs, entries.map(\.id))
     }
 
     func testStableAgentThreadCanFlushRawRecordsCreatedByAnEarlierRun() async throws {
@@ -181,18 +222,26 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual(requests.count, 2)
     }
 
-    func testIncompleteOrChangedReconciliationDoesNotWrite() async throws {
+    func testMissingReconciliationWritesOnlyAbsentRecords() async throws {
         let (scope, transport, client) = try fixture()
         let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
-        do { try await service.sync(try records(scope), reconciling: true); XCTFail("Missing records need review") } catch {}
+        let entries = try records(scope)
+        try await service.sync([entries[0]], reconciling: false)
+        try await service.sync(entries, reconciling: true)
         let requests = await transport.requests
-        XCTAssertFalse(requests.contains { $0.method == "PUT" })
+        let writes = requests.filter { $0.url.path.hasSuffix("/records/batch-sync") }
+        XCTAssertEqual(writes.count, 2)
         XCTAssertEqual(requests.filter { $0.method == "POST" }.map(\.url.path), [
+            "/prefix/api/local/runtime-context-assertions",
             "/prefix/api/local/runtime-context-assertions",
         ])
         XCTAssertTrue(requests.filter { $0.method == "GET" }.allSatisfy {
             $0.url.path.contains("/records/")
         })
+        let repairedRecords = try XCTUnwrap(try object(writes[1].body)["records"] as? [[String: Any]])
+        XCTAssertEqual(repairedRecords.compactMap { $0["id"] as? String }, [entries[1].id])
+        let storedIDs = await transport.storedIDs()
+        XCTAssertEqual(storedIDs, entries.map(\.id))
     }
 
     func testAccountChangeStopsOldServiceBeforeAnyNetworkRequest() async throws {
@@ -251,10 +300,11 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
     }
 
     private func fixture(refreshToken: Bool = false, foreignTenant: Bool = false, statusCode: Int = 200,
-                         summaryError: String? = nil) throws -> (AgentMemoryScope, MemoryTransport, ChatOSAPIClient) {
+                         summaryError: String? = nil, failFirstBatchSync: Bool = false) throws -> (AgentMemoryScope, MemoryTransport, ChatOSAPIClient) {
         let scope = try AgentMemoryScope(tenantID: "user/a?&b", profile: "story", projectID: UUID(), runID: UUID(), runtimeScope: "story:v1")
         let transport = MemoryTransport(scope: scope, refreshToken: refreshToken, foreignTenant: foreignTenant,
-                                        statusCode: statusCode, summaryError: summaryError)
+                                        statusCode: statusCode, summaryError: summaryError,
+                                        failFirstBatchSync: failFirstBatchSync)
         let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example/prefix")!), accessToken: "user-token", transport: transport)
         return (scope, transport, client)
     }
@@ -296,7 +346,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
                 tokenizerID: nil
             ),
             queryText: "current query",
-            currentTurnID: "turn-current"
+            currentTurnID: "turn-current", availableMemoryTokens: 43_219
         )
     }
     private func object(_ data: Data?) throws -> [String: Any] {
@@ -310,13 +360,16 @@ private actor MemoryTransport: HTTPTransport {
     let foreignTenant: Bool
     let statusCode: Int
     let summaryError: String?
+    var remainingBatchSyncFailures: Int
     var requests: [HTTPRequest] = []
     var stored: [[String: Any]] = []
     init(scope: AgentMemoryScope, refreshToken: Bool, foreignTenant: Bool, statusCode: Int,
-         summaryError: String?) {
+         summaryError: String?, failFirstBatchSync: Bool = false) {
         self.scope = scope; self.refreshToken = refreshToken; self.foreignTenant = foreignTenant
         self.statusCode = statusCode; self.summaryError = summaryError
+        self.remainingBatchSyncFailures = failFirstBatchSync ? 1 : 0
     }
+    func storedIDs() -> [String] { stored.compactMap { $0["id"] as? String } }
     func send(_ request: HTTPRequest) throws -> HTTPResponse {
         requests.append(request)
         let body = try request.body.map { try JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? nil
@@ -324,6 +377,10 @@ private actor MemoryTransport: HTTPTransport {
         let path = request.url.path
         if statusCode != 200 { result = ["error": "test error"] }
         else if path.hasSuffix("/records/batch-sync") {
+            if remainingBatchSyncFailures > 0 {
+                remainingBatchSyncFailures -= 1
+                throw URLError(.timedOut)
+            }
             let batch = body?["records"] as? [[String: Any]] ?? []
             for var record in batch {
                 record["tenant_id"] = scope.tenantID; record["source_id"] = scope.sourceID; record["thread_id"] = scope.threadID

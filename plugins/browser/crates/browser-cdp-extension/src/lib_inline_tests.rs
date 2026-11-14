@@ -387,6 +387,7 @@ mod tests {
         (format!("ws://{address}/v1/browser"), task)
     }
 
+    #[allow(clippy::result_large_err)] // Tungstenite fixes the callback error response type.
     async fn spawn_reconnecting_bridge(
         expected_token: &'static str,
         unavailable_attempts: usize,

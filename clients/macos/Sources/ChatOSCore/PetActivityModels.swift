@@ -82,6 +82,8 @@ public struct PetActivityRoute: Sendable, Equatable, Codable {
     public var taskID: String?
     public var runID: String?
     public var requirementSurveyID: String?
+    public var agentTeamRoomID: String?
+    public var agentTodoID: String?
 
     public init(
         projectID: String? = nil,
@@ -91,7 +93,9 @@ public struct PetActivityRoute: Sendable, Equatable, Codable {
         promptID: String? = nil,
         taskID: String? = nil,
         runID: String? = nil,
-        requirementSurveyID: String? = nil
+        requirementSurveyID: String? = nil,
+        agentTeamRoomID: String? = nil,
+        agentTodoID: String? = nil
     ) {
         self.projectID = projectID
         self.conversationID = conversationID
@@ -101,6 +105,8 @@ public struct PetActivityRoute: Sendable, Equatable, Codable {
         self.taskID = taskID
         self.runID = runID
         self.requirementSurveyID = requirementSurveyID
+        self.agentTeamRoomID = agentTeamRoomID
+        self.agentTodoID = agentTodoID
     }
 }
 

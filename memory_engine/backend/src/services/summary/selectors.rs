@@ -4,7 +4,7 @@
 use crate::db::Db;
 use crate::models::{EngineRecord, EngineSummary};
 use crate::repositories::summaries;
-use crate::services::ai_pipeline::{estimate_tokens_text, MIN_TOKEN_LIMIT};
+use crate::services::ai_pipeline::estimate_tokens_text;
 
 use super::render::{record_to_summary_block, summary_to_rollup_block};
 use super::PendingRecordSelection;
@@ -13,35 +13,54 @@ pub(crate) fn select_pending_records_for_summary(
     records: Vec<EngineRecord>,
     token_limit: i64,
 ) -> PendingRecordSelection {
-    let effective_limit = token_limit.max(MIN_TOKEN_LIMIT);
+    let effective_limit = token_limit;
     let mut selected = Vec::new();
     let oversized = Vec::new();
     let mut selected_token_count = 0_i64;
     let oversized_token_count = 0_i64;
     let project_subject_id = records.first().and_then(record_project_subject_id);
 
+    let mut units: Vec<Vec<EngineRecord>> = Vec::new();
     for record in records {
         if record_project_subject_id(&record) != project_subject_id {
             break;
         }
-        let block = record_to_summary_block(&record);
-        let record_tokens = estimate_tokens_text(block.as_str());
-        if record_tokens > effective_limit {
+        let turn_id = record_conversation_turn_id(&record);
+        let joins_previous = turn_id.is_some()
+            && units
+                .last()
+                .and_then(|unit| unit.last())
+                .and_then(record_conversation_turn_id)
+                == turn_id;
+        if joins_previous {
+            units.last_mut().expect("record unit exists").push(record);
+        } else {
+            units.push(vec![record]);
+        }
+    }
+
+    for unit in units {
+        let unit_tokens = unit
+            .iter()
+            .map(record_to_summary_block)
+            .map(|block| estimate_tokens_text(block.as_str()))
+            .sum::<i64>();
+        if unit_tokens > effective_limit {
             if selected.is_empty() {
-                selected_token_count = record_tokens;
-                selected.push(record);
+                selected_token_count = unit_tokens;
+                selected.extend(unit);
             }
             break;
         }
 
         if !selected.is_empty()
-            && selected_token_count.saturating_add(record_tokens) > effective_limit
+            && selected_token_count.saturating_add(unit_tokens) > effective_limit
         {
             break;
         }
 
-        selected_token_count += record_tokens;
-        selected.push(record);
+        selected_token_count += unit_tokens;
+        selected.extend(unit);
     }
 
     PendingRecordSelection {
@@ -51,6 +70,16 @@ pub(crate) fn select_pending_records_for_summary(
         oversized_token_count,
         project_subject_id,
     }
+}
+
+fn record_conversation_turn_id(record: &EngineRecord) -> Option<&str> {
+    record
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("conversation_turn_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn record_project_subject_id(record: &EngineRecord) -> Option<String> {
@@ -74,17 +103,15 @@ pub(crate) async fn select_rollup_batch(
     source_id: &str,
     thread_id: &str,
     token_limit: i64,
-    count_limit: i64,
-    keep_level0_count: i64,
-    max_level: i64,
 ) -> Result<Option<(i64, String, Vec<EngineSummary>, &'static str)>, String> {
-    for level in 0..max_level {
+    for level in summaries::list_pending_summary_levels(db, tenant_id, source_id, thread_id).await?
+    {
         let partition_keys = summaries::list_pending_summary_partition_keys_by_level(
             db, tenant_id, source_id, thread_id, level,
         )
         .await?;
         for project_partition_key in partition_keys {
-            let mut candidates = summaries::list_pending_summaries_by_level_and_partition(
+            let candidates = summaries::list_pending_summaries_by_level_and_partition(
                 db,
                 tenant_id,
                 source_id,
@@ -93,21 +120,11 @@ pub(crate) async fn select_rollup_batch(
                 level,
             )
             .await?;
-            if level == 0 && keep_level0_count > 0 {
-                let keep = keep_level0_count as usize;
-                if candidates.len() > keep {
-                    let rollup_len = candidates.len().saturating_sub(keep);
-                    candidates.truncate(rollup_len);
-                } else {
-                    candidates.clear();
-                }
-            }
-
-            if candidates.is_empty() {
+            if candidates.len() < 2 {
                 continue;
             }
             if let Some((selected, reason)) =
-                select_bounded_rollup_candidates(candidates, token_limit, count_limit)
+                select_bounded_rollup_candidates(candidates, token_limit)
             {
                 return Ok(Some((level, project_partition_key, selected, reason)));
             }
@@ -120,48 +137,28 @@ pub(crate) async fn select_rollup_batch(
 fn select_bounded_rollup_candidates(
     candidates: Vec<EngineSummary>,
     token_limit: i64,
-    count_limit: i64,
 ) -> Option<(Vec<EngineSummary>, &'static str)> {
     if candidates.is_empty() {
         return None;
     }
-    let token_limit = token_limit.max(MIN_TOKEN_LIMIT);
     let token_sizes = candidates
         .iter()
         .map(summary_to_rollup_block)
         .map(|text| estimate_tokens_text(text.as_str()))
         .collect::<Vec<_>>();
-    let count_triggered = count_limit > 0 && (candidates.len() as i64) >= count_limit;
-    if !count_triggered && token_sizes.iter().sum::<i64>() < token_limit {
+    if token_sizes.iter().sum::<i64>() < token_limit {
         return None;
     }
-
-    let candidate_limit = if count_triggered {
-        count_limit as usize
-    } else {
-        candidates.len()
-    };
     let mut selected = Vec::new();
     let mut selected_tokens = 0_i64;
-    for (candidate, candidate_tokens) in candidates
-        .into_iter()
-        .zip(token_sizes)
-        .take(candidate_limit)
-    {
-        if !selected.is_empty() && selected_tokens.saturating_add(candidate_tokens) > token_limit {
+    for (candidate, candidate_tokens) in candidates.into_iter().zip(token_sizes) {
+        if selected.len() >= 2 && selected_tokens.saturating_add(candidate_tokens) > token_limit {
             break;
         }
         selected_tokens = selected_tokens.saturating_add(candidate_tokens);
         selected.push(candidate);
     }
-    Some((
-        selected,
-        if count_triggered {
-            "count_limit"
-        } else {
-            "token_limit"
-        },
-    ))
+    Some((selected, "model_input_capacity"))
 }
 
 #[cfg(test)]
@@ -197,20 +194,31 @@ mod tests {
         value
     }
 
+    fn turn_record(id: &str, turn_id: &str, content: &str) -> EngineRecord {
+        let mut value = record(id, content);
+        value.metadata = Some(serde_json::json!({"conversation_turn_id": turn_id}));
+        value
+    }
+
+    fn record_tokens(record: &EngineRecord) -> i64 {
+        crate::services::ai_pipeline::estimate_tokens_text(
+            super::record_to_summary_block(record).as_str(),
+        )
+    }
+
     #[test]
     fn pending_selector_caps_the_cumulative_batch_instead_of_only_each_record() {
         let content = "x".repeat(2_000);
-        let selection = select_pending_records_for_summary(
-            vec![
-                record("record-1", content.as_str()),
-                record("record-2", content.as_str()),
-                record("record-3", content.as_str()),
-            ],
-            1_100,
-        );
+        let records = vec![
+            record("record-1", content.as_str()),
+            record("record-2", content.as_str()),
+            record("record-3", content.as_str()),
+        ];
+        let token_limit = record_tokens(&records[0]) + record_tokens(&records[1]);
+        let selection = select_pending_records_for_summary(records, token_limit);
 
         assert_eq!(selection.selected.len(), 2);
-        assert!(selection.selected_token_count <= 1_100);
+        assert!(selection.selected_token_count <= token_limit);
         assert!(selection.oversized.is_empty());
     }
 
@@ -232,45 +240,42 @@ mod tests {
     }
 
     #[test]
-    fn count_limit_caps_rollup_batch_size() {
-        let candidates = (0..5)
-            .map(|idx| EngineSummary {
-                id: format!("sum-{idx}"),
-                tenant_id: "tenant".to_string(),
-                source_id: "source".to_string(),
-                thread_id: "thread".to_string(),
-                subject_id: "subject".to_string(),
-                summary_type: "thread_incremental".to_string(),
-                level: 0,
-                source_digest: None,
-                summary_text: format!("summary {idx}"),
-                source_record_start_id: None,
-                source_record_end_id: None,
-                source_record_count: 1,
-                status: "done".to_string(),
-                rollup_status: "pending".to_string(),
-                rollup_summary_id: None,
-                rolled_up_at: None,
-                subject_memory_summarized: 0,
-                subject_memory_summarized_at: None,
-                metadata: None,
-                payload_schema: None,
-                structured_payload: None,
-                created_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: "2026-01-01T00:00:00Z".to_string(),
-            })
-            .collect::<Vec<_>>();
+    fn pending_selector_does_not_split_a_conversation_turn() {
+        let prior = turn_record("prior", "turn-1", "prior");
+        let call = turn_record("call", "turn-2", &"c".repeat(300));
+        let result = turn_record("result", "turn-2", &"r".repeat(300));
+        let final_output = turn_record("final", "turn-2", &"f".repeat(300));
+        let token_limit = record_tokens(&prior) + record_tokens(&call) + record_tokens(&result);
 
-        let (batch, reason) =
-            select_bounded_rollup_candidates(candidates, 50_000, 3).expect("count trigger");
-        assert_eq!(reason, "count_limit");
-        assert_eq!(batch.len(), 3);
-        assert_eq!(batch[0].id, "sum-0");
-        assert_eq!(batch[2].id, "sum-2");
+        let selection = select_pending_records_for_summary(
+            vec![prior, call, result, final_output],
+            token_limit,
+        );
+
+        assert_eq!(
+            selection
+                .selected
+                .iter()
+                .map(|record| record.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["prior"]
+        );
     }
 
     #[test]
-    fn token_limit_caps_rollup_batch_instead_of_only_triggering_it() {
+    fn pending_selector_keeps_an_oversized_first_turn_atomic() {
+        let call = turn_record("call", "turn-1", &"c".repeat(300));
+        let result = turn_record("result", "turn-1", &"r".repeat(300));
+        let token_limit = record_tokens(&call);
+
+        let selection = select_pending_records_for_summary(vec![call, result], token_limit);
+
+        assert_eq!(selection.selected.len(), 2);
+        assert!(selection.selected_token_count > token_limit);
+    }
+
+    #[test]
+    fn rollup_selects_at_least_two_sources_and_pipeline_chunks_oversized_sources() {
         let candidates = (0..4)
             .map(|idx| EngineSummary {
                 id: format!("sum-{idx}"),
@@ -300,9 +305,9 @@ mod tests {
             .collect::<Vec<_>>();
 
         let (selected, reason) =
-            select_bounded_rollup_candidates(candidates, 1_500, 0).expect("token trigger");
-        assert_eq!(reason, "token_limit");
-        assert_eq!(selected.len(), 1);
+            select_bounded_rollup_candidates(candidates, 1_500).expect("token trigger");
+        assert_eq!(reason, "model_input_capacity");
+        assert_eq!(selected.len(), 2);
     }
 
     #[test]
