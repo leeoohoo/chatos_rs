@@ -23,6 +23,7 @@ Windows 产品版本：`3.0.9`
 - 重新执行 MSI 升级 smoke：`0.1.0 → 3.0.9` 正常升级、卸载和运行中升级均通过；损坏 MSI 被拒绝（退出码 `1620`）；事务故障回滚（退出码 `1603`）恢复旧版本注册、应用文件和 sentinel；降级保护通过，Restart Manager 成功关闭运行中的旧应用且没有留下 pending rename。该结果关闭本机可验证的升级/失败保护/回滚路径，但不替代一次性干净 VM 中的强制锁和需重启矩阵。
 - 使用当前 NSIS 安装包重新执行安装版 Hook smoke：安装版 Host 健康握手、Hook Bundle 存储、激活、Prompt 阻断、Host 重启后 active 状态恢复、应用卸载均通过（全部退出码 `0`）。该结果保留 Hook 的真实安装版证据，但不替代签名发布和干净 VM 验收。
 - 只读核验当前发布候选物的 Authenticode 状态：NSIS、MSI、Windows EXE 与 Local Agent Host sidecar 均为 `NotSigned`，没有签名者或证书指纹；因此正式代码签名、证书校验与 SmartScreen 信誉仍明确保持未完成。
+- 在 x64/arm64 worker 重建后再次执行 `smoke:windows --screen`，当前打包 worker 的 doctor、MCP initialize/tools/list、check_permissions 和真实 `observe_screen` 均通过。
 
 - 本轮网络恢复后的原生窗口复核再次打开“插件与 Skills”：控制面返回 6 项 Marketplace 目录；Browser CDP、Solution Studio、Visual Computer Use 明确标记为 Windows 不支持，Diagram Studio、Document Tools、Web Design Studio 显示可安全安装。Computer Use/屏幕采集没有被客户端伪造为可用；该观察不关闭跨平台 `.tgz`、签名 Marketplace 发布和客户端安装闭环。
 - 同步执行 Windows Tauri 定向回归：Controlled Network URL/签名策略 5 项、Plugin 应用运行时 36 项全部通过；本轮没有修改运行逻辑，也没有输入测试账号密码、安装 Plugin、发送消息或修改持久化设置。
