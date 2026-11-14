@@ -8,18 +8,18 @@ Windows 产品版本：`3.0.9`
 
 本清单区分“页面已出现”“业务闭环已完成”“平台能力真实可用”和“发布环境已验证”。只有四项同时满足，才算完成；不再把只读占位、失败关闭或测试未运行写成已拉齐。
 
-## 当前复核（2026-11-08）
+## 当前复核（2026-11-14）
 
 以下结论以当前分支 `3.0.9.3.1` 的最新代码、测试和最终 NSIS 安装包为准。文档后面的编号条目保留为历史交付记录，其中较早的“部分完成”措辞不应覆盖本节的最新状态。
 
 ### 2026-11-14 最新同步与回归
 
-- 已从 `origin/3.0.9.8` 拉取并合并远端最新头 `d23c2b738`，合并提交为 `7870cd3b5`，已推送到 `origin/3.0.9.3.1`。本次上游包含 Memory Engine 可靠性修复、受信 Plugin/MCP 安装器扩展和运行时契约更新；Windows 分支保留自身 265 个后续提交并完成冲突文件的上游语义合并。
+- 已从 `origin/3.0.9.8` 拉取并合并远端最新头 `6ef0a7bd4`，合并提交为 `14fa7ccf9`，已推送到 `origin/3.0.9.3.1`。本次上游包含通信投递卡住释放、Memory Engine compaction/队列可靠性修复；Windows 分支保留自身程序 MCP 改动并完成上游语义合并。Windows 全量回归 `572 passed, 0 failed, 6 ignored`；Memory Engine 其余 `193 passed`，唯一未运行的是 Windows 无法直接执行的 `.sh` mTLS fixture。
 - Windows 能力快照已补齐真实闭环：主聊天现在发布项目经理 `project_dashboard_*` 工具；Plugin 安装助手使用独立的 `plugin-installer-*` 能力 revision，发送到该联系人时按精确 revision 读取并校验 instructions/tools，不会把安装权限混入普通聊天；本地任务最大迭代次数读取受管运行时配置，范围为 2–10,000，离线恢复继续使用已持久化能力快照。提交 `c212fefe0` 已推送。
 - 本轮回归证据：Windows Tauri Rust 全量 `563 passed, 0 failed, 6 ignored`；定向 control-plane 8、conversation composer 4、attachment worker 13、Plugin installer 6 全部通过；`cargo clippy --all-targets --all-features -- -D warnings` 通过；React Vitest `142` 个文件 / `524` 项通过，TypeScript、架构审计、bundle 审计和 Vite production build 通过。
 - 本轮继续补齐上游 macOS 的 Plugin 安装器能力：`f5b3868ff` 发布 `plugin_installer_list_installed`、`plugin_installer_search_marketplace` 和 `plugin_installer_install_marketplace`，安装助手会做明确用户意图、精确 Release、更新/重装身份和安装后真实记录核验；Tauri 全量回归为 `565 passed, 0 failed, 6 ignored`，Clippy `-D warnings` 通过。
 - `97080a7d4` 发布 `plugin_installer_discover_repository` 与 `plugin_installer_resolve_release`：GitHub 公共 API 使用无凭据客户端，严格限制仓库 URL、文档路径、响应/归档大小、重定向主机、Release asset 官方路径、SHA-256、ZIP/TAR 路径和特殊文件；归档只读取清单，不执行内容。Tauri 全量回归为 `568 passed, 0 failed, 6 ignored`，Clippy `-D warnings` 通过。
-- Windows 现在发布 11 个 Plugin 安装器工具，与 macOS 的发现/Marketplace 工具面一致；程序 MCP 的“解析后下载归档、生成受信安装请求并安装”完整闭环仍未实现，因此没有把 GitHub Release 解析误报成程序 MCP 安装完成。Marketplace 签名制品、正式发布和干净 VM 依赖仍保持外部待办。
+- Windows 现在发布 11 个 Plugin 安装器工具，与 macOS 的发现/Marketplace 工具面一致；提交 `1a9cfe01e` 已补齐 GitHub Release 与本机 `.exe` 程序 MCP 的安全 source 预检、固定 Release/归档 SHA-256、归档路径与特殊文件拒绝、原子安装/回滚、安装记录复用和真实 MCP `initialize`/`tools/list` 握手。新增归档 fixture 覆盖正常 `.exe` 解包、路径穿越、符号链接和大小写冲突拒绝；Windows Tauri 全量 `572 passed, 0 failed, 6 ignored`，Clippy `-D warnings`、React Vitest `142` 个文件 / `524` 项、TypeScript、架构/Bundle 审计和生产构建均通过。Marketplace 签名制品、正式发布和干净 VM 依赖仍保持外部待办。
 
 - Hook 链路当前已完成：最终 NSIS 安装包能够真实启动 AppContainer runner，写入并激活受信 Bundle，触发 `UserPromptSubmit`，回传上下文，按 `continue=false` 阻断 Prompt，并在 Host 重启后恢复 active Bundle。证据：`%TEMP%\\chatos-windows-installed-hook-restart.json`。
 - 本轮 Host 诊断改动重新生成的 NSIS 安装包已再次完成安装版 Hook smoke：报告 `%TEMP%\\chatos-windows-installed-hook-auth-diagnostic.json` 中 `installExitCode=0`、`hostHealthVerified=true`、`hookBundleStored=true`、`hookBundleActivated=true`、`hookBlockedVerified=true`、`hostRestartVerified=true`、`hostExitCode=0`、`uninstallExitCode=0`；本轮 Installer SHA-256 为 `2240bd8748ab729d4f235fd2a07f06382612fb243fb2d7d22ea06eeed573028d`，sidecar SHA-256 为 `0cfb0c5a0f277cf1a63426453e9519cdbfdfd1c6664b94e1fb0ea3023958a8ff`。
@@ -191,7 +191,7 @@ Windows 产品版本：`3.0.9`
 - [x] Codex/Ponytail Hook 的 Windows 端完整闭环。最终 NSIS 安装包已真实启动 AppContainer runner，写入并激活受信 Bundle，触发 `UserPromptSubmit`，回传上下文，按 `continue=false` 阻断 Prompt，并在 Host 重启后恢复 active Bundle；报告为 `%TEMP%\\chatos-windows-installed-hook-restart.json`。原生窗口逐态视觉走查仍单独保留为未完成项。
 - [ ] `3.0.9.4` 新增的任务审查优先级展示仍需原生窗口逐态核对。Windows 原生任务图 DTO 现同时保留 Host 原始状态和 `reviewing_followup` / `waiting_confirmation` 展示状态；Task Graph、Run Inspector、对话 Timeline 状态胶囊与宠物活动摘要均让新门禁覆盖旧 Run 活动并保持轮询，`needs_review` 的恢复操作继续保留。各入口的原生视觉优先级仍需取证，当前不声称完全一致。
 - [ ] Computer Use / 屏幕采集的受信发布闭环。Windows Worker 源码、x64/arm64 构建和 smoke 已通过，但当前用户 Plugin 目录为空；还需产出跨平台 `.tgz`、进入签名 Marketplace Release，并从 Windows 客户端完成安装、启用、`doctor`、屏幕采集和输入实测。
-- [ ] GitHub Release 程序 MCP 的安装闭环。Windows 已能安全发现公开仓库、固定 Release 并验证归档清单；仍需把验证后的 Windows 可执行入口纳入 source 预检/安装/回滚与安装记录链，完成真实 MCP `initialize`/`tools/list` 回归后才能关闭。
+- [x] GitHub Release / 本机程序 MCP 的安装闭环。Windows 对公开 GitHub Release 固定 tag、官方 asset 地址、大小、SHA-256、ZIP/TAR.GZ 归档路径、重复/大小写冲突、链接/特殊文件和解压上限做安全预检；本机来源只接受用户明确给出的绝对普通 `.exe`。两类来源都会生成受信 `chatos.plugin.json`，复用原子安装、完整性记录、回滚和安装记录链，并在确认前后真实执行 MCP `initialize`/`tools/list`，工具清单变化会使确认指纹失效。线上公开 Release 的端到端验证仍需稳定的真实 fixture；本机已完成完整 fixture 与安全边界回归。提交 `1a9cfe01e`。
 - [ ] 访问控制的文件与网络隔离。AppContainer 文件/网络拒绝、`disabled`/`loopback`/`controlled` capability token、句柄绑定的非空目录逐项 DACL 快照、父目录临时 `FILE_TRAVERSE` 与按 SID 恢复、运行期新增项 SID 清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 拒绝，带最小环境、一次性输出捕获、长驻交互 stdio、多 workspace 租约、超时与 Job Object 回收的可复用启动器，以及独立 profile SID/journal 崩溃恢复已经通过；Agent Plugin MCP 与任务终端已迁移到独立 AppContainer，Agent Plugin 的 `network.client` 已按 manifest 映射到 `controlled`，Plugin 应用后端已接入生产受限启动路径。普通用户调用 `CheckNetIsolation LoopbackExempt` 会被系统拒绝（Win32 5），仍需实现不依赖管理员权限的细粒度目标/目的地出站规则，并完成 Plugin loopback 健康代理/exemption 后才能开放第 31 页开关。迁移完成前继续只发布账号/项目边界、审批策略和现有 Job Object 进程树回收。
 
 ### P2：平台/发布质量
