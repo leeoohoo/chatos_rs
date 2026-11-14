@@ -240,7 +240,7 @@ fn spawn_detached_active_summary_job(
     let thread_id_owned = thread_id.to_string();
     let job_run_id_owned = job_run_id.to_string();
     task::spawn(async move {
-        if let Err(err) = execute_existing_summary_job(
+        let result = execute_existing_summary_job(
             &config_cloned,
             &db_cloned,
             tenant_id_owned.as_str(),
@@ -249,14 +249,21 @@ fn spawn_detached_active_summary_job(
             job_run_id_owned.as_str(),
             ctx,
         )
-        .await
-        {
-            warn!(
+        .await;
+        match result {
+            Err(err) if err == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED => {
+                info!(
+                    "[MEMORY-ENGINE-ACTIVE-SUMMARY] running-in-background thread_id={} job_run_id={}",
+                    thread_id_owned, job_run_id_owned
+                );
+            }
+            Err(err) => warn!(
                 "[MEMORY-ENGINE-ACTIVE-SUMMARY] detached-run-failed thread_id={} job_run_id={} error={}",
                 thread_id_owned,
                 job_run_id_owned,
                 err
-            );
+            ),
+            Ok(_) => {}
         }
     });
 }

@@ -248,7 +248,18 @@ async fn refresh_subject_scope_slot(
     Ok(())
 }
 
+fn cloud_agent_claim_ttl_seconds(state: &AppState) -> u64 {
+    state
+        .config
+        .ai_request_timeout_secs
+        .saturating_mul(2)
+        .saturating_add(60)
+}
+
 fn runtime(state: Arc<AppState>) -> CloudAgentServiceRuntime<CloudAgentProfileRegistry> {
+    let claim_ttl =
+        chrono::Duration::from_std(Duration::from_secs(cloud_agent_claim_ttl_seconds(&state)))
+            .unwrap_or(chrono::Duration::MAX);
     let registry = CloudAgentProfileRegistry::new("memory-engine", state.cloud_agent_store.clone())
         .register(
             [
@@ -262,6 +273,7 @@ fn runtime(state: Arc<AppState>) -> CloudAgentServiceRuntime<CloudAgentProfileRe
         )
         .expect("Memory Engine Cloud Agent profiles must be valid");
     CloudAgentServiceRuntime::new(registry, MEMORY_CLOUD_AGENT_ROUTING_KEY)
+        .with_claim_ttl(claim_ttl)
 }
 
 fn worker_config(state: &AppState) -> CloudAgentDatabaseWorkerConfig {
@@ -270,6 +282,7 @@ fn worker_config(state: &AppState) -> CloudAgentDatabaseWorkerConfig {
         batch_size: state.config.cloud_agent_outbox_batch_size,
         worker_concurrency: 4,
         conflict_retry_delay: Duration::from_secs(1),
+        claim_ttl: Duration::from_secs(cloud_agent_claim_ttl_seconds(state)),
     }
 }
 

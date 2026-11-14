@@ -43,6 +43,7 @@ public extension AgentContextProviding {
 /// No credentials or network configuration are stored in checkpoints.
 public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
     private static let maximumRequiredCompactionRounds = 3
+    private static let foregroundCompactionWaitSeconds = 5.0
     public let scope: AgentMemoryScope
     private let service: any AgentMemoryServicing
 
@@ -166,12 +167,22 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
                 let beforeTokens = context.budgetUsedTokens
                 let beforePending = context.pendingRecordCount ?? context.recentRecords.count
                 do {
-                    try await service.compactSummary()
-                } catch let failure as AgentMemoryCompactionFailure {
+                    try await withAgentTimeout(seconds: Self.foregroundCompactionWaitSeconds) {
+                        try await service.compactSummary()
+                    }
+                } catch {
+                    let reason: String
+                    if let failure = error as? AgentMemoryCompactionFailure {
+                        reason = failure.reason
+                    } else if AgentRuntimeError.isTransient(error) {
+                        reason = error.localizedDescription
+                    } else {
+                        throw error
+                    }
                     try await emit(
                         state,
                         "memory_compaction_deferred",
-                        "Memory Engine 历史压缩暂时失败；本轮仅使用固定指令和完整当前活动轮继续，历史记录仍保留并等待后续重试。\(failure.reason.prefix(400))",
+                        "Memory Engine 历史压缩已转为后台处理；本轮仅使用固定指令和完整当前活动轮继续，历史记录仍完整保留。\(reason.prefix(400))",
                         record: record
                     )
                     try await check(deadline: deadline, shouldPause: shouldPause)
