@@ -18,6 +18,8 @@ Windows 产品版本：`3.0.9`
 - 同步执行 Windows Tauri 定向回归：Controlled Network URL/签名策略 5 项、Plugin 应用运行时 36 项全部通过；本轮没有修改运行逻辑，也没有输入测试账号密码、安装 Plugin、发送消息或修改持久化设置。
 - 重新执行 `plugins/computer-use` 的正式 `npm run pack:chatos`：Skill gate 审计先通过，随后按设计在 Windows `win32` 主机因缺少 macOS Swift App、`lipo` 与 `PlistBuddy` 工具链而明确失败；同一轮 `build:windows`、`smoke:windows` 和 `smoke:windows:screen` 均通过。该失败是跨平台正式包的真实外部构建依赖，不是 Windows worker 回归失败。
 - 已登录 Release 的 Agent 团队页再次完成只读取证：Local Agent Host 显示“本地服务已就绪”，但真实团队任务板为空，进行中/等待/经理协调/需处理均为 `0`，因此当前没有可观察的 `reviewing_followup` 或 `waiting_confirmation` 任务态。未创建任务、未发送消息，也未把空状态当作逐态视觉验收证据；任务审查优先级仍保持未完成。
+- 网络恢复后再次完成设置页运行态回归：设备与网关显示本机 Agent Host 运行正常，AI 模型页成功读取默认模型、任务模型候选和重试次数，插件与 Skills 页成功读取 6 项 Marketplace 目录；运行与权限页如实显示本机终端已就绪、Computer Use 与屏幕采集尚未提供，访问控制页如实保持文件/网络选项锁定并显示 `windows-local-process-v1:request_approval`。只读复核未输入凭据、发送消息、安装 Plugin 或修改持久化设置。
+- 同一轮回归发现并修复一个与 macOS 不一致的可用性缺口：当控制面只轮换同一模型的 capability revision 时，Windows 会话运行配置此前直接报“会话所选模型版本已不可用”，导致插件安装助手输入框被锁定；现在加载时会按 macOS 语义重写同模型 revision，并在推理等级被移除时回退到该模型默认等级；未知模型仍保持失败关闭。定向回归 `3 passed`，Windows Tauri 全量回归 `582 passed, 0 failed, 6 ignored`，Clippy `-D warnings` 通过。
 
 - 已从 `origin/3.0.9.8` 拉取并合并远端最新头 `6ef0a7bd4`，合并提交为 `14fa7ccf9`，已推送到 `origin/3.0.9.3.1`。本次上游包含通信投递卡住释放、Memory Engine compaction/队列可靠性修复；Windows 分支保留自身程序 MCP 改动并完成上游语义合并。Windows 全量回归 `572 passed, 0 failed, 6 ignored`；Memory Engine 其余 `193 passed`，唯一未运行的是 Windows 无法直接执行的 `.sh` mTLS fixture。
 - Windows 能力快照已补齐真实闭环：主聊天现在发布项目经理 `project_dashboard_*` 工具；Plugin 安装助手使用独立的 `plugin-installer-*` 能力 revision，发送到该联系人时按精确 revision 读取并校验 instructions/tools，不会把安装权限混入普通聊天；本地任务最大迭代次数读取受管运行时配置，范围为 2–10,000，离线恢复继续使用已持久化能力快照。提交 `c212fefe0` 已推送。
