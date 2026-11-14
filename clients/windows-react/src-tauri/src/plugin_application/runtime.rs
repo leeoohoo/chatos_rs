@@ -55,6 +55,9 @@ const MAXIMUM_STATIC_ASSET_BYTES: u64 = 8 * 1_024 * 1_024;
 const MAXIMUM_STATIC_TOTAL_BYTES: u64 = 32 * 1_024 * 1_024;
 const MAXIMUM_STATIC_REQUEST_BYTES: usize = 16 * 1_024;
 const MAXIMUM_STATIC_CONNECTIONS: usize = 64;
+const MAXIMUM_LOOPBACK_PROXY_CONNECTIONS: usize = 64;
+const LOOPBACK_PROXY_CONNECT_TIMEOUT_MS: u64 = 700;
+const LOOPBACK_PROXY_IDLE_TIMEOUT_MS: u64 = 300_000;
 const HOST_CONTEXT_READ_CAPABILITY: &str = "host.context.read";
 
 #[derive(Clone, Debug, Deserialize)]
@@ -182,8 +185,24 @@ struct RunningPluginApplication {
 }
 
 enum RuntimeTermination {
-    Process(ProcessTermination),
+    Process {
+        process: ProcessTermination,
+        proxy: Arc<LoopbackProxyShutdown>,
+    },
     Static(Arc<StaticServerShutdown>),
+}
+
+#[derive(Default)]
+struct LoopbackProxyShutdown {
+    requested: AtomicBool,
+    wake: Notify,
+}
+
+impl LoopbackProxyShutdown {
+    fn request(&self) {
+        self.requested.store(true, Ordering::SeqCst);
+        self.wake.notify_waiters();
+    }
 }
 
 #[derive(Default)]
@@ -230,6 +249,8 @@ struct PreparedRuntimeProcess {
     data_directory: PathBuf,
     cache_directory: PathBuf,
     base_url: String,
+    proxy_port: u16,
+    child_port: u16,
     health_path: String,
     launch_timeout_ms: u64,
     #[cfg(windows)]
@@ -746,8 +767,9 @@ impl RunningPluginApplication {
 
     fn terminate_now(&self) {
         match &self.termination {
-            RuntimeTermination::Process(termination) => {
-                let _ = termination.terminate(true);
+            RuntimeTermination::Process { process, proxy } => {
+                let _ = process.terminate(true);
+                proxy.request();
             }
             RuntimeTermination::Static(shutdown) => shutdown.request(),
         }
@@ -758,8 +780,9 @@ impl RunningPluginApplication {
             return;
         }
         match &self.termination {
-            RuntimeTermination::Process(termination) => {
-                let _ = termination.terminate(false);
+            RuntimeTermination::Process { process, proxy } => {
+                let _ = process.terminate(false);
+                proxy.request();
             }
             RuntimeTermination::Static(shutdown) => shutdown.request(),
         }
@@ -773,8 +796,9 @@ impl RunningPluginApplication {
             return;
         }
         match &self.termination {
-            RuntimeTermination::Process(termination) => {
-                let _ = termination.terminate(true);
+            RuntimeTermination::Process { process, proxy } => {
+                let _ = process.terminate(true);
+                proxy.request();
             }
             RuntimeTermination::Static(shutdown) => shutdown.request(),
         }
@@ -1365,8 +1389,12 @@ fn prepare_runtime_process(
         .ok_or_else(plugin_runtime_error)?;
     let (executable, prefix_arguments) =
         resolve_package_executable(&resolved.installation_root, &runtime.bin)?;
-    let port = available_loopback_port()?;
-    let base_url = format!("http://127.0.0.1:{port}/");
+    let child_port = available_loopback_port()?;
+    let mut proxy_port = available_loopback_port()?;
+    while proxy_port == child_port {
+        proxy_port = available_loopback_port()?;
+    }
+    let base_url = format!("http://127.0.0.1:{proxy_port}/");
     let health_path = runtime
         .health_path
         .clone()
@@ -1395,7 +1423,7 @@ fn prepare_runtime_process(
             context.cache_directory.to_string_lossy().into_owned(),
         ),
         ("CHATOS_PLUGIN_APP_HOST".into(), "127.0.0.1".into()),
-        ("CHATOS_PLUGIN_APP_PORT".into(), port.to_string()),
+        ("CHATOS_PLUGIN_APP_PORT".into(), child_port.to_string()),
         (
             "CHATOS_PLUGIN_ID".into(),
             resolved.record.spec.plugin_id.clone(),
@@ -1444,6 +1472,8 @@ fn prepare_runtime_process(
         data_directory: context.data_directory.clone(),
         cache_directory: context.cache_directory.clone(),
         base_url,
+        proxy_port,
+        child_port,
         health_path,
         launch_timeout_ms: runtime
             .launch_timeout_ms
@@ -1453,15 +1483,79 @@ fn prepare_runtime_process(
     })
 }
 
+async fn start_loopback_proxy(
+    proxy_port: u16,
+    child_port: u16,
+) -> Result<Arc<LoopbackProxyShutdown>, String> {
+    let listener =
+        TokioTcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), proxy_port))
+            .await
+            .map_err(|_| "无法启动 Plugin 应用 loopback 代理。".to_owned())?;
+    let shutdown = Arc::new(LoopbackProxyShutdown::default());
+    tokio::spawn(run_loopback_proxy(
+        listener,
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), child_port),
+        shutdown.clone(),
+    ));
+    Ok(shutdown)
+}
+
+async fn run_loopback_proxy(
+    listener: TokioTcpListener,
+    target: SocketAddr,
+    shutdown: Arc<LoopbackProxyShutdown>,
+) {
+    let connections = Arc::new(Semaphore::new(MAXIMUM_LOOPBACK_PROXY_CONNECTIONS));
+    loop {
+        if shutdown.requested.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::select! {
+            _ = shutdown.wake.notified() => break,
+            accepted = listener.accept() => {
+                let Ok((stream, peer)) = accepted else { break };
+                if !peer.ip().is_loopback() {
+                    continue;
+                }
+                let Ok(permit) = connections.clone().try_acquire_owned() else {
+                    continue;
+                };
+                tokio::spawn(proxy_loopback_connection(stream, target, permit));
+            }
+        }
+    }
+}
+
+async fn proxy_loopback_connection(
+    mut downstream: TcpStream,
+    target: SocketAddr,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+) {
+    let Ok(Ok(mut upstream)) = timeout(
+        Duration::from_millis(LOOPBACK_PROXY_CONNECT_TIMEOUT_MS),
+        TcpStream::connect(target),
+    )
+    .await
+    else {
+        return;
+    };
+    let _ = timeout(
+        Duration::from_millis(LOOPBACK_PROXY_IDLE_TIMEOUT_MS),
+        tokio::io::copy_bidirectional(&mut downstream, &mut upstream),
+    )
+    .await;
+}
+
 async fn spawn_runtime_process(
     resolved: &ResolvedPluginApplication,
     prepared: PreparedRuntimeProcess,
     resource_permit: Option<MachineResourcePermit>,
     #[cfg(windows)] sandbox: Option<Arc<WorkspaceLeaseManager>>,
 ) -> Result<Arc<RunningPluginApplication>, String> {
+    let proxy = start_loopback_proxy(prepared.proxy_port, prepared.child_port).await?;
     #[cfg(windows)]
     if let Some(sandbox) = sandbox {
-        return spawn_sandboxed_runtime(resolved, prepared, resource_permit, sandbox).await;
+        return spawn_sandboxed_runtime(resolved, prepared, resource_permit, sandbox, proxy).await;
     }
     let mut command = Command::new(&prepared.executable);
     command
@@ -1478,12 +1572,14 @@ async fn spawn_runtime_process(
         use std::os::unix::process::CommandExt;
         command.as_std_mut().process_group(0);
     }
-    let mut child = command
-        .spawn()
-        .map_err(|_| "Plugin 应用后端启动失败。".to_owned())?;
+    let mut child = command.spawn().map_err(|_| {
+        proxy.request();
+        "Plugin 应用后端启动失败。".to_owned()
+    })?;
     let termination = match ProcessTermination::attach(&child) {
         Ok(termination) => termination,
         Err(_) => {
+            proxy.request();
             let _ = child.start_kill();
             let _ = child.wait().await;
             return Err("无法隔离 Plugin 应用进程树。".into());
@@ -1497,7 +1593,10 @@ async fn spawn_runtime_process(
         version: resolved.manifest.version.clone(),
         base_url: prepared.base_url,
         health_path: prepared.health_path,
-        termination: RuntimeTermination::Process(termination),
+        termination: RuntimeTermination::Process {
+            process: termination,
+            proxy: proxy.clone(),
+        },
         alive: AtomicBool::new(true),
         finished: Notify::new(),
         resource_permit: StandardMutex::new(resource_permit),
@@ -1509,6 +1608,7 @@ async fn spawn_runtime_process(
         child,
         stdout_task,
         stderr_task,
+        proxy,
     ));
     Ok(process)
 }
@@ -1519,6 +1619,7 @@ async fn spawn_sandboxed_runtime(
     prepared: PreparedRuntimeProcess,
     resource_permit: Option<MachineResourcePermit>,
     sandbox: Arc<WorkspaceLeaseManager>,
+    proxy: Arc<LoopbackProxyShutdown>,
 ) -> Result<Arc<RunningPluginApplication>, String> {
     use std::sync::Mutex as StdMutex;
 
@@ -1548,10 +1649,14 @@ async fn spawn_sandboxed_runtime(
             prepared.network_policy,
             &environment,
         )
-        .map_err(|error| format!("Plugin 应用后端受限进程启动失败：{error}"))?;
+        .map_err(|error| {
+            proxy.request();
+            format!("Plugin 应用后端受限进程启动失败：{error}")
+        })?;
     let stdout = match child.take_stdout().map(spawn_blocking_drain) {
         Some(stdout) => stdout,
         None => {
+            proxy.request();
             let _ = child.restore();
             return Err("Plugin 应用后端 stdout 不可用。".to_owned());
         }
@@ -1559,6 +1664,7 @@ async fn spawn_sandboxed_runtime(
     let stderr = match child.take_stderr().map(spawn_blocking_drain) {
         Some(stderr) => stderr,
         None => {
+            proxy.request();
             let _ = child.restore();
             return Err("Plugin 应用后端 stderr 不可用。".to_owned());
         }
@@ -1571,7 +1677,10 @@ async fn spawn_sandboxed_runtime(
         version: resolved.manifest.version.clone(),
         base_url: prepared.base_url,
         health_path: prepared.health_path,
-        termination: RuntimeTermination::Process(termination),
+        termination: RuntimeTermination::Process {
+            process: termination,
+            proxy: proxy.clone(),
+        },
         alive: AtomicBool::new(true),
         finished: Notify::new(),
         resource_permit: StandardMutex::new(resource_permit),
@@ -1581,6 +1690,7 @@ async fn spawn_sandboxed_runtime(
         child,
         stdout,
         stderr,
+        proxy,
     ));
     Ok(process)
 }
@@ -1604,6 +1714,7 @@ async fn wait_for_sandboxed_process(
     child: Arc<std::sync::Mutex<Option<crate::windows_appcontainer::SandboxedChild>>>,
     stdout: tokio::task::JoinHandle<()>,
     stderr: tokio::task::JoinHandle<()>,
+    proxy: Arc<LoopbackProxyShutdown>,
 ) {
     let _ = tokio::task::spawn_blocking(move || loop {
         let finished = child.lock().ok().and_then(|guard| {
@@ -1625,6 +1736,7 @@ async fn wait_for_sandboxed_process(
         }
     })
     .await;
+    proxy.request();
     process.alive.store(false, Ordering::SeqCst);
     process.release_resource();
     process.finished.notify_waiters();
@@ -1647,8 +1759,10 @@ async fn wait_for_process(
     mut child: Child,
     stdout: Option<tokio::task::JoinHandle<()>>,
     stderr: Option<tokio::task::JoinHandle<()>>,
+    proxy: Arc<LoopbackProxyShutdown>,
 ) {
     let _ = child.wait().await;
+    proxy.request();
     process.alive.store(false, Ordering::SeqCst);
     process.release_resource();
     process.finished.notify_waiters();
@@ -2198,6 +2312,20 @@ mod tests {
         assert_ne!(runtime.epoch(), epoch);
         assert!(runtime.state.lock().await.processes.is_empty());
         assert_eq!(runtime.resources.used_resource_units(), 0);
+        let client = Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_millis(500))
+            .build()
+            .unwrap();
+        let mut stopped = false;
+        for _ in 0..20 {
+            if client.get(&first.url).send().await.is_err() {
+                stopped = true;
+                break;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+        assert!(stopped);
     }
 
     #[tokio::test]
