@@ -12,6 +12,13 @@ Windows 产品版本：`3.0.9`
 
 以下结论以当前分支 `3.0.9.3.1` 的最新代码、测试和最终 NSIS 安装包为准。文档后面的编号条目保留为历史交付记录，其中较早的“部分完成”措辞不应覆盖本节的最新状态。
 
+### 2026-11-14 最新同步与回归
+
+- 已从 `origin/3.0.9.8` 拉取并合并远端最新头 `d23c2b738`，合并提交为 `7870cd3b5`，已推送到 `origin/3.0.9.3.1`。本次上游包含 Memory Engine 可靠性修复、受信 Plugin/MCP 安装器扩展和运行时契约更新；Windows 分支保留自身 265 个后续提交并完成冲突文件的上游语义合并。
+- Windows 能力快照已补齐真实闭环：主聊天现在发布项目经理 `project_dashboard_*` 工具；Plugin 安装助手使用独立的 `plugin-installer-*` 能力 revision，发送到该联系人时按精确 revision 读取并校验 instructions/tools，不会把安装权限混入普通聊天；本地任务最大迭代次数读取受管运行时配置，范围为 2–10,000，离线恢复继续使用已持久化能力快照。提交 `c212fefe0` 已推送。
+- 本轮回归证据：Windows Tauri Rust 全量 `563 passed, 0 failed, 6 ignored`；定向 control-plane 8、conversation composer 4、attachment worker 13、Plugin installer 6 全部通过；`cargo clippy --all-targets --all-features -- -D warnings` 通过；React Vitest `142` 个文件 / `524` 项通过，TypeScript、架构审计、bundle 审计和 Vite production build 通过。
+- 上游 macOS 本轮新增的 Plugin 安装器能力（已安装列表、Marketplace 搜索/安装、GitHub repository/release 发现和程序 MCP verified discovery）尚未在 Windows 端实现；当前 Windows 仍只发布既有 6 个 npm/source 工具，不能把本次合并误报为 Windows 已完成这些新增能力。Marketplace 签名制品、正式发布和干净 VM 依赖仍保持外部待办。
+
 - Hook 链路当前已完成：最终 NSIS 安装包能够真实启动 AppContainer runner，写入并激活受信 Bundle，触发 `UserPromptSubmit`，回传上下文，按 `continue=false` 阻断 Prompt，并在 Host 重启后恢复 active Bundle。证据：`%TEMP%\\chatos-windows-installed-hook-restart.json`。
 - 本轮 Host 诊断改动重新生成的 NSIS 安装包已再次完成安装版 Hook smoke：报告 `%TEMP%\\chatos-windows-installed-hook-auth-diagnostic.json` 中 `installExitCode=0`、`hostHealthVerified=true`、`hookBundleStored=true`、`hookBundleActivated=true`、`hookBlockedVerified=true`、`hostRestartVerified=true`、`hostExitCode=0`、`uninstallExitCode=0`；本轮 Installer SHA-256 为 `2240bd8748ab729d4f235fd2a07f06382612fb243fb2d7d22ea06eeed573028d`，sidecar SHA-256 为 `0cfb0c5a0f277cf1a63426453e9519cdbfdfd1c6664b94e1fb0ea3023958a8ff`。
 - 登录入口当前已完成：原生安装版首屏进入 owner-scoped 项目工作区，不再默认落到设置页。证据：`%TEMP%\\chatos-windows-workspace-entry-nsis.json` 与本机原生窗口观察记录。
