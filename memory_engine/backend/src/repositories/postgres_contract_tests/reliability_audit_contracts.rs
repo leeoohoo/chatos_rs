@@ -146,9 +146,29 @@ async fn m0_audit_lists_p0_migration_objects_without_mutating_them() {
             tenant_id: Some(tenant.clone()),
             source_id: Some(source.clone()),
         },
+        true,
     )
     .await
     .expect("run reliability audit");
+    let metrics = crate::reliability_audit::run_reliability_audit(
+        &pool,
+        crate::reliability_audit::ReliabilityAuditScope {
+            tenant_id: Some(tenant.clone()),
+            source_id: Some(source.clone()),
+        },
+        false,
+    )
+    .await
+    .expect("run reliability metrics audit");
+    assert_eq!(
+        serde_json::to_value(&metrics.alerts).expect("serialize metrics alerts"),
+        serde_json::to_value(&report.alerts).expect("serialize audit alerts")
+    );
+    assert_eq!(
+        serde_json::to_value(&metrics.baseline).expect("serialize metrics baseline"),
+        serde_json::to_value(&report.baseline).expect("serialize audit baseline")
+    );
+    assert!(metrics.source_contract_readiness.is_empty());
     let kinds = report
         .findings
         .iter()

@@ -227,6 +227,7 @@ pub async fn reliability_dashboard(
             tenant_id: Some(tenant.to_string()),
             source_id: Some(source.to_string()),
         },
+        true, // The operator dashboard requires the complete audit.
     )
     .await
     .map(Json)

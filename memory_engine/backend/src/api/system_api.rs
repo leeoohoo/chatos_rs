@@ -122,6 +122,7 @@ pub async fn prometheus_metrics(State(state): State<Arc<AppState>>) -> impl Into
             tenant_id: None,
             source_id: None,
         },
+        false, // Prometheus scrapes must not run the source-readiness full scan.
     )
     .await
     {
