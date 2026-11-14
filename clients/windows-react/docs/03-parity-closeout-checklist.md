@@ -19,6 +19,7 @@ Windows 产品版本：`3.0.9`
 - 网络恢复后重新执行 Computer Use Windows worker 回归：`audit:skill-gates` 通过，packaging 测试 `8 passed, 0 failed`，包含真实 `observe_screen` 的 `smoke:windows --screen` 通过；x64 与 arm64 self-contained worker 均重新构建成功。跨平台 `.tgz`、签名 Marketplace 发布和 Windows 客户端安装/启用闭环仍需 macOS/Marketplace/签名环境，继续保持未完成。
 - 本轮基线质量门禁复核：Windows Tauri `cargo clippy --all-targets --all-features -- -D warnings` 通过，React `npm run typecheck` 通过；工作区与 `origin/3.0.9.3.1` 同步，`origin/3.0.9.8` 没有新的待合并提交。
 - 重新使用当前 `ChatOS_3.0.9_x64-setup.exe` 做隔离安装/冷启动回归：NSIS 安装与卸载均退出码 `0`，两次启动均观察到安装目录自身创建且标题精确为 `ChatOS` 的原生窗口，应用退出码均为 `0`，启动耗时 `2,781 ms` / `2,345 ms`，隔离用户数据清理确认通过。该结果补强安装包和本机冷启动证据，但不替代正式签名、干净 VM、Restart Manager 强制锁和长稳基线。
+- 同一安装包追加 5 次隔离启动回归：5/5 次原生窗口与应用退出均通过，启动 `p50=2,329 ms`、`p95=2,735 ms`，安装/卸载和隔离用户数据清理均通过。该短测只能说明当前机器上的重复启动稳定性，不能替代正式签名、干净 VM 或 8 小时长稳基线。
 
 - 本轮网络恢复后的原生窗口复核再次打开“插件与 Skills”：控制面返回 6 项 Marketplace 目录；Browser CDP、Solution Studio、Visual Computer Use 明确标记为 Windows 不支持，Diagram Studio、Document Tools、Web Design Studio 显示可安全安装。Computer Use/屏幕采集没有被客户端伪造为可用；该观察不关闭跨平台 `.tgz`、签名 Marketplace 发布和客户端安装闭环。
 - 同步执行 Windows Tauri 定向回归：Controlled Network URL/签名策略 5 项、Plugin 应用运行时 36 项全部通过；本轮没有修改运行逻辑，也没有输入测试账号密码、安装 Plugin、发送消息或修改持久化设置。
