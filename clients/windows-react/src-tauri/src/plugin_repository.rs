@@ -1,3 +1,4 @@
+use crate::app_data_transaction::ensure_owned_directory;
 use base64::Engine;
 use flate2::read::GzDecoder;
 use reqwest::{Client, StatusCode, Url};
@@ -5,7 +6,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
-    fs::{self, OpenOptions},
+    fs::OpenOptions,
     io::{Cursor, Read, Write},
     path::Path,
     time::Duration,
@@ -132,6 +133,7 @@ pub(crate) fn extract_release_archive(
     asset_name: &str,
     destination: &Path,
 ) -> Result<(), String> {
+    ensure_owned_directory(destination).map_err(|_| "发行包目标目录无效。".to_owned())?;
     let entries = archive_entries(bytes, asset_name)?;
     let mut seen = BTreeSet::new();
     for entry in &entries {
@@ -153,13 +155,13 @@ pub(crate) fn extract_release_archive(
             validate_archive_path(&name)?;
             let target = destination.join(name.trim_end_matches('/'));
             if item.is_dir() {
-                fs::create_dir_all(&target).map_err(|_| "无法创建发行包目录。".to_owned())?;
+                ensure_owned_directory(&target).map_err(|_| "无法创建发行包目录。".to_owned())?;
                 continue;
             }
             let parent = target
                 .parent()
                 .ok_or_else(|| "发行包目标路径无效。".to_owned())?;
-            fs::create_dir_all(parent).map_err(|_| "无法创建发行包目录。".to_owned())?;
+            ensure_owned_directory(parent).map_err(|_| "无法创建发行包目录。".to_owned())?;
             let mut output = OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -203,13 +205,13 @@ pub(crate) fn extract_release_archive(
             validate_archive_path(&name)?;
             let target = destination.join(name.trim_end_matches('/'));
             if item.header().entry_type().is_dir() {
-                fs::create_dir_all(&target).map_err(|_| "无法创建发行包目录。".to_owned())?;
+                ensure_owned_directory(&target).map_err(|_| "无法创建发行包目录。".to_owned())?;
                 continue;
             }
             let parent = target
                 .parent()
                 .ok_or_else(|| "发行包目标路径无效。".to_owned())?;
-            fs::create_dir_all(parent).map_err(|_| "无法创建发行包目录。".to_owned())?;
+            ensure_owned_directory(parent).map_err(|_| "无法创建发行包目录。".to_owned())?;
             let mut output = OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -722,6 +724,7 @@ impl RepoError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn tar_gz<F>(build: F) -> Vec<u8>
     where
@@ -860,5 +863,21 @@ mod tests {
                 .unwrap_err()
                 .contains("重复或大小写冲突")
         );
+    }
+
+    #[test]
+    fn release_archive_rejects_a_non_directory_destination_before_writing() {
+        let bytes = tar_gz(|archive| {
+            tar_file(archive, "bin/tool.exe", b"MZ-test");
+            Ok(())
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let package = directory.path().join("package");
+        fs::write(&package, b"not a directory").unwrap();
+
+        let error = extract_release_archive(&bytes, "release.tgz", &package).unwrap_err();
+
+        assert!(error.contains("目标目录无效"));
+        assert!(!directory.path().join("bin/tool.exe").exists());
     }
 }
