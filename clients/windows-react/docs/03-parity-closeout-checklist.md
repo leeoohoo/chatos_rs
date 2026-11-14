@@ -16,6 +16,7 @@ Windows 产品版本：`3.0.9`
 
 - 本轮网络恢复后的原生窗口复核再次打开“插件与 Skills”：控制面返回 6 项 Marketplace 目录；Browser CDP、Solution Studio、Visual Computer Use 明确标记为 Windows 不支持，Diagram Studio、Document Tools、Web Design Studio 显示可安全安装。Computer Use/屏幕采集没有被客户端伪造为可用；该观察不关闭跨平台 `.tgz`、签名 Marketplace 发布和客户端安装闭环。
 - 同步执行 Windows Tauri 定向回归：Controlled Network URL/签名策略 5 项、Plugin 应用运行时 36 项全部通过；本轮没有修改运行逻辑，也没有输入测试账号密码、安装 Plugin、发送消息或修改持久化设置。
+- 重新执行 `plugins/computer-use` 的正式 `npm run pack:chatos`：Skill gate 审计先通过，随后按设计在 Windows `win32` 主机因缺少 macOS Swift App、`lipo` 与 `PlistBuddy` 工具链而明确失败；同一轮 `build:windows`、`smoke:windows` 和 `smoke:windows:screen` 均通过。该失败是跨平台正式包的真实外部构建依赖，不是 Windows worker 回归失败。
 
 - 已从 `origin/3.0.9.8` 拉取并合并远端最新头 `6ef0a7bd4`，合并提交为 `14fa7ccf9`，已推送到 `origin/3.0.9.3.1`。本次上游包含通信投递卡住释放、Memory Engine compaction/队列可靠性修复；Windows 分支保留自身程序 MCP 改动并完成上游语义合并。Windows 全量回归 `572 passed, 0 failed, 6 ignored`；Memory Engine 其余 `193 passed`，唯一未运行的是 Windows 无法直接执行的 `.sh` mTLS fixture。
 - Windows 能力快照已补齐真实闭环：主聊天现在发布项目经理 `project_dashboard_*` 工具；Plugin 安装助手使用独立的 `plugin-installer-*` 能力 revision，发送到该联系人时按精确 revision 读取并校验 instructions/tools，不会把安装权限混入普通聊天；本地任务最大迭代次数读取受管运行时配置，范围为 2–10,000，离线恢复继续使用已持久化能力快照。提交 `c212fefe0` 已推送。
