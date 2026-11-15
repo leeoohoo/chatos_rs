@@ -226,8 +226,22 @@ pub(crate) struct GatewayNativeAgentRuntimeSettings {
     pub request_timeout_seconds: usize,
     pub run_timeout_seconds: usize,
     pub maximum_no_progress_rounds: usize,
+    // The managed runtime endpoint is shared with macOS and no longer carries
+    // model-specific context limits. Keep the fields for the story policy
+    // compatibility path, but default them to the product policy values when
+    // older Windows callers receive the current gateway shape.
+    #[serde(default = "default_story_context_window_tokens")]
     pub context_window_tokens: usize,
+    #[serde(default = "default_story_output_reserve_tokens")]
     pub output_reserve_tokens: usize,
+}
+
+fn default_story_context_window_tokens() -> usize {
+    2_000_000
+}
+
+fn default_story_output_reserve_tokens() -> usize {
+    30_000
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1069,6 +1083,48 @@ mod tests {
         assert_eq!(
             settings.context_window_tokens - settings.output_reserve_tokens,
             1460000
+        );
+    }
+
+    #[test]
+    fn managed_runtime_config_decodes_current_gateway_shape_without_model_limits() {
+        let config: GatewayManagedRuntimeConfig = serde_json::from_value(serde_json::json!({
+            "native_agent_runtime_settings": {
+                "maximum_model_calls": 600,
+                "maximum_request_retries": 2,
+                "request_timeout_seconds": 180,
+                "run_timeout_seconds": 7200,
+                "maximum_no_progress_rounds": 8
+            },
+            "local_task_execution_settings": {
+                "max_iterations": 600,
+                "review_read_only_iterations": 8,
+                "review_missing_read_failures": 2,
+                "review_repeat_interval_iterations": 8,
+                "prompt_cache_enabled": true,
+                "prompt_cache_retention_enabled": true
+            },
+            "remote_control_trust": {
+                "require_signed_messages": true,
+                "signature_max_skew_seconds": 300,
+                "trusted_relay_public_keys": { "relay-key-1": "public-key" }
+            }
+        }))
+        .expect("current gateway runtime config should decode");
+        let settings = config
+            .native_agent_runtime_settings
+            .as_ref()
+            .expect("native runtime settings");
+        assert_eq!(settings.maximum_model_calls, 600);
+        assert_eq!(settings.context_window_tokens, 2_000_000);
+        assert_eq!(settings.output_reserve_tokens, 30_000);
+        assert_eq!(
+            config
+                .local_task_execution_settings
+                .as_ref()
+                .expect("task settings")
+                .max_iterations,
+            600
         );
     }
 
