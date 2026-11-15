@@ -54,6 +54,7 @@ Windows 产品版本：`3.0.9`
 - 2026-11-16 修复团队 Run 检查器轮询边界：`reviewing_followup` / `waiting_confirmation` 现在继续触发详情刷新，不会停留在进入审查门禁前的旧状态；Agent Management 定向回归 `28 passed, 0 failed`，TypeScript typecheck 通过。真实窗口仍缺少合法新 Run，故原生逐态验收继续保持未完成。
 - 2026-11-16 在轮询修复后重新执行 React/Vitest 全量回归：`143` 个测试文件、`529 passed, 0 failed`（`23.87s`）；未发现任务审查状态映射或其他 Windows React 回归。
 - 2026-11-16 轮询修复后重新执行 Windows React architecture audit 与 bundle audit：两项均通过，bundle `index-DqW4pc73.js` 为 `456.93 KiB` raw / `137.68 KiB` gzip。
+- 2026-11-16 轮询修复后补跑 Windows Tauri `run_inspector` 定向回归：`8 passed, 0 failed`，覆盖追加审查门禁优先级、事件安全投影、工具调用最新状态和版本/身份校验。
 - 2026-11-16 在同一 Host ready Release 中完成设置中心只读回归：设备与网关显示“本机 Agent Host 运行正常”、当前测试账号和 1 个工作区；命令审批页显示审批模式“需要确认/自动审批/完全控制”、当前选择“需要确认”、无等待审批操作且审批记录为空；运行与权限页显示本机终端“已就绪”、文件访问“按需授权”，Computer Use 与屏幕采集因受信 Plugin/Worker 尚未安装而明确显示“尚未提供”；访问控制页显示审批策略可编辑、文件权限为“Windows 账号权限”、网络访问为“跟随 Windows 本机”、进程树控制已完成，但目标级出站规则仍未完成。本轮未修改任何设置。
 - 2026-11-16 补跑受控网络策略定向回归：Local Connector backend `controlled_network` 为 `6 passed, 0 failed`，Windows Tauri 的签名策略/URL 生成测试为 `5 passed, 0 failed`，Agent Plugin `network.client` capability 映射为 `1 passed, 0 failed`。这些测试确认身份、SID、签名、域名/端口规范化和 `disabled`/`controlled` 选择稳定；策略目前仍只验证并映射到 AppContainer capability，尚未由 Windows 目标级 WFP/等价出站规则强制执行，因此不关闭该待办。
 - 2026-11-16 补跑项目 Git 与终端边界定向回归：Windows Tauri `project_git::tests` 为 `7 passed, 0 failed`，覆盖真实仓库 diff、分支/合并/remote、路径越界、凭据净化和超大输出回收；`terminal_tool_worker` 为 `11 passed, 0 failed`，覆盖 macOS 工具目录、项目读写、会话 ownership、依赖目录跳过和有界搜索。该结果补强 Git Diff/终端大输出的代码边界证据，但不替代真实窗口大目录和长稳性能基线。
