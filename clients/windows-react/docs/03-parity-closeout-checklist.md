@@ -16,6 +16,13 @@ Windows 产品版本：`3.0.9`
 
 ### 2026-11-15 正式 Release 单实例复核与控制面探针
 
+### 2026-11-15 managed runtime 契约修复后的 Release 回归
+
+- 根因已确认：`/api/local-connectors/config/runtime` 与 macOS 共享的当前响应不再提供旧 Windows DTO 强制要求的 `context_window_tokens` / `output_reserve_tokens`；Windows 因此在 Host 启动前把合法响应误报为“服务器返回了无法识别的数据”。客户端现改为对缺失字段使用产品默认故事上下文策略，并新增包含 `remote_control_trust`、完整本地任务设置和缺失模型限制字段的真实响应形状回归。
+- 修复后的 `target-shared/release/chatos-windows-react.exe` 单实例冷启动已通过：账号 `leeoohoo@gmail.com` 的正式窗口显示“本地服务已就绪”，资源导航、Agent、需求调研、AI 创作、应用、本机终端和设置面板均可打开；不再出现 `host_bootstrap: failed`。
+- 使用该 Release 在插件安装助手中发送“请只回复 OK，用于本地服务回归测试。”，模型返回 `OK`，消息记录和输入状态均正确更新；这证明控制面修复后不只是首屏可见，Host、模型选择、消息发送与响应回写业务链路也已打通。
+- 回归结果：Windows Rust `585 passed, 0 failed, 6 ignored`；定向 managed-runtime 解码测试 `2 passed, 0 failed`。`npm run tauri build -- --no-bundle` 成功生成最新 EXE；完整 WiX bundle 仍受外网下载超时影响，但不影响可执行文件回归。
+
 - `git fetch origin --prune` 已成功完成；当前远端仍以 `origin/3.0.9.8` 的 `6ef0a7bd4` 为最新 `3.0.9.x` 头，且该提交已是本分支祖先，没有新的 `3.0.9.9` 或待合并上游提交。工作区保持干净。
 - 在没有其他 ChatOS/Local Agent Host 进程占用共享状态时，重新启动 `target-parity-tauri/release/chatos-windows-react.exe`；真实原生窗口标题精确为 `ChatOS`，accessibility tree 可读到资源导航、账号 `leeoohoo@gmail.com`、项目入口和 Host 恢复入口，证明正式 Release 的窗口/首屏链路可用。Host 仍停留在“本地服务尚未就绪”，界面显示“服务器返回了无法识别的数据”，因此没有把窗口出现误记为 Host ready 或业务闭环完成。
 - 使用用户明确提供的测试账号做一次不落盘、只读的控制面复核：登录成功；`connector.jgoool.com` 的模型列表为 `13` 项，`13/13` 个模型详情均返回 `200 application/json`，执行能力和受管运行时配置端点也均返回 `200 application/json`。当前账号有 `9` 个带 `model_capability_revision` 的可执行/任务模型，另有 `4` 个媒体或非任务模型缺少 revision；缺少 revision 的条目不会被 Windows 当作任务模型静默启用。该探针证明服务端当前控制面可用，但不能替代正式客户端已持有会话的 Host ready 证据；本轮未读取或打开 Codex `auth.json`，也未把令牌或模型密钥写入文件。
