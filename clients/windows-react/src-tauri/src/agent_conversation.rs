@@ -5251,7 +5251,24 @@ async fn ensure_agent_host_conversation(
         Ok(HostResult::Conversation { conversation }) => {
             validate_host_conversation(&conversation, owner_user_id, conversation_id)?;
             if conversation.conversation.resource.as_ref() != Some(&resource) {
-                return Err("Local Agent Host 返回了不匹配的 Agent 资源绑定。".into());
+                if conversation.conversation.resource.is_some() {
+                    return Err("Local Agent Host 返回了不匹配的 Agent 资源绑定。".into());
+                }
+                let migrated = manager
+                    .execute(HostCommand::CreateConversation(CreateConversationCommand {
+                        conversation_id: conversation_id.to_owned(),
+                        owner_user_id: owner_user_id.to_owned(),
+                        title: title.to_owned(),
+                        resource: Some(resource.clone()),
+                    }))
+                    .await?;
+                let HostResult::Conversation { conversation } = migrated else {
+                    return Err("Local Agent Host 返回了错误的 Agent 会话响应。".into());
+                };
+                validate_host_conversation(&conversation, owner_user_id, conversation_id)?;
+                if conversation.conversation.resource.as_ref() != Some(&resource) {
+                    return Err("Local Agent Host 返回了不匹配的 Agent 资源绑定。".into());
+                }
             }
             Ok(())
         }

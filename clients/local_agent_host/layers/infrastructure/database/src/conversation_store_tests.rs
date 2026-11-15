@@ -180,6 +180,46 @@ async fn first_turn_atomically_creates_a_missing_conversation() {
 }
 
 #[tokio::test]
+async fn legacy_unbound_conversation_can_be_bound_once_without_overwriting_resources() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    let legacy = create(&storage, "agent-team-v2-room-agent").await;
+    assert_eq!(legacy.conversation.resource, None);
+
+    let resource = LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Contact,
+        resource_id: "agent".to_string(),
+    };
+    let mut bound = conversation("agent-team-v2-room-agent");
+    bound.resource = Some(resource.clone());
+    let migrated = storage
+        .create_conversation(&idempotency("bind-agent-team"), &bound, 2_000)
+        .await
+        .expect("bind legacy conversation");
+    assert_eq!(migrated.conversation.resource, Some(resource.clone()));
+    assert_eq!(migrated.conversation.version, 2);
+
+    let replay = storage
+        .create_conversation(&idempotency("bind-agent-team"), &bound, 3_000)
+        .await
+        .expect("replay binding");
+    assert_eq!(replay, migrated);
+
+    let mut wrong = bound;
+    wrong.resource = Some(LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Contact,
+        resource_id: "another-agent".to_string(),
+    });
+    assert!(matches!(
+        storage
+            .create_conversation(&idempotency("bind-agent-team-wrong"), &wrong, 4_000)
+            .await,
+        Err(ClientStorageError::Conflict(_))
+    ));
+}
+
+#[tokio::test]
 async fn turn_start_is_atomic_and_rejects_stale_or_concurrent_writes() {
     let storage = SqliteClientStorage::connect_memory()
         .await
