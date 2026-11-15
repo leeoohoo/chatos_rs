@@ -2151,10 +2151,7 @@ function AgentTeamRunDetailSheet({
   }, [ownerUserId, port, runId]);
 
   useEffect(() => {
-    if (!detail || ![
-      "ready", "running", "queued", "model_ready", "model_running",
-      "waiting_tool_result", "continuation_ready", "retry_scheduled",
-    ].includes(detail.run.status.toLowerCase())) return undefined;
+    if (!detail || !shouldPollTeamRunDetail(detail.run.status)) return undefined;
     let active = true;
     const timer = window.setInterval(() => {
       void port.loadRun(ownerUserId, runId, 0).then((snapshot) => {
@@ -2311,6 +2308,14 @@ export function teamRunDetailStatusLabel(
     default:
       return teamRunCheckpointStatusLabel(summaryStatus);
   }
+}
+
+export function shouldPollTeamRunDetail(status: string) {
+  return new Set([
+    "ready", "running", "queued", "model_ready", "model_running",
+    "waiting_tool_result", "continuation_ready", "retry_scheduled",
+    "reviewing_followup", "waiting_confirmation",
+  ]).has(status.trim().toLowerCase());
 }
 
 function teamRunStatusClass(status: AgentTeamRunSummary["runStatus"]) {
