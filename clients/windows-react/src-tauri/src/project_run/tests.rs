@@ -424,7 +424,7 @@ async fn stop_terminates_the_owned_project_process_group() {
 
     assert!(before.elapsed() < Duration::from_secs(4));
     assert!(!stopped.is_running);
-    assert!(matches!(stopped.instances[0].status, "exited" | "failed"));
+    assert_eq!(stopped.instances[0].status, "exited");
     manager.reset().await;
 }
 

@@ -139,6 +139,7 @@ struct ManagedProjectRun {
 
 struct ManagedProjectRunState {
     status: ManagedStatus,
+    stop_requested: bool,
     log: Vec<u8>,
     log_truncated: bool,
     started_at_unix_ms: i64,
@@ -492,7 +493,12 @@ impl ManagedProjectRun {
     async fn finish(&self, exit_code: Option<i32>) {
         let mut state = self.state.lock().await;
         state.exit_code = exit_code;
-        state.status = if exit_code == Some(0) {
+        // A user-requested stop is a normal terminal outcome even when the
+        // wrapped launcher reports a non-zero termination code (for example
+        // npm/cmd commonly returns 1 after its process tree is terminated).
+        // Preserve the exit code for diagnostics, but do not surface this as
+        // a failed run in the UI.
+        state.status = if state.stop_requested || exit_code == Some(0) {
             ManagedStatus::Exited
         } else {
             ManagedStatus::Failed
@@ -529,6 +535,7 @@ impl ManagedProjectRun {
             if matches!(state.status, ManagedStatus::Exited | ManagedStatus::Failed) {
                 return Ok(());
             }
+            state.stop_requested = true;
             state.status = ManagedStatus::Stopping;
         }
         self.append(format!("\n[{reason}]\n").as_bytes()).await;
@@ -612,6 +619,7 @@ async fn spawn_project_run(
         termination,
         state: Mutex::new(ManagedProjectRunState {
             status: ManagedStatus::Running,
+            stop_requested: false,
             log: initial_log,
             log_truncated: false,
             started_at_unix_ms: now_unix_ms(),
