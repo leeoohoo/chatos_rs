@@ -70,6 +70,25 @@ pub fn capability_usage(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let release_ids = task
+        .input
+        .pointer("/tool_options/plugin_release_snapshots")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let object = item.as_object()?;
+                    let key = object.get("plugin_key")?.as_str()?.trim();
+                    let id = object.get("plugin_id")?.as_str()?.trim();
+                    if key.is_empty() || id.is_empty() {
+                        return None;
+                    }
+                    Some((id.to_owned(), key.to_owned()))
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
 
     #[derive(Clone)]
     struct Call {
@@ -138,6 +157,7 @@ pub fn capability_usage(
                 .and_then(|item| item.provider_id.strip_prefix("plugin:"))
                 .map(|value| value.split(':').next().unwrap_or(value).to_owned())
                 .or(plugin_option);
+            let plugin = plugin.map(|value| release_ids.get(&value).cloned().unwrap_or(value));
             let display = disclosure
                 .map(|item| item.tool_name.clone())
                 .unwrap_or_else(|| humanized_tool_name(&requested_name));
@@ -416,7 +436,7 @@ mod tests {
             model_config_ref: "model-1".to_owned(),
             model_config_revision: "revision-1".to_owned(),
             capability_policy_revision: "policy-1".to_owned(),
-            input: json!({"tool_options":{"plugin_hints":[{"plugin_key":"document-plugin","component_key":"document-mcp"}]}}),
+            input: json!({"tool_options":{"plugin_hints":[{"plugin_key":"document-plugin","component_key":"document-mcp"}],"plugin_release_snapshots":[{"plugin_key":"document-plugin","plugin_id":"release-document"}]}}),
             max_iterations: 8,
             status: LocalTaskStatus::Succeeded,
             active_run_id: Some("run-1".to_owned()),
@@ -434,7 +454,7 @@ mod tests {
             run_id: "run-1".to_owned(),
             event_type: "tool_batch_requested".to_owned(),
             created_at_unix_ms: 10,
-            payload: json!({"tool_calls":[{"call_id":"call-1","tool_name":"capability_invoke","arguments":{"plugin_option":"document-plugin","secret":"must-not-leak"}}]}),
+            payload: json!({"tool_calls":[{"call_id":"call-1","tool_name":"capability_invoke","arguments":{"plugin_option":"document-plugin","tool_option":"document-create","secret":"must-not-leak"}}]}),
         }];
         let completed = vec![LocalAgentEventRecord {
             cursor: 2,
@@ -444,7 +464,14 @@ mod tests {
             created_at_unix_ms: 20,
             payload: json!({"invocations":[{"call_id":"call-1","tool_name":"capability_invoke","execution_route":"plugin","status":"succeeded","arguments":{"secret":"must-not-leak"}}]}),
         }];
-        let usage = capability_usage(&task, &requested, &completed, &[]).expect("usage");
+        let disclosures = vec![LocalRunCapabilityDisclosure {
+            plugin_option: "document-plugin".to_owned(),
+            tool_option: "document-create".to_owned(),
+            tool_name: "Document Create".to_owned(),
+            provider_id: "plugin:release-document:document-mcp".to_owned(),
+            schema_sha256: "a".repeat(64),
+        }];
+        let usage = capability_usage(&task, &requested, &completed, &disclosures).expect("usage");
         assert_eq!(usage["plugins"][0]["call_count"], 1);
         assert_eq!(usage["tools"][0]["call_count"], 1);
         assert!(usage.to_string().contains("document-plugin"));
