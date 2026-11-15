@@ -247,14 +247,19 @@ impl AgentSkillStore {
                 label: definition.label,
                 skill_ref: definition.skill_ref,
                 instructions_sha256: definition.instructions_sha256,
-                markdown: definition.markdown,
+                // The Host execution-context contract rejects leading/trailing
+                // whitespace, while the shared macOS catalog intentionally
+                // stores Markdown with a final newline.  The hash is already
+                // computed from the trimmed content, so keep the runtime
+                // payload consistent with that canonical representation.
+                markdown: definition.markdown.trim().to_owned(),
             }),
             "en-US" => Ok(AgentProfessionRuntimeSnapshot {
                 key: definition.key,
                 label: definition.label_en,
                 skill_ref: definition.skill_ref_en,
                 instructions_sha256: definition.instructions_sha256_en,
-                markdown: definition.markdown_en,
+                markdown: definition.markdown_en.trim().to_owned(),
             }),
             _ => Err("内部上下文语言无效。".into()),
         }
@@ -1067,6 +1072,23 @@ mod tests {
         assert!(store
             .profession_runtime_snapshot("alice", "project_manager", "fr-FR")
             .is_err());
+    }
+
+    #[test]
+    fn runtime_snapshot_trims_shared_catalog_markdown_for_host_context() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = AgentSkillStore::new(directory.path().join("overrides.json")).unwrap();
+
+        let snapshot = store
+            .profession_runtime_snapshot("alice", "general_member", "zh-CN")
+            .unwrap();
+
+        assert!(!snapshot.markdown.is_empty());
+        assert_eq!(snapshot.markdown, snapshot.markdown.trim());
+        assert_eq!(
+            snapshot.instructions_sha256,
+            sha256(snapshot.markdown.trim())
+        );
     }
 
     #[test]
