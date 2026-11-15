@@ -30,6 +30,7 @@ Windows 产品版本：`3.0.9`
 - 当前分支最新文档提交后再次复跑前端质量门禁：React Vitest `142` 个测试文件、`524` 项全部通过；`npm run typecheck`、`audit:architecture` 和 `audit:bundle` 均通过，Bundle 当前为 `456.02 KiB` raw / `137.46 KiB` gzip。
 - 2026-11-15 Run Inspector 改动后的全量回归再次通过：Windows Tauri `589 passed, 0 failed, 6 ignored`（含真实 AppContainer 文件权限/恢复测试，耗时 `109.33s`）；React Vitest `142` 个测试文件、`524` 项全部通过；`npm run typecheck` 与 Vite `npm run build` 均通过。该结果只证明本地代码质量门禁，不替代修复后真实团队消息/Run 链路验收。
 - 同一提交状态下，`npm run audit:architecture` 与 `npm run audit:bundle` 继续通过；当前入口 Bundle 为 `456.61 KiB` raw / `137.59 KiB` gzip，未触发预算或分层审计回退。
+- 2026-11-15 Computer Use Windows worker 本机门禁再次通过：`audit:skill-gates` 确认 `11` 个工具、`5` 个 Skills 和目录指纹；`test:packaging` `8 passed, 0 failed`；`smoke:windows` 通过 doctor、MCP `initialize`/`tools/list`、只读 `check_permissions`，`smoke:windows:screen` 进一步通过真实 `observe_screen`。这只证明仓库内 Windows worker 的本机协议和屏幕 smoke，不关闭跨平台 `.tgz`、签名 Marketplace 发布或客户端安装启用闭环。
 
 - `git fetch origin --prune` 已成功完成；当前远端仍以 `origin/3.0.9.8` 的 `6ef0a7bd4` 为最新 `3.0.9.x` 头，且该提交已是本分支祖先，没有新的 `3.0.9.9` 或待合并上游提交。工作区保持干净。
 - 在没有其他 ChatOS/Local Agent Host 进程占用共享状态时，重新启动 `target-parity-tauri/release/chatos-windows-react.exe`；真实原生窗口标题精确为 `ChatOS`，accessibility tree 可读到资源导航、账号 `leeoohoo@gmail.com`、项目入口和 Host 恢复入口，证明正式 Release 的窗口/首屏链路可用。Host 仍停留在“本地服务尚未就绪”，界面显示“服务器返回了无法识别的数据”，因此没有把窗口出现误记为 Host ready 或业务闭环完成。
