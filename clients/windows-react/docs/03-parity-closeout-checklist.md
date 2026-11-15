@@ -30,6 +30,7 @@ Windows 产品版本：`3.0.9`
 - 追加跨平台包门禁取证：Windows 上运行 `npm run pack:chatos` 会先通过 Skill-gate audit，再由 `assertMacPackagingHost` 明确拒绝（缺少 Swift、`lipo`、`PlistBuddy` macOS 工具链），并提示 Windows worker 构建/smoke 替代路径；因此 `.tgz` 产出和 Marketplace 发布继续标为外部 macOS/签名依赖。
 - 追加测试账号可用性取证：当前正式 Release 原生窗口实际显示已登录用户 `leeoohoo@gmail.com`，本地服务为“已就绪”，`Parity Smoke Team`、成员列表、团队消息输入框和发送入口均可达；页面仍保留历史失败 Run，当前测试消息只填入未发送。因此测试账号不是阻碍，后续缺少的是合法新 Run 的发送后回归证据；发送团队消息仍需动作时获得明确授权。
 - 追加 Agent 会话/团队投递回归：`cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml agent_conversation --lib` 完成 `36 passed, 0 failed`，覆盖账号隔离、团队创建与成员管理、消息路由、Contact 绑定、Delivery claim/幂等回执、Todo executor、附件和失败重试；代码回归通过，但不替代真实发送后的合法 Run 与任务审查逐态取证。
+- 追加 Local Agent Host 全量库回归：`cargo test --manifest-path clients/local_agent_host/Cargo.toml --lib` 完成 `161 passed, 0 failed`，覆盖会话/任务调度、Agent 工具边界、Hook、MCP、记忆同步、进程隔离和 `followup` 审查事务；Host 代码门禁通过，但不替代真实 Release 窗口中的消息发送和状态逐态验收。
 
 ### 2026-11-15 命令审批模型目录回退修复后的回归
 
