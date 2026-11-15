@@ -18,6 +18,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 网络恢复后的最终门禁复跑：`origin/3.0.9.8` 的头 `6ef0a7bd4` 已由当前 `3.0.9.3.1` 包含（`git rev-list HEAD..origin/3.0.9.8` 为 `0`，反向为 `436`），没有需要合并的上游提交；当前工作区仍干净。Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `590 passed, 0 failed, 6 ignored`（118.77 秒），React/Vitest 为 `143` 个测试文件、`529 passed, 0 failed`（35.73 秒），`npm run typecheck`、`npm run build`、`npm run audit:architecture` 和 `npm run audit:bundle` 全部通过（Bundle `456.93 KiB` raw / `137.70 KiB` gzip）。本轮只更新回归记录，没有改动运行逻辑或远端数据。
 
+- 2026-11-16 重新执行未签名 NSIS 隔离安装冷启动基线：`ChatOS_3.0.9_x64-setup.exe` 安装、5 次启动、原生窗口标题/进程路径校验、自动退出、卸载和用户数据清理全部通过；安装/卸载退出码均为 `0`，`p50=2,333 ms`、`p95=2,750 ms`，5 次均观察到真实 `ChatOS` 原生窗口，报告在验证后已清理。该结果补强本机安装包基线，但仍不替代正式签名、SmartScreen 和干净 VM 首次扫描复验。
+
 - 本轮在提交 `c365602ef` 后重新执行当前工作树全量回归：Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `590 passed, 0 failed, 6 ignored`（596 个测试，`114.49s`）；React/Vitest 为 `143` 个测试文件、`527 passed, 0 failed`（`35.54s`）。本轮仅有清单文档更新，未发现代码回归。
 - 继续用已登录的正式 Windows Release 做 Agent 团队运行页回归：测试账号、单实例 Local Agent Host 和 `Parity Smoke Team` 均正常可达；团队运行页显示两条历史失败 Run。当前一条 Host 本地记录为 `needs_review`，终止原因是旧会话缺少 Agent-bound resource；另一条界面摘要没有对应的本地 Host Run 记录，打开 Run 检查器时诚实显示“Run 详情暂时不可用”。这说明账号和登录不是阻碍，而是历史 Run 数据与当前 Host 资源绑定不一致；本轮未重试、发送新消息或修改持久化数据。
 - 重新构建并启动正式 Release 后复验 Run 检查器：第一条历史 Run 现在显示完整的失败状态、4 个运行事件、“工具调用”空态和 `run state is invalid: Conversation transcript requires an Agent-bound resource`；第二条历史摘要明确显示 `record not found` 及其 Run 标识。原生窗口已验证错误透传修复生效，仍未重试、发送新消息或修改持久化数据。
