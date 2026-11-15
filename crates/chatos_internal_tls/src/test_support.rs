@@ -21,10 +21,8 @@ pub async fn assert_mtls_listener_contract<F>(
     F: Fn(&Path, &Path, &Path) -> Result<RustlsConfig, String>,
 {
     let material_dir = unique_test_dir(namespace, "trusted");
-    let status = Command::new(generator_script)
-        .arg(&material_dir)
-        .status()
-        .expect("run mTLS material generator");
+    let status =
+        run_generator(generator_script, &material_dir).expect("run mTLS material generator");
     assert!(status.success(), "mTLS material generator must succeed");
 
     let tls = load_config(
@@ -86,6 +84,40 @@ pub async fn assert_mtls_listener_contract<F>(
         .expect("join mTLS server")
         .expect("mTLS server");
     let _ = std::fs::remove_dir_all(material_dir);
+}
+
+fn run_generator(
+    generator_script: &Path,
+    material_dir: &Path,
+) -> std::io::Result<std::process::ExitStatus> {
+    #[cfg(windows)]
+    {
+        // The generators are checked-in POSIX shell scripts. Windows cannot
+        // execute a `.sh` file directly (it reports ERROR_BAD_EXE_FORMAT),
+        // while the Windows test environment provides WSL's `bash.exe`.
+        // Convert drive paths to WSL mount paths before invoking the script.
+        return Command::new("bash")
+            .arg(wsl_path(generator_script))
+            .arg(wsl_path(material_dir))
+            .status();
+    }
+
+    #[cfg(not(windows))]
+    {
+        Command::new(generator_script).arg(material_dir).status()
+    }
+}
+
+#[cfg(windows)]
+fn wsl_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    let bytes = raw.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' {
+        let drive = (bytes[0] as char).to_ascii_lowercase();
+        let remainder = raw[2..].replace('\\', "/");
+        return format!("/mnt/{drive}{remainder}");
+    }
+    raw.replace('\\', "/")
 }
 
 pub fn assert_missing_material_rejected<F>(namespace: &str, load_config: F)
