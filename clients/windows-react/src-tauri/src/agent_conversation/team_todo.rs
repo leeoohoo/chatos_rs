@@ -3241,7 +3241,7 @@ impl AgentConversationStore {
                 let conversation_id = if trigger_kind == "todo" {
                     format!("agent-team-executor-{delivery_id}")
                 } else {
-                    super::agent_team_conversation_id(&team_id, &agent_id)
+                    super::agent_team_conversation_id(team_id, &agent_id)
                 };
                 Ok(ActiveTeamRunBinding {
                     delivery_id,
