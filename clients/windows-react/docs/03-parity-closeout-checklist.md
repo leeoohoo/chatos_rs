@@ -23,6 +23,7 @@ Windows 产品版本：`3.0.9`
 - 使用该 Release 在插件安装助手中发送“请只回复 OK，用于本地服务回归测试。”，模型返回 `OK`，消息记录和输入状态均正确更新；这证明控制面修复后不只是首屏可见，Host、模型选择、消息发送与响应回写业务链路也已打通。
 - 回归结果：Windows Rust `585 passed, 0 failed, 6 ignored`；定向 managed-runtime 解码测试 `2 passed, 0 failed`。`npm run tauri build -- --no-bundle` 成功生成最新 EXE；完整 WiX bundle 仍受外网下载超时影响，但不影响可执行文件回归。
 - 真实 Release Agent 团队回归已覆盖创建团队、邀请 Agent 和团队聊天发送；首次发送暴露共享 macOS Skill 目录末尾换行未满足 Host execution-context 的严格字符串契约（`profession_skill_markdown is invalid`）。Windows 运行时快照现统一裁剪内置目录 Markdown，并新增回归测试；继续回归又发现旧版 unbound Agent 会话与 Host transcript 的 Agent Contact 绑定契约冲突，现已用 v2 会话身份创建 Contact 资源绑定，并补齐 Host/Windows 双端校验与迁移隔离。修复后应继续复跑团队聊天和任务链路，不能把首次失败记录为业务完成。
+- Windows 下的 mTLS fixture 现已可真实执行：测试辅助层在 Windows 通过 WSL `bash` 调用仓库内的四个 POSIX 生成脚本，并将 drive path 转为 `/mnt/<drive>/...`；Configuration Center、User Service、Memory Engine、Plugin Management 的真实受信客户端证书握手测试均通过。修复提交 `908ef7375` 已推送到 `origin/3.0.9.3.1`。随后 Local Agent Host workspace 全量回归最终退出码为 `0`，不再把 `.sh` 执行错误记录为未运行 fixture。
 
 - `git fetch origin --prune` 已成功完成；当前远端仍以 `origin/3.0.9.8` 的 `6ef0a7bd4` 为最新 `3.0.9.x` 头，且该提交已是本分支祖先，没有新的 `3.0.9.9` 或待合并上游提交。工作区保持干净。
 - 在没有其他 ChatOS/Local Agent Host 进程占用共享状态时，重新启动 `target-parity-tauri/release/chatos-windows-react.exe`；真实原生窗口标题精确为 `ChatOS`，accessibility tree 可读到资源导航、账号 `leeoohoo@gmail.com`、项目入口和 Host 恢复入口，证明正式 Release 的窗口/首屏链路可用。Host 仍停留在“本地服务尚未就绪”，界面显示“服务器返回了无法识别的数据”，因此没有把窗口出现误记为 Host ready 或业务闭环完成。
