@@ -43,12 +43,6 @@ export function ProjectWorkspaceSurface({
     <div className="project-workspace-surface">
       <nav className="project-workspace-tabs" aria-label="项目工作面">
         <button className={tab === "directory" ? "is-selected" : ""} onClick={() => setTab("directory")} type="button">项目目录</button>
-        <button
-          aria-label="Git"
-          className="project-workspace-tabs__compat-git"
-          onClick={() => { setTab("directory"); setDirectoryTab("git"); }}
-          type="button"
-        >Git</button>
         <button className={tab === "messages" ? "is-selected" : ""} onClick={() => setTab("messages")} type="button">用户消息</button>
         <button className={tab === "settings" ? "is-selected" : ""} onClick={() => setTab("settings")} type="button">项目设置</button>
       </nav>

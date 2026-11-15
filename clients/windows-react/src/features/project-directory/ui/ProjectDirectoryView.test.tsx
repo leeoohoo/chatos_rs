@@ -146,9 +146,10 @@ describe("ProjectWorkspaceSurface", () => {
         projectName="Project One"
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    fireEvent.click(screen.getByRole("button", { name: "项目目录" }));
     const directoryTabs = await screen.findByRole("navigation", { name: "项目目录视图" });
-    expect(within(directoryTabs).getByRole("button", { name: "Git" })).toHaveTextContent("Git 2");
+    fireEvent.click(within(directoryTabs).getByRole("button", { name: "Git" }));
+    await waitFor(() => expect(within(directoryTabs).getByRole("button", { name: "Git" })).toHaveTextContent("Git 2"));
     fireEvent.click(await screen.findByRole("button", { name: "README.md 暂存区差异" }));
     fireEvent.click(await screen.findByRole("button", { name: "打开文件" }));
     expect(await screen.findByLabelText("README.md 文件内容")).toHaveTextContent("# Hello");

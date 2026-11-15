@@ -199,7 +199,6 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .project-workspace-tabs button.is-selected { color: inherit; background: rgba(255,255,255,.92); box-shadow: 0 1px 4px rgba(0,0,0,.13), 0 0 0 .5px rgba(0,0,0,.05); }
 .project-workspace-tabs button:disabled { cursor: default; opacity: .42; }
 .project-workspace-tabs button:focus-visible { outline: 3px solid rgba(10,132,255,.20); outline-offset: 1px; }
-.project-workspace-tabs__compat-git { position: absolute; width: 1px !important; height: 1px; overflow: hidden; clip: rect(0 0 0 0); margin: -1px; padding: 0 !important; white-space: nowrap; }
 .project-directory-workspace { position: relative; display: block; min-height: 0; flex: 1; overflow: hidden; }
 .project-directory-tabs { position: absolute; z-index: 4; top: 7px; left: 17%; display: grid; width: 146px; grid-template-columns: repeat(2,minmax(0,1fr)); transform: translateX(-50%); border-radius: 8px; padding: 2px; background: rgba(118,118,128,.10); }
 .project-directory-tabs button { min-height: 26px; border: 0; border-radius: 6px; padding: 3px 10px; color: var(--secondary); background: transparent; font: 590 10px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; cursor: pointer; }
