@@ -1,6 +1,6 @@
 # Windows React 与 macOS 功能拉齐关闭清单
 
-更新时间：2026-11-15
+更新时间：2026-11-16
 
 分支：`3.0.9.3.1`
 
@@ -15,6 +15,8 @@ Windows 产品版本：`3.0.9`
 ### 2026-11-14 最新同步与回归
 
 ### 2026-11-16 全量离线回归复核
+
+- 2026-11-16 网络恢复后的最终门禁复跑：`origin/3.0.9.8` 的头 `6ef0a7bd4` 已由当前 `3.0.9.3.1` 包含（`git rev-list HEAD..origin/3.0.9.8` 为 `0`，反向为 `436`），没有需要合并的上游提交；当前工作区仍干净。Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `590 passed, 0 failed, 6 ignored`（118.77 秒），React/Vitest 为 `143` 个测试文件、`529 passed, 0 failed`（35.73 秒），`npm run typecheck`、`npm run build`、`npm run audit:architecture` 和 `npm run audit:bundle` 全部通过（Bundle `456.93 KiB` raw / `137.70 KiB` gzip）。本轮只更新回归记录，没有改动运行逻辑或远端数据。
 
 - 本轮在提交 `c365602ef` 后重新执行当前工作树全量回归：Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `590 passed, 0 failed, 6 ignored`（596 个测试，`114.49s`）；React/Vitest 为 `143` 个测试文件、`527 passed, 0 failed`（`35.54s`）。本轮仅有清单文档更新，未发现代码回归。
 - 继续用已登录的正式 Windows Release 做 Agent 团队运行页回归：测试账号、单实例 Local Agent Host 和 `Parity Smoke Team` 均正常可达；团队运行页显示两条历史失败 Run。当前一条 Host 本地记录为 `needs_review`，终止原因是旧会话缺少 Agent-bound resource；另一条界面摘要没有对应的本地 Host Run 记录，打开 Run 检查器时诚实显示“Run 详情暂时不可用”。这说明账号和登录不是阻碍，而是历史 Run 数据与当前 Host 资源绑定不一致；本轮未重试、发送新消息或修改持久化数据。
