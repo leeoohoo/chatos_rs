@@ -25,6 +25,7 @@ Windows 产品版本：`3.0.9`
 - 2026-11-15 完成“访问控制”页真实原生只读回归：页面显示“审批策略可编辑”，并明确说明文件和网络选项保持锁定；实际控件为本机权限控制禁用、文件权限禁用且值为 `Windows 账号权限`、审批策略为 `按需审批`、审批人为 `用户`、网络访问禁用且值为“跟随 Windows 本机”，策略版本为 `windows-local-process-v1:request_approval`。运行后端显示“Windows 本机进程—部分保护”，文件隔离/网络隔离标为未完成，进程树控制标为已完成；页面明确提示目标级出站规则和 Plugin loopback 健康代理仍未关闭。本轮未修改任何策略或权限。
 - 2026-11-15 完成“设备与网关”页真实原生只读回归：正式 Release 显示“本机 Agent Host 运行正常”，用户为 `leeoohoo@gmail.com`，设备名为 `LEE`，网关为 `https://gateway.jgoool.com`，连接方式为“账号认证控制面”；页面提供“断开本机服务”和“刷新状态”入口，并显示 1 个工作区、Tauri/Rust 权限控制、Rust Local Agent Host、开发环境已关闭。页面同时明确 Windows 使用登录会话与本机 Rust Host，不宣称具备 macOS 的设备签名长连接 Relay。本轮未断开服务或刷新状态。
 - 2026-11-15 完成“插件与 Skills”页真实原生只读回归：Marketplace 目录实际返回 `6` 项，并列出 Browser CDP、Diagram Studio、Document Tools、Solution Studio、Visual Computer Use、Web Design Studio；Windows 不支持项明确标记 Browser CDP、Solution Studio、Visual Computer Use，支持项提供“安全安装”，不支持项的安装按钮保持禁用。页面同时显示“安装助手”“手动安装…”“检查更新”入口及 Marketplace 签名包/本机目录安装前校验说明。本轮未安装、手动导入或检查更新，未把目录可见误记为插件运行闭环。
+- 2026-11-15 完成“AI 模型”页真实原生只读回归：页面显示统一模型配置、`管理供应商`、`同步` 和禁用的 `保存全部`；默认模型实际读取到 Memory 总结 `my_api / gpt-6.1-sol`（Thinking `medium`），本机自动审批 Agent 为“未配置”，请求最大重试次数为 `5`。任务执行模型目录实际展示带凭据的账号模型，`my_api / deepseek-flash`、`deepseek-v4-pro`、`gpt-6.1-sol`、`gpt-6-luna` 等可编辑候选与图片/非任务模型的禁用字段均可见；页面明确说明候选仅影响创建任务，不影响聊天、Agent 或默认模型。本轮未同步、保存或修改模型配置。
 
 ### 2026-11-15 正式 Release 单实例复核与控制面探针
 
