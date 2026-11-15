@@ -563,6 +563,10 @@ describe("AgentManagementView", () => {
         cursor: 1, eventId: "event-1", eventType: "run_completed",
         summary: "Run 已完成", status: "succeeded", createdAtUnixMs: 40,
       }],
+      toolCalls: [{
+        callId: "call-1", toolName: "capability_invoke", displayName: "调用 Plugin 工具",
+        route: "plugin", status: "succeeded", resultSizeBytes: 128,
+      }],
       eventsHasMore: false,
       nextOffset: 1,
     }));
@@ -602,6 +606,10 @@ describe("AgentManagementView", () => {
     await waitFor(() => expect(loadRun).toHaveBeenCalledWith("owner-1", "run-team-1", 0));
     expect(await screen.findByText("Run 已完成")).toBeVisible();
     expect(screen.getByText("已完成团队回复")).toBeVisible();
+    expect(screen.getByText("工具调用")).toBeVisible();
+    expect(screen.getByText("调用 Plugin 工具")).toBeVisible();
+    expect(screen.getByText("路由 · plugin")).toBeVisible();
+    expect(screen.getByText("succeeded · 结果 128 B")).toBeVisible();
   });
 
   it("shows the newest persisted Todo execution record before older history", async () => {
