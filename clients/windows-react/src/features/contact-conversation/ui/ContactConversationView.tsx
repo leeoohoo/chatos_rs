@@ -61,6 +61,7 @@ export function ContactConversationView({
         realtimePort={realtimePort}
         runInspectorPort={runInspectorPort}
         runtimeSettingsPort={runtimeSettingsPort}
+        title={contact.title}
       />
     </div>
   );
