@@ -217,6 +217,40 @@ async fn legacy_unbound_conversation_can_be_bound_once_without_overwriting_resou
             .await,
         Err(ClientStorageError::Conflict(_))
     ));
+
+    let occupied_resource = LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Contact,
+        resource_id: "occupied-agent".to_string(),
+    };
+    let mut occupied = conversation("occupied-contact");
+    occupied.resource = Some(occupied_resource.clone());
+    storage
+        .create_conversation(&idempotency("create-occupied-contact"), &occupied, 5_000)
+        .await
+        .expect("create resource owner");
+    create(&storage, "legacy-contact-conflict").await;
+    let mut conflicting = conversation("legacy-contact-conflict");
+    conflicting.resource = Some(occupied_resource);
+    assert!(matches!(
+        storage
+            .create_conversation(
+                &idempotency("bind-legacy-contact-conflict"),
+                &conflicting,
+                6_000,
+            )
+            .await,
+        Err(ClientStorageError::Conflict(_))
+    ));
+    assert_eq!(
+        storage
+            .get_conversation("user-1", "legacy-contact-conflict")
+            .await
+            .expect("read legacy conflict")
+            .expect("legacy conversation")
+            .conversation
+            .resource,
+        None
+    );
 }
 
 #[tokio::test]
