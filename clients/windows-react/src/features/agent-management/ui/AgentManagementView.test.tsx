@@ -15,7 +15,7 @@ import {
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
 import type { ConversationAttachmentPort } from "../../conversation-attachments/ports/ConversationAttachmentPort";
-import { AgentManagementView } from "./AgentManagementView";
+import { AgentManagementView, teamRunDetailStatusLabel } from "./AgentManagementView";
 
 vi.mock("../../conversation-history/ui/ConversationHistoryView", () => ({
   ConversationHistoryView: ({ agentBound }: { agentBound?: boolean }) => (
@@ -31,6 +31,12 @@ describe("AgentManagementView", () => {
   beforeEach(() => useAgentTeamRunStore.getState().reset());
   beforeEach(() => useAgentTeamTodoStore.getState().reset());
   afterEach(cleanup);
+
+  it("prioritizes follow-up gates in the team Run detail status", () => {
+    expect(teamRunDetailStatusLabel("reviewing_followup", "running")).toBe("审查追加要求");
+    expect(teamRunDetailStatusLabel("waiting_confirmation", "failed")).toBe("等待确认");
+    expect(teamRunDetailStatusLabel("succeeded", "succeeded")).toBe("已完成");
+  });
 
   it("renders macOS profile card facts and enables profile editing", async () => {
     renderView();

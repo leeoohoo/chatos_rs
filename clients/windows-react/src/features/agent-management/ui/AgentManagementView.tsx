@@ -2191,7 +2191,7 @@ function AgentTeamRunDetailSheet({
               <section className="agent-team-run-detail__section">
                 <h3>运行信息</h3>
                 <dl>
-                  <Row label="状态" value={teamRunCheckpointStatusLabel(run.runStatus)} />
+                  <Row label="状态" value={teamRunDetailStatusLabel(detail.run.status, run.runStatus)} />
                   <Row label="触发" value={teamRunTriggerLabel(run.triggerKind)} />
                   <Row label="Delivery" value={teamRunStatusLabel(run.deliveryStatus)} />
                   <Row label="Memory" value={run.lane === "manager" ? "Agent 长期通讯" : "Todo 独立执行"} />
@@ -2297,6 +2297,20 @@ function teamRunCheckpointStatusLabel(status: AgentTeamRunSummary["runStatus"]) 
     failed: "失败",
     cancelled: "已取消",
   }[status];
+}
+
+export function teamRunDetailStatusLabel(
+  detailStatus: string,
+  summaryStatus: AgentTeamRunSummary["runStatus"],
+) {
+  switch (detailStatus.trim().toLowerCase()) {
+    case "reviewing_followup":
+      return "审查追加要求";
+    case "waiting_confirmation":
+      return "等待确认";
+    default:
+      return teamRunCheckpointStatusLabel(summaryStatus);
+  }
 }
 
 function teamRunStatusClass(status: AgentTeamRunSummary["runStatus"]) {
