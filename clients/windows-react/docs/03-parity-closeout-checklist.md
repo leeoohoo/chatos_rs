@@ -25,6 +25,7 @@ Windows 产品版本：`3.0.9`
 - 追加 Computer Use 本机准入回归：`plugins/computer-use` 的打包/平台契约测试 `8 passed`，`audit:skill-gates` 通过（11 tools、5 Skills）；该结果只证明源码与 Skill 门禁稳定，不替代签名 Marketplace 发布、客户端安装、`doctor`、屏幕采集和输入实测。
 - 追加 Computer Use Windows worker smoke：`npm run smoke:windows` 与 `npm run smoke:windows:screen` 均通过，真实覆盖 doctor、MCP `initialize`/`tools/list`、`check_permissions` 和 `observe_screen`；本机 worker 闭环已验证，但签名 Marketplace 发布、客户端安装/启用和真实输入仍保持未完成。
 - 追加 packaged worker doctor 取证：`screenCaptureAvailable=true`、`inputDesktopAvailable=true`、`allGranted=true`、`processElevated=false`，应用身份为 `Visual Computer Use for Windows`；普通桌面会话的屏幕采集/输入能力已就绪，管理员目标仍按 Windows UIPI 规则要求同等完整性级别。
+- 追加 packaged worker 只读 MCP 取证：`active_application` 正确识别当前 Release `chatos-windows-react.exe` / `ChatOS` 窗口，`list_shortcuts` 返回完整 Windows 快捷键目录；本轮未点击、输入或发送团队消息。
 
 ### 2026-11-15 命令审批模型目录回退修复后的回归
 
