@@ -645,7 +645,18 @@ fn project_command(executable: &std::path::Path, arguments: &[String]) -> Comman
             command_line.push(' ');
             command_line.push_str(&quote_windows_command_arg(OsStr::new(argument)));
         }
-        command.arg("/d").arg("/s").arg("/c").arg(command_line);
+        // `/c` consumes the remainder of the command line.  Passing that
+        // remainder through `arg` makes Rust escape the embedded quotes for
+        // CreateProcess, so cmd.exe receives `\"C:\\Program Files...\"` as
+        // the command name.  Keep the command line raw after `/c` so quoted
+        // batch paths remain executable when the path contains spaces.
+        command.arg("/d").arg("/s").arg("/c");
+        std::os::windows::process::CommandExt::raw_arg(
+            command.as_std_mut(),
+            // The outer pair is consumed by cmd's `/s /c` parser; the
+            // inner pair stays around the batch path itself.
+            format!(" \"{command_line}\""),
+        );
         return command;
     }
 

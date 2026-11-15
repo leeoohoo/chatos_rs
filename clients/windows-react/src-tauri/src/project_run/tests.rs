@@ -516,7 +516,7 @@ async fn runtime_launches_analyzed_npm_script_with_windows_shim() {
         root.join("package.json"),
         json!({
             "name": "project-run-test",
-            "scripts": {"dev": "node -e \"setTimeout(() => {}, 60000)\""}
+            "scripts": {"dev": "node -e \"console.log('project-run-ready'); setTimeout(() => {}, 60000)\""}
         })
         .to_string(),
     )
@@ -542,6 +542,25 @@ async fn runtime_launches_analyzed_npm_script_with_windows_shim() {
     let started = manager.start(&scope, resolved).await.unwrap();
     assert!(started.is_running);
     let instance_id = started.instances[0].id.clone();
+    let mut observed = started;
+    for _ in 0..20 {
+        if observed.instances[0].log.contains("project-run-ready") {
+            break;
+        }
+        if !observed.is_running {
+            break;
+        }
+        observed = manager
+            .poll_changes(&scope, observed.revision, 250)
+            .await
+            .unwrap()
+            .state;
+    }
+    assert!(
+        observed.instances[0].log.contains("project-run-ready"),
+        "unexpected npm shim output: {}",
+        observed.instances[0].log
+    );
     let stopped = manager.stop(&scope, &instance_id).await.unwrap();
     assert!(!stopped.is_running);
     manager.reset().await;
