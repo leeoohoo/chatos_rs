@@ -16,6 +16,7 @@ Windows 产品版本：`3.0.9`
 
 ### 2026-11-16 全量离线回归复核
 
+- 本轮在提交 `c365602ef` 后重新执行当前工作树全量回归：Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `590 passed, 0 failed, 6 ignored`（596 个测试，`114.49s`）；React/Vitest 为 `143` 个测试文件、`527 passed, 0 failed`（`35.54s`）。本轮仅有清单文档更新，未发现代码回归。
 - 继续用已登录的正式 Windows Release 做 Agent 团队运行页回归：测试账号、单实例 Local Agent Host 和 `Parity Smoke Team` 均正常可达；团队运行页显示两条历史失败 Run。当前一条 Host 本地记录为 `needs_review`，终止原因是旧会话缺少 Agent-bound resource；另一条界面摘要没有对应的本地 Host Run 记录，打开 Run 检查器时诚实显示“Run 详情暂时不可用”。这说明账号和登录不是阻碍，而是历史 Run 数据与当前 Host 资源绑定不一致；本轮未重试、发送新消息或修改持久化数据。
 - 重新构建并启动正式 Release 后复验 Run 检查器：第一条历史 Run 现在显示完整的失败状态、4 个运行事件、“工具调用”空态和 `run state is invalid: Conversation transcript requires an Agent-bound resource`；第二条历史摘要明确显示 `record not found` 及其 Run 标识。原生窗口已验证错误透传修复生效，仍未重试、发送新消息或修改持久化数据。
 
