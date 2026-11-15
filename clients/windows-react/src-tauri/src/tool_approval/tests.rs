@@ -7,8 +7,24 @@ use serde_json::json;
 use super::{
     exact_pending_invocation,
     models::{ToolApprovalDecision, ToolApprovalMode},
-    policy_auto_approval_candidate, project_pending,
+    gateway_model_options, policy_auto_approval_candidate, project_pending,
 };
+use crate::authentication::GatewayModelConfig;
+
+#[test]
+fn gateway_fallback_model_catalog_is_scoped_to_enabled_credentialed_owner_models() {
+    let catalog = vec![
+        gateway_model("usable", "owner-1", true, true, "gpt-4o"),
+        gateway_model("disabled", "owner-1", false, true, "gpt-4o"),
+        gateway_model("missing-key", "owner-1", true, false, "gpt-4o"),
+        gateway_model("other-owner", "owner-2", true, true, "gpt-4o"),
+        gateway_model("blank-model", "owner-1", true, true, " "),
+    ];
+    let options = gateway_model_options(catalog, "owner-1");
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].id, "usable");
+    assert_eq!(options[0].model_name, "gpt-4o");
+}
 
 #[test]
 fn projects_only_safe_fields_and_never_serializes_full_arguments() {
@@ -242,5 +258,38 @@ fn invocation(
         claim_until_unix_ms: None,
         created_at_unix_ms: 10,
         updated_at_unix_ms: 11,
+    }
+}
+
+fn gateway_model(
+    id: &str,
+    owner_user_id: &str,
+    enabled: bool,
+    has_api_key: bool,
+    model: &str,
+) -> GatewayModelConfig {
+    GatewayModelConfig {
+        id: id.into(),
+        owner_user_id: owner_user_id.into(),
+        name: id.into(),
+        provider: "openai".into(),
+        model: model.into(),
+        api_key: None,
+        base_url: None,
+        task_thinking_level: None,
+        temperature: None,
+        max_output_tokens: None,
+        model_capability_revision: None,
+        context_window_tokens: None,
+        output_reserve_tokens: None,
+        protocol_overhead_estimator_id: None,
+        tokenizer_id: None,
+        responses_compaction_threshold: None,
+        enabled,
+        task_enabled: None,
+        has_api_key,
+        supports_images: false,
+        supports_reasoning: false,
+        supports_responses: true,
     }
 }

@@ -505,7 +505,7 @@ fn resolved_snapshot(
     ))
 }
 
-fn model_option_from_gateway(model: &GatewayModelConfig) -> ControlPlaneModelOption {
+pub(crate) fn model_option_from_gateway(model: &GatewayModelConfig) -> ControlPlaneModelOption {
     model_option(
         model.id.clone(),
         non_empty(model.name.clone()).unwrap_or_else(|| model.model.clone()),

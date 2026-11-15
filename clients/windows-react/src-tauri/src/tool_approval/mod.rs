@@ -164,16 +164,18 @@ pub async fn decide_tool_approval(
 
 #[tauri::command]
 pub async fn load_tool_approval_settings(
+    authentication: State<'_, AuthenticationManager>,
     manager: State<'_, HostManager>,
     settings: State<'_, ApprovalSettingsStore>,
     owner_user_id: String,
 ) -> Result<ToolApprovalSettings, String> {
     let owner_user_id = required("owner_user_id", owner_user_id)?;
-    approval_settings_snapshot(&manager, &settings, &owner_user_id).await
+    approval_settings_snapshot(&authentication, &manager, &settings, &owner_user_id).await
 }
 
 #[tauri::command]
 pub async fn update_tool_approval_mode(
+    authentication: State<'_, AuthenticationManager>,
     manager: State<'_, HostManager>,
     settings: State<'_, ApprovalSettingsStore>,
     input: ToolApprovalModeMutationInput,
@@ -189,17 +191,18 @@ pub async fn update_tool_approval_mode(
     })
     .await
     .map_err(|_| "审批设置任务异常退出。".to_owned())??;
-    approval_settings_snapshot(&manager, &settings, &owner_user_id).await
+    approval_settings_snapshot(&authentication, &manager, &settings, &owner_user_id).await
 }
 
 #[tauri::command]
 pub async fn update_tool_approval_model(
+    authentication: State<'_, AuthenticationManager>,
     manager: State<'_, HostManager>,
     settings: State<'_, ApprovalSettingsStore>,
     input: ToolApprovalModelMutationInput,
 ) -> Result<ToolApprovalSettings, String> {
     let owner_user_id = required("owner_user_id", input.owner_user_id)?;
-    let models = manager.model_options(&owner_user_id).await?;
+    let models = approval_model_options(&authentication, &manager, &owner_user_id).await?;
     let store = settings.inner().clone();
     let owner = owner_user_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -212,7 +215,7 @@ pub async fn update_tool_approval_model(
     })
     .await
     .map_err(|_| "审批模型设置任务异常退出。".to_owned())??;
-    approval_settings_snapshot(&manager, &settings, &owner_user_id).await
+    approval_settings_snapshot(&authentication, &manager, &settings, &owner_user_id).await
 }
 
 async fn resolve_terminal_approval_scope(
@@ -496,16 +499,56 @@ async fn submit_decision(
 }
 
 async fn approval_settings_snapshot(
+    authentication: &AuthenticationManager,
     manager: &HostManager,
     settings: &ApprovalSettingsStore,
     owner_user_id: &str,
 ) -> Result<ToolApprovalSettings, String> {
-    let models = manager.model_options(owner_user_id).await?;
+    let models = approval_model_options(authentication, manager, owner_user_id).await?;
     let store = settings.clone();
     let owner = owner_user_id.to_owned();
     tauri::async_runtime::spawn_blocking(move || store.load(&owner, &models))
         .await
         .map_err(|_| "审批设置任务异常退出。".to_owned())?
+}
+
+async fn approval_model_options(
+    authentication: &AuthenticationManager,
+    manager: &HostManager,
+    owner_user_id: &str,
+) -> Result<Vec<crate::control_plane::ControlPlaneModelOption>, String> {
+    match manager.model_options(owner_user_id).await {
+        Ok(models) => Ok(models),
+        Err(error) if error == "模型目录尚未就绪。" => {
+            let catalog = authentication
+                .model_catalog_for_owner(owner_user_id)
+                .await
+                .map_err(|error| error.message)?;
+            let models = gateway_model_options(catalog, owner_user_id);
+            if models.is_empty() {
+                Err("账号没有已启用且带凭据的模型。".into())
+            } else {
+                Ok(models)
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn gateway_model_options(
+    catalog: Vec<crate::authentication::GatewayModelConfig>,
+    owner_user_id: &str,
+) -> Vec<crate::control_plane::ControlPlaneModelOption> {
+    catalog
+        .into_iter()
+        .filter(|model| {
+            model.owner_user_id == owner_user_id
+                && model.enabled
+                && model.has_api_key
+                && !model.model.trim().is_empty()
+        })
+        .map(|model| crate::control_plane::model_option_from_gateway(&model))
+        .collect()
 }
 
 async fn load_approval_mode(
