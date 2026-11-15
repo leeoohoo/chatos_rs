@@ -16,6 +16,8 @@ Windows 产品版本：`3.0.9`
 
 ### 2026-11-16 全量离线回归复核
 
+- 继续用已登录的正式 Windows Release 做 Agent 团队运行页回归：测试账号、单实例 Local Agent Host 和 `Parity Smoke Team` 均正常可达；团队运行页显示两条历史失败 Run。当前一条 Host 本地记录为 `needs_review`，终止原因是旧会话缺少 Agent-bound resource；另一条界面摘要没有对应的本地 Host Run 记录，打开 Run 检查器时诚实显示“Run 详情暂时不可用”。这说明账号和登录不是阻碍，而是历史 Run 数据与当前 Host 资源绑定不一致；本轮未重试、发送新消息或修改持久化数据。
+
 - 当前分支 `3.0.9.3.1` 工作区干净，已与 `origin/3.0.9.3.1` 同步；本轮没有发现需要合并的更新。
 - Windows Tauri Rust 全量回归：`590 passed, 0 failed, 6 ignored`（包括 AppContainer、Agent 会话、任务审查、网络策略和运行时隔离测试）。
 - React/Vitest 全量回归：`142` 个测试文件、`525 passed, 0 failed`；TypeScript typecheck、architecture audit、bundle audit 全部通过。
