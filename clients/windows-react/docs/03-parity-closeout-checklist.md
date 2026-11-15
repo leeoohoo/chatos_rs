@@ -33,6 +33,7 @@ Windows 产品版本：`3.0.9`
 - 2026-11-15 账号会话恢复后完成 Agent 团队页真实只读回归：`Parity Smoke Team` 总览显示阶段“等待项目经理建立总览”、`0%`、进行中/等待/经理协调均为 `0`，需你处理为 `2`；两条待处理入口均为 `检查失败的 Agent Run`，其中一条明确显示 `invalid Agent execution context: profession_skill_markdown is invalid`。团队成员区显示 1 个在线的 `Parity Smoke Agent`。切换“任务”页最终返回“还没有团队任务 / 项目经理创建的任务会显示在这里”（本次读取约 15 秒），因此没有合法 `reviewing_followup` / `waiting_confirmation` 任务实例可供逐态验收；本轮未发送消息、创建任务或重试 Run。
 - 2026-11-15 在同一真实 Release 打开失败 Run 的 Run 检查器：页面实际显示状态/Delivery 为“失败”、Memory 为“Agent 长期通讯”、模型调用 `1 / 32`、运行耗时 `0.0 秒`，错误为 `run state is invalid: Conversation transcript requires an Agent-bound resource`；工具调用为空，运行事件依次可见 `memory_transcript_record_synced`、`run_needs_review`（Local Agent profile step failed）、`run_claimed`、`conversation_turn_started`，底部提供“重试中断步骤”入口。该取证确认失败审查信息和入口真实可达，但不把失败 Run 当作 `reviewing_followup` / `waiting_confirmation` 成功态；本轮未点击重试。
 - 2026-11-15 完成项目工作区“项目目录 / Git”真实原生只读回归：项目目录实际加载仓库根目录，树中可见 `.cargo`、`.git`、`clients`、`docs`、`target-shared` 等目录和根文件，空态明确提示选择文件后预览且绝对路径不会发送到 React；Git 页读取当前分支 `3.0.9.3.1`、远端同步状态，暂存区/工作区均为 `0`，显示“工作区没有未暂存修改”，提交历史可读取到本轮最新提交。提交说明输入框和拉取/推送/分支/刷新入口均可见，本轮未执行 Git 写操作。
+- 2026-11-15 在同一正式 Release 窗口继续完成项目文件预览真实回归：从项目目录树选择根文件 `README.md` 后，右侧先显示“正在读取文件 /README.md”，随后加载 `README.md` 标题、路径、`12.5 KB`、可写状态、删除/编辑入口和完整 Markdown 内容；这证明项目目录不只是列举树，文件读取与预览链路也已在登录账号 `leeoohoo@gmail.com` 下实际工作。本轮未编辑、删除或保存文件。
 
 ### 2026-11-15 正式 Release 单实例复核与控制面探针
 
