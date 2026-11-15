@@ -67,6 +67,50 @@ export function TaskProcessSection({ phase }: { phase: OpenInspectorPhase }) {
   );
 }
 
+export function TaskCapabilitiesSection({ phase }: { phase: OpenInspectorPhase }) {
+  const usage = phase.taskDetail?.task.capabilityUsage;
+  if (!phase.taskDetail) return <InspectorState loading={phase.isLoadingTask} message="正在加载插件与工具记录…" />;
+  if (!usage) return <InspectorState message="任务产生真实调用后，会在这里集中展示。" />;
+  const totalCalls = usage.tools.reduce((sum, tool) => sum + tool.call_count, 0);
+  const usedPlugins = usage.plugins.filter((plugin) => plugin.call_count > 0);
+  return (
+    <div className="inspector-section capability-usage">
+      <InfoCard title="插件与工具">
+        <p className="inspector-text">只在这里汇总本任务真实使用的能力</p>
+        <div className="capability-facts">
+          <Definition label="调用次数" value={`${totalCalls} 次`} />
+          <Definition label="实际插件" value={`${usedPlugins.length}`} />
+          <Definition label="工具种类" value={`${usage.tools.length}`} />
+        </div>
+      </InfoCard>
+      <InfoCard title="实际使用的插件">
+        {usedPlugins.length > 0 ? usedPlugins.map((plugin) => (
+          <div className="capability-row" key={plugin.id}>
+            <strong>{plugin.display_name}</strong><span>{plugin.call_count} 次</span>
+          </div>
+        )) : <p className="inspector-text">本任务没有调用插件能力。</p>}
+      </InfoCard>
+      <InfoCard title="插件与外部工具调用">
+        {usage.tools.length > 0 ? usage.tools.map((tool) => (
+          <div className="capability-row" key={`${tool.plugin_id ?? "builtin"}:${tool.name}:${tool.status}`}>
+            <div><strong>{tool.display_name}</strong><small>{tool.plugin_name ? `插件 · ${tool.plugin_name}` : routeLabel(tool.route)}</small></div>
+            <span>{tool.status} · {tool.call_count} 次</span>
+          </div>
+        )) : <p className="inspector-text">尚未产生插件或外部工具调用。</p>}
+      </InfoCard>
+    </div>
+  );
+}
+
+function routeLabel(route: string) {
+  switch (route.toLowerCase()) {
+    case "external_mcp": case "mcp": return "外部 MCP 工具";
+    case "plugin": case "capability": return "插件能力";
+    case "project": return "项目工具";
+    default: return "系统内置工具";
+  }
+}
+
 export function TaskRunSection({
   phase,
   onLoadOlder,

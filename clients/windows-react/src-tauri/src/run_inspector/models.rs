@@ -2,6 +2,7 @@ use chatos_local_agent_protocol::{
     LocalAgentRunRecord, LocalMessageTaskGraph, LocalMessageTaskGraphEdge, LocalTaskRecord,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +99,7 @@ pub struct TaskInspectorTask {
     pub last_run_id: Option<String>,
     pub model_config_ref: String,
     pub thinking_level: Option<String>,
+    pub capability_usage: Option<Value>,
     pub created_at_unix_ms: i64,
     pub updated_at_unix_ms: i64,
 }

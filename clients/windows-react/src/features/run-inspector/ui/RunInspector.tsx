@@ -12,6 +12,7 @@ import {
   InspectorState,
   statusLabel,
   TaskDetailSection,
+  TaskCapabilitiesSection,
   TaskProcessSection,
   TaskRunSection,
 } from "./RunInspectorSections";
@@ -20,6 +21,7 @@ const POLL_INTERVAL_MILLISECONDS = 1_500;
 const sections: Array<{ id: RunInspectorSection; label: string }> = [
   { id: "detail", label: "任务详情" },
   { id: "process", label: "执行过程" },
+  { id: "capabilities", label: "插件与工具" },
   { id: "run", label: "运行详情" },
 ];
 
@@ -230,6 +232,8 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
                 <TaskDetailSection phase={phase} />
               ) : phase.section === "process" ? (
                 <TaskProcessSection phase={phase} />
+              ) : phase.section === "capabilities" ? (
+                <TaskCapabilitiesSection phase={phase} />
               ) : (
                 <TaskRunSection phase={phase} onLoadOlder={() => void loadOlder(port)} />
               )}

@@ -92,7 +92,7 @@ describe("Run Inspector launcher", () => {
     fireEvent.keyDown(tabs[0], { key: "ArrowRight" });
     expect(tabs[1]).toHaveFocus();
     fireEvent.keyDown(tabs[1], { key: "End" });
-    expect(tabs[2]).toHaveFocus();
+    expect(tabs[3]).toHaveFocus();
   });
 });
 

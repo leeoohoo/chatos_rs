@@ -4,10 +4,10 @@ mod projection;
 pub(crate) use projection::display_status;
 
 use chatos_local_agent_protocol::{
-    CancelTaskCommand, GetMessageTaskGraphCommand, GetRunCommand, GetTaskRunsCommand, HostCommand,
-    HostResult, ListEventsCommand, LocalAgentEventPayloadMode, LocalAgentEventRecord,
-    LocalAgentRunRecord, LocalMessageTaskGraph, LocalTaskGraph, RestartTaskCommand,
-    RetryTaskCommand,
+    CancelTaskCommand, GetMessageTaskGraphCommand, GetRunCapabilityDisclosuresCommand,
+    GetRunCommand, GetTaskRunsCommand, HostCommand, HostResult, ListEventsCommand,
+    LocalAgentEventPayloadMode, LocalAgentEventRecord, LocalAgentRunRecord, LocalMessageTaskGraph,
+    LocalTaskGraph, RestartTaskCommand, RetryTaskCommand,
 };
 use tauri::State;
 
@@ -49,14 +49,55 @@ pub async fn load_task_inspector(
         .find(|task| task.task_id == task_id)
         .ok_or_else(|| "没有找到对应的任务。".to_owned())?;
     let run = latest_task_run(&manager, &lookup.owner_user_id, &task_id).await?;
-    let entries = match run.as_ref() {
-        Some(run) => projection::process_entries(
-            &process_events(&manager, &lookup.owner_user_id, &run.run_id).await?,
-        ),
-        None => Vec::new(),
+    let (entries, completed_events, requested_events, disclosures) = match run.as_ref() {
+        Some(run) => {
+            let completed = process_events(
+                &manager,
+                &lookup.owner_user_id,
+                &run.run_id,
+                "tool_batch_completed",
+            )
+            .await?;
+            let requested = process_events(
+                &manager,
+                &lookup.owner_user_id,
+                &run.run_id,
+                "tool_batch_requested",
+            )
+            .await?;
+            let disclosures = match manager
+                .execute(HostCommand::GetRunCapabilityDisclosures(
+                    GetRunCapabilityDisclosuresCommand {
+                        owner_user_id: lookup.owner_user_id.clone(),
+                        run_id: run.run_id.clone(),
+                    },
+                ))
+                .await
+            {
+                Ok(HostResult::RunCapabilityDisclosures {
+                    run_id,
+                    disclosures,
+                }) if run_id == run.run_id => disclosures,
+                _ => Vec::new(),
+            };
+            (
+                projection::process_entries(&completed),
+                completed,
+                requested,
+                disclosures,
+            )
+        }
+        None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
     };
     Ok(TaskInspectorDetail {
-        task: projection::task(&task, run.as_ref(), entries),
+        task: projection::task(
+            &task,
+            run.as_ref(),
+            entries,
+            &completed_events,
+            &requested_events,
+            &disclosures,
+        ),
         run: run.as_ref().map(RunInspectorRun::from_record),
     })
 }
@@ -242,6 +283,7 @@ async fn process_events(
     manager: &HostManager,
     owner_user_id: &str,
     run_id: &str,
+    event_type: &str,
 ) -> Result<Vec<LocalAgentEventRecord>, String> {
     let mut collected = Vec::new();
     let mut cursor = 0;
@@ -252,7 +294,7 @@ async fn process_events(
                 after_cursor: cursor,
                 limit: PROCESS_EVENT_LIMIT,
                 run_id: Some(run_id.to_owned()),
-                event_type: Some("tool_batch_completed".to_owned()),
+                event_type: Some(event_type.to_owned()),
                 newest_first: false,
                 payload_mode: LocalAgentEventPayloadMode::Full,
             }))

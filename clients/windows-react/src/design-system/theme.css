@@ -856,6 +856,10 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .process-entry strong { font-size: 12px; }
 .process-entry time { color: var(--tertiary); font-size: 10px; }
 .process-entry p { margin: 6px 0 0; color: var(--secondary); font-size: 12px; line-height: 1.58; white-space: pre-wrap; user-select: text; }
+.capability-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.capability-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--separator); font-size: 12px; }
+.capability-row:last-child { border-bottom: 0; }
+.capability-row small { display: block; margin-top: 3px; color: var(--tertiary); font-size: 10px; }
 .run-event-list { display: flex; flex-direction: column; gap: 0; padding: 2px 0 0; }
 .run-event { display: grid; grid-template-columns: 12px minmax(0,1fr); gap: 8px; padding: 8px 5px; }
 .run-event__dot { width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(10,132,255,.12); }

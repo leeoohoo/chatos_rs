@@ -11,7 +11,29 @@ export const runInspectorGraphSchema = messageTaskGraphSchema.extend({
 });
 
 export type RunInspectorGraph = z.infer<typeof runInspectorGraphSchema>;
-export type RunInspectorSection = "detail" | "process" | "run";
+export type RunInspectorSection = "detail" | "process" | "capabilities" | "run";
+
+export const taskCapabilityUsageSchema = z.object({
+  version: z.number().int().positive(),
+  plugins: z.array(z.object({
+    id: z.string().min(1),
+    key: z.string().min(1),
+    component_key: z.string().min(1),
+    display_name: z.string().min(1),
+    call_count: z.number().int().nonnegative(),
+    status: z.string().min(1),
+  })),
+  tools: z.array(z.object({
+    name: z.string().min(1),
+    display_name: z.string().min(1),
+    route: z.string().min(1),
+    plugin_id: z.string().nullable(),
+    plugin_name: z.string().nullable(),
+    status: z.string().min(1),
+    call_count: z.number().int().nonnegative(),
+    latest_at_unix_ms: z.number().nonnegative(),
+  })),
+});
 
 export const runInspectorProcessEntrySchema = z.object({
   id: z.string().min(1),
@@ -47,6 +69,7 @@ export const taskInspectorDetailSchema = z.object({
     lastRunId: z.string().min(1).nullable(),
     modelConfigRef: z.string().min(1),
     thinkingLevel: z.string().nullable(),
+    capabilityUsage: taskCapabilityUsageSchema.nullable().optional(),
     createdAtUnixMs: z.number().int().nonnegative(),
     updatedAtUnixMs: z.number().int().nonnegative(),
   }),
