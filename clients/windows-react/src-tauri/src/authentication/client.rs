@@ -769,6 +769,7 @@ impl AuthenticationApiClient {
         body: Option<&B>,
         access_token: Option<&str>,
     ) -> Result<ApiReply<R>, ApiError> {
+        let endpoint = url.path().to_owned();
         let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| ApiError {
             message: "请求方法无效。".into(),
             unauthorized: false,
@@ -825,8 +826,8 @@ impl AuthenticationApiClient {
         } else {
             bytes.as_ref()
         };
-        let value = serde_json::from_slice(source).map_err(|_| ApiError {
-            message: "服务器返回了无法识别的数据。".into(),
+        let value = serde_json::from_slice(source).map_err(|error| ApiError {
+            message: response_decode_error(&endpoint, &error),
             unauthorized: false,
         })?;
         Ok(ApiReply {
@@ -947,6 +948,14 @@ fn non_empty_owned(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_owned())
 }
 
+fn response_decode_error(endpoint: &str, error: &serde_json::Error) -> String {
+    if error.is_syntax() || error.is_eof() {
+        format!("服务器返回了无法识别的数据（接口：{endpoint}）。")
+    } else {
+        format!("服务器返回的数据格式与当前客户端不兼容（接口：{endpoint}）。")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -988,6 +997,55 @@ mod tests {
             assert_eq!(response.token, "secret");
             assert_eq!(response.user.id, "u1");
         }
+    }
+
+    #[test]
+    fn decodes_current_connector_model_config_shape_without_echoing_secrets() {
+        let model: GatewayModelConfig = serde_json::from_value(serde_json::json!({
+            "id": "provider_model_1",
+            "owner_user_id": "owner-1",
+            "name": "my_api / gpt-6.1-sol",
+            "provider": "gpt",
+            "model": "gpt-6.1-sol",
+            "api_key": "redacted-test-key",
+            "base_url": "https://example.test/v1",
+            "task_thinking_level": null,
+            "temperature": null,
+            "max_output_tokens": null,
+            "model_capability_revision": "vendor-common-2026-11-12-v1",
+            "context_window_tokens": 400000,
+            "output_reserve_tokens": 128000,
+            "protocol_overhead_estimator_id": "responses-json-v1",
+            "tokenizer_id": null,
+            "responses_compaction_threshold": null,
+            "enabled": true,
+            "task_enabled": true,
+            "has_api_key": true,
+            "supports_images": false,
+            "supports_reasoning": true,
+            "supports_responses": true,
+            "model_name": "gpt-6.1-sol",
+            "task_usage_scenario": "chat",
+            "created_at": "2026-11-02T02:12:04Z",
+            "updated_at": "2026-11-12T02:12:04Z"
+        }))
+        .unwrap();
+        assert_eq!(model.model, "gpt-6.1-sol");
+        assert_eq!(
+            model.model_capability_revision.as_deref(),
+            Some("vendor-common-2026-11-12-v1")
+        );
+        assert_eq!(model.context_window_tokens, Some(400000));
+        assert!(model.supports_responses);
+    }
+
+    #[test]
+    fn response_decode_error_is_endpoint_scoped_without_response_body() {
+        let error =
+            serde_json::from_str::<Vec<String>>("{\"secret\":\"do-not-echo\"}").unwrap_err();
+        let message = response_decode_error("/api/model-configs/provider_model_1", &error);
+        assert!(message.contains("/api/model-configs/provider_model_1"));
+        assert!(!message.contains("do-not-echo"));
     }
 
     #[test]
