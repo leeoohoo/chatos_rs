@@ -3734,10 +3734,10 @@ pub(crate) async fn prepare_agent_conversation(
         .require_session_generation(&owner_user_id, generation)
         .await?;
 
-    // The Host conversation is deliberately unbound from Contact and Project resources. The
-    // account-scoped Agent room above remains the authority that binds this transcript to exactly
-    // one Agent; a normal contact can therefore never impersonate an Agent direct conversation.
-    let conversation_id = format!("agent-direct-{}", room.id);
+    // Bind the Host transcript to the exact Agent Contact.  The account-scoped Agent room above
+    // remains the authority for the rest of the execution profile, while the Host resource
+    // binding lets memory history resolve the same Agent thread without an unbound conversation.
+    let conversation_id = agent_direct_conversation_id(&room.id);
     let existing = manager
         .execute_detailed(HostCommand::GetConversation(GetConversationCommand {
             owner_user_id: owner_user_id.clone(),
@@ -3755,7 +3755,10 @@ pub(crate) async fn prepare_agent_conversation(
                     conversation_id: conversation_id.clone(),
                     owner_user_id: owner_user_id.clone(),
                     title: room.name.clone(),
-                    resource: None,
+                    resource: Some(LocalConversationResourceBinding {
+                        kind: LocalConversationResourceKind::Contact,
+                        resource_id: room.agent_id.clone(),
+                    }),
                 }))
                 .await;
             match created {
@@ -3824,7 +3827,7 @@ pub(crate) async fn load_agent_conversation_activity(
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
-    let conversation_id = format!("agent-direct-{}", binding.room_id);
+    let conversation_id = agent_direct_conversation_id(&binding.room_id);
     let detail = agent_conversation_context(&manager, &owner_user_id, &conversation_id).await?;
     authentication
         .require_session_generation(&owner_user_id, generation)
@@ -3877,10 +3880,8 @@ pub(crate) async fn load_agent_team_member_activity(
     })
     .await
     .map_err(|_| "团队 Agent 执行身份读取任务异常退出。".to_owned())??;
-    let conversation_id = format!(
-        "agent-team-{}-{}",
-        binding.agent.room_id, binding.agent.agent_id
-    );
+    let conversation_id =
+        agent_team_conversation_id(&binding.agent.room_id, &binding.agent.agent_id);
     let host_result = manager
         .execute_detailed(HostCommand::GetConversationContext(
             GetConversationCommand {
@@ -3971,7 +3972,7 @@ pub(crate) async fn load_agent_profile_activity(
         if binding.agent_id != agent_id {
             return Err("Agent 运行动态成员身份不一致。".into());
         }
-        let conversation_id = format!("agent-direct-{}", binding.room_id);
+        let conversation_id = agent_direct_conversation_id(&binding.room_id);
         let result = manager
             .execute_detailed(HostCommand::GetConversationContext(
                 GetConversationCommand {
@@ -4704,9 +4705,9 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
     let conversation_id = if pending.trigger_kind == "todo" {
         format!("agent-team-executor-{}", pending.delivery_id)
     } else {
-        format!(
-            "agent-team-{}-{}",
-            pending.binding.agent.room_id, pending.binding.agent.agent_id
+        agent_team_conversation_id(
+            &pending.binding.agent.room_id,
+            &pending.binding.agent.agent_id,
         )
     };
     let title = format!(
@@ -4723,7 +4724,17 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
         )
         .await?
     } else {
-        ensure_agent_host_conversation(&manager, &owner_user_id, &conversation_id, &title).await?;
+        ensure_agent_host_conversation(
+            &manager,
+            &owner_user_id,
+            &conversation_id,
+            &title,
+            LocalConversationResourceBinding {
+                kind: LocalConversationResourceKind::Contact,
+                resource_id: pending.binding.agent.agent_id.clone(),
+            },
+        )
+        .await?;
         agent_conversation_context(&manager, &owner_user_id, &conversation_id).await?
     };
     let model = selected_agent_model(
@@ -4907,7 +4918,17 @@ pub(crate) async fn dispatch_next_agent_communication_delivery(
     let conversation_id =
         agent_communication_conversation_id(&pending.binding.room_id, &pending.binding.agent_id);
     let title = format!("{} · {}", pending.room_name, pending.binding.name);
-    ensure_agent_host_conversation(&manager, &owner_user_id, &conversation_id, &title).await?;
+    ensure_agent_host_conversation(
+        &manager,
+        &owner_user_id,
+        &conversation_id,
+        &title,
+        LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Contact,
+            resource_id: pending.binding.agent_id.clone(),
+        },
+    )
+    .await?;
     let detail = agent_conversation_context(&manager, &owner_user_id, &conversation_id).await?;
     let model =
         selected_agent_model(&manager, &owner_user_id, &pending.binding.model_config_id).await?;
@@ -5067,7 +5088,7 @@ pub(crate) async fn send_agent_conversation_draft(
         .require_session_generation(&input.owner_user_id, generation)
         .await?;
 
-    let conversation_id = format!("agent-direct-{}", binding.room_id);
+    let conversation_id = agent_direct_conversation_id(&binding.room_id);
     let attachment_scope = AttachmentScope::new(&input.owner_user_id, &conversation_id);
     let attachment_ids = input.submission.attachment_ids.clone();
     let attachments =
@@ -5218,6 +5239,7 @@ async fn ensure_agent_host_conversation(
     owner_user_id: &str,
     conversation_id: &str,
     title: &str,
+    resource: LocalConversationResourceBinding,
 ) -> Result<(), String> {
     let existing = manager
         .execute_detailed(HostCommand::GetConversation(GetConversationCommand {
@@ -5228,6 +5250,9 @@ async fn ensure_agent_host_conversation(
     match existing {
         Ok(HostResult::Conversation { conversation }) => {
             validate_host_conversation(&conversation, owner_user_id, conversation_id)?;
+            if conversation.conversation.resource.as_ref() != Some(&resource) {
+                return Err("Local Agent Host 返回了不匹配的 Agent 资源绑定。".into());
+            }
             Ok(())
         }
         Ok(_) => Err("Local Agent Host 返回了错误的 Agent 会话响应。".into()),
@@ -5237,18 +5262,26 @@ async fn ensure_agent_host_conversation(
                     conversation_id: conversation_id.to_owned(),
                     owner_user_id: owner_user_id.to_owned(),
                     title: title.to_owned(),
-                    resource: None,
+                    resource: Some(resource.clone()),
                 }))
                 .await;
             match created {
                 Ok(HostResult::Conversation { conversation }) => {
-                    validate_host_conversation(&conversation, owner_user_id, conversation_id)
+                    validate_host_conversation(&conversation, owner_user_id, conversation_id)?;
+                    if conversation.conversation.resource.as_ref() != Some(&resource) {
+                        return Err("Local Agent Host 返回了不匹配的 Agent 资源绑定。".into());
+                    }
+                    Ok(())
                 }
                 Ok(_) => Err("Local Agent Host 返回了错误的 Agent 会话响应。".into()),
                 Err(_) => {
                     let retry =
                         agent_conversation_context(manager, owner_user_id, conversation_id).await?;
-                    validate_host_conversation(&retry, owner_user_id, conversation_id)
+                    validate_host_conversation(&retry, owner_user_id, conversation_id)?;
+                    if retry.conversation.resource.as_ref() != Some(&resource) {
+                        return Err("Local Agent Host 返回了不匹配的 Agent 资源绑定。".into());
+                    }
+                    Ok(())
                 }
             }
         }
@@ -6201,7 +6234,15 @@ fn validate_agent_execution_binding(binding: &AgentExecutionBinding) -> Result<(
 }
 
 fn agent_communication_conversation_id(room_id: &str, agent_id: &str) -> String {
-    format!("agent-communication-{room_id}-{agent_id}")
+    format!("agent-communication-v2-{room_id}-{agent_id}")
+}
+
+fn agent_direct_conversation_id(room_id: &str) -> String {
+    format!("agent-direct-v2-{room_id}")
+}
+
+fn agent_team_conversation_id(room_id: &str, agent_id: &str) -> String {
+    format!("agent-team-v2-{room_id}-{agent_id}")
 }
 
 fn agent_team_attachment_conversation_id(team_id: &str) -> String {
@@ -9255,17 +9296,20 @@ mod tests {
 
         let detail = LocalConversationDetail {
             conversation: chatos_local_agent_protocol::LocalConversationRecord {
-                conversation_id: format!("agent-direct-{}", room.id),
+                conversation_id: agent_direct_conversation_id(&room.id),
                 owner_user_id: "alice".into(),
                 title: "测试 Agent".into(),
-                resource: None,
+                resource: Some(LocalConversationResourceBinding {
+                    kind: LocalConversationResourceKind::Contact,
+                    resource_id: room.agent_id.clone(),
+                }),
                 version: 2,
                 created_at_unix_ms: 100,
                 updated_at_unix_ms: 220,
             },
             turns: vec![LocalConversationTurnRecord {
                 turn_id: "turn-1".into(),
-                conversation_id: format!("agent-direct-{}", room.id),
+                conversation_id: agent_direct_conversation_id(&room.id),
                 user_message_id: "message-1".into(),
                 run_id: "run-1".into(),
                 status: LocalConversationTurnStatus::Succeeded,
@@ -9275,7 +9319,7 @@ mod tests {
             messages: vec![
                 chatos_local_agent_protocol::LocalConversationMessageRecord {
                     message_id: "answer-1".into(),
-                    conversation_id: format!("agent-direct-{}", room.id),
+                    conversation_id: agent_direct_conversation_id(&room.id),
                     turn_id: "turn-1".into(),
                     ordinal: 2,
                     role: LocalConversationMessageRole::Assistant,
