@@ -14,6 +14,14 @@ Windows 产品版本：`3.0.9`
 
 ### 2026-11-14 最新同步与回归
 
+### 2026-11-16 全量离线回归复核
+
+- 当前分支 `3.0.9.3.1` 工作区干净，已与 `origin/3.0.9.3.1` 同步；本轮没有发现需要合并的更新。
+- Windows Tauri Rust 全量回归：`590 passed, 0 failed, 6 ignored`（包括 AppContainer、Agent 会话、任务审查、网络策略和运行时隔离测试）。
+- React/Vitest 全量回归：`142` 个测试文件、`525 passed, 0 failed`；TypeScript typecheck、architecture audit、bundle audit 全部通过。
+- 修复后的 Skill Markdown 规范化和旧 Agent 会话 Contact 绑定代码回归已通过；真实 Release 仍显示测试账号 `leeoohoo@gmail.com`、本地服务“已就绪”。
+- 真实团队消息尚未在本轮重新发送，因此仍不把修复后的 Agent 回复、合法 Run 或 `reviewing_followup` / `waiting_confirmation` 逐态视觉证据写成已完成；发送测试消息前需在动作时确认。
+
 ### 2026-11-15 命令审批模型目录回退修复后的回归
 
 - 原生 Release 只读回归曾发现设置中心“命令审批”页在 Host 已运行但内存模型目录尚未恢复时显示“审批设置暂时不可用”。根因是 Tauri 命令把审批设置读取硬绑定到 `HostManager` 的瞬时模型目录，而 AI 模型页使用认证控制面目录仍可正常读取。
