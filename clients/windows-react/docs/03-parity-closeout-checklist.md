@@ -1,6 +1,6 @@
 # Windows React 与 macOS 功能拉齐关闭清单
 
-更新时间：2026-11-14
+更新时间：2026-11-15
 
 分支：`3.0.9.3.1`
 
@@ -13,6 +13,13 @@ Windows 产品版本：`3.0.9`
 以下结论以当前分支 `3.0.9.3.1` 的最新代码、测试和最终 NSIS 安装包为准。文档后面的编号条目保留为历史交付记录，其中较早的“部分完成”措辞不应覆盖本节的最新状态。
 
 ### 2026-11-14 最新同步与回归
+
+### 2026-11-15 正式 Release 单实例复核与控制面探针
+
+- `git fetch origin --prune` 已成功完成；当前远端仍以 `origin/3.0.9.8` 的 `6ef0a7bd4` 为最新 `3.0.9.x` 头，且该提交已是本分支祖先，没有新的 `3.0.9.9` 或待合并上游提交。工作区保持干净。
+- 在没有其他 ChatOS/Local Agent Host 进程占用共享状态时，重新启动 `target-parity-tauri/release/chatos-windows-react.exe`；真实原生窗口标题精确为 `ChatOS`，accessibility tree 可读到资源导航、账号 `leeoohoo@gmail.com`、项目入口和 Host 恢复入口，证明正式 Release 的窗口/首屏链路可用。Host 仍停留在“本地服务尚未就绪”，界面显示“服务器返回了无法识别的数据”，因此没有把窗口出现误记为 Host ready 或业务闭环完成。
+- 使用用户明确提供的测试账号做一次不落盘、只读的控制面复核：登录成功；`connector.jgoool.com` 的模型列表为 `13` 项，`13/13` 个模型详情均返回 `200 application/json`，执行能力和受管运行时配置端点也均返回 `200 application/json`。当前账号有 `9` 个带 `model_capability_revision` 的可执行/任务模型，另有 `4` 个媒体或非任务模型缺少 revision；缺少 revision 的条目不会被 Windows 当作任务模型静默启用。该探针证明服务端当前控制面可用，但不能替代正式客户端已持有会话的 Host ready 证据；本轮未读取或打开 Codex `auth.json`，也未把令牌或模型密钥写入文件。
+- 正式 Release 内点击“重新检查”后再次观察，错误保持不变；因此当前剩余阻塞已从“网络/多实例”收敛为正式客户端持久会话与新鲜控制面会话之间的差异，需用户在客户端手动重新登录或在干净用户配置下复验后，才能继续首屏会话、设置业务链路和 revision reconcile 的真实 UI 验收。未自动化认证对话框，也未强杀用户进程。
 
 - 网络恢复后重新执行完整基线回归：Windows Tauri Rust `582 passed, 0 failed, 6 ignored`，React Vitest `142` 个测试文件 / `524` 项全部通过；远端 `origin/3.0.9.8` 本轮 fetch 后仍为当前分支已包含的最新提交，没有新的上游代码可合并。正式嵌入版窗口复核仍发现同一 Windows 账号下已有多个 ChatOS 实例，Host 显示 `early eof`；未强制结束用户进程，因此该状态继续记录为多实例/单实例环境限制，不作为 Host 业务链路失败结论。
 - 使用仓库正式 `chatos_local_agent_host.exe` 重新执行原本默认忽略的 Host 原生协议回归：v52 health handshake 与 account-scoped business requests `2 passed, 0 failed`；该结果证明 sidecar 协议链路可用，但不替代单实例正式客户端窗口和干净 VM 验收。
