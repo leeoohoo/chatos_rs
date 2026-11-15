@@ -195,12 +195,16 @@ export const useProjectDirectoryStore = create<ProjectDirectoryState>((set, get)
     const current = get();
     if (value === current.searchText) return;
     const requestId = current.requestSequence + 1;
+    const query = value.trim();
     set({
       searchText: value,
       requestSequence: requestId,
       activeSearchRequest: null,
-      searchLoading: false,
-      searchSnapshot: value.trim() ? current.searchSnapshot : null,
+      // Keep the search surface in a pending state during the debounce window.
+      // Otherwise a freshly typed query briefly renders the final empty state
+      // ("没有找到") before the native search request has even started.
+      searchLoading: Boolean(query),
+      searchSnapshot: query ? emptySearch(query) : null,
       searchError: null,
     });
   },

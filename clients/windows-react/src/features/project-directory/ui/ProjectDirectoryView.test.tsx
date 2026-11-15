@@ -44,7 +44,9 @@ describe("ProjectDirectoryView", () => {
   it("searches names and content then opens a matching line", async () => {
     const port = stubPort();
     render(<ProjectDirectoryView ownerUserId="owner-1" port={port} projectId="project-1" />);
-    fireEvent.change(await screen.findByRole("searchbox", { name: "搜索项目文件" }), { target: { value: "hello" } });
+    const search = await screen.findByRole("searchbox", { name: "搜索项目文件" });
+    fireEvent.change(search, { target: { value: "hello" } });
+    expect(screen.getByText("正在搜索文件内容…")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: /README.md 第 1 行/ }));
     expect(await screen.findByLabelText("README.md 文件内容")).toHaveTextContent("# Hello");
     expect(port.searchEntries).toHaveBeenCalledWith(expect.objectContaining({ query: "hello", limit: 100 }));
