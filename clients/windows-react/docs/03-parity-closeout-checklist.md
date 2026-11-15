@@ -28,6 +28,7 @@ Windows 产品版本：`3.0.9`
 - 追加 packaged worker 只读 MCP 取证：`active_application` 正确识别当前 Release `chatos-windows-react.exe` / `ChatOS` 窗口，`list_shortcuts` 返回完整 Windows 快捷键目录；本轮未点击、输入或发送团队消息。
 - 追加 Windows worker 双架构重建：`npm run build:windows` 成功生成 `win-x64` 与 `win-arm64` self-contained worker；重建后再次运行 `smoke:windows` 与 `smoke:windows:screen` 均通过。该结果关闭本机 x64/arm64 构建与屏幕采集回归风险，不替代签名 Marketplace 发布和客户端安装验收。
 - 追加跨平台包门禁取证：Windows 上运行 `npm run pack:chatos` 会先通过 Skill-gate audit，再由 `assertMacPackagingHost` 明确拒绝（缺少 Swift、`lipo`、`PlistBuddy` macOS 工具链），并提示 Windows worker 构建/smoke 替代路径；因此 `.tgz` 产出和 Marketplace 发布继续标为外部 macOS/签名依赖。
+- 追加测试账号可用性取证：当前正式 Release 原生窗口实际显示已登录用户 `leeoohoo@gmail.com`，本地服务为“已就绪”，`Parity Smoke Team`、成员列表、团队消息输入框和发送入口均可达；页面仍保留历史失败 Run，当前测试消息只填入未发送。因此测试账号不是阻碍，后续缺少的是合法新 Run 的发送后回归证据；发送团队消息仍需动作时获得明确授权。
 
 ### 2026-11-15 命令审批模型目录回退修复后的回归
 
