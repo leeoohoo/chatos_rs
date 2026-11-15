@@ -27,6 +27,7 @@ Windows 产品版本：`3.0.9`
 - 追加 packaged worker doctor 取证：`screenCaptureAvailable=true`、`inputDesktopAvailable=true`、`allGranted=true`、`processElevated=false`，应用身份为 `Visual Computer Use for Windows`；普通桌面会话的屏幕采集/输入能力已就绪，管理员目标仍按 Windows UIPI 规则要求同等完整性级别。
 - 追加 packaged worker 只读 MCP 取证：`active_application` 正确识别当前 Release `chatos-windows-react.exe` / `ChatOS` 窗口，`list_shortcuts` 返回完整 Windows 快捷键目录；本轮未点击、输入或发送团队消息。
 - 追加 Windows worker 双架构重建：`npm run build:windows` 成功生成 `win-x64` 与 `win-arm64` self-contained worker；重建后再次运行 `smoke:windows` 与 `smoke:windows:screen` 均通过。该结果关闭本机 x64/arm64 构建与屏幕采集回归风险，不替代签名 Marketplace 发布和客户端安装验收。
+- 追加跨平台包门禁取证：Windows 上运行 `npm run pack:chatos` 会先通过 Skill-gate audit，再由 `assertMacPackagingHost` 明确拒绝（缺少 Swift、`lipo`、`PlistBuddy` macOS 工具链），并提示 Windows worker 构建/smoke 替代路径；因此 `.tgz` 产出和 Marketplace 发布继续标为外部 macOS/签名依赖。
 
 ### 2026-11-15 命令审批模型目录回退修复后的回归
 
