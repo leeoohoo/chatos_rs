@@ -153,6 +153,7 @@ pub async fn load_run_inspector(
     Ok(RunInspectorDetail {
         run: RunInspectorRun::from_record(&run),
         events: selected,
+        tool_calls: projection::tool_calls(&events),
         events_has_more: events.len() > next_offset,
         next_offset,
     })

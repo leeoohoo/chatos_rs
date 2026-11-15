@@ -118,6 +118,7 @@ pub struct RunInspectorProcessEntry {
 pub struct RunInspectorDetail {
     pub run: RunInspectorRun,
     pub events: Vec<RunInspectorEvent>,
+    pub tool_calls: Vec<RunInspectorToolCall>,
     pub events_has_more: bool,
     pub next_offset: usize,
 }
@@ -147,6 +148,17 @@ pub struct RunInspectorEvent {
     pub summary: Option<String>,
     pub status: Option<String>,
     pub created_at_unix_ms: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunInspectorToolCall {
+    pub call_id: String,
+    pub tool_name: String,
+    pub display_name: String,
+    pub route: Option<String>,
+    pub status: String,
+    pub result_size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]

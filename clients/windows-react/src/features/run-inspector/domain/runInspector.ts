@@ -86,6 +86,14 @@ export const runInspectorDetailSchema = z.object({
     status: z.string().nullable(),
     createdAtUnixMs: z.number().int().nonnegative(),
   })),
+  toolCalls: z.array(z.object({
+    callId: z.string().min(1),
+    toolName: z.string().min(1),
+    displayName: z.string().min(1),
+    route: z.string().nullable(),
+    status: z.string().min(1),
+    resultSizeBytes: z.number().int().nonnegative().nullable(),
+  })).optional(),
   eventsHasMore: z.boolean(),
   nextOffset: z.number().int().nonnegative(),
 });

@@ -5,7 +5,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 use super::models::{
-    RunInspectorEvent, RunInspectorProcessEntry, RunInspectorRun, TaskInspectorTask,
+    RunInspectorEvent, RunInspectorProcessEntry, RunInspectorRun, RunInspectorToolCall,
+    TaskInspectorTask,
 };
 
 const PROCESS_TOOL_NAME: &str = "task_run_process_record_process";
@@ -231,6 +232,44 @@ pub fn event(record: &LocalAgentEventRecord) -> RunInspectorEvent {
         status: string_field(&record.payload, &["status"]),
         created_at_unix_ms: record.created_at_unix_ms,
     }
+}
+
+pub fn tool_calls(events: &[LocalAgentEventRecord]) -> Vec<RunInspectorToolCall> {
+    let mut latest = BTreeMap::<String, RunInspectorToolCall>::new();
+    let mut ordered = events.iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|event| event.cursor);
+    for event in ordered {
+        if event.event_type != "tool_batch_completed" {
+            continue;
+        }
+        let Some(invocations) = event.payload.get("invocations").and_then(Value::as_array) else {
+            continue;
+        };
+        for invocation in invocations {
+            let Some(call_id) = string_field(invocation, &["call_id"]) else {
+                continue;
+            };
+            let Some(tool_name) = string_field(invocation, &["tool_name"]) else {
+                continue;
+            };
+            let status =
+                string_field(invocation, &["status"]).unwrap_or_else(|| "completed".to_owned());
+            let route = string_field(invocation, &["execution_route"]);
+            let result_size_bytes = invocation.get("result_size_bytes").and_then(Value::as_u64);
+            latest.insert(
+                call_id.clone(),
+                RunInspectorToolCall {
+                    call_id,
+                    display_name: humanized_tool_name(&tool_name),
+                    tool_name,
+                    route,
+                    status,
+                    result_size_bytes,
+                },
+            );
+        }
+    }
+    latest.into_values().collect()
 }
 
 pub fn process_entries(events: &[LocalAgentEventRecord]) -> Vec<RunInspectorProcessEntry> {
@@ -476,5 +515,67 @@ mod tests {
         assert_eq!(usage["tools"][0]["call_count"], 1);
         assert!(usage.to_string().contains("document-plugin"));
         assert!(!usage.to_string().contains("must-not-leak"));
+    }
+
+    #[test]
+    fn tool_call_projection_is_safe_and_keeps_latest_status() {
+        let events = vec![
+            LocalAgentEventRecord {
+                cursor: 2,
+                event_id: "completed-2".to_owned(),
+                run_id: "run-1".to_owned(),
+                event_type: "tool_batch_completed".to_owned(),
+                created_at_unix_ms: 20,
+                payload: json!({"invocations":[{
+                    "call_id":"call-1",
+                    "tool_name":"capability_invoke",
+                    "execution_route":"plugin",
+                    "status":"failed",
+                    "result_size_bytes":17,
+                    "arguments":{"secret":"do-not-project"},
+                    "result":{"token":"do-not-project"}
+                }]}),
+            },
+            LocalAgentEventRecord {
+                cursor: 1,
+                event_id: "completed-1".to_owned(),
+                run_id: "run-1".to_owned(),
+                event_type: "tool_batch_completed".to_owned(),
+                created_at_unix_ms: 10,
+                payload: json!({"invocations":[{
+                    "call_id":"call-1",
+                    "tool_name":"capability_invoke",
+                    "execution_route":"plugin",
+                    "status":"running",
+                    "arguments":{"secret":"do-not-project"}
+                }]}),
+            },
+        ];
+
+        let projected = tool_calls(&events);
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].status, "failed");
+        assert_eq!(projected[0].display_name, "调用 Plugin 工具");
+        assert_eq!(projected[0].result_size_bytes, Some(17));
+        let serialized = serde_json::to_string(&projected).expect("serialize projection");
+        assert!(!serialized.contains("do-not-project"));
+        assert!(!serialized.contains("token"));
+    }
+
+    #[test]
+    fn tool_call_projection_ignores_incomplete_invocations() {
+        let events = vec![LocalAgentEventRecord {
+            cursor: 1,
+            event_id: "completed-1".to_owned(),
+            run_id: "run-1".to_owned(),
+            event_type: "tool_batch_completed".to_owned(),
+            created_at_unix_ms: 10,
+            payload: json!({"invocations":[
+                {"tool_name":"missing-call-id", "status":"succeeded"},
+                {"call_id":"call-2", "status":"succeeded"}
+            ]}),
+        }];
+
+        assert!(tool_calls(&events).is_empty());
     }
 }

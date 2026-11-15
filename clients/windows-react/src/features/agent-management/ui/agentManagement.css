@@ -535,6 +535,10 @@
 .agent-team-run-detail__summary strong,.agent-team-run-detail__body > section h3 { font-size: 10.5px; }
 .agent-team-run-detail__summary .notepad-markdown { padding-top: 7px; font-size: 9.5px; }
 .agent-team-run-detail__error { border-radius: 9px; padding: 8px 10px; color: #c9342d; background: rgba(255,59,48,.08); font-size: 9px; }
+.agent-team-run-detail__tool { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid rgba(60,60,67,.07); padding: 7px 2px 9px; }
+.agent-team-run-detail__tool > div { display: grid; min-width: 0; gap: 3px; }
+.agent-team-run-detail__tool strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-team-run-detail__tool > span { flex: none; color: var(--secondary); font-size: 8px; }
 .agent-team-run-detail__body > section { display: grid; gap: 8px; }
 .agent-team-run-detail__body > section h3 { margin: 0; }
 .agent-team-run-detail__body > section article { display: grid; grid-template-columns: 8px minmax(0,1fr); gap: 9px; border-bottom: 1px solid rgba(60,60,67,.07); padding: 7px 2px 9px; }

@@ -2205,6 +2205,20 @@ function AgentTeamRunDetailSheet({
               </section>
               {detail.run.errorMessage && <div className="agent-team-run-detail__error" role="alert">{detail.run.errorMessage}</div>}
               <section className="agent-team-run-detail__section">
+                <h3>工具调用</h3>
+                {(detail.toolCalls ?? []).length === 0 ? (
+                  <p className="agent-team-run-detail__empty">本次 Run 没有已记录的工具调用。</p>
+                ) : (detail.toolCalls ?? []).map((tool) => (
+                  <article className="agent-team-run-detail__tool" key={tool.callId}>
+                    <div>
+                      <strong>{tool.displayName}</strong>
+                      <small>{tool.route ? `路由 · ${tool.route}` : tool.toolName}</small>
+                    </div>
+                    <span>{tool.status}{tool.resultSizeBytes != null ? ` · 结果 ${tool.resultSizeBytes} B` : ""}</span>
+                  </article>
+                ))}
+              </section>
+              <section className="agent-team-run-detail__section">
                 <h3>运行事件</h3>
                 {detail.events.length === 0 ? (
                   <p className="agent-team-run-detail__empty">本次 Run 还没有执行事件。</p>
