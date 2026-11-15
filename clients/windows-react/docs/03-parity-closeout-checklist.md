@@ -21,6 +21,7 @@ Windows 产品版本：`3.0.9`
 - React/Vitest 全量回归：`142` 个测试文件、`525 passed, 0 failed`；TypeScript typecheck、architecture audit、bundle audit 全部通过。
 - 修复后的 Skill Markdown 规范化和旧 Agent 会话 Contact 绑定代码回归已通过；真实 Release 仍显示测试账号 `leeoohoo@gmail.com`、本地服务“已就绪”。
 - 真实团队消息尚未在本轮重新发送，因此仍不把修复后的 Agent 回复、合法 Run 或 `reviewing_followup` / `waiting_confirmation` 逐态视觉证据写成已完成；发送测试消息前需在动作时确认。
+- 追加原生视觉对照：将 macOS 参考图 `clients/macos/docs/screenshots/13-agent-team-chat.png` 与当前 Windows Release 窗口并排核对，团队聊天的四栏结构、顶部工作区标签、消息区、Composer 和右侧成员面板均可达；Windows 当前仍只有历史失败消息，数据状态与 macOS 参考图不同，因此该对照不关闭任务审查逐态或 31 页完整走查。
 
 ### 2026-11-15 命令审批模型目录回退修复后的回归
 
