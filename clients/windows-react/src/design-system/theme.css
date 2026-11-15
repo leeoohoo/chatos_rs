@@ -740,6 +740,8 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .ask-user-loading { display: flex; justify-self: center; align-items: center; gap: 6px; color: var(--secondary); font-size: 10px; }
 .conversation-empty { margin: 120px 0 0; color: var(--secondary); text-align: center; font-size: 13px; }
 .conversation-screen { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.conversation-title-bar { flex: 0 0 auto; border-bottom: 1px solid var(--separator); padding: 11px 14px 10px; }
+.conversation-title-bar h1 { margin: 0; color: inherit; font-size: 12px; font-weight: 650; letter-spacing: -.01em; }
 .conversation-history { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 18px; }
 .conversation-composer { display: grid; width: 100%; margin: 0; gap: 7px; padding: 10px 0 0; }
 .conversation-composer--drop-targeted .composer-input { border-color: rgba(10,132,255,.72); box-shadow: 0 0 0 3px rgba(10,132,255,.14), 0 8px 28px rgba(0,0,0,.07); }

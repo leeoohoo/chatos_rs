@@ -31,6 +31,7 @@ import type { ConversationHistoryPort } from "../ports/ConversationHistoryPort";
 export function ConversationHistoryView({
   ownerUserId,
   conversationId,
+  title,
   port,
   composerPort,
   attachmentPort,
@@ -42,6 +43,7 @@ export function ConversationHistoryView({
 }: {
   ownerUserId: string;
   conversationId: string;
+  title?: string;
   port: ConversationHistoryPort;
   composerPort: ConversationComposerPort;
   attachmentPort: ConversationAttachmentPort;
@@ -126,6 +128,11 @@ export function ConversationHistoryView({
         port={realtimePort}
         onAffected={reconcile}
       />
+      {title?.trim() ? (
+        <header className="conversation-title-bar">
+          <h1>{title}</h1>
+        </header>
+      ) : null}
       <div className="conversation-history" aria-label="会话记录">
         {phase.snapshot.next_before_cursor != null && (
           <button className="history-more" type="button" disabled={phase.isLoadingOlder} onClick={() => void loadOlder(port)}>

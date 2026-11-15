@@ -98,6 +98,7 @@ export function ProjectConversationPlaceholder({
       <ConversationHistoryView
         ownerUserId={ownerUserId}
         conversationId={phase.conversationId}
+        title={`${project.title} · 叽咕狸`}
         port={historyPort}
         composerPort={composerPort}
         attachmentPort={attachmentPort}
