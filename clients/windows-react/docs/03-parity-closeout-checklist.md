@@ -34,6 +34,7 @@ Windows 产品版本：`3.0.9`
 - 2026-11-15 在同一真实 Release 打开失败 Run 的 Run 检查器：页面实际显示状态/Delivery 为“失败”、Memory 为“Agent 长期通讯”、模型调用 `1 / 32`、运行耗时 `0.0 秒`，错误为 `run state is invalid: Conversation transcript requires an Agent-bound resource`；工具调用为空，运行事件依次可见 `memory_transcript_record_synced`、`run_needs_review`（Local Agent profile step failed）、`run_claimed`、`conversation_turn_started`，底部提供“重试中断步骤”入口。该取证确认失败审查信息和入口真实可达，但不把失败 Run 当作 `reviewing_followup` / `waiting_confirmation` 成功态；本轮未点击重试。
 - 2026-11-15 完成项目工作区“项目目录 / Git”真实原生只读回归：项目目录实际加载仓库根目录，树中可见 `.cargo`、`.git`、`clients`、`docs`、`target-shared` 等目录和根文件，空态明确提示选择文件后预览且绝对路径不会发送到 React；Git 页读取当前分支 `3.0.9.3.1`、远端同步状态，暂存区/工作区均为 `0`，显示“工作区没有未暂存修改”，提交历史可读取到本轮最新提交。提交说明输入框和拉取/推送/分支/刷新入口均可见，本轮未执行 Git 写操作。
 - 2026-11-15 在同一正式 Release 窗口继续完成项目文件预览真实回归：从项目目录树选择根文件 `README.md` 后，右侧先显示“正在读取文件 /README.md”，随后加载 `README.md` 标题、路径、`12.5 KB`、可写状态、删除/编辑入口和完整 Markdown 内容；这证明项目目录不只是列举树，文件读取与预览链路也已在登录账号 `leeoohoo@gmail.com` 下实际工作。本轮未编辑、删除或保存文件。
+- 2026-11-15 完成“项目设置”真实原生只读回归：页面完成项目分析后显示项目 `chatos`、本机项目目录、状态“空闲”、运行目标数量 `80`，运行预检为“没有发现阻塞问题”；默认运行目标为 `Node: npm dev`，命令 `npm run dev`、工作目录 `admin_console`、JavaScript/TypeScript、来源 `package.json:scripts.dev` 和清单 `admin_console/package.json` 均可读取。Node.js `node.exe` 与 npm `npm.cmd` 均由原生层自动发现，工具链状态“运行环境已准备好”；配置文件安全预览列出仓库中的 Cargo/package/Swift 清单，运行实例为空且“启动新实例”入口可见。本轮未启动实例、保存工具选择、改变宠物快捷访问或删除项目。
 
 ### 2026-11-15 正式 Release 单实例复核与控制面探针
 
