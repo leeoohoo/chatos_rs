@@ -27,6 +27,7 @@ Windows 产品版本：`3.0.9`
 - 追加原生视觉对照：将 macOS 参考图 `clients/macos/docs/screenshots/13-agent-team-chat.png` 与当前 Windows Release 窗口并排核对，团队聊天的四栏结构、顶部工作区标签、消息区、Composer 和右侧成员面板均可达；Windows 当前仍只有历史失败消息，数据状态与 macOS 参考图不同，因此该对照不关闭任务审查逐态或 31 页完整走查。
 - 追加 Computer Use 本机准入回归：`plugins/computer-use` 的打包/平台契约测试 `8 passed`，`audit:skill-gates` 通过（11 tools、5 Skills）；该结果只证明源码与 Skill 门禁稳定，不替代签名 Marketplace 发布、客户端安装、`doctor`、屏幕采集和输入实测。
 - 追加 Computer Use Windows worker smoke：`npm run smoke:windows` 与 `npm run smoke:windows:screen` 均通过，真实覆盖 doctor、MCP `initialize`/`tools/list`、`check_permissions` 和 `observe_screen`；本机 worker 闭环已验证，但签名 Marketplace 发布、客户端安装/启用和真实输入仍保持未完成。
+- 追加正式 Release 的 Computer Use 输入框 smoke：在已登录的 `ChatOS` 原生窗口中，使用仓库 Windows worker 对“用户消息”页的消息输入框执行观察→点击→输入→刷新→选择→清空→刷新闭环。非敏感文本 `computer-use-input-smoke` 可见时“发送”按钮启用；清空后输入框无值且“发送”恢复禁用。全程未点击发送、未创建 Run、未发送团队消息，也未触碰认证窗口或敏感数据。该证据关闭本机消息 Composer 输入/清空门禁，但不替代受信 Plugin 安装、Marketplace 签名发布或真实消息/Run 业务闭环。
 - 追加 packaged worker doctor 取证：`screenCaptureAvailable=true`、`inputDesktopAvailable=true`、`allGranted=true`、`processElevated=false`，应用身份为 `Visual Computer Use for Windows`；普通桌面会话的屏幕采集/输入能力已就绪，管理员目标仍按 Windows UIPI 规则要求同等完整性级别。
 - 追加 packaged worker 只读 MCP 取证：`active_application` 正确识别当前 Release `chatos-windows-react.exe` / `ChatOS` 窗口，`list_shortcuts` 返回完整 Windows 快捷键目录；本轮未点击、输入或发送团队消息。
 - 追加 Windows worker 双架构重建：`npm run build:windows` 成功生成 `win-x64` 与 `win-arm64` self-contained worker；重建后再次运行 `smoke:windows` 与 `smoke:windows:screen` 均通过。该结果关闭本机 x64/arm64 构建与屏幕采集回归风险，不替代签名 Marketplace 发布和客户端安装验收。
