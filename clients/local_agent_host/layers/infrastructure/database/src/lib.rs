@@ -255,7 +255,15 @@ impl SqliteClientStorage {
         } else {
             None
         };
-        storage.migrate().await.db()?;
+        // A failed migration must release every SQLite handle before returning.
+        // On Windows an implicit pool drop can leave the WAL/SHM sidecars locked
+        // long enough to prevent recovery cleanup (and can make the next open
+        // observe a stale migration writer). Close the pool explicitly on the
+        // error path so callers can safely retry or remove the database.
+        if let Err(error) = storage.migrate().await {
+            storage.pool.close().await;
+            return Err(error);
+        }
         storage
             .memory_outbox_revision_tracking
             .store(true, Ordering::Release);
