@@ -169,3 +169,114 @@ async fn native_pty_streams_output_and_exit_as_ordered_events() {
     assert_eq!(resources.snapshot().used_resource_units, 0);
     session.close();
 }
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_native_pty_exits_after_power_shell_exit_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let launch = LocalTerminalLaunch::for_platform(directory.path().to_path_buf()).unwrap();
+    let session = ManagedLocalTerminal::spawn(
+        LocalTerminalIdentity {
+            session_id: "local-terminal-windows-exit-test".into(),
+            owner_user_id: "owner-1".into(),
+            presentation_id: "tab-1".into(),
+            epoch: 0,
+            generation: 1,
+        },
+        launch,
+        80,
+        24,
+    )
+    .unwrap();
+    // PowerShell asks an interactive terminal for the cursor position before
+    // displaying its prompt.  A raw PTY test must answer that query just as a
+    // terminal emulator would, otherwise the shell never consumes input.
+    session.send(b"\x1b[1;1R").unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    session.send(b"exit\r\n").unwrap();
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut cursor = 0;
+    let mut output = Vec::new();
+    let running = loop {
+        let timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if timeout.is_zero() {
+            break true;
+        }
+        let (snapshot, _) = session
+            .poll(cursor, timeout.as_millis().min(1_000) as u64)
+            .await
+            .unwrap();
+        if let Some(last) = snapshot.events.last() {
+            cursor = last.cursor();
+        }
+        for event in &snapshot.events {
+            if let LocalTerminalEvent::Output { bytes, .. } = event {
+                output.extend(bytes);
+            }
+        }
+        if !snapshot.running {
+            break false;
+        }
+    };
+    session.close();
+    assert!(
+        !running,
+        "PowerShell did not exit within the 15-second bound; output={:?}",
+        String::from_utf8_lossy(&output)
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_native_pty_drains_megabyte_output_and_exits() {
+    let directory = tempfile::tempdir().unwrap();
+    let launch = LocalTerminalLaunch::for_platform(directory.path().to_path_buf()).unwrap();
+    let session = ManagedLocalTerminal::spawn(
+        LocalTerminalIdentity {
+            session_id: "local-terminal-windows-output-test".into(),
+            owner_user_id: "owner-1".into(),
+            presentation_id: "tab-1".into(),
+            epoch: 0,
+            generation: 1,
+        },
+        launch,
+        80,
+        24,
+    )
+    .unwrap();
+    session.send(b"\x1b[1;1R").unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    session
+        .send(b"1..65536 | ForEach-Object { 'xxxxxxxxxxxxxxxx' }; exit\r\n")
+        .unwrap();
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut cursor = 0;
+    let mut output_bytes = 0;
+    let running = loop {
+        let timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if timeout.is_zero() {
+            break true;
+        }
+        let (snapshot, _) = session
+            .poll(cursor, timeout.as_millis().min(1_000) as u64)
+            .await
+            .unwrap();
+        for event in &snapshot.events {
+            cursor = event.cursor();
+            if let LocalTerminalEvent::Output { bytes, .. } = event {
+                output_bytes += bytes.len();
+            }
+        }
+        if !snapshot.running {
+            break false;
+        }
+    };
+    session.close();
+    assert!(!running, "PowerShell output command did not exit within 15 seconds");
+    assert!(
+        output_bytes >= 1_024 * 1_024,
+        "expected at least 1 MiB of output, received {output_bytes} bytes"
+    );
+}
