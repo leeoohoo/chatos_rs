@@ -26,6 +26,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-17 补跑任务审查优先级相关的前端契约回归：Agent Management、Run Inspector（入口/分区/领域）与 Pet 状态共 `6` 个测试文件、`37 passed, 0 failed`；覆盖 `reviewing_followup` / `waiting_confirmation` 的展示标签、持续轮询、活动任务投影和宠物摘要门禁。该结果确认代码层投影稳定，但不替代登录后原生窗口逐态视觉取证。
 
+- 2026-11-17 重新构建 Windows Computer Use worker：`npm run build:windows` 在本机成功生成 self-contained `win-x64` 与 `win-arm64` worker；随后 `npm run smoke:windows:screen` 通过 doctor、MCP `initialize`/`tools/list`、权限检查和真实 `observe_screen`。该结果关闭 Windows worker 本机编译/屏幕采集回归，不替代需要 macOS Swift/Xcode 的跨平台 `.tgz` 组合、Marketplace 签名发布和安装后受信闭环。
+
 - 2026-11-17 只读核验本机网络强制前置条件：`MpsSvc` Windows Firewall 服务为 `Running/Automatic`，Domain/Private/Public 三个配置文件均为 `AllowOutbound`，本地规则由 GPO 管理且没有应用级目标规则；`CheckNetIsolation LoopbackExempt -s` 返回空列表。该结果与现有代码审计一致：当前 `controlled` capability 仍不是目标/目的地级 WFP 或等价出站强制，不能将其写成已完成。
 
 - 2026-11-17 对当前保留的 `target-shared/release/chatos-windows-react.exe` 做 Authenticode 只读核验，状态为 `NotSigned`，没有签名证书；因此正式代码签名、证书校验和 SmartScreen 信誉仍保持为外部发布依赖，未将本机可启动误记为正式发布验收。
