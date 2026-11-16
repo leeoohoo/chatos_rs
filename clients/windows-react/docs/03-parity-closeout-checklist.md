@@ -18,6 +18,8 @@ Windows 产品版本：`3.0.9`
 
 ### 2026-11-17 短时稳定性复核
 
+- 2026-11-17 重新启动当前 Release 做原生窗口只读核验：窗口标题为 `ChatOS`，accessibility tree 真实暴露登录页标题、`auth-username`、`auth-password`、登录和创建账号入口；当前发布进程没有恢复合法会话，因此未进入登录后团队/任务页面。没有自动填写、读取或提交账号密码，随后正常关闭窗口；Computer Use 的认证窗口安全边界仍使任务审查逐态视觉证据保持未完成。
+
 - 2026-11-17 在当前工作树重复执行 Windows 原生 ConPTY 回归 5 轮：每轮均通过 PowerShell 自然退出与至少 1 MiB 输出排空（`2 passed, 0 failed`），5/5 轮均在 15 秒门限内完成；该结果加强短时退出/背压稳定性证据，但不替代 8 小时长稳与更大规模性能基线。
 
 - 2026-11-17 全量 Tauri Rust 回归首次暴露 AppContainer Git fixture 在 `where.exe` 选中 Codex 私有 Git 时的环境依赖（Win32 2）；测试现优先选择标准 `Program Files\\Git\\cmd\\git.exe`，仅在其不存在时回退 PATH。修正后 AppContainer 模块 `16 passed, 0 failed`，Tauri `--all-targets` 为 `599 passed, 0 failed, 6 ignored`；Rustfmt 与 Clippy `-D warnings` 均通过。该修正只稳定测试 fixture，不改变运行时隔离逻辑。
