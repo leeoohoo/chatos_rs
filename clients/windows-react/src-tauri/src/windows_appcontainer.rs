@@ -3224,7 +3224,7 @@ mod tests {
         let manager = WorkspaceLeaseManager::open(app_data.path()).unwrap();
         let profile = AppContainerProfile::create("ChatOS.AppContainer.Probe").unwrap();
         let lease = manager
-            .grant(workspace.path(), profile.sid, WorkspaceAccess::ReadOnly,)
+            .grant(workspace.path(), profile.sid, WorkspaceAccess::ReadOnly)
             .expect("a reparse child must not poison the workspace lease");
         assert_eq!(read_file_exit_code(&profile, &inside).unwrap(), 0);
         assert_ne!(read_file_exit_code(&profile, &target).unwrap(), 0);
