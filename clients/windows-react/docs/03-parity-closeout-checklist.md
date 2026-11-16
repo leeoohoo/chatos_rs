@@ -28,7 +28,9 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 为已验签策略补充统一目标匹配器：精确域名、仅子域通配符、80/443 端口白名单和非法/IP 目标均有明确 allow/deny 单测；`controlled_network_policy` 模块 `3 passed, 0 failed`。该匹配器只作为后续 WFP/等价执行层的安全输入，当前仍未接入系统级出站拦截。
 
-- 2026-11-16 为大目录性能/稳定性基线补充真实回归：`project_filesystem` 新增 6,000 文件临时目录用例，确认目录列表严格截断到 5,000 项且标记 `is_truncated`，名称搜索遵守与 macOS 同源的 500 条结果上限并标记截断；该模块共 `7 passed, 0 failed`。这加强了大目录边界证据，但不把短时边界测试冒充 8 小时稳定性完成。
+- 2026-11-16 为大目录性能/稳定性基线补充真实回归：`project_filesystem` 新增 6,000 文件临时目录用例，确认目录列表严格截断到 5,000 项且标记 `is_truncated`，名称搜索遵守调用方 2,000 条结果上限并标记截断；该模块共 `7 passed, 0 failed`。这加强了大目录边界证据，但不把短时边界测试冒充 8 小时稳定性完成。
+
+- 2026-11-16 复核 macOS `NativeWorkspaceFilesystem` 与 Code Read Worker 后修正项目搜索结果契约：macOS 文件名和内容搜索的最大结果数均为 500。Windows Tauri 命令入口与底层 `project_filesystem` helper 现在都统一 clamp 到 500；11,000 文件回归同时断言文件名与内容搜索各返回 500 条并标记截断，定向测试 `1 passed, 0 failed`，项目文件 Rustfmt、Clippy `-D warnings` 通过。此前 2,000 条仅是旧 helper 直测值，不代表 macOS/IPC 合同。
 
 - 2026-11-16 尝试用 Windows 原生 ConPTY/PowerShell 直接产生 1 MiB 输出并验证终止、轮询上限和资源释放；进程在 15 秒门限内没有进入终止态。临时压力测试已撤回，未把失败结果提交为产品代码；该结果反向确认终端大输出与长稳仍未完成，后续需要修复 PTY 生命周期/背压后再建立门禁。
 
