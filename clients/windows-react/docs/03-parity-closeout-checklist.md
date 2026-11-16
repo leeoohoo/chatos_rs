@@ -24,6 +24,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-17 只读核验本机网络强制前置条件：`MpsSvc` Windows Firewall 服务为 `Running/Automatic`，Domain/Private/Public 三个配置文件均为 `AllowOutbound`，本地规则由 GPO 管理且没有应用级目标规则；`CheckNetIsolation LoopbackExempt -s` 返回空列表。该结果与现有代码审计一致：当前 `controlled` capability 仍不是目标/目的地级 WFP 或等价出站强制，不能将其写成已完成。
 
+- 2026-11-17 对当前保留的 `target-shared/release/chatos-windows-react.exe` 做 Authenticode 只读核验，状态为 `NotSigned`，没有签名证书；因此正式代码签名、证书校验和 SmartScreen 信誉仍保持为外部发布依赖，未将本机可启动误记为正式发布验收。
+
 - 2026-11-17 在当前 HEAD（已包含 `origin/3.0.9.10` 最新提交）重新执行 Windows Tauri 全量回归：`cargo test --all-targets` 为 `601 passed, 0 failed, 6 ignored`，覆盖 AppContainer、受控网络策略、ConPTY/终端、任务审查、Plugin、项目运行、媒体和安装相关 native contract；本轮没有代码行为改动。测试完成后确认没有 debug 构建进程，删除本轮生成的 `target-shared/debug`，保留正式 `target-shared/release` 和正在运行的 8 小时 Release 长稳任务。
 
 - 2026-11-17 在设置 `CHATOS_LOCAL_AGENT_HOST_TEST_PATH=target-shared/release/chatos_local_agent_host.exe` 且标准 Git、Node/npm 和公开网络可用时，补跑全部默认 ignored 的 Windows 外部集成回归：Host sidecar 健康握手/账号隔离、Plugin installer 的 Git HTTPS、Node MCP、npm Registry 获取和 npm MCP 隔离预检共 `6 passed, 0 failed`。这些用例仍保留 ignored 标记，避免无外部依赖的 CI 默认运行；测试完成后确认无 debug 进程并删除本轮生成的 `target-shared/debug`，不把公开服务或本机 Release sidecar 可用性误记为正式发布保证。
