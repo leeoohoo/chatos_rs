@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::{
     app_data_transaction::{ensure_owned_directory, replace_owned_file},
-    authentication::AuthenticationManager,
+    authentication::{AuthenticationManager, GatewayModelConfig},
     host_lifecycle::validate_owner,
 };
 
@@ -27,6 +27,45 @@ const MEDIA_WORKFLOW_SYSTEM_PROMPT: &str = r#"你是 AI 创作工作流中的文
 准确分析所有提供的图片和当前工作文本，不臆造不可见信息。严格遵循用户指定的语言、格式和篇幅；用户未限制篇幅时，应提供完成任务所需的充分细节。
 
 当节点要求生成图片或视频提示词时，直接给出完整、可复制使用的专业提示词：明确每份参考素材的用途、需要保留与修改的内容，并覆盖主体、构图、姿态、镜头、光线、色彩、材质、环境及必要的约束或负面要求。不要只解释应该怎么写。"#;
+
+fn validate_workflow_text_capability(
+    model: &GatewayModelConfig,
+) -> Result<(String, usize, usize, String), String> {
+    let context_window_tokens = model
+        .context_window_tokens
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "文本模型缺少有效上下文窗口。".to_owned())?;
+    let output_reserve_tokens = model
+        .output_reserve_tokens
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "文本模型缺少有效输出预留。".to_owned())?;
+    let model_capability_revision = model
+        .model_capability_revision
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "文本模型缺少 capability revision。".to_owned())?;
+    let protocol_overhead_estimator_id = model
+        .protocol_overhead_estimator_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "文本模型缺少协议开销估算器。".to_owned())?;
+    if output_reserve_tokens >= context_window_tokens
+        || model.max_output_tokens.is_some_and(|value| {
+            value <= 0
+                || u128::try_from(value).map_or(true, |value| value > output_reserve_tokens as u128)
+        })
+    {
+        return Err("文本模型能力快照无效。".into());
+    }
+    Ok((
+        model_capability_revision,
+        context_window_tokens,
+        output_reserve_tokens,
+        protocol_overhead_estimator_id,
+    ))
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -698,33 +737,12 @@ async fn generate_workflow_text(
         .base_url
         .clone()
         .ok_or_else(|| "模型配置没有 API 地址。".to_owned())?;
-    let context_window_tokens = model
-        .context_window_tokens
-        .and_then(|value| usize::try_from(value).ok())
-        .filter(|value| *value >= 2_048)
-        .ok_or_else(|| "文本模型缺少有效上下文窗口。".to_owned())?;
-    let output_reserve_tokens = model
-        .output_reserve_tokens
-        .and_then(|value| usize::try_from(value).ok())
-        .filter(|value| *value >= 256)
-        .ok_or_else(|| "文本模型缺少有效输出预留。".to_owned())?;
-    let model_capability_revision = model
-        .model_capability_revision
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "文本模型缺少 capability revision。".to_owned())?;
-    let protocol_overhead_estimator_id = model
-        .protocol_overhead_estimator_id
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "文本模型缺少协议开销估算器。".to_owned())?;
-    if output_reserve_tokens >= context_window_tokens
-        || model
-            .max_output_tokens
-            .is_some_and(|value| value <= 0 || value as usize > output_reserve_tokens)
-    {
-        return Err("文本模型能力快照无效。".into());
-    }
+    let (
+        model_capability_revision,
+        context_window_tokens,
+        output_reserve_tokens,
+        protocol_overhead_estimator_id,
+    ) = validate_workflow_text_capability(&model)?;
     let config = ModelRuntimeConfig {
         model_capability_revision,
         context_window_tokens,
@@ -852,6 +870,33 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn text_model() -> GatewayModelConfig {
+        GatewayModelConfig {
+            id: "text-model".into(),
+            owner_user_id: "alice".into(),
+            name: "Text".into(),
+            provider: "openai".into(),
+            model: "gpt-6.1-sol".into(),
+            api_key: Some("test-key".into()),
+            base_url: Some("https://relay.example/v1/responses".into()),
+            task_thinking_level: Some("medium".into()),
+            temperature: None,
+            max_output_tokens: Some(2_000),
+            model_capability_revision: Some("capability-v1".into()),
+            context_window_tokens: Some(128_000),
+            output_reserve_tokens: Some(8_000),
+            protocol_overhead_estimator_id: Some("responses-json-v1".into()),
+            tokenizer_id: Some("o200k_base".into()),
+            responses_compaction_threshold: None,
+            enabled: true,
+            task_enabled: Some(true),
+            has_api_key: true,
+            supports_images: true,
+            supports_reasoning: true,
+            supports_responses: true,
+        }
+    }
+
     fn workflow() -> MediaWorkflow {
         MediaWorkflow {
             id: Uuid::new_v4().to_string(),
@@ -891,6 +936,39 @@ mod tests {
         assert!(validate_workflow(&value).is_ok());
         value.nodes.swap(0, 1);
         assert!(validate_workflow(&value).is_err());
+    }
+
+    #[test]
+    fn validates_workflow_text_capability_and_output_budget() {
+        let model = text_model();
+        let capability = validate_workflow_text_capability(&model).unwrap();
+        assert_eq!(capability.0, "capability-v1");
+        assert_eq!(capability.1, 128_000);
+        assert_eq!(capability.2, 8_000);
+        assert_eq!(capability.3, "responses-json-v1");
+
+        let mut missing_revision = model.clone();
+        missing_revision.model_capability_revision = Some("  ".into());
+        assert!(validate_workflow_text_capability(&missing_revision).is_err());
+
+        let mut invalid_budget = model;
+        invalid_budget.max_output_tokens = Some(8_001);
+        assert!(validate_workflow_text_capability(&invalid_budget).is_err());
+    }
+
+    #[test]
+    fn rejects_non_positive_or_overlapping_workflow_text_capability() {
+        let mut model = text_model();
+        model.context_window_tokens = Some(0);
+        assert!(validate_workflow_text_capability(&model).is_err());
+
+        let mut model = text_model();
+        model.output_reserve_tokens = model.context_window_tokens;
+        assert!(validate_workflow_text_capability(&model).is_err());
+
+        let mut model = text_model();
+        model.max_output_tokens = Some(0);
+        assert!(validate_workflow_text_capability(&model).is_err());
     }
 
     #[test]
