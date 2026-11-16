@@ -35,6 +35,7 @@ Windows 产品版本：`3.0.9`
 - 2026-11-16 收紧 Windows ConPTY 会话生命周期：本机终端现在按 `portable-pty` 约束保留 slave 句柄到 wait 路径确认退出，并在 spawn 后再接管 reader/writer，避免短命子进程因过早关闭 slave 收到伪 `CTRL+C`；`local_terminal` 定向回归 `5 passed, 0 failed`，Rustfmt 和 Clippy `-D warnings` 通过。当前机器的原生 ConPTY 探针即使在该修复后启动 `cmd.exe`/PowerShell 仍未在门限内进入退出态，因此大输出/自然退出门禁继续保持未完成，不把环境失败写成产品通过。
 - 2026-11-16 修正 ConPTY 压力探针：PowerShell 启动时会先发出 `ESC[6n` 光标位置查询，原始 PTY 测试已按真实终端回复 `ESC[1;1R`，不再把未实现终端仿真误判为产品失败。新增真实 Windows `local_terminal` 回归：PowerShell `exit` 在 15 秒内自然终止，并连续产生至少 1 MiB 输出后在同一门限内终止；两项均 `1 passed, 0 failed`。这关闭了本机自然退出/1 MiB 背压门禁，但不替代 8 小时长稳与更大规模性能基线。
 - 2026-11-16 在提交 `d34ff709c` 后完成全量门禁复核：Windows Tauri Rust `597 passed, 0 failed, 6 ignored`（603 项）；React/Vitest `145` 个测试文件、`536 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture` 和 `npm run audit:bundle` 均通过，入口 Bundle `456.97 KiB raw / 137.71 KiB gzip`。确认无构建或 ChatOS 进程后，清理本轮生成的 `target-shared/debug`（约 4.2 GiB）和历史 `target-shared/x86_64-pc-windows-msvc`（约 0.77 GiB），当前 `target-shared/release` 保持不变。
+- 2026-11-16 为万级消息性能基线补充真实 Host SQLite 回归（提交 `ccdfca086`）：写入 10,000 条账号隔离会话消息，按协议上限每页 100 条读取 100 页；每页严格有界、消息顺序稳定、游标单调递减且最终完整覆盖 10,000 条，单测耗时约 1.4 秒。数据库 crate 全量回归 `222 passed, 0 failed`，Clippy `-D warnings` 和 Rustfmt 均通过。这关闭了万级消息分页/游标的代码基线缺口，但不替代真实 Release 窗口渲染和 8 小时长稳验收。
 
 - 2026-11-16 收紧 Windows 本机终端启动环境：PowerShell 现在固定使用 `-NoLogo -NoProfile`，避免用户 profile 改写受控环境、输出和退出语义；Windows 启动参数与 allowlisted environment 回归 `5 passed, 0 failed`。这改善了确定性，但不替代尚未通过的 ConPTY 大输出压力测试。
 
