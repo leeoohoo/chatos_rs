@@ -51,8 +51,8 @@ use video_provider::{
 };
 use workflow::MediaWorkflow;
 pub(crate) use workflow::{
-    delete_media_studio_workflow, list_media_studio_workflows, save_media_studio_workflow,
-    MediaStudioWorkflowStore,
+    delete_media_studio_workflow, list_media_studio_workflows, run_media_studio_workflow,
+    save_media_studio_workflow, MediaStudioWorkflowStore,
 };
 
 const MAXIMUM_PROVIDER_RESPONSE_BYTES: usize = 48 * 1_024 * 1_024;

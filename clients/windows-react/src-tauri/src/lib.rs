@@ -141,7 +141,7 @@ use media_studio::{
     list_media_studio_models, list_media_studio_workflows, load_media_studio_image_history,
     load_media_studio_video_history, media_studio_protocol, pick_agent_avatar,
     pick_media_studio_reference_images, pick_media_studio_video_reference_audio,
-    poll_media_studio_video_generation, save_media_studio_workflow,
+    poll_media_studio_video_generation, run_media_studio_workflow, save_media_studio_workflow,
     stage_media_studio_history_references, start_media_studio_video_generation, MediaStudioManager,
 };
 use notepad::{
@@ -680,6 +680,7 @@ pub fn run() {
             list_media_studio_workflows,
             save_media_studio_workflow,
             delete_media_studio_workflow,
+            run_media_studio_workflow,
             load_story_projects,
             load_story_project,
             preview_story_media_batch,
