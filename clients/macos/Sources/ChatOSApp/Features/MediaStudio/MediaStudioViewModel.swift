@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class MediaStudioViewModel: ObservableObject {
     enum Section: String, CaseIterable, Identifiable {
+        case workflow
         case image
         case video
         case story
@@ -35,7 +36,13 @@ final class MediaStudioViewModel: ObservableObject {
         return .empty
     }
 
-    @Published var section: Section = .image
+    enum WorkflowNodeState: Equatable {
+        case running(String?)
+        case completed(String)
+        case failed(String)
+    }
+
+    @Published var section: Section = .workflow
     @Published var prompt = ""
     @Published var selectedModelID: String?
     @Published var size = "1024x1024"
@@ -69,6 +76,13 @@ final class MediaStudioViewModel: ObservableObject {
     @Published private(set) var isLoadingVideoInputImage = false
     @Published private(set) var isLoadingVideoReferenceAudio = false
     @Published private(set) var isLoadingInputImages = false
+    @Published private(set) var workflows: [MediaStudioWorkflow] = []
+    @Published var selectedWorkflowID: UUID?
+    @Published var selectedWorkflowNodeID: UUID?
+    @Published private(set) var isLoadingWorkflows = false
+    @Published private(set) var isSavingWorkflow = false
+    @Published private(set) var isRunningWorkflow = false
+    @Published private(set) var workflowNodeStates: [UUID: WorkflowNodeState] = [:]
 
     private let service: any MediaGenerationServicing
     private let imageGenerationUseCase: MediaStudioImageGenerationUseCase
@@ -79,6 +93,8 @@ final class MediaStudioViewModel: ObservableObject {
     private let imageReferenceUseCase: MediaStudioImageReferenceUseCase
     private let imageReferenceImporter: any MediaStudioImageReferenceImporting
     private let inputArtifacts: MediaStudioInputArtifactStore
+    private let workflowStore: MediaStudioWorkflowStore
+    private let workflowRunner: MediaStudioWorkflowRunner?
     let stories: StoryStudioViewModel
     private var hasLoaded = false
     private var hasLoadedHistory = false
@@ -103,27 +119,43 @@ final class MediaStudioViewModel: ObservableObject {
     private var videoAudioTask: Task<Void, Never>?
     private var inputImagesTask: Task<Void, Never>?
     private var imageReferenceState = MediaStudioImageReferenceState()
+    private var workflowPersistenceTask: Task<Void, Never>?
+    private var workflowRunTask: Task<Void, Never>?
+    private var hasLoadedWorkflows = false
 
     init(
         service: any MediaGenerationServicing,
         historyStore: MediaStudioHistoryStore = MediaStudioHistoryStore(),
         videoJobStore: MediaStudioVideoJobStore = MediaStudioVideoJobStore(),
         imageTransport: any HTTPTransport = URLSessionHTTPTransport(),
-        storyPlanner: (any StoryPlanningServicing)? = nil
+        storyPlanner: (any StoryPlanningServicing)? = nil,
+        textGenerator: (any MediaStudioTextGenerating)? = nil,
+        workflowStore: MediaStudioWorkflowStore = MediaStudioWorkflowStore()
     ) {
         let inputArtifacts = MediaStudioInputArtifactStore()
         let storyStore = StoryProjectStore()
-        self.service = service
-        self.inputArtifacts = inputArtifacts
-        self.imageGenerationUseCase = MediaStudioImageGenerationUseCase(
+        let imageGenerationUseCase = MediaStudioImageGenerationUseCase(
             generator: service,
             history: historyStore
         )
-        self.videoJobService = MediaStudioVideoJobService(
+        let videoJobService = MediaStudioVideoJobService(
             generator: service,
             history: historyStore,
             store: videoJobStore
         )
+        self.service = service
+        self.inputArtifacts = inputArtifacts
+        self.imageGenerationUseCase = imageGenerationUseCase
+        self.videoJobService = videoJobService
+        self.workflowStore = workflowStore
+        self.workflowRunner = textGenerator.map {
+            MediaStudioWorkflowRunner(
+                textGenerator: $0,
+                imageGenerator: imageGenerationUseCase,
+                videoGenerator: videoJobService,
+                store: workflowStore
+            )
+        }
         self.videoJobMaintenance = MediaStudioVideoJobMaintenance(
             jobs: videoJobStore,
             history: historyStore,
@@ -156,6 +188,8 @@ final class MediaStudioViewModel: ObservableObject {
         inputImagesTask?.cancel()
         videoInputTask?.cancel()
         videoAudioTask?.cancel()
+        workflowPersistenceTask?.cancel()
+        workflowRunTask?.cancel()
         inputArtifacts.removeAll()
     }
 
@@ -339,6 +373,8 @@ final class MediaStudioViewModel: ObservableObject {
         switch section {
         case .story, .history:
             stories.activate(userID: ownerID)
+        case .workflow:
+            loadWorkflowsIfNeeded()
         case .image, .video:
             break
         }
@@ -348,6 +384,399 @@ final class MediaStudioViewModel: ObservableObject {
         guard ownerID != nil else { return }
         hasLoaded = true
         loadModels()
+    }
+
+    var selectedWorkflow: MediaStudioWorkflow? {
+        guard let selectedWorkflowID else { return nil }
+        return workflows.first { $0.id == selectedWorkflowID }
+    }
+
+    var selectedWorkflowNode: MediaStudioWorkflowNode? {
+        guard let selectedWorkflowNodeID else { return nil }
+        return selectedWorkflow?.nodes.first { $0.id == selectedWorkflowNodeID }
+    }
+
+    func loadWorkflowsIfNeeded() {
+        guard let ownerID, !hasLoadedWorkflows else { return }
+        hasLoadedWorkflows = true
+        isLoadingWorkflows = true
+        let session = sessionID
+        let store = workflowStore
+        workflowPersistenceTask?.cancel()
+        workflowPersistenceTask = Task { [weak self] in
+            let result: Result<[MediaStudioWorkflow], Error>
+            do {
+                result = .success(try await store.list(owner: ownerID))
+            } catch {
+                result = .failure(error)
+            }
+            guard let self, self.ownerID == ownerID, self.sessionID == session else { return }
+            switch result {
+            case let .success(workflows): self.workflows = workflows
+            case let .failure(error): self.errorMessage = error.localizedDescription
+            }
+            self.isLoadingWorkflows = false
+            self.workflowPersistenceTask = nil
+        }
+    }
+
+    func createWorkflow() {
+        guard let ownerID, !isSavingWorkflow else { return }
+        let node: MediaStudioWorkflowNode
+        if let model = imageModels.first {
+            node = .init(kind: .image, modelConfigID: model.id, prompt: "根据当前描述生成图片")
+        } else if let model = textModels.first {
+            node = .init(kind: .text, modelConfigID: model.id, prompt: "优化当前描述")
+        } else {
+            errorMessage = "请先配置一个可用的文本或图片模型。"
+            return
+        }
+        let workflow = MediaStudioWorkflow(
+            name: "工作流 \(workflows.count + 1)",
+            nodes: [node]
+        )
+        persist(workflow, owner: ownerID, selectAfterSave: true)
+    }
+
+    func openWorkflow(_ workflow: MediaStudioWorkflow) {
+        selectedWorkflowID = workflow.id
+        selectedWorkflowNodeID = workflow.nodes.first?.id
+        workflowNodeStates = [:]
+    }
+
+    func closeWorkflow() {
+        guard !isRunningWorkflow else { return }
+        selectedWorkflowID = nil
+        selectedWorkflowNodeID = nil
+        workflowNodeStates = [:]
+    }
+
+    func editSelectedWorkflow(_ edit: (inout MediaStudioWorkflow) -> Void) {
+        guard !isRunningWorkflow,
+              let id = selectedWorkflowID,
+              let index = workflows.firstIndex(where: { $0.id == id }) else { return }
+        edit(&workflows[index])
+    }
+
+    func editSelectedNode(_ edit: (inout MediaStudioWorkflowNode) -> Void) {
+        guard let nodeID = selectedWorkflowNodeID else { return }
+        editSelectedWorkflow { workflow in
+            guard let index = workflow.nodes.firstIndex(where: { $0.id == nodeID }) else { return }
+            edit(&workflow.nodes[index])
+        }
+    }
+
+    func saveSelectedWorkflow() {
+        guard let ownerID, var workflow = selectedWorkflow else { return }
+        workflow.updatedAt = Date()
+        persist(workflow, owner: ownerID, selectAfterSave: false)
+    }
+
+    func deleteSelectedWorkflow() {
+        guard let ownerID, let id = selectedWorkflowID, !isRunningWorkflow else { return }
+        let session = sessionID
+        let store = workflowStore
+        isSavingWorkflow = true
+        workflowPersistenceTask?.cancel()
+        workflowPersistenceTask = Task { [weak self] in
+            do {
+                try await store.delete(id: id, owner: ownerID)
+                guard let self, self.ownerID == ownerID, self.sessionID == session,
+                      self.selectedWorkflowID == id else { return }
+                self.workflows.removeAll { $0.id == id }
+                self.closeWorkflow()
+            } catch {
+                guard let self, self.ownerID == ownerID, self.sessionID == session else { return }
+                self.errorMessage = error.localizedDescription
+            }
+            self?.isSavingWorkflow = false
+            self?.workflowPersistenceTask = nil
+        }
+    }
+
+    func addWorkflowNode(_ kind: MediaStudioWorkflowNodeKind) {
+        guard let workflow = selectedWorkflow,
+              workflow.nodes.count < MediaStudioWorkflowValidator.maximumNodeCount,
+              workflow.nodes.last?.kind != .video,
+              kind != .video || !workflow.nodes.contains(where: { $0.kind == .video }) else {
+            errorMessage = "视频节点必须是唯一的末尾节点。"
+            return
+        }
+        let model: MediaGenerationModel?
+        switch kind {
+        case .text: model = textModels.first
+        case .image: model = imageModels.first
+        case .video: model = videoModels.first
+        }
+        guard let model else {
+            errorMessage = "当前没有可用于该节点类型的模型。"
+            return
+        }
+        let node = MediaStudioWorkflowNode(
+            kind: kind,
+            modelConfigID: model.id,
+            prompt: kind == .text ? "优化当前工作文本" : kind == .image ? "根据当前文本生成图片" : "根据当前文本生成视频"
+        )
+        editSelectedWorkflow { $0.nodes.append(node) }
+        selectedWorkflowNodeID = node.id
+    }
+
+    func removeSelectedWorkflowNode() {
+        guard let nodeID = selectedWorkflowNodeID,
+              let workflow = selectedWorkflow,
+              workflow.nodes.count > 1 else {
+            errorMessage = "工作流至少需要一个节点。"
+            return
+        }
+        editSelectedWorkflow { $0.nodes.removeAll { $0.id == nodeID } }
+        selectedWorkflowNodeID = selectedWorkflow?.nodes.first?.id
+    }
+
+    func changeSelectedWorkflowNodeKind(_ kind: MediaStudioWorkflowNodeKind) {
+        guard let nodeID = selectedWorkflowNodeID,
+              let workflow = selectedWorkflow,
+              let index = workflow.nodes.firstIndex(where: { $0.id == nodeID }),
+              workflow.nodes[index].kind != kind else { return }
+        if kind == .video,
+           (index != workflow.nodes.count - 1 || workflow.nodes.contains(where: {
+               $0.kind == .video && $0.id != nodeID
+           })) {
+            errorMessage = "视频节点只能是唯一的末尾节点。"
+            return
+        }
+        let model: MediaGenerationModel?
+        switch kind {
+        case .text: model = textModels.first
+        case .image: model = imageModels.first
+        case .video: model = videoModels.first
+        }
+        guard let model else {
+            errorMessage = "当前没有可用于该节点类型的模型。"
+            return
+        }
+        editSelectedNode {
+            $0.kind = kind
+            $0.modelConfigID = model.id
+            if kind == .video, $0.referenceImages.count > 1 {
+                $0.referenceImages = Array($0.referenceImages.prefix(1))
+            }
+        }
+    }
+
+    func moveSelectedWorkflowNode(by offset: Int) {
+        guard let nodeID = selectedWorkflowNodeID,
+              let workflow = selectedWorkflow,
+              let source = workflow.nodes.firstIndex(where: { $0.id == nodeID }) else { return }
+        let destination = source + offset
+        guard workflow.nodes.indices.contains(destination),
+              workflow.nodes[source].kind != .video,
+              workflow.nodes[destination].kind != .video else { return }
+        editSelectedWorkflow { $0.nodes.swapAt(source, destination) }
+    }
+
+    func importWorkflowImage(from url: URL, nodeID: UUID?) {
+        guard let ownerID, let workflow = selectedWorkflow, !isRunningWorkflow else { return }
+        let currentCount = nodeID.flatMap { id in
+            workflow.nodes.first(where: { $0.id == id })?.referenceImages.count
+        } ?? workflow.inputImages.count
+        let maximum = nodeID.flatMap { id in
+            workflow.nodes.first(where: { $0.id == id })?.kind == .video ? 1 : nil
+        } ?? MediaStudioWorkflowValidator.maximumReferenceCount
+        guard currentCount < maximum else {
+            errorMessage = maximum == 1 ? "视频节点最多上传一张图片。" : "每处最多上传 8 张图片。"
+            return
+        }
+        let session = sessionID
+        let store = workflowStore
+        isSavingWorkflow = true
+        workflowPersistenceTask?.cancel()
+        workflowPersistenceTask = Task { [weak self] in
+            do {
+                let reference = try await store.importImage(
+                    .init(name: url.lastPathComponent, mimeType: Self.imageMIMEType(url), fileURL: url),
+                    workflowID: workflow.id,
+                    owner: ownerID
+                )
+                guard let self, self.ownerID == ownerID, self.sessionID == session,
+                      self.selectedWorkflowID == workflow.id else { return }
+                self.editSelectedWorkflow { value in
+                    if let nodeID,
+                       let index = value.nodes.firstIndex(where: { $0.id == nodeID }) {
+                        value.nodes[index].referenceImages.append(reference)
+                    } else {
+                        value.inputImages.append(reference)
+                    }
+                    value.updatedAt = Date()
+                }
+                if let updated = self.selectedWorkflow {
+                    try await store.save(updated, owner: ownerID)
+                }
+            } catch {
+                guard let self, self.ownerID == ownerID, self.sessionID == session else { return }
+                self.errorMessage = error.localizedDescription
+            }
+            self?.isSavingWorkflow = false
+            self?.workflowPersistenceTask = nil
+        }
+    }
+
+    func removeWorkflowImage(_ referenceID: UUID, nodeID: UUID?) {
+        editSelectedWorkflow { workflow in
+            if let nodeID,
+               let index = workflow.nodes.firstIndex(where: { $0.id == nodeID }) {
+                workflow.nodes[index].referenceImages.removeAll { $0.id == referenceID }
+            } else {
+                workflow.inputImages.removeAll { $0.id == referenceID }
+            }
+        }
+    }
+
+    func runSelectedWorkflow() {
+        guard let ownerID, let workflow = selectedWorkflow,
+              let runner = workflowRunner, !isRunningWorkflow,
+              !isLoadingModels, !isLoadingHistory else {
+            if workflowRunner == nil { errorMessage = "工作流文本服务尚未配置。" }
+            return
+        }
+        do { try validateModels(for: workflow) } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        let session = sessionID
+        isRunningWorkflow = true
+        workflowNodeStates = [:]
+        errorMessage = nil
+        workflowRunTask?.cancel()
+        workflowRunTask = Task { [weak self] in
+            do {
+                let result = try await runner.run(
+                    workflow,
+                    owner: ownerID,
+                    sessionEpoch: session
+                ) { [weak self] event in
+                    await MainActor.run {
+                        guard let self, self.ownerID == ownerID,
+                              self.sessionID == session,
+                              self.selectedWorkflowID == workflow.id else { return }
+                        self.applyWorkflowEvent(event)
+                    }
+                }
+                guard let self, self.ownerID == ownerID, self.sessionID == session else { return }
+                self.history.insert(contentsOf: result.imageHistory.reversed(), at: 0)
+                self.videoHistory.insert(contentsOf: result.videoHistory.reversed(), at: 0)
+                self.isRunningWorkflow = false
+                self.workflowRunTask = nil
+            } catch is CancellationError {
+                guard let self, self.ownerID == ownerID, self.sessionID == session else { return }
+                if let running = self.workflowNodeStates.first(where: {
+                    if case .running = $0.value { true } else { false }
+                })?.key {
+                    self.workflowNodeStates[running] = .failed("已停止")
+                }
+                self.isRunningWorkflow = false
+                self.workflowRunTask = nil
+                self.reloadHistoryAfterWorkflowInterruption()
+            } catch {
+                guard let self, self.ownerID == ownerID, self.sessionID == session else { return }
+                if let running = self.workflowNodeStates.first(where: {
+                    if case .running = $0.value { true } else { false }
+                })?.key {
+                    self.workflowNodeStates[running] = .failed(error.localizedDescription)
+                }
+                self.errorMessage = error.localizedDescription
+                self.isRunningWorkflow = false
+                self.workflowRunTask = nil
+                self.reloadHistoryAfterWorkflowInterruption()
+            }
+        }
+    }
+
+    func cancelWorkflowRun() {
+        workflowRunTask?.cancel()
+    }
+
+    func dismissError() {
+        errorMessage = nil
+    }
+
+    private func persist(
+        _ workflow: MediaStudioWorkflow,
+        owner: String,
+        selectAfterSave: Bool
+    ) {
+        do { try MediaStudioWorkflowValidator.validate(workflow) } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        let session = sessionID
+        let store = workflowStore
+        isSavingWorkflow = true
+        workflowPersistenceTask?.cancel()
+        workflowPersistenceTask = Task { [weak self] in
+            do {
+                try await store.save(workflow, owner: owner)
+                guard let self, self.ownerID == owner, self.sessionID == session else { return }
+                if let index = self.workflows.firstIndex(where: { $0.id == workflow.id }) {
+                    self.workflows[index] = workflow
+                } else {
+                    self.workflows.insert(workflow, at: 0)
+                }
+                if selectAfterSave { self.openWorkflow(workflow) }
+            } catch {
+                guard let self, self.ownerID == owner, self.sessionID == session else { return }
+                self.errorMessage = error.localizedDescription
+            }
+            self?.isSavingWorkflow = false
+            self?.workflowPersistenceTask = nil
+        }
+    }
+
+    private func validateModels(for workflow: MediaStudioWorkflow) throws {
+        try MediaStudioWorkflowValidator.validate(workflow)
+        var hasImages = !workflow.inputImages.isEmpty
+        for node in workflow.nodes {
+            switch node.kind {
+            case .text:
+                guard let model = textModels.first(where: { $0.id == node.modelConfigID }) else {
+                    throw MediaStudioWorkflowViewModelError.modelUnavailable
+                }
+                if hasImages || !node.referenceImages.isEmpty, !model.supportsImageInput {
+                    throw MediaStudioWorkflowViewModelError.textModelCannotReadImages
+                }
+            case .image:
+                guard imageModels.contains(where: { $0.id == node.modelConfigID }) else {
+                    throw MediaStudioWorkflowViewModelError.modelUnavailable
+                }
+                hasImages = true
+            case .video:
+                guard videoModels.contains(where: { $0.id == node.modelConfigID }) else {
+                    throw MediaStudioWorkflowViewModelError.modelUnavailable
+                }
+            }
+        }
+    }
+
+    private func applyWorkflowEvent(_ event: MediaStudioWorkflowRunEvent) {
+        switch event {
+        case let .started(id): workflowNodeStates[id] = .running(nil)
+        case let .progress(id, progress):
+            workflowNodeStates[id] = .running(progress.percent.map { "\($0)%" } ?? progress.status)
+        case let .completed(id, summary): workflowNodeStates[id] = .completed(summary)
+        }
+    }
+
+    private func reloadHistoryAfterWorkflowInterruption() {
+        historyLoadTask?.cancel()
+        historyLoadTask = nil
+        historyLoadState.reset()
+        hasLoadedHistory = false
+        isLoadingHistory = false
+        isLoadingMoreHistory = false
+        loadHistoryIfNeeded()
+    }
+
+    private static func imageMIMEType(_ url: URL) -> String {
+        UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "image/png"
     }
 
     func generate() {
@@ -886,8 +1315,13 @@ final class MediaStudioViewModel: ObservableObject {
         videoGenerationTask = nil
         videoJobMaintenanceTask?.cancel()
         videoJobMaintenanceTask = nil
+        workflowPersistenceTask?.cancel()
+        workflowPersistenceTask = nil
+        workflowRunTask?.cancel()
+        workflowRunTask = nil
         hasLoaded = false
         hasLoadedHistory = false
+        hasLoadedWorkflows = false
         hasAttemptedVideoRecovery = false
         hasAttemptedVideoJobMaintenance = false
         prompt = ""
@@ -902,6 +1336,13 @@ final class MediaStudioViewModel: ObservableObject {
         videoModels = []
         history = []
         videoHistory = []
+        workflows = []
+        selectedWorkflowID = nil
+        selectedWorkflowNodeID = nil
+        isLoadingWorkflows = false
+        isSavingWorkflow = false
+        isRunningWorkflow = false
+        workflowNodeStates = [:]
         isLoadingModels = false
         isGenerating = false
         isGeneratingVideo = false
@@ -962,4 +1403,16 @@ final class MediaStudioViewModel: ObservableObject {
         modelsLoadTask = nil
     }
 
+}
+
+private enum MediaStudioWorkflowViewModelError: LocalizedError {
+    case modelUnavailable
+    case textModelCannotReadImages
+
+    var errorDescription: String? {
+        switch self {
+        case .modelUnavailable: "工作流中有模型已停用或不可用，请重新选择。"
+        case .textModelCannotReadImages: "该文本节点会接收图片，请选择支持图片输入的语言模型。"
+        }
+    }
 }

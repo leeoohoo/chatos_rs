@@ -4,7 +4,7 @@ import ChatOSAgentRuntime
 import Foundation
 
 /// Uses the user's configured relay and secret; no separate story-model credentials.
-public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServiceProviding {
+public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServiceProviding, MediaStudioTextGenerating {
     private let client: ChatOSAPIClient
     private let transport: any HTTPTransport
     private let workerModelTransportEnabled: Bool
@@ -136,6 +136,63 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
         return data
     }
 
+    public func generateText(_ request: MediaStudioTextGenerationRequest) async throws -> String {
+        let session = try await client.currentAuthenticationSessionID()
+        let config = try await loadModelConfig(
+            id: request.modelConfigID,
+            expectedAuthenticationSessionID: session
+        )
+        guard config.enabled,
+              ModelWorkload.forModel(config.model) == .chat,
+              request.images.isEmpty || config.supportsImages == true,
+              let key = config.apiKey, !key.isEmpty,
+              let raw = config.baseURL,
+              let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              url.host != nil, url.user == nil, url.password == nil else {
+            throw AgentRuntimeError.modelConfigurationUnavailable
+        }
+        let attachments = try request.images.map { image in
+            guard let fileURL = image.fileURL else { throw AgentRuntimeError.invalidAttachment }
+            return AgentMessageAttachment(
+                name: image.name,
+                mimeType: image.mimeType,
+                kind: .image,
+                localFileURL: fileURL
+            )
+        }
+        let send: AgentResponsesModelClient.Transport = { urlRequest in
+            guard let requestURL = urlRequest.url else { throw ChatOSAPIError.invalidEndpoint }
+            let response = try await transport.send(.init(
+                url: requestURL,
+                method: "POST",
+                headers: urlRequest.allHTTPHeaderFields ?? [:],
+                body: urlRequest.httpBody,
+                timeoutInterval: urlRequest.timeoutInterval,
+                maximumResponseBytes: 2 * 1_024 * 1_024
+            ))
+            return (response.body, response.statusCode)
+        }
+        let model = try AgentResponsesModelClient(
+            baseURL: url,
+            model: config.model,
+            apiKey: key,
+            promptCacheKey: "media-workflow:\(request.modelConfigID)",
+            transport: send
+        )
+        let response = try await model.complete(
+            messages: [.init(role: .user, content: request.prompt, attachments: attachments)],
+            tools: [],
+            timeout: 180
+        )
+        guard try await client.currentAuthenticationSessionID() == session else {
+            throw ChatOSAPIError.unauthorized
+        }
+        let output = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !output.isEmpty else { throw AgentRuntimeError.invalidResponse }
+        return output
+    }
+
     private func loadModelConfig(
         id: String,
         expectedAuthenticationSessionID: UUID? = nil
@@ -198,6 +255,7 @@ private struct Config: Decodable {
     var outputReserveTokens: Int?
     var protocolOverheadEstimatorID: String?
     var tokenizerID: String?
+    var supportsImages: Bool?
     enum CodingKeys: String, CodingKey {
         case enabled, model, provider
         case apiKey = "api_key"
@@ -209,5 +267,6 @@ private struct Config: Decodable {
         case outputReserveTokens = "output_reserve_tokens"
         case protocolOverheadEstimatorID = "protocol_overhead_estimator_id"
         case tokenizerID = "tokenizer_id"
+        case supportsImages = "supports_images"
     }
 }
