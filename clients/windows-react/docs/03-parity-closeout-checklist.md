@@ -34,6 +34,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 在格式修复和上游同步后补跑 Windows Tauri Clippy：`cargo clippy --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib -- -D warnings` 通过，未发现警告。
 
+- 2026-11-16 在当前 HEAD（上游同步、格式修复和 Clippy 通过后）重新执行 `npm run tauri -- build --no-bundle`，Release 产物生成成功：`target-shared/release/chatos-windows-react.exe`，SHA-256 为 `525def94acbf2e6b3a5dae631d5a97b65aa8dedffc8b16ddc8f6d23e836c6bc4`。启动 smoke 观察到自身原生窗口标题 `ChatOS` 与正确 Release 路径，随后由测试清理进程；本次没有进入认证窗口或写入用户数据。
+
 - 2026-11-16 在上述修复后重新执行完整本机门禁：Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `591 passed, 0 failed, 6 ignored`（597 个测试）；React/Vitest 为 `143` 个测试文件、`529 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture`、`npm run audit:bundle` 和 `npm run tauri -- build --no-bundle` 全部通过。当前工作区干净，代码提交 `d1bdeef93` 与文档提交均已推送到 `origin/3.0.9.3.1`。
 
 - 2026-11-16 网络恢复后的最终门禁复跑：`origin/3.0.9.8` 的头 `6ef0a7bd4` 已由当前 `3.0.9.3.1` 包含（`git rev-list HEAD..origin/3.0.9.8` 为 `0`，反向为 `436`），没有需要合并的上游提交；当前工作区仍干净。Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `590 passed, 0 failed, 6 ignored`（118.77 秒），React/Vitest 为 `143` 个测试文件、`529 passed, 0 failed`（35.73 秒），`npm run typecheck`、`npm run build`、`npm run audit:architecture` 和 `npm run audit:bundle` 全部通过（Bundle `456.93 KiB` raw / `137.70 KiB` gzip）。本轮只更新回归记录，没有改动运行逻辑或远端数据。
