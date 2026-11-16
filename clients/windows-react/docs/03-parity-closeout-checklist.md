@@ -16,6 +16,8 @@ Windows 产品版本：`3.0.9`
 
 ### 2026-11-16 全量离线回归复核
 
+- 2026-11-16 完成 Computer Use 安装后 Windows 实测：已安装的 `Visual Computer Use 0.9.0` x64 worker 通过 `--doctor`（`screenCaptureAvailable=true`、`inputDesktopAvailable=true`、`allGranted=true`），真实 stdio MCP `initialize`/`tools/list` 暴露 11 个工具，`check_permissions` 与 `observe_screen` 均返回有效结构化结果和带虚拟准星的真实截图。安装后首次尝试从 UI 切换本机 Plugin 时复现 Marketplace 短暂不可用导致的“无法确认 Plugin 来源”误拦截；Windows 宿主已改为对已安装、`local-plugin-*`/`local-release-*` 的本机包允许独立启停，同时继续对 Marketplace 包执行来源门禁。`plugin_settings` 定向回归 `19 passed, 0 failed`，Release 构建成功并已推送提交 `d1bdeef93`。重启后的正式 Release 需要重新登录才能继续 UI 开关闭环；Computer Use 安全规则不允许代理认证窗口，因此未伪造登录后视觉证据。
+
 - 2026-11-16 网络恢复后的最终门禁复跑：`origin/3.0.9.8` 的头 `6ef0a7bd4` 已由当前 `3.0.9.3.1` 包含（`git rev-list HEAD..origin/3.0.9.8` 为 `0`，反向为 `436`），没有需要合并的上游提交；当前工作区仍干净。Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `590 passed, 0 failed, 6 ignored`（118.77 秒），React/Vitest 为 `143` 个测试文件、`529 passed, 0 failed`（35.73 秒），`npm run typecheck`、`npm run build`、`npm run audit:architecture` 和 `npm run audit:bundle` 全部通过（Bundle `456.93 KiB` raw / `137.70 KiB` gzip）。本轮只更新回归记录，没有改动运行逻辑或远端数据。
 
 - 2026-11-16 重新执行未签名 NSIS 隔离安装冷启动基线：`ChatOS_3.0.9_x64-setup.exe` 安装、5 次启动、原生窗口标题/进程路径校验、自动退出、卸载和用户数据清理全部通过；安装/卸载退出码均为 `0`，`p50=2,333 ms`、`p95=2,750 ms`，5 次均观察到真实 `ChatOS` 原生窗口，报告在验证后已清理。该结果补强本机安装包基线，但仍不替代正式签名、SmartScreen 和干净 VM 首次扫描复验。
