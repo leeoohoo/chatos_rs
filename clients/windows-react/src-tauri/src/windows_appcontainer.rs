@@ -3283,18 +3283,33 @@ mod tests {
 
     #[test]
     fn read_write_lease_runs_real_git_against_an_existing_repository() {
-        let located = std::process::Command::new("where.exe")
-            .arg("git.exe")
-            .output()
-            .unwrap();
-        if !located.status.success() {
-            return;
-        }
-        let located_stdout = String::from_utf8_lossy(&located.stdout);
-        let Some(git_line) = located_stdout.lines().find(|line| !line.trim().is_empty()) else {
+        // Prefer the regular machine Git installation. The Codex-bundled Git
+        // may appear first in `where.exe` on developer machines, but its
+        // private parent ACL is intentionally not AppContainer-readable; in
+        // that case CreateProcessW reports the misleading ERROR_FILE_NOT_FOUND
+        // even though the current user can execute it. Fall back to PATH only
+        // when the machine installation is absent.
+        let git = std::env::var_os("ProgramFiles")
+            .map(PathBuf::from)
+            .map(|program_files| program_files.join("Git").join("cmd").join("git.exe"))
+            .filter(|path| path.is_file())
+            .or_else(|| {
+                std::process::Command::new("where.exe")
+                    .arg("git.exe")
+                    .output()
+                    .ok()
+                    .filter(|located| located.status.success())
+                    .and_then(|located| {
+                        String::from_utf8_lossy(&located.stdout)
+                            .lines()
+                            .find(|line| !line.trim().is_empty())
+                            .map(|line| PathBuf::from(line.trim()))
+                    })
+                    .filter(|path| path.is_file())
+            });
+        let Some(git) = git else {
             return;
         };
-        let git = PathBuf::from(git_line.trim());
         let app_data = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
         let initialized = std::process::Command::new(&git)

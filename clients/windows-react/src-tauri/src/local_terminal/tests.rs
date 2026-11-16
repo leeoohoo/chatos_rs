@@ -274,7 +274,10 @@ async fn windows_native_pty_drains_megabyte_output_and_exits() {
         }
     };
     session.close();
-    assert!(!running, "PowerShell output command did not exit within 15 seconds");
+    assert!(
+        !running,
+        "PowerShell output command did not exit within 15 seconds"
+    );
     assert!(
         output_bytes >= 1_024 * 1_024,
         "expected at least 1 MiB of output, received {output_bytes} bytes"
