@@ -128,8 +128,8 @@ struct MediaStudioView: View {
                 Text(appModel.localized("AI 创作", english: "AI Creation"))
                     .font(.system(size: 16, weight: .semibold))
                 Text(appModel.localized(
-                    "独立于聊天的图片与视频工作台",
-                    english: "A dedicated image and video workspace"
+                    "可配置的文本、图片与视频生成流程",
+                    english: "Configurable text, image, and video workflows"
                 ))
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
@@ -138,10 +138,8 @@ struct MediaStudioView: View {
             Spacer(minLength: 24)
 
             Picker("", selection: $viewModel.section) {
-                Label(appModel.localized("图片", english: "Image"), systemImage: "photo")
-                    .tag(MediaStudioViewModel.Section.image)
-                Label(appModel.localized("视频", english: "Video"), systemImage: "video")
-                    .tag(MediaStudioViewModel.Section.video)
+                Label(appModel.localized("工作流", english: "Workflows"), systemImage: "point.3.connected.trianglepath.dotted")
+                    .tag(MediaStudioViewModel.Section.workflow)
                 Label(appModel.localized("剧情模式", english: "Story"), systemImage: "film.stack")
                     .tag(MediaStudioViewModel.Section.story)
                 Label(appModel.localized("记录", english: "History"), systemImage: "clock")
@@ -149,7 +147,7 @@ struct MediaStudioView: View {
             }
             .labelsHidden()
             .pickerStyle(.segmented)
-            .frame(width: 400)
+            .frame(width: 360)
         }
         .padding(.horizontal, 20)
         .frame(height: 68)
@@ -159,6 +157,8 @@ struct MediaStudioView: View {
     @ViewBuilder
     private var content: some View {
         switch viewModel.section {
+        case .workflow:
+            MediaStudioWorkflowWorkspace(viewModel: viewModel)
         case .image:
             imageWorkspace
         case .video:

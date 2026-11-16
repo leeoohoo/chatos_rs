@@ -2,6 +2,17 @@ import XCTest
 @testable import ChatOSCore
 
 final class MediaGenerationModelsTests: XCTestCase {
+    func testTextModelImageInputCapabilityDecodesFromCatalog() throws {
+        let model = try JSONDecoder().decode(
+            MediaGenerationModel.self,
+            from: Data("""
+            {"id":"vision","name":"Vision","provider":"gpt","model":"gpt-6.1-sol","enabled":true,"task_enabled":false,"has_api_key":true,"supports_images":true}
+            """.utf8)
+        )
+
+        XCTAssertTrue(model.supportsImageInput)
+    }
+
     func testFileBackedImageReferenceDoesNotPersistLocalURLInLegacyWireShape() throws {
         let input = ImageGenerationInputImage(
             name: "first.png",

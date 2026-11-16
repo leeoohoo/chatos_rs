@@ -281,7 +281,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         self.agentServices = agentServices
         self.mediaStudio = MediaStudioViewModel(
             service: ChatOSMediaGenerationService(client: apiClient),
-            storyPlanner: remoteAgentServices
+            storyPlanner: remoteAgentServices,
+            textGenerator: remoteAgentServices
         )
         self.localConnectorService = localConnectorService
         self.pluginApplicationListUseCase = PluginApplicationListUseCase(

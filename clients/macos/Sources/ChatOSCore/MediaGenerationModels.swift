@@ -9,6 +9,7 @@ public struct MediaGenerationModel: Codable, Identifiable, Sendable, Equatable {
     public var enabled: Bool
     public var taskEnabled: Bool
     public var hasAPIKey: Bool
+    public var supportsImages: Bool?
 
     public init(
         id: String,
@@ -17,7 +18,8 @@ public struct MediaGenerationModel: Codable, Identifiable, Sendable, Equatable {
         modelName: String,
         enabled: Bool,
         taskEnabled: Bool,
-        hasAPIKey: Bool
+        hasAPIKey: Bool,
+        supportsImages: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -26,6 +28,7 @@ public struct MediaGenerationModel: Codable, Identifiable, Sendable, Equatable {
         self.enabled = enabled
         self.taskEnabled = taskEnabled
         self.hasAPIKey = hasAPIKey
+        self.supportsImages = supportsImages
     }
 
     enum CodingKeys: String, CodingKey {
@@ -33,10 +36,12 @@ public struct MediaGenerationModel: Codable, Identifiable, Sendable, Equatable {
         case modelName = "model"
         case taskEnabled = "task_enabled"
         case hasAPIKey = "has_api_key"
+        case supportsImages = "supports_images"
     }
 
     public var supportsImageGeneration: Bool { ModelWorkload.forModel(modelName) == .image }
     public var supportsChat: Bool { ModelWorkload.forModel(modelName) == .chat }
+    public var supportsImageInput: Bool { supportsImages == true }
     public var isLikelyVideoModel: Bool { ModelWorkload.forModel(modelName) == .video }
 
     /// NewAPI's unified `/v1/videos` contract exposes model capabilities by profile.
@@ -522,6 +527,26 @@ public protocol MediaVideoGenerating: Sendable {
         _ request: VideoGenerationRequest,
         progress: @escaping @Sendable (VideoGenerationProgress) async -> Void
     ) async throws -> VideoGenerationResult
+}
+
+public struct MediaStudioTextGenerationRequest: Sendable, Equatable {
+    public var modelConfigID: String
+    public var prompt: String
+    public var images: [ImageGenerationInputImage]
+
+    public init(
+        modelConfigID: String,
+        prompt: String,
+        images: [ImageGenerationInputImage] = []
+    ) {
+        self.modelConfigID = modelConfigID
+        self.prompt = prompt
+        self.images = images
+    }
+}
+
+public protocol MediaStudioTextGenerating: Sendable {
+    func generateText(_ request: MediaStudioTextGenerationRequest) async throws -> String
 }
 
 public protocol MediaGenerationServicing:
