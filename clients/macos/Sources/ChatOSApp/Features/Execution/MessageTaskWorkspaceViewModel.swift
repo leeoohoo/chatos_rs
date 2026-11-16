@@ -251,11 +251,11 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
 
     func retrySelectedRun() {
         guard let task = selectedTask,
-              let runID = task.lastRunID ?? runDetail?.run.id,
+              task.canRetryExecution,
               !isRetrying,
               let session = workspaceLifecycleState.activeSession else { return }
         let token = retryState.begin(
-            contextID: "\(turn.sessionID):\(task.id):\(runID)"
+            contextID: "\(turn.sessionID):\(task.id)"
         )
         let instruction = retryInstruction
         let graphUseCase = graphUseCase
@@ -266,7 +266,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
             do {
                 try await graphUseCase.retryRun(
                     messageID: target.messageID,
-                    runID: runID,
+                    taskID: task.id,
                     lookup: target.lookup,
                     instruction: instruction
                 )

@@ -191,6 +191,29 @@ fn companion_request_allowed(method: &Method, path: &str) -> bool {
     ) || matches!((method, segments.as_slice()),
         (&Method::POST, [device_id, "agents", agent_id, "direct-conversation"])
             if !device_id.is_empty() && !agent_id.is_empty()
+    ) || matches!((method, segments.as_slice()),
+        (&Method::GET, [device_id, "conversations", conversation_id])
+            if !device_id.is_empty() && !conversation_id.is_empty()
+    ) || matches!((method, segments.as_slice()),
+        (&Method::GET, [device_id, "conversations", conversation_id, "history" | "state"])
+            if !device_id.is_empty() && !conversation_id.is_empty()
+    ) || matches!((method, segments.as_slice()),
+        (&Method::POST,
+            [device_id, "conversations", conversation_id, "messages" | "guidance" | "stop"])
+            if !device_id.is_empty() && !conversation_id.is_empty()
+    ) || matches!((method, segments.as_slice()),
+        (&Method::GET,
+            [device_id, "conversations", conversation_id, "ask-user-prompts"])
+            if !device_id.is_empty() && !conversation_id.is_empty()
+    ) || matches!((method, segments.as_slice()),
+        (&Method::POST,
+            [device_id, "conversations", conversation_id, "ask-user-prompts", prompt_id,
+                "submit" | "cancel"])
+            if !device_id.is_empty() && !conversation_id.is_empty() && !prompt_id.is_empty()
+    ) || matches!((method, segments.as_slice()),
+        (&Method::GET,
+            [device_id, "conversations", conversation_id, "messages", message_id, "tasks"])
+            if !device_id.is_empty() && !conversation_id.is_empty() && !message_id.is_empty()
     )
 }
 
@@ -326,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn companion_scope_only_allows_sanitized_device_summary() {
+    fn companion_scope_only_allows_companion_endpoints() {
         let user = companion_user();
         assert!(enforce_client_scope(
             &user,
@@ -379,6 +402,46 @@ mod tests {
                 Method::POST,
                 "/api/local-connectors/companion/devices/device-1/agents/agent-1/direct-conversation",
             ),
+            (
+                Method::GET,
+                "/api/local-connectors/companion/devices/device-1/conversations/conversation-1",
+            ),
+            (
+                Method::GET,
+                "/api/local-connectors/companion/devices/device-1/conversations/conversation-1/history",
+            ),
+            (
+                Method::GET,
+                "/api/local-connectors/companion/devices/device-1/conversations/conversation-1/state",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/companion/devices/device-1/conversations/conversation-1/messages",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/companion/devices/device-1/conversations/conversation-1/guidance",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/companion/devices/device-1/conversations/conversation-1/stop",
+            ),
+            (
+                Method::GET,
+                "/api/local-connectors/companion/devices/device-1/conversations/conversation-1/ask-user-prompts",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/companion/devices/device-1/conversations/conversation-1/ask-user-prompts/prompt-1/submit",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/companion/devices/device-1/conversations/conversation-1/ask-user-prompts/prompt-1/cancel",
+            ),
+            (
+                Method::GET,
+                "/api/local-connectors/companion/devices/device-1/conversations/conversation-1/messages/message-1/tasks",
+            ),
         ] {
             assert!(
                 enforce_client_scope(&user, &method, path).is_ok(),
@@ -413,6 +476,18 @@ mod tests {
             (
                 Method::POST,
                 "/api/local-connectors/companion/devices/device-1/agent-workspace",
+            ),
+            (
+                Method::GET,
+                "/api/local-connectors/companion/devices/device-1/conversations/conversation-1/messages",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/companion/devices/device-1/conversations/conversation-1/history",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/companion/devices/device-1/conversations/conversation-1/ask-user-prompts//submit",
             ),
         ] {
             assert!(

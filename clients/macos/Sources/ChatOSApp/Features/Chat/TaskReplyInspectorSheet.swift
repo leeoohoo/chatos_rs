@@ -210,7 +210,7 @@ struct TaskReplyInspectorContent: View {
                 .appFont(.caption)
                 .foregroundStyle(.orange)
         }
-        if task.normalizedStatus == "blocked" || task.normalizedStatus == "failed" {
+        if task.canRetryExecution {
             blockedActions(task)
         }
     }
@@ -261,7 +261,7 @@ struct TaskReplyInspectorContent: View {
                 }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(task.lastRunID == nil || viewModel.isRetrying)
+            .disabled(viewModel.isRetrying)
         }
         .padding(14)
         .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))

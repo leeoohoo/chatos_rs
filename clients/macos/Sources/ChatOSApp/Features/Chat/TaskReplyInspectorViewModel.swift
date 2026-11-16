@@ -355,9 +355,11 @@ final class TaskReplyInspectorViewModel: ObservableObject {
 
     func retry() {
         guard let callback = selection.reply.taskCallback,
-              let runID = task?.lastRunID ?? callback.runID,
+              let task,
+              task.canRetryExecution,
               !isRetrying,
               let inspectorSession = lifecycleState.activeSession else { return }
+        let taskID = task.id
         let selection = selection
         let instruction = retryInstruction
         let lookup = lookup(callback, selection: selection)
@@ -370,7 +372,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
             do {
                 try await graphUseCase.retryRun(
                     messageID: selection.reply.message.id,
-                    runID: runID,
+                    taskID: taskID,
                     lookup: lookup,
                     instruction: instruction
                 )

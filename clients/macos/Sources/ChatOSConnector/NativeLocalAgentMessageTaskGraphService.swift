@@ -360,37 +360,50 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
 
     public func retryRun(
         messageID: String,
-        runID: String,
+        taskID: String,
         lookup: MessageTaskLookup?,
         instruction: String?
     ) async throws -> MessageTaskRun {
         let owner = try requireOwner()
-        let run = try await client.run(ownerUserID: owner, runID: runID)
         let current: LocalAgentTaskRecord?
         if let graph = try await messageGraph(lookup: lookup) {
             current = graph.nodes.lazy.map(\.task).first(where: {
-                $0.taskID == run.ownerEntityID
+                $0.taskID == taskID
             })
         } else {
             let graphs = try await matchingGraphs(
                 lookup: lookup,
-                requiredTaskID: run.ownerEntityID
+                requiredTaskID: taskID
             )
             current = graphs.lazy.flatMap(\.tasks).first(where: {
-                $0.taskID == run.ownerEntityID
+                $0.taskID == taskID
             })
         }
         guard let current else {
             throw NativeLocalAgentMessageTaskGraphServiceError.taskNotFound
         }
-        await beforeRetry(runID)
-        let graph = try await client.retry(
-            ownerUserID: owner,
-            taskID: current.taskID,
-            expectedVersion: current.version,
-            retryInstruction: instruction?.trimmingCharacters(in: .whitespacesAndNewlines)
-                .nilIfEmpty
-        )
+        var previousRunID = current.activeRunID
+        if previousRunID == nil {
+            previousRunID = try? await client.runs(
+                ownerUserID: owner,
+                taskID: current.taskID,
+                limit: 1
+            ).first?.runID
+        }
+        if let previousRunID { await beforeRetry(previousRunID) }
+        let graph: LocalAgentTaskGraph
+        do {
+            graph = try await client.retry(
+                ownerUserID: owner,
+                taskID: current.taskID,
+                expectedVersion: current.version,
+                retryInstruction: instruction?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .nilIfEmpty
+            )
+        } catch let NativeLocalAgentHostError.hostError(code, message, _)
+            where code == "conflict" && message.contains("task prerequisites are not satisfied") {
+            throw NativeLocalAgentMessageTaskGraphServiceError.prerequisitesNotSatisfied
+        }
         await afterRetry()
         guard let retried = graph.tasks.first(where: { $0.taskID == current.taskID }) else {
             throw NativeLocalAgentMessageTaskGraphServiceError.taskNotFound
@@ -1317,11 +1330,13 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
 public enum NativeLocalAgentMessageTaskGraphServiceError: LocalizedError {
     case notConfigured
     case taskNotFound
+    case prerequisitesNotSatisfied
 
     public var errorDescription: String? {
         switch self {
         case .notConfigured: "task service is not configured."
         case .taskNotFound: "The task does not exist."
+        case .prerequisitesNotSatisfied: "该任务尚未启动，必须先处理未满足的前置任务。"
         }
     }
 }

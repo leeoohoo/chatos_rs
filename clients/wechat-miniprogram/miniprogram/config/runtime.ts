@@ -13,6 +13,14 @@ export function isDevelopmentEnvironment(): boolean {
   }
 }
 
+export function isTestEnvironment(): boolean {
+  try {
+    return wx.getAccountInfoSync().miniProgram.envVersion !== 'release'
+  } catch {
+    return false
+  }
+}
+
 function normalizeOrigin(value: unknown, allowLocalHttp: boolean): string | undefined {
   if (typeof value !== 'string') return undefined
   const origin = value.trim().replace(/\/+$/, '')

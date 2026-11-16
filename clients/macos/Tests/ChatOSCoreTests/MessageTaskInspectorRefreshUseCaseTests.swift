@@ -214,7 +214,7 @@ private actor MessageTaskInspectorServiceStub: MessageTaskGraphServicing {
 
     func retryRun(
         messageID: String,
-        runID: String,
+        taskID: String,
         lookup: MessageTaskLookup?,
         instruction: String?
     ) async throws -> MessageTaskRun {

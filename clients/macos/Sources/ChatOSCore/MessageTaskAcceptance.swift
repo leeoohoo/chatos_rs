@@ -136,6 +136,11 @@ public extension MessageTask {
             && !prerequisiteTaskIDs.isEmpty
     }
 
+    var canRetryExecution: Bool {
+        !wasPreventedFromStartingByPrerequisite
+            && ["blocked", "failed", "error", "execution_failed"].contains(normalizedStatus)
+    }
+
     var presentationStatus: MessageTaskPresentationStatus {
         if let disposition = resultDisposition {
             return switch disposition {

@@ -106,8 +106,7 @@ struct MessageTaskInspectorView: View {
             isLoadingModelOutput: viewModel.isLoadingModelOutput,
             allowsTextSelection: true
         )
-        if (task.normalizedStatus == "blocked" || task.normalizedStatus == "failed"),
-           task.lastRunID != nil {
+        if task.canRetryExecution {
             blockedActions(task)
         }
     }
@@ -315,7 +314,7 @@ struct MessageTaskInspectorView: View {
                 }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(task.lastRunID == nil || viewModel.isRetrying)
+            .disabled(viewModel.isRetrying)
         }
         .padding(14)
         .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))

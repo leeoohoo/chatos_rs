@@ -215,7 +215,10 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
     }
 
     func testRetryFailureRemainsVisibleWithLoadedTask() async throws {
-        let service = TaskReplyInspectorServiceStub(failRetryRequest: true)
+        let service = TaskReplyInspectorServiceStub(
+            failRetryRequest: true,
+            taskStatus: "blocked"
+        )
         let viewModel = TaskReplyInspectorViewModel(
             selection: makeSelection(section: .detail),
             service: service
@@ -230,6 +233,47 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.task?.id, "task-1")
         XCTAssertEqual(viewModel.retryInstruction, "Use the current date")
         XCTAssertEqual(viewModel.retryErrorMessage, "重试被拒绝")
+    }
+
+    func testBlockedTaskRetriesWithoutAnyRunID() async throws {
+        let service = TaskReplyInspectorServiceStub(
+            latestRunID: nil,
+            taskStatus: "blocked"
+        )
+        let viewModel = TaskReplyInspectorViewModel(
+            selection: makeSelection(section: .process, runID: nil),
+            service: service
+        )
+
+        viewModel.load()
+        try await waitUntilLoaded(viewModel)
+        viewModel.retry()
+        try await waitUntilCondition {
+            await service.retriedTaskIDs() == ["task-1"]
+        }
+
+        XCTAssertNil(viewModel.task?.lastRunID)
+    }
+
+    func testDependencyBlockedTaskDoesNotSubmitRetry() async throws {
+        let service = TaskReplyInspectorServiceStub(
+            latestRunID: nil,
+            taskStatus: "blocked",
+            prerequisiteTaskIDs: ["task-0"]
+        )
+        let viewModel = TaskReplyInspectorViewModel(
+            selection: makeSelection(section: .process, runID: nil),
+            service: service
+        )
+
+        viewModel.load()
+        try await waitUntilLoaded(viewModel)
+        viewModel.retry()
+        try await Task.sleep(for: .milliseconds(30))
+
+        let retriedTaskIDs = await service.retriedTaskIDs()
+        XCTAssertEqual(retriedTaskIDs, [])
+        XCTAssertEqual(viewModel.task?.presentationStatus, .dependencyBlocked)
     }
 
     func testStalledToolTaskRequiresDiagnosisBeforeAnyForceRestart() async throws {
@@ -276,7 +320,10 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
     }
 
     func testStopRejectsLateRetryResponse() async throws {
-        let service = TaskReplyInspectorServiceStub(delayRetryRequest: true)
+        let service = TaskReplyInspectorServiceStub(
+            delayRetryRequest: true,
+            taskStatus: "blocked"
+        )
         let viewModel = TaskReplyInspectorViewModel(
             selection: makeSelection(section: .detail),
             service: service
@@ -328,7 +375,10 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
     }
 
     func testChangingRetryTargetRejectsLateRetryResponse() async throws {
-        let service = TaskReplyInspectorServiceStub(delayRetryRequest: true)
+        let service = TaskReplyInspectorServiceStub(
+            delayRetryRequest: true,
+            taskStatus: "blocked"
+        )
         let viewModel = TaskReplyInspectorViewModel(
             selection: makeSelection(section: .detail),
             service: service
@@ -476,7 +526,7 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         turnID: String = "turn-1",
         replyID: String = "reply-1",
         taskID: String = "task-1",
-        runID: String = "run-1"
+        runID: String? = "run-1"
     ) -> TaskReplySelection {
         let now = Date(timeIntervalSince1970: 1)
         let userMessage = ChatMessage(
@@ -513,16 +563,18 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
 private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
     private let failRunRequest: Bool
     private let failRetryRequest: Bool
-    private let latestRunID: String
+    private let latestRunID: String?
     private let fetchTaskDelayMilliseconds: Int
     private let delayRetryRequest: Bool
     private let taskStatus: String
+    private let prerequisiteTaskIDs: [String]
     private let stalledTool: Bool
     private let delayRunRequest: Bool
     private let delayFirstTaskRequest: Bool
     private var taskCalls = 0
     private var runCalls = 0
     private var runIDs: [String] = []
+    private var retryTaskIDs: [String] = []
     private var retryContinuation: CheckedContinuation<Void, Never>?
     private var runContinuation: CheckedContinuation<Void, Never>?
     private var taskContinuation: CheckedContinuation<Void, Never>?
@@ -531,10 +583,11 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
     init(
         failRunRequest: Bool = false,
         failRetryRequest: Bool = false,
-        latestRunID: String = "run-1",
+        latestRunID: String? = "run-1",
         fetchTaskDelayMilliseconds: Int = 0,
         delayRetryRequest: Bool = false,
         taskStatus: String = "succeeded",
+        prerequisiteTaskIDs: [String] = [],
         stalledTool: Bool = false,
         delayRunRequest: Bool = false,
         delayFirstTaskRequest: Bool = false
@@ -545,6 +598,7 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         self.fetchTaskDelayMilliseconds = fetchTaskDelayMilliseconds
         self.delayRetryRequest = delayRetryRequest
         self.taskStatus = taskStatus
+        self.prerequisiteTaskIDs = prerequisiteTaskIDs
         self.stalledTool = stalledTool
         self.delayRunRequest = delayRunRequest
         self.delayFirstTaskRequest = delayFirstTaskRequest
@@ -556,6 +610,10 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
 
     func requestedRunIDs() -> [String] {
         runIDs
+    }
+
+    func retriedTaskIDs() -> [String] {
+        retryTaskIDs
     }
 
     func restartCount() -> Int { restarts }
@@ -649,10 +707,11 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
 
     func retryRun(
         messageID: String,
-        runID: String,
+        taskID: String,
         lookup: MessageTaskLookup?,
         instruction: String?
     ) async throws -> MessageTaskRun {
+        retryTaskIDs.append(taskID)
         if delayRetryRequest {
             await withCheckedContinuation { continuation in
                 retryContinuation = continuation
@@ -661,7 +720,7 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         if failRetryRequest {
             throw TaskReplyInspectorStubError.retryRejected
         }
-        return MessageTaskRun(id: runID, taskID: "task-1")
+        return MessageTaskRun(id: "retry-\(taskID)", taskID: taskID)
     }
 
     func cancelTask(
@@ -689,7 +748,7 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
             processLog: "[2026-09-08 10:00] 开始\n执行完成",
             lastRunID: latestRunID,
             lastRun: stalledTool ? MessageTaskLastRunSummary(
-                id: latestRunID,
+                id: latestRunID ?? "run-1",
                 status: "waiting_tool_result",
                 activity: MessageTaskRunActivity(
                     kind: .waitingTool,
@@ -697,7 +756,8 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
                     startedAt: Date().addingTimeInterval(-120),
                     lastProgressAt: Date().addingTimeInterval(-120)
                 )
-            ) : nil
+            ) : nil,
+            prerequisiteTaskIDs: prerequisiteTaskIDs
         )
     }
 }

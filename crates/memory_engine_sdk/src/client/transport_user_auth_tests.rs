@@ -129,3 +129,60 @@ async fn sibling_auth_recovery_is_bounded_and_does_not_refresh_forbidden_request
         );
     }
 }
+
+#[tokio::test]
+async fn retryable_sibling_request_recovers_when_connection_closes_before_response() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        for attempt in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut reader = BufReader::new(&stream);
+            let mut content_length = 0;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':') {
+                    if name.eq_ignore_ascii_case("content-length") {
+                        content_length = value.trim().parse().unwrap();
+                    }
+                }
+            }
+            reader.read_exact(&mut vec![0; content_length]).unwrap();
+            if attempt == 0 {
+                continue;
+            }
+            let body = r#"{"runtime_context_assertion":"assertion"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+    let client = MemoryEngineClient::new_direct(
+        format!("http://{address}/api/memory"),
+        Duration::from_secs(2),
+        "chatos",
+    )
+    .unwrap()
+    .with_bearer_token("user-token");
+
+    let response: Value = client
+        .post_retryable_with_user_auth(
+            &format!("http://{address}/api/local/runtime-context-assertions"),
+            &json!({}),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["runtime_context_assertion"], "assertion");
+    server.join().unwrap();
+}

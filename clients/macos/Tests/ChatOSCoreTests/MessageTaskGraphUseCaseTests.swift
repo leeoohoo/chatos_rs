@@ -94,7 +94,7 @@ struct MessageTaskGraphUseCaseTests {
         )
         let retried = try await useCase.retryRun(
             messageID: "message-1",
-            runID: "run-1",
+            taskID: "task-1",
             lookup: lookup,
             instruction: "Use the latest context"
         )
@@ -102,7 +102,7 @@ struct MessageTaskGraphUseCaseTests {
         #expect(loaded == task)
         #expect(retried.id == "run-1")
         #expect(await service.taskRequests == ["message-1:task-1"])
-        #expect(await service.retryRequests == ["message-1:run-1:Use the latest context"])
+        #expect(await service.retryRequests == ["message-1:task-1:Use the latest context"])
     }
 
     private var lookup: MessageTaskLookup {
@@ -189,12 +189,12 @@ private actor MessageTaskGraphUseCaseStub: MessageTaskGraphServicing {
 
     func retryRun(
         messageID: String,
-        runID: String,
+        taskID: String,
         lookup: MessageTaskLookup?,
         instruction: String?
     ) async throws -> MessageTaskRun {
-        retryRequests.append("\(messageID):\(runID):\(instruction ?? "")")
-        return MessageTaskRun(id: runID, taskID: task?.id ?? "task-1", status: "queued")
+        retryRequests.append("\(messageID):\(taskID):\(instruction ?? "")")
+        return MessageTaskRun(id: "run-1", taskID: taskID, status: "queued")
     }
 
     func cancelTask(
