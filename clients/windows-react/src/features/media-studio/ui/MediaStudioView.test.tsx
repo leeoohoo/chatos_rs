@@ -181,6 +181,9 @@ describe("MediaStudioView", () => {
 
 function port(overrides: Partial<MediaStudioPort> = {}): MediaStudioPort {
   return {
+    listWorkflows: vi.fn(async () => []),
+    saveWorkflow: vi.fn(async () => undefined),
+    deleteWorkflow: vi.fn(async () => undefined),
     listModels: vi.fn(async () => [model()]),
     loadImageHistory: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     loadVideoHistory: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),

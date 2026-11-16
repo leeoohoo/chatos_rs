@@ -18,6 +18,7 @@ import type {
 } from "../domain/mediaStudio";
 import type { MediaStudioPort } from "../ports/MediaStudioPort";
 import type { StoryStudioPort } from "../../story-studio/ports/StoryStudioPort";
+import { MediaWorkflowWorkspace } from "./MediaWorkflowWorkspace";
 import "./mediaStudio.css";
 
 const StoryStudioView = lazy(async () => {
@@ -31,7 +32,7 @@ interface MediaStudioViewProps {
   storyPort?: StoryStudioPort;
 }
 
-type StudioSection = "image" | "video" | "story" | "history";
+type StudioSection = "workflow" | "image" | "video" | "story" | "history";
 
 export function MediaStudioView({ ownerUserId, port, storyPort }: MediaStudioViewProps) {
   const store = useMediaStudioStore();
@@ -53,6 +54,8 @@ export function MediaStudioView({ ownerUserId, port, storyPort }: MediaStudioVie
           onPreview={(url, alt) => setPreview({ url, alt })}
           port={port}
         />
+      ) : section === "workflow" ? (
+        <MediaWorkflowWorkspace ownerUserId={ownerUserId} port={port} />
       ) : section === "video" ? (
         <VideoWorkspace onChooseHistory={() => setHistoryPicker("video")} port={port} />
       ) : section === "story" ? (
@@ -109,6 +112,12 @@ function StudioHeader({
         <span><strong>AI 创作</strong><small>独立于聊天的图片与视频工作台</small></span>
       </div>
       <div className="media-studio__segments" aria-label="创作类型" role="group">
+        <button
+          aria-pressed={section === "workflow"}
+          className={section === "workflow" ? "is-active" : ""}
+          onClick={() => onSelect("workflow")}
+          type="button"
+        ><span aria-hidden="true">⋈</span>工作流</button>
         <button
           aria-pressed={section === "image"}
           className={section === "image" ? "is-active" : ""}

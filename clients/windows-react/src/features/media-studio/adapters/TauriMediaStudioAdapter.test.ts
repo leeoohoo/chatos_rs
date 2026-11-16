@@ -33,6 +33,41 @@ describe("TauriMediaStudioAdapter", () => {
     await expect(new TauriMediaStudioAdapter().listModels(OWNER_ID)).rejects.toThrow();
   });
 
+  it("keeps workflow persistence behind strict typed commands", async () => {
+    const workflow = {
+      id: "55555555-5555-4555-8555-555555555555",
+      name: "workflow",
+      inputPrompt: "input",
+      inputImages: [],
+      nodes: [{
+        id: "66666666-6666-4666-8666-666666666666",
+        kind: "image" as const,
+        modelConfigId: "image-model",
+        prompt: "draw",
+        referenceImages: [],
+        imageSize: "1024x1024",
+        videoSize: "1280x720",
+        videoRatio: "16:9",
+        videoSeconds: 4,
+      }],
+      createdAtUnixMs: 1,
+      updatedAtUnixMs: 2,
+    };
+    vi.mocked(invoke).mockResolvedValueOnce([workflow]);
+    const adapter = new TauriMediaStudioAdapter();
+    await expect(adapter.listWorkflows(OWNER_ID)).resolves.toEqual([workflow]);
+    expect(invoke).toHaveBeenCalledWith("list_media_studio_workflows", { ownerUserId: OWNER_ID });
+    await adapter.saveWorkflow(OWNER_ID, workflow);
+    expect(invoke).toHaveBeenLastCalledWith("save_media_studio_workflow", {
+      ownerUserId: OWNER_ID,
+      workflow,
+    });
+    await adapter.deleteWorkflow(OWNER_ID, workflow.id);
+    expect(invoke).toHaveBeenLastCalledWith("delete_media_studio_workflow", {
+      input: { ownerUserId: OWNER_ID, workflowId: workflow.id },
+    });
+  });
+
   it("loads a bounded page with explicit nullable native arguments", async () => {
     vi.mocked(invoke).mockResolvedValue(historyPage());
     await new TauriMediaStudioAdapter().loadImageHistory({ ownerUserId: OWNER_ID });
