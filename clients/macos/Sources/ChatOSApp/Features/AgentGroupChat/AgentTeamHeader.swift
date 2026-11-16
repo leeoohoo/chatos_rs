@@ -12,21 +12,14 @@ struct AgentTeamHeader: View {
     let onStop: () -> Void
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 14) {
-                identity.frame(minWidth: 220, idealWidth: 300, maxWidth: .infinity)
+                identity
                 controls
-                sectionPicker.frame(width: 470)
             }
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 14) {
-                    identity
-                    controls
-                }
-                sectionPicker
-                    .frame(maxWidth: 470)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
+            sectionPicker
+                .frame(maxWidth: 470)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -89,31 +82,38 @@ struct AgentTeamRunControls: View {
     let onStop: () -> Void
 
     var body: some View {
+        let canStop = isRunning || hasInterruptedRuns
         HStack(spacing: 10) {
-            if isRunning {
-                Button(action: onPause) {
-                    Label("暂停", systemImage: "pause.fill")
-                        .appFont(.body)
-                        .opacity(isPausing ? 0 : 1)
-                        .overlay {
-                            if isPausing { ProgressView().controlSize(.small) }
-                        }
-                }
-                .disabled(isPausing || isStopping)
-                .help("暂停当前团队的 Agent")
+            Button(action: onPause) {
+                Label("暂停", systemImage: "pause.fill")
+                    .appFont(.body)
+                    .opacity(isPausing ? 0 : 1)
+                    .overlay {
+                        ProgressView()
+                            .controlSize(.small)
+                            .opacity(isPausing ? 1 : 0)
+                    }
             }
-            if isRunning || hasInterruptedRuns {
-                Button(role: .destructive, action: onStop) {
-                    Label("停止全部", systemImage: "stop.fill")
-                        .appFont(.body)
-                        .opacity(isStopping ? 0 : 1)
-                        .overlay {
-                            if isStopping { ProgressView().controlSize(.small) }
-                        }
-                }
-                .disabled(isStopping)
-                .help("停止当前团队的全部 Agent")
+            .opacity(isRunning ? 1 : 0)
+            .disabled(!isRunning || isPausing || isStopping)
+            .allowsHitTesting(isRunning)
+            .accessibilityHidden(!isRunning)
+            .help("暂停当前团队的 Agent")
+            Button(role: .destructive, action: onStop) {
+                Label("停止全部", systemImage: "stop.fill")
+                    .appFont(.body)
+                    .opacity(isStopping ? 0 : 1)
+                    .overlay {
+                        ProgressView()
+                            .controlSize(.small)
+                            .opacity(isStopping ? 1 : 0)
+                    }
             }
+            .opacity(canStop ? 1 : 0)
+            .disabled(!canStop || isStopping)
+            .allowsHitTesting(canStop)
+            .accessibilityHidden(!canStop)
+            .help("停止当前团队的全部 Agent")
         }
         .labelStyle(.titleAndIcon)
         .buttonStyle(.bordered)

@@ -5,6 +5,26 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentTeamExecutorTests: XCTestCase {
+    func testConfigurationWaitsForStartupHandshake() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("native-team-configuration-tests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let executor = NativeLocalAgentTeamExecutor(
+            host: TeamConfigurationHostStub(),
+            groupChatService: NativeAgentGroupChatService(
+                databaseURL: folder.appendingPathComponent("chat.db")
+            )
+        )
+
+        async let pending = executor.configured(ownerUserID: "alice", timeout: .seconds(1))
+        try await Task.sleep(for: .milliseconds(20))
+        try await executor.configure(ownerUserID: "alice", bootstrap: Self.bootstrap())
+
+        let configuration = try await pending
+        XCTAssertEqual(configuration.ownerUserID, "alice")
+        XCTAssertEqual(configuration.models.keys.sorted(), ["model-1"])
+    }
+
     func testHumanOnlyBlockDoesNotContinueHostRun() {
         XCTAssertFalse(NativeLocalAgentTeamExecutor.shouldContinueAfterSuccessfulHostRun(
             acceptanceChecks: [
@@ -162,5 +182,43 @@ final class NativeLocalAgentTeamExecutorTests: XCTestCase {
     private func jsonObject(_ value: LocalAgentJSONValue) throws -> Any {
         let data = try JSONEncoder().encode(value)
         return try JSONSerialization.jsonObject(with: data)
+    }
+
+    private static func bootstrap() -> NativeLocalAgentBootstrapResult {
+        let model = LocalAgentModelConfigSnapshot(
+            ownerUserID: "alice",
+            modelConfigRef: "model-1",
+            modelConfigRevision: "revision-1",
+            modelCapabilityRevision: "capability-v1",
+            contextWindowTokens: 200_000,
+            outputReserveTokens: 30_000,
+            protocolOverheadEstimatorID: "responses-json-v1",
+            credentialRef: "env:CHATOS_LOCAL_AGENT_MODEL_1",
+            baseURL: "https://example.test/v1",
+            model: "test",
+            provider: "openai",
+            supportsResponses: true
+        )
+        let capability = LocalAgentCapabilityPolicySnapshot(
+            ownerUserID: "alice",
+            profileKey: "main_chat",
+            capabilityPolicyRevision: "policy-1"
+        )
+        return .init(
+            modelSnapshots: [model],
+            modelOptions: [],
+            defaultConversationModelConfigRef: model.modelConfigRef,
+            capabilitySnapshot: capability,
+            capabilitySnapshotsByModelConfigRef: [model.modelConfigRef: capability],
+            pluginInstallerCapabilitySnapshotsByModelConfigRef: [:]
+        )
+    }
+}
+
+private actor TeamConfigurationHostStub: LocalAgentHostClientServicing {
+    func start(ownerUserID: String) async throws {}
+    func stop() async {}
+    func request(command: Data) async throws -> Data {
+        throw NativeLocalAgentHostError.invalidCommand
     }
 }

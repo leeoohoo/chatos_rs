@@ -264,5 +264,47 @@ extension AgentGroupChatMigrations {
                 "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (34)"
             )
         }
+        if !hasMigration(35) {
+            try execute(
+                """
+                UPDATE local_agent_group_chat_runs AS run
+                SET status = 'completed',
+                    run_json = json_set(
+                        run.run_json,
+                        '$.checkpoint.status', 'completed',
+                        '$.checkpoint.stopReason', NULL,
+                        '$.updatedAtUnixMs', MAX(
+                            run.updated_at_unix_ms,
+                            COALESCE((
+                                SELECT delivery.completed_at_unix_ms
+                                FROM project_agent_deliveries delivery
+                                WHERE delivery.owner_user_id = run.owner_user_id
+                                  AND delivery.id = run.delivery_id
+                            ), run.updated_at_unix_ms)
+                        )
+                    ),
+                    updated_at_unix_ms = MAX(
+                        run.updated_at_unix_ms,
+                        COALESCE((
+                            SELECT delivery.completed_at_unix_ms
+                            FROM project_agent_deliveries delivery
+                            WHERE delivery.owner_user_id = run.owner_user_id
+                              AND delivery.id = run.delivery_id
+                        ), run.updated_at_unix_ms)
+                    )
+                WHERE run.status NOT IN ('completed', 'failed')
+                  AND EXISTS (
+                      SELECT 1 FROM project_agent_deliveries delivery
+                      WHERE delivery.owner_user_id = run.owner_user_id
+                        AND delivery.id = run.delivery_id
+                        AND delivery.trigger_kind = 'todo'
+                        AND delivery.status = 'completed'
+                  )
+                """
+            )
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (35)"
+            )
+        }
     }
 }

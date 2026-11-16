@@ -69,6 +69,23 @@ final class AgentGroupChatHistoricalMigrationTests: XCTestCase {
         return result
     }
 
+    private func execute(_ databaseURL: URL, sql: String) throws {
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(
+            databaseURL.path,
+            &database,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
+            nil
+        ) == SQLITE_OK, let database else {
+            defer { sqlite3_close(database) }
+            throw AgentGroupChatError.storage("database open failed")
+        }
+        defer { sqlite3_close(database) }
+        guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+            throw AgentGroupChatError.storage(String(cString: sqlite3_errmsg(database)))
+        }
+    }
+
     private func integer(_ databaseURL: URL, sql: String) throws -> Int64 {
         var database: OpaquePointer?
         guard sqlite3_open_v2(
@@ -147,7 +164,7 @@ final class AgentGroupChatHistoricalMigrationTests: XCTestCase {
                 url,
                 sql: "SELECT CAST(version AS TEXT) FROM local_agent_group_chat_schema_migrations ORDER BY version"
             ),
-            (1...34).map(String.init)
+            (1...35).map(String.init)
         )
         XCTAssertEqual(
             try strings(
@@ -189,5 +206,40 @@ final class AgentGroupChatHistoricalMigrationTests: XCTestCase {
             limit: 20
         )
         XCTAssertEqual(reopenedMessages, messages)
+    }
+
+    func testMigrationRepairsCompletedTodoRunLeftPaused() throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try installV11Fixture(at: url)
+        var store: SQLiteAgentGroupChatStore? = try SQLiteAgentGroupChatStore(databaseURL: url)
+        XCTAssertNotNil(store)
+        store = nil
+        try execute(
+            url,
+            sql: """
+            UPDATE project_agent_deliveries
+            SET trigger_kind = 'todo', status = 'completed', completed_at_unix_ms = 200
+            WHERE id = 'fixture-delivery';
+            UPDATE local_agent_group_chat_runs
+            SET status = 'paused',
+                run_json = '{"checkpoint":{"status":"paused","stopReason":"startup race"},"updatedAtUnixMs":100}'
+            WHERE id = 'fixture-run';
+            DELETE FROM local_agent_group_chat_schema_migrations WHERE version = 35;
+            """
+        )
+
+        store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        store = nil
+
+        XCTAssertEqual(try strings(
+            url,
+            sql: """
+            SELECT status || '|' || json_extract(run_json, '$.checkpoint.status') || '|' ||
+                   COALESCE(json_extract(run_json, '$.checkpoint.stopReason'), 'nil') || '|' ||
+                   updated_at_unix_ms
+            FROM local_agent_group_chat_runs WHERE id = 'fixture-run'
+            """
+        ), ["completed|completed|nil|200"])
     }
 }

@@ -2,7 +2,10 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    task_tool_support::task_status_for_agent,
+    task_tool_support::{
+        task_effective_status_for_agent, task_result_reason_for_agent,
+        task_result_status_for_agent, task_satisfies_dependency, task_status_for_agent,
+    },
     task_tools::{CancelTaskArgs, LocalTaskToolExecutor, RequiredTaskPolicy},
 };
 use chatos_local_agent_ports::ClientStorageError;
@@ -288,6 +291,10 @@ impl LocalTaskToolExecutor {
                         "id": task.task_id,
                         "title": task.title,
                         "status": task_status_for_agent(task),
+                        "execution_status": task_status_for_agent(task),
+                        "result_status": task_result_status_for_agent(task),
+                        "effective_status": task_effective_status_for_agent(task),
+                        "result_reason": task_result_reason_for_agent(task),
                         "last_run_id": task.active_run_id,
                         "updated_at": task.updated_at_unix_ms,
                     })
@@ -296,14 +303,19 @@ impl LocalTaskToolExecutor {
         };
         let blocked_by = transitive
             .iter()
-            .filter(|task| task.status != LocalTaskStatus::Succeeded)
+            .filter(|task| !task_satisfies_dependency(task))
             .cloned()
             .collect::<Vec<_>>();
         Ok(json!({
             "task_id": root.task_id,
+            "status": task_status_for_agent(&root),
+            "execution_status": task_status_for_agent(&root),
+            "result_status": task_result_status_for_agent(&root),
+            "effective_status": task_effective_status_for_agent(&root),
             "prerequisites": summaries(&direct),
             "transitive_prerequisites": summaries(&transitive),
-            "ready": blocked_by.is_empty(),
+            "ready": root.status == LocalTaskStatus::Ready && blocked_by.is_empty(),
+            "dependencies_satisfied": blocked_by.is_empty(),
             "blocked_by": summaries(&blocked_by),
         }))
     }

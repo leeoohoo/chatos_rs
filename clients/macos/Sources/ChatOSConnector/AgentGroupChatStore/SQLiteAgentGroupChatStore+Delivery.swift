@@ -283,8 +283,31 @@ extension SQLiteAgentGroupChatStore {
                 """,
                 [.integer(nowUnixMs), .text(ownerUserID), .text(deliveryID)]
             )
-            guard sqlite3_changes(database) == 1,
-                  let updated = try readDelivery(
+            guard sqlite3_changes(database) == 1 else {
+                throw AgentGroupChatError.conflict
+            }
+            if delivery.triggerKind == .todo {
+                try execute(
+                    """
+                    UPDATE local_agent_group_chat_runs
+                    SET status = 'completed',
+                        run_json = json_set(
+                            run_json,
+                            '$.checkpoint.status', 'completed',
+                            '$.checkpoint.stopReason', NULL,
+                            '$.updatedAtUnixMs', MAX(updated_at_unix_ms, ?)
+                        ),
+                        updated_at_unix_ms = MAX(updated_at_unix_ms, ?)
+                    WHERE owner_user_id = ? AND delivery_id = ?
+                      AND status NOT IN ('completed', 'failed')
+                    """,
+                    [
+                        .integer(nowUnixMs), .integer(nowUnixMs),
+                        .text(ownerUserID), .text(deliveryID),
+                    ]
+                )
+            }
+            guard let updated = try readDelivery(
                     ownerUserID: ownerUserID,
                     deliveryID: deliveryID
                   ) else { throw AgentGroupChatError.conflict }

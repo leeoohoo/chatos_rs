@@ -58,7 +58,7 @@ pub fn task_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": LIST_TASKS_TOOL,
-            "description": "List durable tasks created from the current conversation/project. Use this before answering any question about current Task state instead of relying on conversation history or retained Memory. Results are newest-first, mark superseded historical Tasks, and never include another conversation or account.",
+            "description": "List durable tasks created from the current conversation/project. Use this before answering any question about current Task state instead of relying on conversation history or retained Memory. execution_status reports whether the worker finished; result_status is the dependency gate; effective_status is the state to use when deciding whether work succeeded or can unblock descendants. Results are newest-first, mark superseded historical Tasks, and never include another conversation or account.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -80,7 +80,7 @@ pub fn task_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": GET_TASK_TOOL,
-            "description": "Get a durable task by task_id and resolve its complete replacement chain to the current leaf Task(s). Always use current_tasks for the current status; requested_task may be a cancelled or otherwise superseded historical Task.",
+            "description": "Get a durable task by task_id and resolve its complete replacement chain to the current leaf Task(s). Always use current_tasks for current state and effective_status for delivery/dependency decisions; execution_status=succeeded does not override result_status=failed or blocked. requested_task may be a cancelled or otherwise superseded historical Task.",
             "parameters": {
                 "type": "object",
                 "properties": {"task_id": {"type": "string", "minLength": 1}},
@@ -198,7 +198,7 @@ pub fn task_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": GET_TASK_DEPENDENCY_GRAPH_TOOL,
-            "description": "Get the complete local dependency graph containing one task from the current conversation/project.",
+            "description": "Get the complete local dependency graph containing one task from the current conversation/project. ready is true only when the requested Task itself can be materialized now. blocked_by uses each prerequisite's effective_status, including its result_status dependency gate rather than execution_status alone.",
             "parameters": {
                 "type": "object",
                 "properties": {"task_id": {"type": "string", "minLength": 1}},

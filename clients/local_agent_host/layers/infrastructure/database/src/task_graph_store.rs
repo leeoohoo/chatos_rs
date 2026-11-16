@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::{task_result::decode_result_summary, ClientStorageError, SqliteResultExt};
+use super::{
+    task_result::{decode_result_gate, decode_result_summary},
+    ClientStorageError, SqliteResultExt,
+};
 use chatos_local_agent_protocol::{
     CreateTaskGraphCommand, LocalTaskDependency, LocalTaskGraph, LocalTaskGraphStatus,
     LocalTaskRecord, LocalTaskStatus,
@@ -219,7 +222,19 @@ pub(super) async fn fetch_graph(
             WHERE r.owner_user_id = g.owner_user_id \
               AND r.owner_entity_type = 'task' AND r.owner_entity_id = t.task_id \
             ORDER BY r.created_at_unix_ms DESC, r.run_id DESC LIMIT 1) \
-           AS latest_terminal_outcome_json \
+           AS latest_terminal_outcome_json, \
+         (SELECT json_object('result_json', invocation.result_json, \
+                             'arguments_json', invocation.arguments_json) \
+            FROM local_agent_runs run \
+            JOIN local_agent_tool_invocations invocation ON invocation.run_id = run.run_id \
+            WHERE run.owner_user_id = g.owner_user_id \
+              AND run.owner_entity_type = 'task' AND run.owner_entity_id = t.task_id \
+              AND run.status = 'succeeded' \
+              AND invocation.tool_name = 'task_run_process_report_outcome' \
+              AND invocation.status = 'succeeded' \
+            ORDER BY run.updated_at_unix_ms DESC, run.created_at_unix_ms DESC, run.rowid DESC, \
+                     invocation.updated_at_unix_ms DESC, invocation.rowid DESC LIMIT 1) \
+           AS latest_result_report_json \
          FROM local_tasks t JOIN local_task_graphs g ON g.graph_id = t.graph_id \
          WHERE t.graph_id = ? ORDER BY t.task_id",
     )
@@ -280,6 +295,7 @@ pub(super) async fn fetch_graph_for_owner(
 
 fn decode_task(row: SqliteRow, graph: &SqliteRow) -> Result<LocalTaskRecord, ClientStorageError> {
     let status: String = row.try_get("status").db()?;
+    let (result_status, result_reason) = decode_result_gate(&row)?;
     Ok(LocalTaskRecord {
         graph_id: row.try_get("graph_id").db()?,
         owner_user_id: graph.try_get("owner_user_id").db()?,
@@ -311,6 +327,8 @@ fn decode_task(row: SqliteRow, graph: &SqliteRow) -> Result<LocalTaskRecord, Cli
         },
         cancelled_because_task_id: row.try_get("cancelled_because_task_id").db()?,
         result_summary: decode_result_summary(&row)?,
+        result_status,
+        result_reason,
         version: u64::try_from(row.try_get::<i64, _>("version").db()?)
             .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?,
         created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
