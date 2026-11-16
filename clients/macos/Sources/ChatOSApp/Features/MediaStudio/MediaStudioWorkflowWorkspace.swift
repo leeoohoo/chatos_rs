@@ -149,7 +149,7 @@ struct MediaStudioWorkflowWorkspace: View {
                 flowCanvas
                 Divider()
                 inspector
-                    .frame(width: 330)
+                    .frame(width: 520)
             }
         }
     }
