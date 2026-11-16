@@ -606,6 +606,7 @@ fn search_entries(
     query: &str,
     limit: usize,
 ) -> Result<ProjectEntrySearchResult, String> {
+    let limit = limit.clamp(1, MAXIMUM_SEARCH_RESULTS);
     let start = resolve_existing_path(project_root, relative_path, true)?;
     let deadline = Instant::now() + SEARCH_DURATION;
     let needle = search_fold(query);
@@ -682,6 +683,7 @@ fn search_content(
     query: &str,
     limit: usize,
 ) -> Result<ProjectContentSearchResult, String> {
+    let limit = limit.clamp(1, MAXIMUM_SEARCH_RESULTS);
     let start = resolve_existing_path(project_root, relative_path, true)?;
     let deadline = Instant::now() + SEARCH_DURATION;
     let needle = search_fold(query);
@@ -1186,8 +1188,12 @@ mod tests {
         assert!(listing.is_truncated);
 
         let search = search_entries(root.path(), "project-large", "", "needle", 2_000).unwrap();
-        assert_eq!(search.matches.len(), 2_000);
+        assert_eq!(search.matches.len(), MAXIMUM_SEARCH_RESULTS);
         assert!(search.is_truncated);
+
+        let content = search_content(root.path(), "project-large", "", "needle", 2_000).unwrap();
+        assert_eq!(content.matches.len(), MAXIMUM_SEARCH_RESULTS);
+        assert!(content.is_truncated);
     }
 
     #[test]
