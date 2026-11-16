@@ -14,6 +14,11 @@ struct MediaStudioWorkflowRunResult: Sendable {
     var videoHistory: [MediaStudioVideoHistoryItem]
 }
 
+struct MediaStudioWorkflowRunInput: Sendable {
+    var prompt: String
+    var images: [ImageGenerationInputImage]
+}
+
 struct MediaStudioWorkflowRunner: Sendable {
     let textGenerator: any MediaStudioTextGenerating
     let imageGenerator: MediaStudioImageGenerationUseCase
@@ -22,17 +27,14 @@ struct MediaStudioWorkflowRunner: Sendable {
 
     func run(
         _ workflow: MediaStudioWorkflow,
+        input: MediaStudioWorkflowRunInput,
         owner: String,
         sessionEpoch: UUID,
         event: @escaping @Sendable (MediaStudioWorkflowRunEvent) async -> Void
     ) async throws -> MediaStudioWorkflowRunResult {
         try MediaStudioWorkflowValidator.validate(workflow)
-        var text = workflow.inputPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        var images = try await store.resolveImages(
-            workflow.inputImages,
-            workflowID: workflow.id,
-            owner: owner
-        )
+        var text = input.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        var images = input.images
         var imageHistory: [MediaStudioImageHistoryItem] = []
         var videoHistory: [MediaStudioVideoHistoryItem] = []
 

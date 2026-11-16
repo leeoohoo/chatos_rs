@@ -9,7 +9,7 @@ final class MediaStudioWorkflowRunnerTests: XCTestCase {
         let runner = try makeRunner(text: text)
         let workflow = MediaStudioWorkflow(
             name: "Copy",
-            inputPrompt: "seed",
+            inputPrompt: "legacy input must not be used",
             nodes: [
                 .init(kind: .text, modelConfigID: "text", prompt: "first instruction"),
                 .init(kind: .text, modelConfigID: "text", prompt: "second instruction"),
@@ -18,6 +18,7 @@ final class MediaStudioWorkflowRunnerTests: XCTestCase {
 
         let result = try await runner.run(
             workflow,
+            input: .init(prompt: "seed", images: []),
             owner: "alice",
             sessionEpoch: UUID()
         ) { _ in }
@@ -44,7 +45,12 @@ final class MediaStudioWorkflowRunnerTests: XCTestCase {
         )
 
         do {
-            _ = try await runner.run(workflow, owner: "alice", sessionEpoch: UUID()) { _ in }
+            _ = try await runner.run(
+                workflow,
+                input: .init(prompt: "", images: []),
+                owner: "alice",
+                sessionEpoch: UUID()
+            ) { _ in }
             XCTFail("The workflow should stop at the failed node")
         } catch WorkflowTestError.failed {}
         let requestCount = await text.requestCount

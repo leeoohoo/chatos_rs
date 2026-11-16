@@ -42,6 +42,9 @@ struct MediaStudioWorkflowWorkspace: View {
         } message: {
             Text("工作流配置和已上传的节点图片会从本机删除；生成记录不受影响。")
         }
+        .sheet(isPresented: $viewModel.isPresentingWorkflowRunInput) {
+            workflowRunInputSheet
+        }
     }
 
     private var workflowList: some View {
@@ -70,7 +73,7 @@ struct MediaStudioWorkflowWorkspace: View {
                 ContentUnavailableView {
                     Label("还没有工作流", systemImage: "point.3.connected.trianglepath.dotted")
                 } description: {
-                    Text("新建一个流程，从输入开始连接文本、图片或视频节点。")
+                    Text("新建一个流程，依次连接文本、图片或视频节点。")
                 } actions: {
                     Button("新建工作流", action: viewModel.createWorkflow)
                 }
@@ -161,12 +164,16 @@ struct MediaStudioWorkflowWorkspace: View {
             Spacer()
             if viewModel.isSavingWorkflow { ProgressView().controlSize(.small) }
             Button("保存", action: viewModel.saveSelectedWorkflow)
-                .disabled(viewModel.isSavingWorkflow || viewModel.isRunningWorkflow)
+                .disabled(
+                    viewModel.isSavingWorkflow ||
+                    viewModel.isRunningWorkflow ||
+                    viewModel.isLoadingWorkflowRunImages
+                )
             if viewModel.isRunningWorkflow {
                 Button("停止", action: viewModel.cancelWorkflowRun)
                     .tint(.red)
             } else {
-                Button(action: viewModel.runSelectedWorkflow) {
+                Button(action: viewModel.presentWorkflowRunInput) {
                     Label("运行工作流", systemImage: "play.fill")
                 }
                 .buttonStyle(.borderedProminent)
@@ -181,7 +188,7 @@ struct MediaStudioWorkflowWorkspace: View {
     private var flowCanvas: some View {
         ScrollView([.horizontal, .vertical]) {
             HStack(spacing: 12) {
-                flowInputCard
+                flowStart
                 arrow
                 if let workflow = viewModel.selectedWorkflow {
                     ForEach(Array(workflow.nodes.enumerated()), id: \.element.id) { index, node in
@@ -202,26 +209,14 @@ struct MediaStudioWorkflowWorkspace: View {
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.38))
     }
 
-    private var flowInputCard: some View {
-        Button {
-            viewModel.selectedWorkflowNodeID = nil
-        } label: {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("流程输入", systemImage: "arrow.down.doc")
-                    .font(.system(size: 14, weight: .semibold))
-                Text(viewModel.selectedWorkflow?.inputPrompt.isEmpty == false
-                     ? viewModel.selectedWorkflow!.inputPrompt : "提示词与参考图")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                Spacer()
-                Text("\(viewModel.selectedWorkflow?.inputImages.count ?? 0) 张图片")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            .flowNodeStyle(selected: viewModel.selectedWorkflowNodeID == nil, color: .blue)
-        }
-        .buttonStyle(.plain)
+    private var flowStart: some View {
+        Label("开始", systemImage: "play.fill")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.background, in: Capsule())
+            .overlay { Capsule().stroke(.secondary.opacity(0.25)) }
     }
 
     private func nodeCard(_ node: MediaStudioWorkflowNode, number: Int) -> some View {
@@ -304,34 +299,12 @@ struct MediaStudioWorkflowWorkspace: View {
             VStack(alignment: .leading, spacing: 18) {
                 if let node = viewModel.selectedWorkflowNode {
                     nodeInspector(node)
-                } else {
-                    inputInspector
                 }
             }
             .padding(20)
         }
         .disabled(viewModel.isRunningWorkflow || viewModel.isSavingWorkflow)
         .background(.background.opacity(0.75))
-    }
-
-    private var inputInspector: some View {
-        Group {
-            inspectorTitle("流程输入", subtitle: "第一个节点接收这些内容")
-            fieldLabel("初始提示词")
-            TextEditor(text: inputPrompt)
-                .frame(minHeight: 120)
-                .padding(7)
-                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-            imageSection(
-                references: viewModel.selectedWorkflow?.inputImages ?? [],
-                nodeID: nil
-            )
-            Divider()
-            Button("删除工作流", role: .destructive) {
-                confirmsWorkflowDeletion = true
-            }
-                .disabled(viewModel.isRunningWorkflow)
-        }
     }
 
     private func nodeInspector(_ node: MediaStudioWorkflowNode) -> some View {
@@ -385,7 +358,96 @@ struct MediaStudioWorkflowWorkspace: View {
                 Button("删除节点", role: .destructive, action: viewModel.removeSelectedWorkflowNode)
             }
             .disabled(viewModel.isRunningWorkflow)
+            Divider()
+            Button("删除工作流", role: .destructive) {
+                confirmsWorkflowDeletion = true
+            }
+            .disabled(viewModel.isRunningWorkflow)
         }
+    }
+
+    private var workflowRunInputSheet: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("本次运行输入")
+                    .font(.title2.weight(.semibold))
+                Text("这些内容只用于本次运行，不会保存到工作流。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            fieldLabel("本次需求")
+            TextEditor(text: $viewModel.workflowRunPrompt)
+                .frame(minHeight: 130)
+                .padding(7)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    fieldLabel("上传图片")
+                    Text("\(viewModel.workflowRunImages.count) / \(MediaStudioWorkflowValidator.maximumReferenceCount)")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    if viewModel.isLoadingWorkflowRunImages {
+                        ProgressView().controlSize(.small)
+                    }
+                    Button {
+                        chooseWorkflowRunImage()
+                    } label: {
+                        Label("添加", systemImage: "plus")
+                    }
+                    .disabled(
+                        viewModel.isLoadingWorkflowRunImages ||
+                        viewModel.workflowRunImages.count >= MediaStudioWorkflowValidator.maximumReferenceCount
+                    )
+                }
+                if viewModel.workflowRunImages.isEmpty {
+                    Text("上传本次需要处理的原图或参考图。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(viewModel.workflowRunImages.enumerated()), id: \.offset) { index, image in
+                        HStack {
+                            Image(systemName: "photo").foregroundStyle(.purple)
+                            Text(image.name).lineLimit(1)
+                            Spacer()
+                            Button {
+                                viewModel.removeWorkflowRunImage(at: index)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(9)
+                        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+
+            if let message = viewModel.errorMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+
+            Spacer()
+            HStack {
+                Button("取消") { viewModel.isPresentingWorkflowRunInput = false }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(action: viewModel.runSelectedWorkflow) {
+                    Label("运行工作流", systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(viewModel.isLoadingWorkflowRunImages)
+            }
+        }
+        .padding(24)
+        .frame(width: 520, height: 520)
     }
 
     private var videoOptions: some View {
@@ -404,7 +466,7 @@ struct MediaStudioWorkflowWorkspace: View {
 
     private func imageSection(
         references: [MediaStudioWorkflowImageReference],
-        nodeID: UUID?
+        nodeID: UUID
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -454,12 +516,20 @@ struct MediaStudioWorkflowWorkspace: View {
         Text(value).font(.caption.weight(.medium)).foregroundStyle(.secondary)
     }
 
-    private func chooseImage(nodeID: UUID?) {
+    private func chooseImage(nodeID: UUID) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         viewModel.importWorkflowImage(from: url, nodeID: nodeID)
+    }
+
+    private func chooseWorkflowRunImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        viewModel.importWorkflowRunImage(from: url)
     }
 
     private func modelOptions(for kind: MediaStudioWorkflowNodeKind) -> [MediaGenerationModel] {
@@ -502,13 +572,6 @@ struct MediaStudioWorkflowWorkspace: View {
         .init(
             get: { viewModel.selectedWorkflow?.name ?? "" },
             set: { value in viewModel.editSelectedWorkflow { $0.name = value } }
-        )
-    }
-
-    private var inputPrompt: Binding<String> {
-        .init(
-            get: { viewModel.selectedWorkflow?.inputPrompt ?? "" },
-            set: { value in viewModel.editSelectedWorkflow { $0.inputPrompt = value } }
         )
     }
 
