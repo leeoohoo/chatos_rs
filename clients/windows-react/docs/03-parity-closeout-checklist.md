@@ -24,6 +24,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-17 在当前 HEAD（已包含 `origin/3.0.9.10` 最新提交）重新执行 Windows Tauri 全量回归：`cargo test --all-targets` 为 `601 passed, 0 failed, 6 ignored`，覆盖 AppContainer、受控网络策略、ConPTY/终端、任务审查、Plugin、项目运行、媒体和安装相关 native contract；本轮没有代码行为改动。测试完成后确认没有 debug 构建进程，删除本轮生成的 `target-shared/debug`，保留正式 `target-shared/release` 和正在运行的 8 小时 Release 长稳任务。
 
+- 2026-11-17 在设置 `CHATOS_LOCAL_AGENT_HOST_TEST_PATH=target-shared/release/chatos_local_agent_host.exe` 且标准 Git、Node/npm 和公开网络可用时，补跑全部默认 ignored 的 Windows 外部集成回归：Host sidecar 健康握手/账号隔离、Plugin installer 的 Git HTTPS、Node MCP、npm Registry 获取和 npm MCP 隔离预检共 `6 passed, 0 failed`。这些用例仍保留 ignored 标记，避免无外部依赖的 CI 默认运行；测试完成后确认无 debug 进程并删除本轮生成的 `target-shared/debug`，不把公开服务或本机 Release sidecar 可用性误记为正式发布保证。
+
 - 2026-11-17 重新启动当前 Release 做原生窗口只读核验：窗口标题为 `ChatOS`，accessibility tree 真实暴露登录页标题、`auth-username`、`auth-password`、登录和创建账号入口；当前发布进程没有恢复合法会话，因此未进入登录后团队/任务页面。没有自动填写、读取或提交账号密码，随后正常关闭窗口；Computer Use 的认证窗口安全边界仍使任务审查逐态视觉证据保持未完成。
 
 - 2026-11-17 在当前工作树重复执行 Windows 原生 ConPTY 回归 5 轮：每轮均通过 PowerShell 自然退出与至少 1 MiB 输出排空（`2 passed, 0 failed`），5/5 轮均在 15 秒门限内完成；该结果加强短时退出/背压稳定性证据，但不替代 8 小时长稳与更大规模性能基线。
