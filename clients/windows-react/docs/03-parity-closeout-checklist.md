@@ -30,6 +30,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 上游同步后的 Windows 前端回归：React/Vitest `143` 个测试文件、`529 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture` 和 `npm run audit:bundle` 均通过（bundle `456.93 KiB` raw / `137.70 KiB` gzip）。
 
+- 2026-11-16 上游合并后的 Rust 格式门禁首次发现两处既有未格式化差异（Windows AppContainer 测试调用尾逗号、Connector router import 排版）；已由提交 `fa2e47738` 格式化并推送。随后 `cargo fmt --all -- --check` 通过，Windows AppContainer 定向回归 `16 passed, 0 failed`，Connector auth middleware `4 passed, 0 failed`。
+
 - 2026-11-16 在上述修复后重新执行完整本机门禁：Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `591 passed, 0 failed, 6 ignored`（597 个测试）；React/Vitest 为 `143` 个测试文件、`529 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture`、`npm run audit:bundle` 和 `npm run tauri -- build --no-bundle` 全部通过。当前工作区干净，代码提交 `d1bdeef93` 与文档提交均已推送到 `origin/3.0.9.3.1`。
 
 - 2026-11-16 网络恢复后的最终门禁复跑：`origin/3.0.9.8` 的头 `6ef0a7bd4` 已由当前 `3.0.9.3.1` 包含（`git rev-list HEAD..origin/3.0.9.8` 为 `0`，反向为 `436`），没有需要合并的上游提交；当前工作区仍干净。Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `590 passed, 0 failed, 6 ignored`（118.77 秒），React/Vitest 为 `143` 个测试文件、`529 passed, 0 failed`（35.73 秒），`npm run typecheck`、`npm run build`、`npm run audit:architecture` 和 `npm run audit:bundle` 全部通过（Bundle `456.93 KiB` raw / `137.70 KiB` gzip）。本轮只更新回归记录，没有改动运行逻辑或远端数据。
