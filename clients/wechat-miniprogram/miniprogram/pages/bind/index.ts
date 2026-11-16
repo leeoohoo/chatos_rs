@@ -1,6 +1,6 @@
 import { authService } from '../../services/auth-service'
 import { ApiError } from '../../services/api-client'
-import { isDevelopmentEnvironment } from '../../config/runtime'
+import { isTestEnvironment } from '../../config/runtime'
 import { beginTabSwitch, cancelTabSwitch } from '../../services/tab-navigation'
 import { sessionStore } from '../../stores/session-store'
 
@@ -38,7 +38,7 @@ Page({
     }
     const app = getApp<IAppOption>()
     const scene = decodeURIComponent(query.scene ?? app.globalData.launchScene ?? '').trim()
-    this.setData({ scene, developmentMode: isDevelopmentEnvironment() })
+    this.setData({ scene, developmentMode: isTestEnvironment() })
     if (scene) void this.startClaim()
   },
 

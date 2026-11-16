@@ -326,9 +326,16 @@ Page({
       // onLoad starts the intervention poller, including its immediate refresh.
       // Repeating those relay calls here made the cold path issue two identical
       // approval/prompt queries and increased contention on remote devices.
-      await this.refreshRuntime()
     } catch (error) {
       this.setData({ loading: false, error: error instanceof Error ? error.message : '加载会话失败' })
+      return
+    }
+    try {
+      await this.refreshRuntime()
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 401) {
+        wx.reLaunch({ url: '/pages/bind/index' })
+      }
     }
   },
 
@@ -356,18 +363,27 @@ Page({
     if (!this.conversationId || !this.deviceId || this.reconciling) return
     this.reconciling = true
     try {
-      const history = await conversationService.history(this.deviceId, this.conversationId)
+      const [history, recoveredConversation] = await Promise.all([
+        conversationService.history(this.deviceId, this.conversationId),
+        this.data.error
+          ? conversationService.get(this.deviceId, this.conversationId)
+          : Promise.resolve(undefined),
+      ])
       const serverMessages = messageViews(history.items, this.data.messages)
       if (!this.loadedOlder) this.nextBefore = history.next_before
       const messages = mergeReconciledMessages(this.data.messages, serverMessages)
       const messagesChanged = !sameMessageSequence(this.data.messages, messages)
       const hasMore = this.loadedOlder ? this.data.hasMore : history.has_more
-      if (messagesChanged || this.data.hasMore !== hasMore || this.data.actionError) {
+      if (messagesChanged || this.data.hasMore !== hasMore || this.data.actionError || recoveredConversation) {
         this.setData({
           ...(messagesChanged ? { messages } : {}),
           ...(this.data.hasMore !== hasMore ? { hasMore } : {}),
           ...(this.data.actionError ? { actionError: '' } : {}),
+          ...(recoveredConversation ? { conversation: recoveredConversation, error: '' } : {}),
         })
+      }
+      if (recoveredConversation) {
+        wx.setNavigationBarTitle({ title: recoveredConversation.title || '会话' })
       }
       await Promise.all([this.refreshRuntime(), this.refreshPrompts(), this.refreshApprovals()])
       if (messagesChanged) this.scrollToBottom()

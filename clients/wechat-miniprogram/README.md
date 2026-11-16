@@ -10,7 +10,7 @@
 4. 体验版联调时将 User Service 的 `USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION` 设为 `trial`；生产发布使用默认值 `release`。
 5. 执行 `npm install && npm run check` 做 TypeScript 校验。
 
-开发者工具使用 `develop` 版本时，绑定页会显示测试通道。该入口要求真实 ChatOS 用户名和密码，后端仍只签发绑定当前设备公钥的受限 Companion 会话。User Service 默认关闭该接口；联调环境必须显式设置 `USER_SERVICE_WECHAT_MINI_PROGRAM_DEVELOPMENT_LOGIN_ENABLED=true`，体验版和正式版页面不会显示该入口。
+开发版和体验版的绑定页会显示测试通道，供本地联调和微信审核使用。该入口要求专用 ChatOS 测试账号和密码，后端仍只签发绑定当前设备公钥的受限 Companion 会话。User Service 默认关闭该接口；使用时必须显式设置 `USER_SERVICE_WECHAT_MINI_PROGRAM_DEVELOPMENT_LOGIN_ENABLED=true`，正式版页面不会显示该入口。
 
 线上开发者工具联调时，可只重新部署 User Service 并开启该开关：
 
