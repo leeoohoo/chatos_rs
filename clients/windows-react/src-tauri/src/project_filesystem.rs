@@ -1171,6 +1171,26 @@ mod tests {
     }
 
     #[test]
+    fn large_directories_are_bounded_for_listing_and_name_search() {
+        let root = tempfile::tempdir().unwrap();
+        for index in 0..(MAXIMUM_DIRECTORY_ENTRIES + 1_000) {
+            fs::write(
+                root.path().join(format!("entry-{index:05}-needle.txt")),
+                "needle",
+            )
+            .unwrap();
+        }
+
+        let listing = list_directory(root.path(), "project-large", "").unwrap();
+        assert_eq!(listing.entries.len(), MAXIMUM_DIRECTORY_ENTRIES);
+        assert!(listing.is_truncated);
+
+        let search = search_entries(root.path(), "project-large", "", "needle", 2_000).unwrap();
+        assert_eq!(search.matches.len(), 2_000);
+        assert!(search.is_truncated);
+    }
+
+    #[test]
     fn mutations_require_revisions_and_never_overwrite_create_targets() {
         let root = tempfile::tempdir().unwrap();
         fs::write(root.path().join("note.txt"), "first").unwrap();

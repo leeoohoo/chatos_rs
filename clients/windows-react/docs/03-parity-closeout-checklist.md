@@ -20,6 +20,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 在本轮原生观察后重跑 Controlled Network 定向单测：Windows Tauri `controlled_network_policy` 与策略 URL 用例为 `5 passed, 0 failed`。该结果继续确认签名、身份、SID、过期、域名/端口校验稳定，但不改变目标/目的地级 WFP 或等价出站强制尚未实现的结论。测试重新生成的 `target-shared/debug` 仅为中间产物，确认无 cargo/rustc/ChatOS 构建进程后已删除；当前发布目录 `target-shared/release` 未改动。
 
+- 2026-11-16 为大目录性能/稳定性基线补充真实回归：`project_filesystem` 新增 6,000 文件临时目录用例，确认目录列表严格截断到 5,000 项且标记 `is_truncated`，名称搜索遵守调用方 2,000 条结果上限并标记截断；该模块共 `7 passed, 0 failed`。这加强了大目录边界证据，但不把短时边界测试冒充 8 小时稳定性完成。
+
 - 2026-11-16 完成当前 HEAD 的完整 Tauri bundle 与安装包回归：`npm run tauri -- build` 成功生成 NSIS `ChatOS_3.0.9_x64-setup.exe`（SHA-256 `9f500a8aa7252eef084d35b3cdebebc3ae0939872e1a3a3aa6386a543b50c0`）和 MSI `ChatOS_3.0.9_x64_en-US.msi`（SHA-256 `35fd95bd85f805670cbabfc99d6b0bc6f896a788394158c3d003817092c126ea`）。`smoke-installed-app.ps1` 在隔离目录执行安装、2 次真实 `ChatOS` 原生窗口启动、资源与 sidecar hash 校验、自动退出、卸载和用户数据清理，全部通过（安装/卸载退出码 `0`，启动退出码 `0`，`p50=2,599 ms`、`p95=3,004 ms`）；报告为 `%TEMP%\\chatos-windows-install-smoke-latest.json`。`smoke-installed-hook.ps1` 同包通过已安装 Host health、Hook Bundle 存储/激活、`continue=false` 阻断、Host 重启恢复和卸载（全部退出码 `0`），报告为 `%TEMP%\\chatos-windows-installed-hook-smoke-latest.json`。
 
 - 2026-11-16 完成当前 MSI 的真实升级/失败保护回归：以仓库现有 `ChatOS_0.1.0_x64_en-US.msi` 为 legacy、当前 `ChatOS_3.0.9_x64_en-US.msi` 为 current，`smoke-msi-upgrade.ps1` 全部通过。覆盖旧版安装与启动、截断升级包拒绝（`1620`）、事务故障注入回滚（`1603`，旧版 ProductCode/文件字节/AppData sentinel 恢复）、正常升级（`0`）、降级保护文案、运行中应用升级（Restart Manager 关闭旧进程且 `PendingFileRenameOperations` 未改变）、升级后启动和最终卸载；报告为 `%TEMP%\\chatos-windows-msi-upgrade-smoke-latest.json`。该结果关闭本机安装/升级事务和正常运行中升级风险，但不替代正式代码签名、SmartScreen、强制文件锁/需重启 VM 场景。
