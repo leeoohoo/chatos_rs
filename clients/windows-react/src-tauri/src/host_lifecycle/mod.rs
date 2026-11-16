@@ -116,16 +116,29 @@ impl HostManager {
         if self.process.lock().await.is_none() {
             return Ok(());
         }
+        let target_concurrent_work_items = self
+            .process
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|host| host.scheduler.as_ref())
+            .map(|scheduler| scheduler.target_concurrent_work_items)
+            .unwrap_or(1);
         match self
             .execute_detailed(HostCommand::SetSchedulerPressure(
-                SetSchedulerPressureCommand { pressure_level },
+                SetSchedulerPressureCommand {
+                    pressure_level,
+                    target_concurrent_work_items,
+                },
             ))
             .await
         {
             Ok(HostResult::SchedulerPressureUpdated {
                 pressure_level: applied,
+                target_concurrent_work_items: applied_target,
                 effective_maximum_concurrent_work_items,
             }) if applied == pressure_level
+                && applied_target == target_concurrent_work_items
                 && (1..=16).contains(&effective_maximum_concurrent_work_items) =>
             {
                 Ok(())
@@ -593,21 +606,32 @@ async fn apply_scheduler_pressure(
     host: &mut ManagedHost,
     pressure_level: LocalAgentResourcePressureLevel,
 ) -> Result<(), String> {
+    let target_concurrent_work_items = host
+        .scheduler
+        .as_ref()
+        .map(|scheduler| scheduler.target_concurrent_work_items)
+        .unwrap_or(1);
     match request(
         host,
-        HostCommand::SetSchedulerPressure(SetSchedulerPressureCommand { pressure_level }),
+        HostCommand::SetSchedulerPressure(SetSchedulerPressureCommand {
+            pressure_level,
+            target_concurrent_work_items,
+        }),
     )
     .await
     .map_err(|error| error.message)?
     {
         HostResult::SchedulerPressureUpdated {
             pressure_level: applied,
+            target_concurrent_work_items: applied_target,
             effective_maximum_concurrent_work_items,
         } if applied == pressure_level
+            && applied_target == target_concurrent_work_items
             && (1..=16).contains(&effective_maximum_concurrent_work_items) =>
         {
             if let Some(scheduler) = host.scheduler.as_mut() {
                 scheduler.pressure_level = applied;
+                scheduler.target_concurrent_work_items = applied_target;
                 scheduler.effective_maximum_concurrent_work_items =
                     effective_maximum_concurrent_work_items;
             }

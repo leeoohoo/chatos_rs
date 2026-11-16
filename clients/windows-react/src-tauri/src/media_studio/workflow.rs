@@ -193,7 +193,7 @@ impl MediaStudioWorkflowStore {
             if !is_plain_directory(&path) {
                 continue;
             }
-            let Ok(workflow) = self.load(&path) else {
+            let Ok(workflow) = self.load(&path, owner) else {
                 continue;
             };
             workflows.push(workflow);
@@ -265,7 +265,7 @@ impl MediaStudioWorkflowStore {
             .collect()
     }
 
-    fn load(&self, folder: &Path) -> Result<MediaWorkflow, String> {
+    fn load(&self, folder: &Path, owner: &str) -> Result<MediaWorkflow, String> {
         let manifest = folder.join("workflow.json");
         let metadata =
             fs::symlink_metadata(&manifest).map_err(|_| "工作流清单无效。".to_owned())?;
@@ -287,6 +287,16 @@ impl MediaStudioWorkflowStore {
             return Err("工作流清单标识不匹配。".into());
         }
         validate_workflow(&workflow)?;
+        self.resolve_images(
+            owner,
+            &workflow
+                .input_images
+                .iter()
+                .chain(workflow.nodes.iter().flat_map(|node| node.reference_images.iter()))
+                .cloned()
+                .collect::<Vec<_>>(),
+            &workflow.id,
+        )?;
         Ok(workflow)
     }
 
@@ -427,12 +437,11 @@ pub(crate) async fn run_media_studio_workflow(
         .session_generation_for_owner(&request.owner_user_id)
         .await?;
     let preview_token = manager.activate_session(&request.owner_user_id, generation)?;
-    let mut current_text = workflow.input_prompt.trim().to_owned();
-    let mut current_images = manager.workflows.resolve_images(
-        &request.owner_user_id,
-        &workflow.input_images,
-        &workflow.id,
-    )?;
+    // Workflow execution starts at the first model node. The legacy input fields
+    // remain deserializable for compatibility, but are intentionally not part of
+    // the execution snapshot (matching the macOS runner).
+    let mut current_text = String::new();
+    let mut current_images = Vec::new();
     let mut image_record_ids = Vec::new();
     let mut video_record_ids = Vec::new();
     for node in &workflow.nodes {

@@ -70,7 +70,6 @@ function WorkflowEditor({
       </header>
       <div className="media-workflow__editor-grid">
         <section className="media-workflow__canvas" aria-label="工作流节点">
-          <div className="media-workflow__input-card"><strong>流程输入</strong><textarea aria-label="流程输入提示词" maxLength={20_000} onChange={(event) => state.updateDraft((workflow) => ({ ...workflow, inputPrompt: event.target.value }))} placeholder="输入整个流程的初始要求…" value={draft.inputPrompt} /></div>
           {draft.nodes.map((node, index) => (
             <div className="media-workflow__node" key={node.id}>
               <span className={`media-workflow__node-kind media-workflow__node-kind--${node.kind}`}>{mediaWorkflowNodeLabel(node.kind)}</span>
@@ -87,7 +86,7 @@ function WorkflowEditor({
           {canAddNode && <div className="media-workflow__add-node"><span>添加节点</span>{(["text", "image", "video"] as MediaWorkflowNodeKind[]).map((kind) => <button key={kind} onClick={() => state.addNode(kind, models[0]?.id)} type="button">＋ {mediaWorkflowNodeLabel(kind)}</button>)}</div>}
           {!canAddNode && draft.nodes.length >= 8 && <small className="media-workflow__limit">最多支持 8 个节点。</small>}
         </section>
-        <aside className="media-workflow__inspector"><h3>运行说明</h3><p>节点按从上到下的顺序执行。视频节点只能出现一次并且必须是最后一个节点。</p><p className="media-workflow__notice">点击“运行”会先保存当前草稿，再串行调用文本、图片和视频节点；图片与视频结果会进入对应历史记录。</p>{state.runResult && <div className="media-workflow__run-result" role="status"><strong>运行完成</strong>{state.runResult.finalText && <p>{state.runResult.finalText}</p>}<small>图片记录 {state.runResult.imageRecordIds.length} 条 · 视频记录 {state.runResult.videoRecordIds.length} 条</small></div>}</aside>
+        <aside className="media-workflow__inspector"><h3>运行说明</h3><p>流程从第一个模型节点开始，按从上到下的顺序执行。视频节点只能出现一次并且必须是最后一个节点。</p><p className="media-workflow__notice">点击“运行”会先保存当前草稿，再串行调用文本、图片和视频节点；图片与视频结果会进入对应历史记录。</p>{state.runResult && <div className="media-workflow__run-result" role="status"><strong>运行完成</strong>{state.runResult.finalText && <p>{state.runResult.finalText}</p>}<small>图片记录 {state.runResult.imageRecordIds.length} 条 · 视频记录 {state.runResult.videoRecordIds.length} 条</small></div>}</aside>
       </div>
       {state.errorMessage && <WorkflowError />}
     </div>
