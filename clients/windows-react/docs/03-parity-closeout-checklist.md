@@ -16,6 +16,10 @@ Windows 产品版本：`3.0.9`
 
 ### 2026-11-16 全量离线回归复核
 
+- 2026-11-16 完成当前 HEAD 的完整 Tauri bundle 与安装包回归：`npm run tauri -- build` 成功生成 NSIS `ChatOS_3.0.9_x64-setup.exe`（SHA-256 `9f500a8aa7252eef084d35b3cdebebc3ae0939872e1a3a3aa6386a543b50c0`）和 MSI `ChatOS_3.0.9_x64_en-US.msi`（SHA-256 `35fd95bd85f805670cbabfc99d6b0bc6f896a788394158c3d003817092c126ea`）。`smoke-installed-app.ps1` 在隔离目录执行安装、2 次真实 `ChatOS` 原生窗口启动、资源与 sidecar hash 校验、自动退出、卸载和用户数据清理，全部通过（安装/卸载退出码 `0`，启动退出码 `0`，`p50=2,599 ms`、`p95=3,004 ms`）；报告为 `%TEMP%\\chatos-windows-install-smoke-latest.json`。`smoke-installed-hook.ps1` 同包通过已安装 Host health、Hook Bundle 存储/激活、`continue=false` 阻断、Host 重启恢复和卸载（全部退出码 `0`），报告为 `%TEMP%\\chatos-windows-installed-hook-smoke-latest.json`。
+
+- 2026-11-16 完成当前 MSI 的真实升级/失败保护回归：以仓库现有 `ChatOS_0.1.0_x64_en-US.msi` 为 legacy、当前 `ChatOS_3.0.9_x64_en-US.msi` 为 current，`smoke-msi-upgrade.ps1` 全部通过。覆盖旧版安装与启动、截断升级包拒绝（`1620`）、事务故障注入回滚（`1603`，旧版 ProductCode/文件字节/AppData sentinel 恢复）、正常升级（`0`）、降级保护文案、运行中应用升级（Restart Manager 关闭旧进程且 `PendingFileRenameOperations` 未改变）、升级后启动和最终卸载；报告为 `%TEMP%\\chatos-windows-msi-upgrade-smoke-latest.json`。该结果关闭本机安装/升级事务和正常运行中升级风险，但不替代正式代码签名、SmartScreen、强制文件锁/需重启 VM 场景。
+
 - 2026-11-16 完成 Computer Use 安装后 Windows 实测：已安装的 `Visual Computer Use 0.9.0` x64 worker 通过 `--doctor`（`screenCaptureAvailable=true`、`inputDesktopAvailable=true`、`allGranted=true`），真实 stdio MCP `initialize`/`tools/list` 暴露 11 个工具，`check_permissions` 与 `observe_screen` 均返回有效结构化结果和带虚拟准星的真实截图。安装后首次尝试从 UI 切换本机 Plugin 时复现 Marketplace 短暂不可用导致的“无法确认 Plugin 来源”误拦截；Windows 宿主已改为对已安装、`local-plugin-*`/`local-release-*` 的本机包允许独立启停，同时继续对 Marketplace 包执行来源门禁。`plugin_settings` 定向回归 `19 passed, 0 failed`，Release 构建成功并已推送提交 `d1bdeef93`。重启后的正式 Release 需要重新登录才能继续 UI 开关闭环；Computer Use 安全规则不允许代理认证窗口，因此未伪造登录后视觉证据。
 
 - 2026-11-16 使用已安装的 Windows x64 worker 完成专用输入 smoke：为避免 Notepad 历史文档污染，创建一个空临时文件并由 worker 激活其 Notepad 窗口，依次执行真实 `Ctrl+A`、`type_text("chatos-worker-input-smoke")`、`Ctrl+S`、`Alt+F4`；所有 MCP action 均无错误，保存后文件内容精确匹配，随后关闭 Notepad、worker 并删除该临时文件。该结果关闭 Windows Computer Use 的专用输入闭环缺口；不替代正式签名 Marketplace 发布、干净 VM 和管理员/UIPI 目标矩阵。
