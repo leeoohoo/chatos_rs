@@ -109,7 +109,7 @@
 .media-workflow__empty { display: flex; min-height: 330px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--secondary); font-size: 12px; text-align: center; }
 .media-workflow__empty strong { color: inherit; font-size: 17px; }
 .media-workflow__empty button { margin-top: 8px; border: 1px solid rgba(138,77,232,.3); border-radius: 9px; padding: 8px 13px; color: var(--media-purple); background: transparent; cursor: pointer; }
-.media-workflow__editor-grid { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(0,1fr) 260px; gap: 18px; padding-top: 14px; }
+.media-workflow__editor-grid { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(0,1fr) 520px; gap: 18px; padding-top: 14px; }
 .media-workflow__canvas { display: grid; align-content: start; gap: 12px; overflow: auto; padding: 4px; }
 .media-workflow__input-card,.media-workflow__node,.media-workflow__inspector { border: 1px solid rgba(60,60,67,.11); border-radius: 13px; padding: 14px; background: rgba(255,255,255,.68); }
 .media-workflow__input-card { display: grid; gap: 8px; }
