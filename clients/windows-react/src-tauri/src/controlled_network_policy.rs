@@ -41,6 +41,23 @@ pub(crate) struct VerifiedControlledNetworkPolicy {
     pub expires_at: DateTime<Utc>,
 }
 
+impl VerifiedControlledNetworkPolicy {
+    pub(crate) fn allows_destination(&self, host: &str, port: u16) -> bool {
+        if !self.allowed_ports.contains(&port) {
+            return false;
+        }
+        let Ok(host) = normalize_destination_host(host) else {
+            return false;
+        };
+        self.allowed_hosts.iter().any(|allowed| {
+            allowed == &host
+                || allowed.strip_prefix("*.").is_some_and(|suffix| {
+                    host.ends_with(&format!(".{suffix}")) && host != suffix
+                })
+        })
+    }
+}
+
 pub(crate) fn verify_controlled_network_policy(
     policy: &ControlledNetworkPolicyEnvelope,
     expected_owner_user_id: &str,
@@ -217,6 +234,20 @@ fn normalize_host(value: &str) -> Result<String, String> {
     })
 }
 
+fn normalize_destination_host(value: &str) -> Result<String, String> {
+    let value = value.trim().trim_end_matches('.');
+    if value.is_empty() || value.contains(['/', ':', '@', '*']) || value.chars().any(char::is_whitespace)
+    {
+        return Err("Controlled Network destination host is invalid.".into());
+    }
+    match Host::parse(value).map_err(|_| "Controlled Network destination host is invalid.")? {
+        Host::Domain(domain) => Ok(domain.to_ascii_lowercase()),
+        Host::Ipv4(_) | Host::Ipv6(_) => {
+            Err("Controlled Network destination IP literals are not allowed.".into())
+        }
+    }
+}
+
 fn decode_prefixed_base64(
     value: &str,
     label: &str,
@@ -283,6 +314,12 @@ mod tests {
             vec!["*.example.com", "api.example.com"]
         );
         assert_eq!(verified.allowed_ports, vec![80, 443]);
+        assert!(verified.allows_destination("api.example.com", 443));
+        assert!(verified.allows_destination("v1.example.com", 80));
+        assert!(verified.allows_destination("V1.Example.Com.", 443));
+        assert!(!verified.allows_destination("example.com", 443));
+        assert!(!verified.allows_destination("api.example.com", 8080));
+        assert!(!verified.allows_destination("127.0.0.1", 443));
     }
 
     #[test]

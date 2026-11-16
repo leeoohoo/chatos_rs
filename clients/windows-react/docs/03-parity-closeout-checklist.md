@@ -20,6 +20,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 在本轮原生观察后重跑 Controlled Network 定向单测：Windows Tauri `controlled_network_policy` 与策略 URL 用例为 `5 passed, 0 failed`。该结果继续确认签名、身份、SID、过期、域名/端口校验稳定，但不改变目标/目的地级 WFP 或等价出站强制尚未实现的结论。测试重新生成的 `target-shared/debug` 仅为中间产物，确认无 cargo/rustc/ChatOS 构建进程后已删除；当前发布目录 `target-shared/release` 未改动。
 
+- 2026-11-16 为已验签策略补充统一目标匹配器：精确域名、仅子域通配符、80/443 端口白名单和非法/IP 目标均有明确 allow/deny 单测；`controlled_network_policy` 模块 `3 passed, 0 failed`。该匹配器只作为后续 WFP/等价执行层的安全输入，当前仍未接入系统级出站拦截。
+
 - 2026-11-16 为大目录性能/稳定性基线补充真实回归：`project_filesystem` 新增 6,000 文件临时目录用例，确认目录列表严格截断到 5,000 项且标记 `is_truncated`，名称搜索遵守调用方 2,000 条结果上限并标记截断；该模块共 `7 passed, 0 failed`。这加强了大目录边界证据，但不把短时边界测试冒充 8 小时稳定性完成。
 
 - 2026-11-16 尝试用 Windows 原生 ConPTY/PowerShell 直接产生 1 MiB 输出并验证终止、轮询上限和资源释放；进程在 15 秒门限内没有进入终止态。临时压力测试已撤回，未把失败结果提交为产品代码；该结果反向确认终端大输出与长稳仍未完成，后续需要修复 PTY 生命周期/背压后再建立门禁。
