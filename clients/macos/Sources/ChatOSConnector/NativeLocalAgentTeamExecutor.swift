@@ -16,7 +16,7 @@ struct NativeLocalAgentTeamExecutorOutcome: Sendable, Equatable {
 /// Starts Agent-team Todo work on the same durable Rust Local Agent Host used by normal Tasks.
 /// Team boards, members, deliveries and acceptance gates remain native collaboration objects.
 public actor NativeLocalAgentTeamExecutor {
-  private struct Configuration: Sendable {
+  struct Configuration: Sendable {
     let ownerUserID: String
     let models: [String: LocalAgentModelConfigSnapshot]
     let capabilities: [String: LocalAgentCapabilityPolicySnapshot]
@@ -72,7 +72,7 @@ public actor NativeLocalAgentTeamExecutor {
     groupRun: LocalAgentGroupChatRun,
     resumeRequested: Bool = false
   ) async throws -> NativeLocalAgentTeamExecutorOutcome {
-    let config = try configured(ownerUserID: room.ownerUserID)
+    let config = try await configured(ownerUserID: room.ownerUserID)
     guard delivery.lane == .executor,
       delivery.triggerKind == .todo,
       delivery.targetAgentID == profile.id,
@@ -245,11 +245,22 @@ public actor NativeLocalAgentTeamExecutor {
     )
   }
 
-  private func configured(ownerUserID: String) throws -> Configuration {
-    guard let configuration, configuration.ownerUserID == ownerUserID else {
-      throw NativeLocalAgentConversationServiceError.notConfigured
+  // shortcut: poll startup configuration for 60 seconds, replace when bootstrap exposes readiness events.
+  func configured(
+    ownerUserID: String,
+    timeout: Duration = .seconds(60)
+  ) async throws -> Configuration {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while true {
+      if let configuration, configuration.ownerUserID == ownerUserID {
+        return configuration
+      }
+      try Task.checkCancellation()
+      guard ContinuousClock.now < deadline else {
+        throw NativeLocalAgentConversationServiceError.notConfigured
+      }
+      try await Task.sleep(for: .milliseconds(100))
     }
-    return configuration
   }
 
   /// Reconcile an existing Run on startup; only an explicit recovery action resumes it.

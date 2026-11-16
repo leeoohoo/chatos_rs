@@ -37,6 +37,7 @@ public struct ClientMachineResourceBudget: Sendable, Equatable {
     public static let fileWorkerUnitCost = 1
 
     public let availableResourceUnits: Int
+    public let maximumAvailableResourceUnits: Int
     public let reservedHostResourceUnits: Int
     public let maximumAgentRuns: Int
     public let maximumMediaWorkers: Int
@@ -44,18 +45,23 @@ public struct ClientMachineResourceBudget: Sendable, Equatable {
 
     public init(
         availableResourceUnits: Int,
+        maximumAvailableResourceUnits: Int? = nil,
         reservedHostResourceUnits: Int,
         maximumAgentRuns: Int,
         maximumMediaWorkers: Int,
         maximumCodeReadWorkers: Int
     ) {
         precondition(availableResourceUnits > 0)
+        let maximumAvailableResourceUnits = maximumAvailableResourceUnits
+            ?? availableResourceUnits
+        precondition(maximumAvailableResourceUnits >= availableResourceUnits)
         precondition(reservedHostResourceUnits >= 0)
         precondition(maximumAgentRuns >= 0)
         precondition(maximumMediaWorkers >= 0)
         precondition(maximumCodeReadWorkers >= 0)
         precondition(maximumAgentRuns + maximumMediaWorkers + maximumCodeReadWorkers > 0)
         self.availableResourceUnits = availableResourceUnits
+        self.maximumAvailableResourceUnits = maximumAvailableResourceUnits
         self.reservedHostResourceUnits = reservedHostResourceUnits
         self.maximumAgentRuns = maximumAgentRuns
         self.maximumMediaWorkers = maximumMediaWorkers
@@ -127,19 +133,23 @@ public enum ClientMachineResourceBudgetPolicy {
             physicalMemoryBytes: physicalMemoryBytes,
             configuredTotalLogicalJobs: configuredTotalLogicalJobs
         )
-        let recommendedHost = max(1, totalJobs / 4)
-        let requestedHost = configuredHostWorkItems
-            .flatMap { (1...16).contains($0) ? $0 : nil } ?? recommendedHost
+        let configuredHost = configuredHostWorkItems
+            .flatMap { (1...16).contains($0) ? $0 : nil }
+        let recommendedHost = (totalJobs + 1) / 2
+        let requestedHost = configuredHost ?? recommendedHost
         let hostWorkItems = min(totalJobs - 1, requestedHost)
-        let maximumAgentRuns = totalJobs - hostWorkItems
+        let baselineAgentRuns = totalJobs - hostWorkItems
+        let maximumAgentRuns = configuredHost == nil ? totalJobs - 1 : baselineAgentRuns
         let files = fileBudget ?? ClientFileWorkerResourceBudgetPolicy.recommended(
             logicalProcessorCount: logicalProcessorCount,
             physicalMemoryBytes: physicalMemoryBytes
         )
         return .init(
-            // One Agent Run is budgeted like two short-lived file workers. Host keeps its hard
-            // reservation; Helpers may borrow only the remaining App-owned share.
+            // One Agent Run is budgeted like two short-lived file workers. The baseline is the
+            // App half; the runtime target may borrow Host units up to the machine-wide maximum.
             availableResourceUnits:
+                baselineAgentRuns * ClientMachineResourceBudget.agentRunUnitCost,
+            maximumAvailableResourceUnits:
                 maximumAgentRuns * ClientMachineResourceBudget.agentRunUnitCost,
             reservedHostResourceUnits:
                 hostWorkItems * ClientMachineResourceBudget.agentRunUnitCost,
@@ -195,6 +205,7 @@ public struct ClientMachineResourceGovernorSnapshot: Sendable, Equatable {
     public let maximumObservedFileActive: Int
     public let maximumObservedFileQueued: Int
     public let capacity: ClientMachineResourceCapacity
+    public let targetResourceUnits: Int
     public let pendingRecoveryState: ClientMachinePressureState?
 
     public var usedResourceUnits: Int {
@@ -291,9 +302,10 @@ public enum ClientMachineResourcePressurePolicy {
 
     public static func capacity(
         budget: ClientMachineResourceBudget,
+        targetResourceUnits: Int? = nil,
         pressureState: ClientMachinePressureState
     ) -> ClientMachineResourceCapacity {
-        let baseline = budget.availableResourceUnits
+        let baseline = targetResourceUnits ?? budget.availableResourceUnits
         let minimum = min(baseline, interactiveReserveResourceUnits)
         let effective: Int
         let background: Int
@@ -383,6 +395,7 @@ public actor ClientMachineResourceGovernor {
     private var maximumObservedFileActive = 0
     private var maximumObservedFileQueued = 0
     private var capacity: ClientMachineResourceCapacity
+    private var targetResourceUnits: Int
     private var pendingRecoveryState: ClientMachinePressureState?
     private var recoveryTask: Task<Void, Never>?
     private var recoveryGeneration: UInt64 = 0
@@ -398,6 +411,7 @@ public actor ClientMachineResourceGovernor {
         self.budget = budget
         self.maximumQueued = maximumQueued
         self.recoveryDelay = recoveryDelay
+        self.targetResourceUnits = budget.availableResourceUnits
         self.capacity = ClientMachineResourcePressurePolicy.capacity(
             budget: budget,
             pressureState: .normal
@@ -465,8 +479,24 @@ public actor ClientMachineResourceGovernor {
             maximumObservedFileActive: maximumObservedFileActive,
             maximumObservedFileQueued: maximumObservedFileQueued,
             capacity: capacity,
+            targetResourceUnits: targetResourceUnits,
             pendingRecoveryState: pendingRecoveryState
         )
+    }
+
+    @discardableResult
+    public func updateTargetResourceUnits(_ resourceUnits: Int) -> Bool {
+        guard (1...budget.maximumAvailableResourceUnits).contains(resourceUnits) else {
+            return false
+        }
+        targetResourceUnits = resourceUnits
+        capacity = ClientMachineResourcePressurePolicy.capacity(
+            budget: budget,
+            targetResourceUnits: resourceUnits,
+            pressureState: capacity.pressureState
+        )
+        drainWaiters()
+        return true
     }
 
     /// Applies resource pressure without revoking permits that already crossed the admission
@@ -477,6 +507,7 @@ public actor ClientMachineResourceGovernor {
             cancelPendingRecovery()
             capacity = ClientMachineResourcePressurePolicy.capacity(
                 budget: budget,
+                targetResourceUnits: targetResourceUnits,
                 pressureState: pressureState
             )
             drainWaiters()
@@ -653,6 +684,7 @@ public actor ClientMachineResourceGovernor {
               pendingRecoveryState == pressureState else { return }
         capacity = ClientMachineResourcePressurePolicy.capacity(
             budget: budget,
+            targetResourceUnits: targetResourceUnits,
             pressureState: pressureState
         )
         pendingRecoveryState = nil

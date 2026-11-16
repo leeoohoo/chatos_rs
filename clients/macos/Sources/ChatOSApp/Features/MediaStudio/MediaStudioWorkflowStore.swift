@@ -37,10 +37,19 @@ actor MediaStudioWorkflowStore {
         return workflows.sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    func save(_ workflow: MediaStudioWorkflow, owner ownerInput: String) throws {
+    @discardableResult
+    func save(_ workflow: MediaStudioWorkflow, owner ownerInput: String) throws -> Bool {
         let owner = try normalizedOwner(ownerInput)
         try MediaStudioWorkflowValidator.validate(workflow)
         let folder = workflowFolder(workflow.id, owner: owner)
+        let manifest = folder.appendingPathComponent("workflow.json")
+        let previousManifestDate = try? manifest.resourceValues(
+            forKeys: [.contentModificationDateKey]
+        ).contentModificationDate
+        if FileManager.default.fileExists(atPath: manifest.path),
+           try load(folder: folder, owner: owner).updatedAt > workflow.updatedAt {
+            return false
+        }
         let assets = folder.appendingPathComponent("assets", isDirectory: true)
         try createPrivateDirectory(folder)
         try createPrivateDirectory(assets)
@@ -48,8 +57,13 @@ actor MediaStudioWorkflowStore {
         guard data.count <= Self.maximumManifestBytes else {
             throw MediaStudioWorkflowStoreError.invalidManifest
         }
-        try data.write(to: folder.appendingPathComponent("workflow.json"), options: .atomic)
-        try cleanupAssets(in: assets, referencedBy: workflow)
+        try data.write(to: manifest, options: .atomic)
+        try cleanupAssets(
+            in: assets,
+            referencedBy: workflow,
+            olderThanOrEqualTo: previousManifestDate
+        )
+        return true
     }
 
     func delete(id: UUID, owner ownerInput: String) throws {
@@ -158,16 +172,27 @@ actor MediaStudioWorkflowStore {
         return workflow
     }
 
-    private func cleanupAssets(in directory: URL, referencedBy workflow: MediaStudioWorkflow) throws {
+    private func cleanupAssets(
+        in directory: URL,
+        referencedBy workflow: MediaStudioWorkflow,
+        olderThanOrEqualTo previousManifestDate: Date?
+    ) throws {
         let referenced = Set(
             (workflow.inputImages + workflow.nodes.flatMap(\.referenceImages)).map(\.filename)
         )
         for url in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
             guard !referenced.contains(url.lastPathComponent) else { continue }
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            let values = try url.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .isSymbolicLinkKey,
+                .contentModificationDateKey,
+            ])
             guard values.isRegularFile == true, values.isSymbolicLink != true else {
                 throw MediaStudioWorkflowStoreError.invalidImage
             }
+            guard let previousManifestDate,
+                  let modifiedAt = values.contentModificationDate,
+                  modifiedAt <= previousManifestDate else { continue }
             try FileManager.default.removeItem(at: url)
         }
     }

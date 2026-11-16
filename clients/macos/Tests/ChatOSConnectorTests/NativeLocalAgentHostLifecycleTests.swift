@@ -27,7 +27,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             executableURL: wrapper.executable,
             databaseURL: root.appendingPathComponent("agent.sqlite3"),
             startupTimeout: .seconds(10),
-            maximumConcurrentWorkItems: 3
+            maximumConcurrentWorkItems: 3,
+            initialConcurrentWorkItems: 2
         ))
 
         do {
@@ -43,11 +44,18 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             let resourceSnapshot = await lifecycle.resourceSnapshot()
             let resources = try XCTUnwrap(resourceSnapshot)
             XCTAssertEqual(resources.maximumConcurrentWorkItems, 3)
-            XCTAssertEqual(resources.effectiveMaximumConcurrentWorkItems, 3)
+            XCTAssertEqual(resources.targetConcurrentWorkItems, 2)
+            XCTAssertEqual(resources.effectiveMaximumConcurrentWorkItems, 2)
             XCTAssertEqual(resources.pressureLevel, .normal)
             XCTAssertEqual(resources.activeWorkItems, 0)
             XCTAssertEqual(resources.idleWorkers, 3)
             XCTAssertEqual(resources.queuedReadyWorkItems, 0)
+            let updated = await lifecycle.updateConcurrencyTarget(3)
+            XCTAssertTrue(updated)
+            let expandedSnapshot = await lifecycle.resourceSnapshot()
+            let expanded = try XCTUnwrap(expandedSnapshot)
+            XCTAssertEqual(expanded.targetConcurrentWorkItems, 3)
+            XCTAssertEqual(expanded.effectiveMaximumConcurrentWorkItems, 3)
             await lifecycle.stop()
         } catch {
             await lifecycle.stop()
@@ -909,6 +917,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         XCTAssertTrue(arguments.contains("local_agent"))
         XCTAssertTrue(arguments.contains("12345"))
         XCTAssertTrue(arguments.contains("--max-concurrent-work-items"))
+        XCTAssertTrue(arguments.contains("--initial-concurrent-work-items"))
         XCTAssertTrue(arguments.contains("7"))
         XCTAssertFalse(arguments.contains("memory-secret"))
         XCTAssertFalse(arguments.contains("--disable-workers"))

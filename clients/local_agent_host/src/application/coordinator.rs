@@ -58,6 +58,7 @@ pub struct LocalAgentHostCoordinator {
     memory_work_activity: HostWorkActivity,
     reserved_ipc_tools: Vec<String>,
     maximum_concurrent_work_items: usize,
+    target_concurrent_work_items: watch::Sender<usize>,
     effective_maximum_concurrent_work_items: watch::Sender<usize>,
     pressure_level: watch::Sender<LocalAgentResourcePressureLevel>,
     accepting_new_work: watch::Sender<bool>,
@@ -89,6 +90,7 @@ impl LocalAgentHostCoordinator {
         }
         let (activity, _) = watch::channel(0);
         let maximum_concurrent_work_items = default_maximum_concurrent_work_items();
+        let (target_concurrent_work_items, _) = watch::channel(maximum_concurrent_work_items);
         let (effective_maximum_concurrent_work_items, _) =
             watch::channel(maximum_concurrent_work_items);
         let (pressure_level, _) = watch::channel(LocalAgentResourcePressureLevel::Normal);
@@ -110,6 +112,7 @@ impl LocalAgentHostCoordinator {
             memory_work_activity: HostWorkActivity::default(),
             reserved_ipc_tools: Vec::new(),
             maximum_concurrent_work_items,
+            target_concurrent_work_items,
             effective_maximum_concurrent_work_items,
             pressure_level,
             accepting_new_work,
@@ -124,8 +127,22 @@ impl LocalAgentHostCoordinator {
             ));
         }
         self.maximum_concurrent_work_items = maximum;
+        self.target_concurrent_work_items.send_replace(maximum);
         self.effective_maximum_concurrent_work_items
             .send_replace(maximum);
+        Ok(self)
+    }
+
+    pub fn with_target_concurrent_work_items(self, target: usize) -> Result<Self, String> {
+        if !(MIN_CONCURRENT_WORK_ITEMS..=self.maximum_concurrent_work_items).contains(&target) {
+            return Err(format!(
+                "target concurrent work items must be between {MIN_CONCURRENT_WORK_ITEMS} and {}",
+                self.maximum_concurrent_work_items
+            ));
+        }
+        self.target_concurrent_work_items.send_replace(target);
+        self.effective_maximum_concurrent_work_items
+            .send_replace(target);
         Ok(self)
     }
 
@@ -734,6 +751,7 @@ impl LocalAgentHostCoordinator {
         let active_memory_sync_items = self.memory_work_activity.active_count();
         let scheduler = LocalAgentHostSchedulerSnapshot {
             maximum_concurrent_work_items: self.maximum_concurrent_work_items,
+            target_concurrent_work_items: *self.target_concurrent_work_items.borrow(),
             effective_maximum_concurrent_work_items: *self
                 .effective_maximum_concurrent_work_items
                 .borrow(),
@@ -761,16 +779,30 @@ impl LocalAgentHostCoordinator {
         &self,
         request: HostRequestEnvelope,
         pressure_level: LocalAgentResourcePressureLevel,
+        target_concurrent_work_items: usize,
     ) -> HostResponseEnvelope {
+        if target_concurrent_work_items > self.maximum_concurrent_work_items {
+            return HostResponseEnvelope::failure(
+                request.command_id,
+                HostError::new(
+                    "invalid_request",
+                    "scheduler target exceeds the configured maximum",
+                    false,
+                ),
+            );
+        }
         let effective_maximum_concurrent_work_items =
-            effective_worker_limit(self.maximum_concurrent_work_items, pressure_level);
+            effective_worker_limit(target_concurrent_work_items, pressure_level);
         self.pressure_level.send_replace(pressure_level);
+        self.target_concurrent_work_items
+            .send_replace(target_concurrent_work_items);
         self.effective_maximum_concurrent_work_items
             .send_replace(effective_maximum_concurrent_work_items);
         HostResponseEnvelope::success(
             request.command_id,
             HostResult::SchedulerPressureUpdated {
                 pressure_level,
+                target_concurrent_work_items,
                 effective_maximum_concurrent_work_items,
             },
         )
@@ -833,7 +865,17 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
             return self.health_response(request).await;
         }
         if let HostCommand::SetSchedulerPressure(command) = request.command.clone() {
-            return self.update_scheduler_pressure(request, command.pressure_level);
+            if let Err(message) = request.validate() {
+                return HostResponseEnvelope::failure(
+                    request.command_id,
+                    HostError::new("invalid_request", message, false),
+                );
+            }
+            return self.update_scheduler_pressure(
+                request,
+                command.pressure_level,
+                command.target_concurrent_work_items,
+            );
         }
         if let HostCommand::SetSchedulerAdmission(command) = request.command.clone() {
             return self

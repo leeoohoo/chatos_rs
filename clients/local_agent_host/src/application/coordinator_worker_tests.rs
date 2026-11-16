@@ -653,6 +653,7 @@ async fn pressure_gate_applies_before_the_next_claim_without_cancelling_active_w
             "set-critical-pressure",
             HostCommand::SetSchedulerPressure(SetSchedulerPressureCommand {
                 pressure_level: LocalAgentResourcePressureLevel::Critical,
+                target_concurrent_work_items: 2,
             }),
         ))
         .await;
@@ -660,6 +661,7 @@ async fn pressure_gate_applies_before_the_next_claim_without_cancelling_active_w
         pressure.result,
         Some(HostResult::SchedulerPressureUpdated {
             pressure_level: LocalAgentResourcePressureLevel::Critical,
+            target_concurrent_work_items: 2,
             effective_maximum_concurrent_work_items: 1,
         })
     ));
@@ -704,6 +706,7 @@ async fn pressure_gate_applies_before_the_next_claim_without_cancelling_active_w
             "restore-normal-pressure",
             HostCommand::SetSchedulerPressure(SetSchedulerPressureCommand {
                 pressure_level: LocalAgentResourcePressureLevel::Normal,
+                target_concurrent_work_items: 2,
             }),
         ))
         .await;
@@ -711,6 +714,7 @@ async fn pressure_gate_applies_before_the_next_claim_without_cancelling_active_w
         recovery.result,
         Some(HostResult::SchedulerPressureUpdated {
             pressure_level: LocalAgentResourcePressureLevel::Normal,
+            target_concurrent_work_items: 2,
             effective_maximum_concurrent_work_items: 2,
         })
     ));

@@ -74,6 +74,46 @@ final class MediaStudioWorkflowStoreTests: XCTestCase {
         } catch {}
     }
 
+    func testOlderSaveCannotOverwriteNewerWorkflowSnapshot() async throws {
+        let root = try temporaryDirectory()
+        let store = MediaStudioWorkflowStore(root: root)
+        let older = Self.workflow()
+        var newer = older
+        newer.nodes.append(.init(kind: .image, modelConfigID: "image", prompt: "Render it"))
+        newer.updatedAt = older.updatedAt.addingTimeInterval(1)
+
+        let savedNewer = try await store.save(newer, owner: "alice")
+        let savedOlder = try await store.save(older, owner: "alice")
+        XCTAssertTrue(savedNewer)
+        XCTAssertFalse(savedOlder)
+
+        let restored = try await store.list(owner: "alice")
+        XCTAssertEqual(restored, [newer])
+    }
+
+    func testStaleSaveDoesNotDeleteAnImageBeingAddedToNewerSnapshot() async throws {
+        let root = try temporaryDirectory()
+        let store = MediaStudioWorkflowStore(root: root.appendingPathComponent("store"))
+        let source = root.appendingPathComponent("source.png")
+        try Self.png.write(to: source)
+        let older = Self.workflow()
+        try await store.save(older, owner: "alice")
+        let reference = try await store.importImage(
+            .init(name: "source.png", mimeType: "image/png", fileURL: source),
+            workflowID: older.id,
+            owner: "alice"
+        )
+
+        try await store.save(older, owner: "alice")
+        var newer = older
+        newer.inputImages = [reference]
+        newer.updatedAt = older.updatedAt.addingTimeInterval(1)
+        try await store.save(newer, owner: "alice")
+
+        let restored = try await store.list(owner: "alice")
+        XCTAssertEqual(restored, [newer])
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("MediaStudioWorkflowTests-\(UUID().uuidString)")

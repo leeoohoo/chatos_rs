@@ -24,6 +24,8 @@ fn record(status: LocalTaskStatus) -> LocalTaskRecord {
         replacement_task_ids: Vec::new(),
         cancelled_because_task_id: None,
         result_summary: None,
+        result_status: None,
+        result_reason: None,
         version: 1,
         created_at_unix_ms: 1,
         updated_at_unix_ms: 1,

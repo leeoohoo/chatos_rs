@@ -86,6 +86,10 @@ pub(super) fn task_for_agent_tool(
         "final_delivery": input.and_then(|input| input.get("final_delivery")).cloned().unwrap_or(Value::Bool(false)),
         "input_payload": input.and_then(|input| input.get("input_payload")).cloned().unwrap_or(Value::Null),
         "status": task_status_for_agent(task),
+        "execution_status": task_status_for_agent(task),
+        "result_status": task_result_status_for_agent(task),
+        "effective_status": task_effective_status_for_agent(task),
+        "result_reason": task_result_reason_for_agent(task),
         "cancel_reason": task.cancel_reason,
         "replacement_task_ids": task.replacement_task_ids,
         "cancelled_because_task_id": task.cancelled_because_task_id,
@@ -103,6 +107,45 @@ pub(super) fn task_for_agent_tool(
         "created_at": unix_ms_rfc3339(task.created_at_unix_ms),
         "updated_at": unix_ms_rfc3339(task.updated_at_unix_ms),
     })
+}
+
+pub(super) fn task_result_status_for_agent(task: &LocalTaskRecord) -> Option<&str> {
+    if matches!(
+        task.status,
+        LocalTaskStatus::Pending | LocalTaskStatus::Ready | LocalTaskStatus::Running
+    ) {
+        return None;
+    }
+    task.result_status.as_deref().or_else(|| {
+        (task.status == LocalTaskStatus::Succeeded).then_some(
+            if task
+                .input
+                .get("acceptance_report_version")
+                .and_then(Value::as_u64)
+                == Some(1)
+            {
+                "missing"
+            } else {
+                "succeeded"
+            },
+        )
+    })
+}
+
+pub(super) fn task_effective_status_for_agent(task: &LocalTaskRecord) -> &str {
+    if task.status == LocalTaskStatus::Succeeded {
+        task_result_status_for_agent(task).unwrap_or("missing")
+    } else {
+        task_status_for_agent(task)
+    }
+}
+
+pub(super) fn task_result_reason_for_agent(task: &LocalTaskRecord) -> Option<&str> {
+    task_result_status_for_agent(task).and(task.result_reason.as_deref())
+}
+
+pub(super) fn task_satisfies_dependency(task: &LocalTaskRecord) -> bool {
+    task_effective_status_for_agent(task) == "succeeded"
 }
 
 pub(super) fn tasks_for_agent_tool(tasks: &[LocalTaskRecord]) -> Value {
@@ -133,6 +176,10 @@ pub(super) fn batch_creation_value(
                 "task_id": task.task_id,
                 "title": task.title,
                 "status": task_status_for_agent(task),
+                "execution_status": task_status_for_agent(task),
+                "result_status": task_result_status_for_agent(task),
+                "effective_status": task_effective_status_for_agent(task),
+                "result_reason": task_result_reason_for_agent(task),
             });
             if let Some(client_ref) = refs_by_task.get(task.task_id.as_str()) {
                 value["client_ref"] = Value::String((*client_ref).to_string());
@@ -722,6 +769,8 @@ mod result_tests {
             replacement_task_ids: Vec::new(),
             cancelled_because_task_id: None,
             result_summary: Some("Godot project; run with godot --path .".to_string()),
+            result_status: Some("succeeded".to_string()),
+            result_reason: Some("Inspection completed.".to_string()),
             version: 2,
             created_at_unix_ms: 1,
             updated_at_unix_ms: 2,
@@ -732,5 +781,20 @@ mod result_tests {
             output["result_summary"],
             "Godot project; run with godot --path ."
         );
+        assert_eq!(output["execution_status"], "succeeded");
+        assert_eq!(output["result_status"], "succeeded");
+        assert_eq!(output["effective_status"], "succeeded");
+
+        let blocked = LocalTaskRecord {
+            result_status: Some("blocked".to_string()),
+            result_reason: Some("External approval is required.".to_string()),
+            ..task
+        };
+        let output = task_for_agent_tool(&blocked, &[]);
+        assert_eq!(output["execution_status"], "succeeded");
+        assert_eq!(output["result_status"], "blocked");
+        assert_eq!(output["effective_status"], "blocked");
+        assert_eq!(output["result_reason"], "External approval is required.");
+        assert!(!task_satisfies_dependency(&blocked));
     }
 }

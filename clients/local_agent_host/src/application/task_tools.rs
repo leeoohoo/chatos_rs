@@ -362,7 +362,22 @@ impl LocalTaskToolExecutor {
                     .tasks
                     .first()
                     .ok_or_else(|| "created Task Graph contains no Tasks".to_string())?;
-                task_for_agent_tool(task, &graph.dependencies)
+                let mut output = task_for_agent_tool(task, &graph.dependencies);
+                if task.status == LocalTaskStatus::Blocked {
+                    let dependency = self
+                        .dependency_graph_for_task(conversation_id, task.clone())
+                        .await?;
+                    if let (Some(output), Some(dependency)) =
+                        (output.as_object_mut(), dependency.as_object())
+                    {
+                        for key in ["ready", "dependencies_satisfied", "blocked_by"] {
+                            if let Some(value) = dependency.get(key) {
+                                output.insert(key.to_string(), value.clone());
+                            }
+                        }
+                    }
+                }
+                output
             }
             CREATE_TASKS_TOOL => {
                 let mut args: CreateTasksArgs =

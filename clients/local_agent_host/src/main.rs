@@ -37,6 +37,7 @@ struct Options {
     approval_exempt_tools: Vec<String>,
     memory: Option<MemoryOptions>,
     maximum_concurrent_work_items: usize,
+    initial_concurrent_work_items: usize,
 }
 
 struct MemoryOptions {
@@ -157,6 +158,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     })
     .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?
     .with_maximum_concurrent_work_items(options.maximum_concurrent_work_items)
+    .and_then(|assembly| {
+        assembly.with_target_concurrent_work_items(options.initial_concurrent_work_items)
+    })
     .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
     let coordinator = assembly.coordinator();
     match options.mode {
@@ -235,6 +239,7 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
     let mut memory_source_id = None;
     let mut memory_timeout_ms = 30_000;
     let mut maximum_concurrent_work_items = default_maximum_concurrent_work_items();
+    let mut initial_concurrent_work_items = None;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -286,6 +291,13 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
                     return Err("--max-concurrent-work-items must be between 1 and 16".to_string());
                 }
             }
+            "--initial-concurrent-work-items" => {
+                index += 1;
+                let value = required_value(&arguments, index, "--initial-concurrent-work-items")?;
+                initial_concurrent_work_items = Some(value.parse::<usize>().map_err(|_| {
+                    "--initial-concurrent-work-items must be an integer".to_string()
+                })?);
+            }
             "--disable-workers" => workers_enabled = false,
             "--stdio" => set_mode(&mut mode, IpcMode::Stdio)?,
             #[cfg(unix)]
@@ -323,6 +335,14 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
                 .to_string(),
         );
     }
+    let initial_concurrent_work_items =
+        initial_concurrent_work_items.unwrap_or(maximum_concurrent_work_items);
+    if !(1..=maximum_concurrent_work_items).contains(&initial_concurrent_work_items) {
+        return Err(
+            "--initial-concurrent-work-items must be between 1 and the configured maximum"
+                .to_string(),
+        );
+    }
     Ok(Options {
         database: database.ok_or_else(|| "--database is required".to_string())?,
         owner_user_id: owner_user_id.ok_or_else(|| "--owner-user-id is required".to_string())?,
@@ -332,6 +352,7 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
         approval_exempt_tools,
         memory,
         maximum_concurrent_work_items,
+        initial_concurrent_work_items,
     })
 }
 
@@ -378,6 +399,7 @@ fn print_help() {
     eprintln!("  --memory-source-id <id>  Memory source paired with --memory-base-url");
     eprintln!("  --memory-timeout-ms <ms>  Memory request timeout (default: 30000)");
     eprintln!("  --max-concurrent-work-items <count>  Shared model/tool concurrency (1..16; adaptive default)");
+    eprintln!("  --initial-concurrent-work-items <count>  Initial scheduler target (1..maximum)");
     eprintln!(
         "  --disable-workers    Serve IPC without claiming model or tool work during bootstrap"
     );
@@ -530,6 +552,7 @@ mod tests {
             vec!["stage_edit_batch".to_string()]
         );
         assert_eq!(options.maximum_concurrent_work_items, 7);
+        assert_eq!(options.initial_concurrent_work_items, 7);
         assert!(matches!(options.mode, IpcMode::Stdio));
         assert!(options.memory.is_none());
         assert!(parse_options(vec!["--api-key".to_string(), "secret".to_string()]).is_err());
@@ -543,6 +566,24 @@ mod tests {
                 .into_iter()
                 .map(str::to_string)
                 .collect()
+        )
+        .is_err());
+        assert!(parse_options(
+            [
+                "--database",
+                "/tmp/local-agent.sqlite",
+                "--owner-user-id",
+                "user-1",
+                "--max-concurrent-work-items",
+                "4",
+                "--initial-concurrent-work-items",
+                "5",
+                "--disable-workers",
+                "--stdio",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
         )
         .is_err());
         assert!(parse_options(

@@ -161,6 +161,40 @@ final class ClientMachineResourceGovernorTests: XCTestCase {
         XCTAssertEqual(critical.maximumBackgroundResourceUnits, 0)
     }
 
+    func testRuntimeTargetBorrowsCapacityWithoutRevokingActiveWork() async throws {
+        let governor = ClientMachineResourceGovernor(budget: .init(
+            availableResourceUnits: 4,
+            maximumAvailableResourceUnits: 8,
+            reservedHostResourceUnits: 4,
+            maximumAgentRuns: 4,
+            maximumMediaWorkers: 4,
+            maximumCodeReadWorkers: 4
+        ))
+        let first = try await governor.acquire(context: Self.context(.agentRun, "first"))
+        let second = try await governor.acquire(context: Self.context(.agentRun, "second"))
+        let waiting = Task {
+            try await governor.acquire(context: Self.context(.agentRun, "borrowed"))
+        }
+        try await waitUntil { await governor.snapshot().queued.count == 1 }
+
+        let expanded = await governor.updateTargetResourceUnits(6)
+        XCTAssertTrue(expanded)
+        let borrowed = try await waiting.value
+        var snapshot = await governor.snapshot()
+        XCTAssertEqual(snapshot.targetResourceUnits, 6)
+        XCTAssertEqual(snapshot.active.count, 3)
+
+        let shrunk = await governor.updateTargetResourceUnits(2)
+        XCTAssertTrue(shrunk)
+        snapshot = await governor.snapshot()
+        XCTAssertEqual(snapshot.active.count, 3)
+        XCTAssertEqual(snapshot.capacity.effectiveResourceUnits, 2)
+
+        await first.releaseAndWait()
+        await second.releaseAndWait()
+        await borrowed.releaseAndWait()
+    }
+
     func testPowerAndBatterySignalsMapToElevatedPressure() {
         XCTAssertEqual(
             Self.pressure(lowPowerModeEnabled: true).level,

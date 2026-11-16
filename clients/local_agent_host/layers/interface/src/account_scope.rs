@@ -110,6 +110,7 @@ mod tests {
         assert_eq!(
             HostCommand::SetSchedulerPressure(crate::SetSchedulerPressureCommand {
                 pressure_level: crate::LocalAgentResourcePressureLevel::Critical,
+                target_concurrent_work_items: 1,
             })
             .owner_user_id(),
             None

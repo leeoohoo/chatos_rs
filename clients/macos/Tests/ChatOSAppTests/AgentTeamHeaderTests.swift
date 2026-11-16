@@ -28,11 +28,37 @@ final class AgentTeamHeaderTests: XCTestCase {
         XCTAssertGreaterThan(narrow.width, regular.width)
     }
 
-    func testNarrowHeaderMovesTabsToSecondRow() async throws {
+    func testHeaderKeepsStableTwoRowHeight() async throws {
         let wide = try await measureHeader(width: 1_200)
         let narrow = try await measureHeader(width: 550)
-        XCTAssertGreaterThan(narrow.height, wide.height + 10)
+        XCTAssertEqual(narrow.height, wide.height, accuracy: 1)
         XCTAssertLessThanOrEqual(narrow.width, 550)
+    }
+
+    func testHeaderLayoutStaysFiniteWhileRunControlsChange() {
+        let width: CGFloat = 550
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: width, height: 180),
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let hosting = NSHostingView(rootView: header(isRunning: false))
+        window.contentView = hosting
+
+        for index in 0..<40 {
+            hosting.rootView = header(
+                isRunning: index.isMultiple(of: 2),
+                hasInterruptedRuns: index.isMultiple(of: 3),
+                isPausing: index.isMultiple(of: 5),
+                isStopping: index.isMultiple(of: 7)
+            )
+            hosting.layoutSubtreeIfNeeded()
+            let size = hosting.fittingSize
+            XCTAssertTrue(size.width.isFinite)
+            XCTAssertTrue(size.height.isFinite)
+            XCTAssertGreaterThan(size.height, 0)
+        }
     }
 
     private func measureControls(
@@ -57,16 +83,26 @@ final class AgentTeamHeaderTests: XCTestCase {
 
     private func measureHeader(width: CGFloat) async throws -> CGSize {
         let measurement = HeaderMeasurement()
-        let root = AgentTeamHeader(
-            name: "FinFlow 财务产品团队", goal: String(repeating: "构建可运行的财务业务流程。", count: 30),
-            selectedSection: .constant(.chat), isRunning: true, hasInterruptedRuns: true,
-            isPausing: false, isStopping: false, onPause: {}, onStop: {}
-        )
-        .frame(width: width)
-        .fixedSize(horizontal: false, vertical: true)
-        .onGeometryChange(for: CGSize.self, of: { $0.size }) { measurement.size = $0 }
+        let root = header(isRunning: true, hasInterruptedRuns: true)
+            .frame(width: width)
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGSize.self, of: { $0.size }) { measurement.size = $0 }
         try await render(root, width: width)
         return try XCTUnwrap(measurement.size)
+    }
+
+    private func header(
+        isRunning: Bool,
+        hasInterruptedRuns: Bool = false,
+        isPausing: Bool = false,
+        isStopping: Bool = false
+    ) -> some View {
+        AgentTeamHeader(
+            name: "FinFlow 财务产品团队", goal: String(repeating: "构建可运行的财务业务流程。", count: 30),
+            selectedSection: .constant(.chat), isRunning: isRunning,
+            hasInterruptedRuns: hasInterruptedRuns, isPausing: isPausing,
+            isStopping: isStopping, onPause: {}, onStop: {}
+        )
     }
 
     private func render(_ root: some View, width: CGFloat) async throws {

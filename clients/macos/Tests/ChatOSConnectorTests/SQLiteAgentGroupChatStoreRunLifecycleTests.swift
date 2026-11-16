@@ -25,12 +25,19 @@ extension SQLiteAgentGroupChatStoreTests {
             draft: .init(title: "生成轻量摘要", teamRoomID: room.id),
             nowUnixMs: 100
         )
-        let deliveryValue = try await store.startNextReadyAgentTodo(
+        let queuedValue = try await store.startNextReadyAgentTodo(
             ownerUserID: "alice",
             agentID: agent.id,
             nowUnixMs: 101
         )
-        let delivery = try XCTUnwrap(deliveryValue)
+        let queued = try XCTUnwrap(queuedValue)
+        let claimedValue = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 102
+        )
+        let delivery = try XCTUnwrap(claimedValue)
+        XCTAssertEqual(delivery.id, queued.id)
         let runID = UUID()
         let context = try LocalAgentChatRunContext(
             ownerUserID: "alice",
@@ -49,7 +56,8 @@ extension SQLiteAgentGroupChatStoreTests {
             messages: [.init(role: .system, content: "large history is not needed here")]
         )
         checkpoint.id = runID
-        checkpoint.status = .completed
+        checkpoint.status = .paused
+        checkpoint.stopReason = "Host 配置尚未完成。"
         checkpoint.receipts = [
             "write": .init(#"{"result":{"committed_paths":["Sources/B.swift","Sources/A.swift"]}}"#),
             "duplicate": .init(#"{"committed_paths":["Sources/A.swift"]}"#),
@@ -61,9 +69,14 @@ extension SQLiteAgentGroupChatStoreTests {
             modelConfigID: agent.draft.modelConfigID,
             policy: .init(),
             checkpoint: checkpoint,
-            createdAtUnixMs: 101,
+            createdAtUnixMs: 102,
             updatedAtUnixMs: 102
         ))
+        _ = try await store.completeHeartbeatDelivery(
+            ownerUserID: "alice",
+            deliveryID: delivery.id,
+            nowUnixMs: 103
+        )
 
         let summaries = try await store.listLatestTodoRunSummaries(
             ownerUserID: "alice",
@@ -78,9 +91,12 @@ extension SQLiteAgentGroupChatStoreTests {
                 status: .completed,
                 receiptCount: 3,
                 committedPaths: ["Sources/A.swift", "Sources/B.swift"],
-                updatedAtUnixMs: 102
+                updatedAtUnixMs: 103
             ),
         ])
+        let completedRun = try await store.run(ownerUserID: "alice", deliveryID: delivery.id)
+        XCTAssertEqual(completedRun?.checkpoint.status, .completed)
+        XCTAssertNil(completedRun?.checkpoint.stopReason)
     }
 
     func testStopOutstandingDeliveriesClosesRunsAndCancelsQueuedWorkAtomically() async throws {

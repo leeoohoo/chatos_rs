@@ -38,7 +38,7 @@ final class MediaStudioViewModel: ObservableObject {
 
     enum WorkflowNodeState: Equatable {
         case running(String?)
-        case completed(String)
+        case completed(MediaStudioWorkflowNodeResult)
         case failed(String)
     }
 
@@ -83,6 +83,7 @@ final class MediaStudioViewModel: ObservableObject {
     @Published private(set) var isSavingWorkflow = false
     @Published private(set) var isRunningWorkflow = false
     @Published private(set) var workflowNodeStates: [UUID: WorkflowNodeState] = [:]
+    @Published private(set) var workflowSavedAt: Date?
 
     private let service: any MediaGenerationServicing
     private let imageGenerationUseCase: MediaStudioImageGenerationUseCase
@@ -120,6 +121,7 @@ final class MediaStudioViewModel: ObservableObject {
     private var inputImagesTask: Task<Void, Never>?
     private var imageReferenceState = MediaStudioImageReferenceState()
     private var workflowPersistenceTask: Task<Void, Never>?
+    private var workflowPersistenceGeneration: UInt64 = 0
     private var workflowRunTask: Task<Void, Never>?
     private var hasLoadedWorkflows = false
 
@@ -402,6 +404,8 @@ final class MediaStudioViewModel: ObservableObject {
         isLoadingWorkflows = true
         let session = sessionID
         let store = workflowStore
+        workflowPersistenceGeneration &+= 1
+        let generation = workflowPersistenceGeneration
         workflowPersistenceTask?.cancel()
         workflowPersistenceTask = Task { [weak self] in
             let result: Result<[MediaStudioWorkflow], Error>
@@ -410,7 +414,8 @@ final class MediaStudioViewModel: ObservableObject {
             } catch {
                 result = .failure(error)
             }
-            guard let self, self.ownerID == ownerID, self.sessionID == session else { return }
+            guard let self, self.ownerID == ownerID, self.sessionID == session,
+                  self.workflowPersistenceGeneration == generation else { return }
             switch result {
             case let .success(workflows): self.workflows = workflows
             case let .failure(error): self.errorMessage = error.localizedDescription
@@ -442,6 +447,11 @@ final class MediaStudioViewModel: ObservableObject {
         selectedWorkflowID = workflow.id
         selectedWorkflowNodeID = workflow.nodes.first?.id
         workflowNodeStates = [:]
+        editSelectedWorkflow {
+            $0.inputPrompt = ""
+            $0.inputImages = []
+        }
+        workflowSavedAt = workflow.updatedAt
     }
 
     func closeWorkflow() {
@@ -449,6 +459,7 @@ final class MediaStudioViewModel: ObservableObject {
         selectedWorkflowID = nil
         selectedWorkflowNodeID = nil
         workflowNodeStates = [:]
+        workflowSavedAt = nil
     }
 
     func editSelectedWorkflow(_ edit: (inout MediaStudioWorkflow) -> Void) {
@@ -456,6 +467,7 @@ final class MediaStudioViewModel: ObservableObject {
               let id = selectedWorkflowID,
               let index = workflows.firstIndex(where: { $0.id == id }) else { return }
         edit(&workflows[index])
+        workflowSavedAt = nil
     }
 
     func editSelectedNode(_ edit: (inout MediaStudioWorkflowNode) -> Void) {
@@ -469,6 +481,10 @@ final class MediaStudioViewModel: ObservableObject {
     func saveSelectedWorkflow() {
         guard let ownerID, var workflow = selectedWorkflow else { return }
         workflow.updatedAt = Date()
+        if let index = workflows.firstIndex(where: { $0.id == workflow.id }) {
+            workflows[index] = workflow
+            workflowSavedAt = nil
+        }
         persist(workflow, owner: ownerID, selectAfterSave: false)
     }
 
@@ -477,20 +493,25 @@ final class MediaStudioViewModel: ObservableObject {
         let session = sessionID
         let store = workflowStore
         isSavingWorkflow = true
+        workflowPersistenceGeneration &+= 1
+        let generation = workflowPersistenceGeneration
         workflowPersistenceTask?.cancel()
         workflowPersistenceTask = Task { [weak self] in
             do {
                 try await store.delete(id: id, owner: ownerID)
                 guard let self, self.ownerID == ownerID, self.sessionID == session,
+                      self.workflowPersistenceGeneration == generation,
                       self.selectedWorkflowID == id else { return }
                 self.workflows.removeAll { $0.id == id }
                 self.closeWorkflow()
             } catch {
-                guard let self, self.ownerID == ownerID, self.sessionID == session else { return }
+                guard let self, self.ownerID == ownerID, self.sessionID == session,
+                      self.workflowPersistenceGeneration == generation else { return }
                 self.errorMessage = error.localizedDescription
             }
-            self?.isSavingWorkflow = false
-            self?.workflowPersistenceTask = nil
+            guard let self, self.workflowPersistenceGeneration == generation else { return }
+            self.isSavingWorkflow = false
+            self.workflowPersistenceTask = nil
         }
     }
 
@@ -574,14 +595,11 @@ final class MediaStudioViewModel: ObservableObject {
         editSelectedWorkflow { $0.nodes.swapAt(source, destination) }
     }
 
-    func importWorkflowImage(from url: URL, nodeID: UUID?) {
+    func importWorkflowImage(from url: URL, nodeID: UUID) {
         guard let ownerID, let workflow = selectedWorkflow, !isRunningWorkflow else { return }
-        let currentCount = nodeID.flatMap { id in
-            workflow.nodes.first(where: { $0.id == id })?.referenceImages.count
-        } ?? workflow.inputImages.count
-        let maximum = nodeID.flatMap { id in
-            workflow.nodes.first(where: { $0.id == id })?.kind == .video ? 1 : nil
-        } ?? MediaStudioWorkflowValidator.maximumReferenceCount
+        let node = workflow.nodes.first { $0.id == nodeID }
+        let currentCount = node?.referenceImages.count ?? 0
+        let maximum = node?.kind == .video ? 1 : MediaStudioWorkflowValidator.maximumReferenceCount
         guard currentCount < maximum else {
             errorMessage = maximum == 1 ? "视频节点最多上传一张图片。" : "每处最多上传 8 张图片。"
             return
@@ -589,6 +607,8 @@ final class MediaStudioViewModel: ObservableObject {
         let session = sessionID
         let store = workflowStore
         isSavingWorkflow = true
+        workflowPersistenceGeneration &+= 1
+        let generation = workflowPersistenceGeneration
         workflowPersistenceTask?.cancel()
         workflowPersistenceTask = Task { [weak self] in
             do {
@@ -598,35 +618,36 @@ final class MediaStudioViewModel: ObservableObject {
                     owner: ownerID
                 )
                 guard let self, self.ownerID == ownerID, self.sessionID == session,
+                      self.workflowPersistenceGeneration == generation,
                       self.selectedWorkflowID == workflow.id else { return }
                 self.editSelectedWorkflow { value in
-                    if let nodeID,
-                       let index = value.nodes.firstIndex(where: { $0.id == nodeID }) {
+                    if let index = value.nodes.firstIndex(where: { $0.id == nodeID }) {
                         value.nodes[index].referenceImages.append(reference)
-                    } else {
-                        value.inputImages.append(reference)
                     }
                     value.updatedAt = Date()
                 }
                 if let updated = self.selectedWorkflow {
-                    try await store.save(updated, owner: ownerID)
+                    let saved = try await store.save(updated, owner: ownerID)
+                    guard self.workflowPersistenceGeneration == generation else { return }
+                    if saved {
+                        self.workflowSavedAt = updated.updatedAt
+                    }
                 }
             } catch {
-                guard let self, self.ownerID == ownerID, self.sessionID == session else { return }
+                guard let self, self.ownerID == ownerID, self.sessionID == session,
+                      self.workflowPersistenceGeneration == generation else { return }
                 self.errorMessage = error.localizedDescription
             }
-            self?.isSavingWorkflow = false
-            self?.workflowPersistenceTask = nil
+            guard let self, self.workflowPersistenceGeneration == generation else { return }
+            self.isSavingWorkflow = false
+            self.workflowPersistenceTask = nil
         }
     }
 
-    func removeWorkflowImage(_ referenceID: UUID, nodeID: UUID?) {
+    func removeWorkflowImage(_ referenceID: UUID, nodeID: UUID) {
         editSelectedWorkflow { workflow in
-            if let nodeID,
-               let index = workflow.nodes.firstIndex(where: { $0.id == nodeID }) {
+            if let index = workflow.nodes.firstIndex(where: { $0.id == nodeID }) {
                 workflow.nodes[index].referenceImages.removeAll { $0.id == referenceID }
-            } else {
-                workflow.inputImages.removeAll { $0.id == referenceID }
             }
         }
     }
@@ -695,6 +716,14 @@ final class MediaStudioViewModel: ObservableObject {
         workflowRunTask?.cancel()
     }
 
+    var hasPendingWorkflowPersistence: Bool {
+        workflowPersistenceTask != nil
+    }
+
+    func waitForWorkflowPersistence() async {
+        await workflowPersistenceTask?.value
+    }
+
     func dismissError() {
         errorMessage = nil
     }
@@ -711,29 +740,39 @@ final class MediaStudioViewModel: ObservableObject {
         let session = sessionID
         let store = workflowStore
         isSavingWorkflow = true
+        workflowPersistenceGeneration &+= 1
+        let generation = workflowPersistenceGeneration
         workflowPersistenceTask?.cancel()
         workflowPersistenceTask = Task { [weak self] in
             do {
-                try await store.save(workflow, owner: owner)
-                guard let self, self.ownerID == owner, self.sessionID == session else { return }
-                if let index = self.workflows.firstIndex(where: { $0.id == workflow.id }) {
-                    self.workflows[index] = workflow
-                } else {
-                    self.workflows.insert(workflow, at: 0)
+                let saved = try await store.save(workflow, owner: owner)
+                guard let self, self.ownerID == owner, self.sessionID == session,
+                      self.workflowPersistenceGeneration == generation else { return }
+                if saved {
+                    if let index = self.workflows.firstIndex(where: { $0.id == workflow.id }) {
+                        if self.workflows[index] == workflow {
+                            self.workflowSavedAt = workflow.updatedAt
+                        }
+                    } else {
+                        self.workflows.insert(workflow, at: 0)
+                        if selectAfterSave { self.openWorkflow(workflow) }
+                        self.workflowSavedAt = workflow.updatedAt
+                    }
                 }
-                if selectAfterSave { self.openWorkflow(workflow) }
             } catch {
-                guard let self, self.ownerID == owner, self.sessionID == session else { return }
+                guard let self, self.ownerID == owner, self.sessionID == session,
+                      self.workflowPersistenceGeneration == generation else { return }
                 self.errorMessage = error.localizedDescription
             }
-            self?.isSavingWorkflow = false
-            self?.workflowPersistenceTask = nil
+            guard let self, self.workflowPersistenceGeneration == generation else { return }
+            self.isSavingWorkflow = false
+            self.workflowPersistenceTask = nil
         }
     }
 
     private func validateModels(for workflow: MediaStudioWorkflow) throws {
         try MediaStudioWorkflowValidator.validate(workflow)
-        var hasImages = !workflow.inputImages.isEmpty
+        var hasImages = false
         for node in workflow.nodes {
             switch node.kind {
             case .text:
@@ -761,7 +800,7 @@ final class MediaStudioViewModel: ObservableObject {
         case let .started(id): workflowNodeStates[id] = .running(nil)
         case let .progress(id, progress):
             workflowNodeStates[id] = .running(progress.percent.map { "\($0)%" } ?? progress.status)
-        case let .completed(id, summary): workflowNodeStates[id] = .completed(summary)
+        case let .completed(id, result): workflowNodeStates[id] = .completed(result)
         }
     }
 
@@ -1317,6 +1356,7 @@ final class MediaStudioViewModel: ObservableObject {
         videoJobMaintenanceTask = nil
         workflowPersistenceTask?.cancel()
         workflowPersistenceTask = nil
+        workflowPersistenceGeneration &+= 1
         workflowRunTask?.cancel()
         workflowRunTask = nil
         hasLoaded = false
@@ -1343,6 +1383,7 @@ final class MediaStudioViewModel: ObservableObject {
         isSavingWorkflow = false
         isRunningWorkflow = false
         workflowNodeStates = [:]
+        workflowSavedAt = nil
         isLoadingModels = false
         isGenerating = false
         isGeneratingVideo = false

@@ -17,7 +17,7 @@ use chatos_local_agent_protocol::{LocalTaskDependency, LocalTaskGraphStatus};
 use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite};
 use std::str::FromStr;
 
-use super::task_result::decode_result_summary;
+use super::task_result::{decode_result_gate, decode_result_summary};
 
 pub(super) const SCOPED_TASK_SELECT: &str =
     "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
@@ -37,7 +37,19 @@ pub(super) const SCOPED_TASK_SELECT: &str =
         WHERE r.owner_user_id = g.owner_user_id \
           AND r.owner_entity_type = 'task' AND r.owner_entity_id = t.task_id \
         ORDER BY r.created_at_unix_ms DESC, r.run_id DESC LIMIT 1) \
-       AS latest_terminal_outcome_json FROM local_tasks t \
+       AS latest_terminal_outcome_json, \
+     (SELECT json_object('result_json', invocation.result_json, \
+                         'arguments_json', invocation.arguments_json) \
+        FROM local_agent_runs run \
+        JOIN local_agent_tool_invocations invocation ON invocation.run_id = run.run_id \
+        WHERE run.owner_user_id = g.owner_user_id \
+          AND run.owner_entity_type = 'task' AND run.owner_entity_id = t.task_id \
+          AND run.status = 'succeeded' \
+          AND invocation.tool_name = 'task_run_process_report_outcome' \
+          AND invocation.status = 'succeeded' \
+        ORDER BY run.updated_at_unix_ms DESC, run.created_at_unix_ms DESC, run.rowid DESC, \
+                 invocation.updated_at_unix_ms DESC, invocation.rowid DESC LIMIT 1) \
+       AS latest_result_report_json FROM local_tasks t \
      JOIN local_task_graphs g ON g.graph_id = t.graph_id \
      JOIN local_conversation_turns source_turn \
        ON g.source_entity_type = 'conversation_turn' \
@@ -574,6 +586,7 @@ fn decode_message_task_graph_run(
 
 fn decode_scoped_task(row: SqliteRow) -> Result<LocalTaskRecord, ClientStorageError> {
     let status: String = row.try_get("status").db()?;
+    let (result_status, result_reason) = decode_result_gate(&row)?;
     Ok(LocalTaskRecord {
         graph_id: row.try_get("graph_id").db()?,
         owner_user_id: row.try_get("owner_user_id").db()?,
@@ -594,6 +607,8 @@ fn decode_scoped_task(row: SqliteRow) -> Result<LocalTaskRecord, ClientStorageEr
         replacement_task_ids: replacement_task_ids(&row)?,
         cancelled_because_task_id: row.try_get("cancelled_because_task_id").db()?,
         result_summary: decode_result_summary(&row)?,
+        result_status,
+        result_reason,
         version: u64::try_from(row.try_get::<i64, _>("version").db()?)
             .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?,
         created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,

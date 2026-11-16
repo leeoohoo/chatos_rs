@@ -1479,6 +1479,11 @@ async fn blocked_internal_result_blocks_task_and_dependents_after_run_finishes()
         .expect("get graph")
         .expect("graph");
     assert_eq!(graph.tasks[0].status, LocalTaskStatus::Blocked);
+    assert_eq!(graph.tasks[0].result_status.as_deref(), Some("blocked"));
+    assert_eq!(
+        graph.tasks[0].result_reason.as_deref(),
+        Some("Waiting for a required credential.")
+    );
     assert!(graph.tasks[1..]
         .iter()
         .all(|task| task.status == LocalTaskStatus::Blocked));

@@ -173,15 +173,30 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
             ))
             return (response.body, response.statusCode)
         }
+        let capability = try AgentModelCapabilitySnapshot(
+            revision: config.modelCapabilityRevision ?? "",
+            contextWindowTokens: config.contextWindowTokens ?? 0,
+            outputReserveTokens: config.outputReserveTokens ?? 0,
+            protocolOverheadEstimatorID: config.protocolOverheadEstimatorID ?? "",
+            tokenizerID: config.tokenizerID
+        )
+        guard config.maxOutputTokens.map({ $0 > 0 && $0 <= capability.outputReserveTokens }) ?? true else {
+            throw AgentRuntimeError.modelConfigurationUnavailable
+        }
         let model = try AgentResponsesModelClient(
             baseURL: url,
             model: config.model,
             apiKey: key,
-            promptCacheKey: "media-workflow:\(request.modelConfigID)",
+            thinking: config.taskThinkingLevel,
+            maximumOutputTokens: config.maxOutputTokens ?? capability.outputReserveTokens,
+            promptCacheKey: "media-workflow:\(request.modelConfigID):\(config.taskThinkingLevel ?? "default")",
             transport: send
         )
         let response = try await model.complete(
-            messages: [.init(role: .user, content: request.prompt, attachments: attachments)],
+            messages: [
+                .init(role: .system, content: Self.mediaWorkflowSystemPrompt),
+                .init(role: .user, content: request.prompt, attachments: attachments),
+            ],
             tools: [],
             timeout: 180
         )
@@ -192,6 +207,12 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
         guard !output.isEmpty else { throw AgentRuntimeError.invalidResponse }
         return output
     }
+
+    private static let mediaWorkflowSystemPrompt = """
+    你是 Chat OS 的 AI 创作工作流文本节点。理解并完整执行当前节点要求，结合提供的当前工作文本和附件给出准确回应。
+
+    语言必须跟随用户最近一条有实际语义的消息；用户明确指定语言、格式或篇幅时优先遵循。只依据提供的内容，不臆造未提供或不可见的信息。回答直接、清晰，并给出节点要求所需的完整结果。
+    """
 
     private func loadModelConfig(
         id: String,
