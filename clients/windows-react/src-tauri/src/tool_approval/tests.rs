@@ -5,9 +5,9 @@ use chatos_local_agent_protocol::{
 use serde_json::json;
 
 use super::{
-    exact_pending_invocation,
+    exact_pending_invocation, gateway_model_options,
     models::{ToolApprovalDecision, ToolApprovalMode},
-    gateway_model_options, policy_auto_approval_candidate, project_pending,
+    policy_auto_approval_candidate, project_pending,
 };
 use crate::authentication::GatewayModelConfig;
 

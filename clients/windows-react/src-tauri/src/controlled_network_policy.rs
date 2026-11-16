@@ -51,9 +51,9 @@ impl VerifiedControlledNetworkPolicy {
         };
         self.allowed_hosts.iter().any(|allowed| {
             allowed == &host
-                || allowed.strip_prefix("*.").is_some_and(|suffix| {
-                    host.ends_with(&format!(".{suffix}")) && host != suffix
-                })
+                || allowed
+                    .strip_prefix("*.")
+                    .is_some_and(|suffix| host.ends_with(&format!(".{suffix}")) && host != suffix)
         })
     }
 }
@@ -236,7 +236,9 @@ fn normalize_host(value: &str) -> Result<String, String> {
 
 fn normalize_destination_host(value: &str) -> Result<String, String> {
     let value = value.trim().trim_end_matches('.');
-    if value.is_empty() || value.contains(['/', ':', '@', '*']) || value.chars().any(char::is_whitespace)
+    if value.is_empty()
+        || value.contains(['/', ':', '@', '*'])
+        || value.chars().any(char::is_whitespace)
     {
         return Err("Controlled Network destination host is invalid.".into());
     }

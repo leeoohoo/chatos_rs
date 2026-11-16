@@ -4953,10 +4953,7 @@ lines.on("line", (line) => {
                 .await
                 .unwrap();
         assert_eq!(installed_inspection.fingerprint, inspection.fingerprint);
-        assert!(package
-            .installation_root
-            .join("bin/fixture.exe")
-            .is_file());
+        assert!(package.installation_root.join("bin/fixture.exe").is_file());
         assert!(package
             .installation_root
             .join("chatos.plugin.json")
@@ -4975,9 +4972,11 @@ lines.on("line", (line) => {
         let changed = inspect_program_mcp(&plugin_root, &draft).await.unwrap();
         assert_eq!(changed.tools[0]["name"], "fixture_pong");
         assert_ne!(changed.fingerprint, inspection.fingerprint);
-        assert!(install_program_mcp(&plugin_root, &draft, &inspection.fingerprint)
-            .await
-            .is_err());
+        assert!(
+            install_program_mcp(&plugin_root, &draft, &inspection.fingerprint)
+                .await
+                .is_err()
+        );
     }
 
     #[cfg(windows)]
@@ -5006,7 +5005,10 @@ fn main() {
             .arg(output)
             .status()
             .expect("rustc must be available for the local MCP fixture");
-        assert!(status.success(), "rustc failed to compile the local MCP fixture");
+        assert!(
+            status.success(),
+            "rustc failed to compile the local MCP fixture"
+        );
     }
 
     #[tokio::test]
