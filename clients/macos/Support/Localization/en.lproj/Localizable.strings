@@ -781,6 +781,10 @@
 "初始提示词" = "Initial Prompt";
 "删除工作流" = "Delete Workflow";
 "删除节点" = "Delete Node";
+"已保存" = "Saved";
+"播放生成视频" = "Play Generated Video";
+"放大查看图片" = "Enlarge Image";
+"本次运行结果" = "Current Run Result";
 "可上传图片作为这个节点的额外输入。" = "Upload images as additional input for this node.";
 "图片" = "Image";
 "图片尺寸" = "Image Size";
