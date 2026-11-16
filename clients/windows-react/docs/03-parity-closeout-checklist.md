@@ -20,6 +20,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 在当前 HEAD 与该 Release 构建后重跑受控网络与 Plugin 应用 runtime 定向回归：`controlled_network_policy`（含认证 client URL）为 `5 passed, 0 failed`，`plugin_application` 为 `36 passed, 0 failed`。这确认策略签名/目的地匹配输入和受限 Plugin runtime 没有回归，但仍不等于目标级 WFP/等价出站规则已经接入；测试生成的 `target-shared/debug` 已在确认无 cargo/rustc/npm/ChatOS 构建进程后删除。
 
+- 2026-11-16 在当前 HEAD 重新执行 Windows React 前端门禁：Vitest `145` 个测试文件、`536 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture` 和 `npm run audit:bundle` 均通过，入口 Bundle 为 `456.97 KiB raw / 137.71 KiB gzip`。本轮未修改运行逻辑，结果只证明前端契约与架构边界无回归，不替代原生逐页视觉和发布环境验收。
+
 - 2026-11-16 继续执行当前 Release 的原生窗口回归：从 `target-shared/release/chatos-windows-react.exe` 启动后，窗口标题为 `ChatOS`，accessibility tree 真实暴露登录页标题、账号字段（`auth-username`）、密码字段（`auth-password`）、登录按钮和创建账号入口；随后用 Tab 做只读焦点回归并由 `Alt+F4` 正常关闭。没有自动填充、读取或提交账号密码，也没有打开 `auth.json`。测试账号本身不是工程阻碍；本轮不能继续到登录后页面的唯一原因是 Computer Use 安全规则禁止代理认证窗口，因此不把登录后业务、Run 或视觉状态写成已验收。
 
 - 2026-11-16 在本轮原生观察后重跑 Controlled Network 定向单测：Windows Tauri `controlled_network_policy` 与策略 URL 用例为 `5 passed, 0 failed`。该结果继续确认签名、身份、SID、过期、域名/端口校验稳定，但不改变目标/目的地级 WFP 或等价出站强制尚未实现的结论。测试重新生成的 `target-shared/debug` 仅为中间产物，确认无 cargo/rustc/ChatOS 构建进程后已删除；当前发布目录 `target-shared/release` 未改动。
