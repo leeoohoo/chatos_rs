@@ -199,6 +199,39 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         XCTAssertEqual(calls[1].url.path, "/prefix/v1/responses")
     }
 
+    func testMediaWorkflowUsesConfiguredQualityAndDedicatedInstructions() async throws {
+        let transport = StoryPlanningTransport(scenario: "workflow-text")
+        let imageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("workflow-text-\(UUID().uuidString).png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: imageURL)
+        defer { try? FileManager.default.removeItem(at: imageURL) }
+
+        let output = try await makeService(transport).generateText(.init(
+            modelConfigID: "text-model",
+            prompt: "生成完整换脸提示词",
+            images: [.init(name: "portrait.png", mimeType: "image/png", fileURL: imageURL)]
+        ))
+
+        XCTAssertEqual(output, "完整专业提示词")
+        let calls = await transport.requests()
+        let body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: XCTUnwrap(calls[1].body)) as? [String: Any]
+        )
+        XCTAssertEqual(body["max_output_tokens"] as? Int, 12_000)
+        XCTAssertEqual((body["reasoning"] as? [String: Any])?["effort"] as? String, "medium")
+        let input = try XCTUnwrap(body["input"] as? [[String: Any]])
+        XCTAssertEqual(input.first?["role"] as? String, "system")
+        XCTAssertTrue((input.first?["content"] as? String)?.contains("完整执行节点要求") == true)
+        XCTAssertTrue((input.first?["content"] as? String)?.contains("不要只解释应该怎么写") == true)
+        XCTAssertEqual(input.last?["role"] as? String, "user")
+        let content = try XCTUnwrap(input.last?["content"] as? [[String: Any]])
+        XCTAssertTrue(content.contains { $0["type"] as? String == "input_image" })
+        XCTAssertTrue(content.contains {
+            $0["type"] as? String == "input_text"
+                && ($0["text"] as? String)?.contains("生成完整换脸提示词") == true
+        })
+    }
+
     private var request: StoryPlanningRequest {
         .init(modelConfigID: "text-model", systemPrompt: "Plan one step", context: "story data", toolName: "story_save_outline",
               schema: Data(#"{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}"#.utf8))
@@ -225,7 +258,7 @@ private actor StoryPlanningTransport: HTTPTransport {
                     body: Data(#"{"detail":"load ai model config via user_service failed"}"#.utf8)
                 )
             }
-            body = [
+            var config: [String: Any] = [
                 "enabled": true,
                 "provider": scenario == "native" ? "anthropic" : "gpt",
                 "model": "chosen-text-model",
@@ -238,7 +271,28 @@ private actor StoryPlanningTransport: HTTPTransport {
                     : "https://relay.example/prefix/v1/",
                 "api_key": "model-secret",
             ]
+            if scenario == "workflow-text" {
+                config["task_thinking_level"] = "medium"
+                config["max_output_tokens"] = 12_000
+                config["supports_images"] = true
+            }
+            body = config
         } else if request.url.path.hasSuffix("/responses") {
+            if scenario == "workflow-text" {
+                body = [
+                    "id": "resp_workflow_text",
+                    "status": "completed",
+                    "output": [[
+                        "type": "message",
+                        "content": [["type": "output_text", "text": "完整专业提示词"]],
+                    ]],
+                ]
+                return .init(
+                    statusCode: 200,
+                    headers: [:],
+                    body: try JSONSerialization.data(withJSONObject: body)
+                )
+            }
             let name = scenario == "wrong-tool" ? "generate_video" : "story_save_outline"
             let call: [String: Any] = [
                 "type": "function_call", "call_id": "call_1", "name": name,

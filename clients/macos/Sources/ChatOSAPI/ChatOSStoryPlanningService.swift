@@ -173,15 +173,30 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
             ))
             return (response.body, response.statusCode)
         }
+        let capability = try AgentModelCapabilitySnapshot(
+            revision: config.modelCapabilityRevision ?? "",
+            contextWindowTokens: config.contextWindowTokens ?? 0,
+            outputReserveTokens: config.outputReserveTokens ?? 0,
+            protocolOverheadEstimatorID: config.protocolOverheadEstimatorID ?? "",
+            tokenizerID: config.tokenizerID
+        )
+        guard config.maxOutputTokens.map({ $0 > 0 && $0 <= capability.outputReserveTokens }) ?? true else {
+            throw AgentRuntimeError.modelConfigurationUnavailable
+        }
         let model = try AgentResponsesModelClient(
             baseURL: url,
             model: config.model,
             apiKey: key,
-            promptCacheKey: "media-workflow:\(request.modelConfigID)",
+            thinking: config.taskThinkingLevel,
+            maximumOutputTokens: config.maxOutputTokens ?? capability.outputReserveTokens,
+            promptCacheKey: "media-workflow:\(request.modelConfigID):\(config.taskThinkingLevel ?? "default")",
             transport: send
         )
         let response = try await model.complete(
-            messages: [.init(role: .user, content: request.prompt, attachments: attachments)],
+            messages: [
+                .init(role: .system, content: Self.mediaWorkflowSystemPrompt),
+                .init(role: .user, content: request.prompt, attachments: attachments),
+            ],
             tools: [],
             timeout: 180
         )
@@ -192,6 +207,14 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
         guard !output.isEmpty else { throw AgentRuntimeError.invalidResponse }
         return output
     }
+
+    private static let mediaWorkflowSystemPrompt = """
+    你是 AI 创作工作流中的文本节点。完整执行节点要求，输出可直接交给下游文本、图片或视频节点使用的成品，而不是简短建议、过程说明或任务摘要。
+
+    准确分析所有提供的图片和当前工作文本，不臆造不可见信息。严格遵循用户指定的语言、格式和篇幅；用户未限制篇幅时，应提供完成任务所需的充分细节。
+
+    当节点要求生成图片或视频提示词时，直接给出完整、可复制使用的专业提示词：明确每份参考素材的用途、需要保留与修改的内容，并覆盖主体、构图、姿态、镜头、光线、色彩、材质、环境及必要的约束或负面要求。不要只解释应该怎么写。
+    """
 
     private func loadModelConfig(
         id: String,
