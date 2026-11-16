@@ -1215,7 +1215,13 @@ pub async fn update_plugin_enabled(
             .iter()
             .any(|source| source.catalog.id == plugin_id)
     });
-    if sources.is_err() {
+    // Local installs are intentionally independent from the Marketplace. A
+    // transient Marketplace outage must not prevent users from enabling or
+    // disabling a package that is already installed and integrity-checked on
+    // this machine. Keep the source gate for every Marketplace-looking
+    // installation so a missing source cannot weaken signed package checks.
+    let is_local = targets.iter().all(is_local_plugin_installation);
+    if sources.is_err() && !is_local {
         return Err("无法确认 Plugin 来源，未更改本机运行状态。".into());
     }
 
@@ -2332,6 +2338,11 @@ fn matching_records(
     }
 }
 
+fn is_local_plugin_installation(record: &LocalPluginInstallationRecord) -> bool {
+    record.spec.plugin_id.starts_with("local-plugin-")
+        && record.spec.release_id.starts_with("local-release-")
+}
+
 async fn set_records_enabled(
     host: &dyn PluginSettingsHost,
     records: Vec<LocalPluginInstallationRecord>,
@@ -3135,6 +3146,38 @@ mod tests {
         assert_eq!(runtime_status(false, false), "not_installed");
         assert_eq!(runtime_status(true, false), "disabled");
         assert_eq!(runtime_status(true, true), "not_checked");
+    }
+
+    #[test]
+    fn local_installations_do_not_depend_on_marketplace_source_availability() {
+        let local = LocalPluginInstallationRecord {
+            spec: LocalPluginInstallationSpec {
+                installation_id: "installation-1".into(),
+                owner_user_id: "owner-1".into(),
+                plugin_id: "local-plugin-a".into(),
+                release_id: "local-release-a".into(),
+                release_digest: "sha256:a".into(),
+                component_id: "component-1".into(),
+                component_revision: "integrity-v1-a".into(),
+                server_id: "component-1".into(),
+                executable_path: "C:\\plugins\\local\\plugin.exe".into(),
+                args: Vec::new(),
+                working_directory: Some("C:\\plugins\\local".into()),
+                environment_secret_refs: BTreeMap::new(),
+                tool_prefix: None,
+                allowed_tools: None,
+                enabled: true,
+            },
+            version: 1,
+            created_at_unix_ms: 1,
+            updated_at_unix_ms: 1,
+        };
+        assert!(is_local_plugin_installation(&local));
+
+        let mut marketplace = local.clone();
+        marketplace.spec.plugin_id = "marketplace-plugin".into();
+        marketplace.spec.release_id = "release-1".into();
+        assert!(!is_local_plugin_installation(&marketplace));
     }
 
     #[test]
