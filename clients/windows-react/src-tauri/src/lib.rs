@@ -135,13 +135,14 @@ use local_terminal::{
 };
 use machine_resource_governor::{machine_resource_snapshot, MachineResourceGovernor};
 use media_studio::{
-    cancel_media_studio_video_generation, discard_media_studio_presentation,
-    discard_media_studio_reference_images, discard_media_studio_video_reference_audio,
-    generate_media_studio_image, list_media_studio_models, load_media_studio_image_history,
+    cancel_media_studio_video_generation, delete_media_studio_workflow,
+    discard_media_studio_presentation, discard_media_studio_reference_images,
+    discard_media_studio_video_reference_audio, generate_media_studio_image,
+    list_media_studio_models, list_media_studio_workflows, load_media_studio_image_history,
     load_media_studio_video_history, media_studio_protocol, pick_agent_avatar,
     pick_media_studio_reference_images, pick_media_studio_video_reference_audio,
-    poll_media_studio_video_generation, stage_media_studio_history_references,
-    start_media_studio_video_generation, MediaStudioManager,
+    poll_media_studio_video_generation, save_media_studio_workflow,
+    stage_media_studio_history_references, start_media_studio_video_generation, MediaStudioManager,
 };
 use notepad::{
     copy_notepad_text, create_notepad_folder, create_notepad_note, delete_notepad_folder,
@@ -676,6 +677,9 @@ pub fn run() {
             start_media_studio_video_generation,
             poll_media_studio_video_generation,
             cancel_media_studio_video_generation,
+            list_media_studio_workflows,
+            save_media_studio_workflow,
+            delete_media_studio_workflow,
             load_story_projects,
             load_story_project,
             preview_story_media_batch,

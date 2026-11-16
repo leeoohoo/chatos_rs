@@ -5,6 +5,7 @@ mod video_history;
 mod video_input;
 mod video_job;
 mod video_provider;
+mod workflow;
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -48,6 +49,11 @@ use video_provider::{
     resolve_video_model, video_content_endpoint, video_job_endpoint, VideoGenerationRequest,
     VideoInput, VideoReferencePurpose, MAXIMUM_VIDEO_BYTES, MAXIMUM_VIDEO_JOB_RESPONSE_BYTES,
 };
+use workflow::MediaWorkflow;
+pub(crate) use workflow::{
+    delete_media_studio_workflow, list_media_studio_workflows, save_media_studio_workflow,
+    MediaStudioWorkflowStore,
+};
 
 const MAXIMUM_PROVIDER_RESPONSE_BYTES: usize = 48 * 1_024 * 1_024;
 const MAXIMUM_IMAGE_REFERENCES: usize = 8;
@@ -59,6 +65,7 @@ const MAXIMUM_HISTORY_CLEANUP_TREE_ENTRIES: usize = 20_000;
 pub(crate) struct MediaStudioManager {
     history: MediaStudioHistoryStore,
     video_history: MediaStudioVideoHistoryStore,
+    workflows: MediaStudioWorkflowStore,
     provider_client: reqwest::Client,
     preview_session: Arc<Mutex<Option<MediaPreviewSession>>>,
     references: MediaImageReferenceVault,
@@ -148,6 +155,7 @@ impl MediaStudioManager {
         Ok(Self {
             history: MediaStudioHistoryStore::new(app_data_directory.clone())?,
             video_history: MediaStudioVideoHistoryStore::new(app_data_directory.clone()),
+            workflows: MediaStudioWorkflowStore::new(app_data_directory.clone())?,
             provider_client,
             preview_session: Arc::new(Mutex::new(None)),
             references: MediaImageReferenceVault::new(
@@ -220,6 +228,26 @@ impl MediaStudioManager {
         self.references.reset();
         self.video_inputs.reset();
         self.video_jobs.reset();
+    }
+
+    pub(crate) fn list_workflows(&self, owner_user_id: &str) -> Result<Vec<MediaWorkflow>, String> {
+        self.workflows.list(owner_user_id)
+    }
+
+    pub(crate) fn save_workflow(
+        &self,
+        owner_user_id: &str,
+        workflow: &MediaWorkflow,
+    ) -> Result<(), String> {
+        self.workflows.save(owner_user_id, workflow)
+    }
+
+    pub(crate) fn delete_workflow(
+        &self,
+        owner_user_id: &str,
+        workflow_id: &str,
+    ) -> Result<(), String> {
+        self.workflows.delete(owner_user_id, workflow_id)
     }
 
     /// Reads one already-persisted generated image through Media Studio's owner-scoped history
