@@ -283,3 +283,53 @@ async fn windows_native_pty_drains_megabyte_output_and_exits() {
         "expected at least 1 MiB of output, received {output_bytes} bytes"
     );
 }
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_native_pty_repeats_cursor_handshake_and_exit_without_leaking_sessions() {
+    for iteration in 0..3 {
+        let directory = tempfile::tempdir().unwrap();
+        let launch = LocalTerminalLaunch::for_platform(directory.path().to_path_buf()).unwrap();
+        let session = ManagedLocalTerminal::spawn(
+            LocalTerminalIdentity {
+                session_id: format!("local-terminal-windows-repeat-{iteration}"),
+                owner_user_id: "owner-1".into(),
+                presentation_id: format!("tab-repeat-{iteration}"),
+                epoch: 0,
+                generation: 1,
+            },
+            launch,
+            80,
+            24,
+        )
+        .unwrap();
+        session.send(b"\x1b[1;1R").unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        session.send(b"exit\r\n").unwrap();
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+        let mut cursor = 0;
+        let exit_code = loop {
+            let timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if timeout.is_zero() {
+                panic!("PowerShell repeat {iteration} did not exit within 15 seconds");
+            }
+            let (snapshot, _) = session
+                .poll(cursor, timeout.as_millis().min(1_000) as u64)
+                .await
+                .unwrap();
+            if let Some(last) = snapshot.events.last() {
+                cursor = last.cursor();
+            }
+            if !snapshot.running {
+                break snapshot.exit_code;
+            }
+        };
+        assert_eq!(
+            exit_code,
+            Some(0),
+            "PowerShell repeat {iteration} exit code"
+        );
+        session.close();
+    }
+}
