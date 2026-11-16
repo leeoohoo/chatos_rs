@@ -38,6 +38,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 为上述 Windows 工作流文本能力边界补充纯单元回归：完整 capability snapshot、缺失 revision、非正上下文/输出预算、输出预留重叠和 `max_output_tokens` 越界均有断言；`media_studio::workflow` 定向 Rust 回归为 `4 passed, 0 failed`。前端全量回归为 `145` 个测试文件、`536 passed, 0 failed`，TypeScript typecheck 通过。
 
+- 2026-11-16 本轮工作流与 PTY 回归生成的 `target-shared/debug`（约 `3.08 GiB`）已在确认无 cargo/rustc/ChatOS/Local Agent Host 进程后删除；`target-shared/release` 当前 3.0.9 EXE、Host sidecar、PDB 和资源未改动。
+
 - 2026-11-16 尝试用 Windows 原生 ConPTY/PowerShell 直接产生 1 MiB 输出并验证终止、轮询上限和资源释放；进程在 15 秒门限内没有进入终止态。临时压力测试已撤回，未把失败结果提交为产品代码；该结果反向确认终端大输出与长稳仍未完成，后续需要修复 PTY 生命周期/背压后再建立门禁。
 
 - 2026-11-16 收紧 Windows ConPTY 会话生命周期：本机终端现在按 `portable-pty` 约束保留 slave 句柄到 wait 路径确认退出，并在 spawn 后再接管 reader/writer，避免短命子进程因过早关闭 slave 收到伪 `CTRL+C`；`local_terminal` 定向回归 `5 passed, 0 failed`，Rustfmt 和 Clippy `-D warnings` 通过。当前机器的原生 ConPTY 探针即使在该修复后启动 `cmd.exe`/PowerShell 仍未在门限内进入退出态，因此大输出/自然退出门禁继续保持未完成，不把环境失败写成产品通过。
