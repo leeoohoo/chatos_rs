@@ -199,7 +199,7 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         XCTAssertEqual(calls[1].url.path, "/prefix/v1/responses")
     }
 
-    func testMediaWorkflowUsesConfiguredQualityAndDedicatedInstructions() async throws {
+    func testMediaWorkflowUsesConfiguredQualityAndGenericChatInstructions() async throws {
         let transport = StoryPlanningTransport(scenario: "workflow-text")
         let imageURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("workflow-text-\(UUID().uuidString).png")
@@ -221,8 +221,11 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         XCTAssertEqual((body["reasoning"] as? [String: Any])?["effort"] as? String, "medium")
         let input = try XCTUnwrap(body["input"] as? [[String: Any]])
         XCTAssertEqual(input.first?["role"] as? String, "system")
-        XCTAssertTrue((input.first?["content"] as? String)?.contains("完整执行节点要求") == true)
-        XCTAssertTrue((input.first?["content"] as? String)?.contains("不要只解释应该怎么写") == true)
+        let systemPrompt = try XCTUnwrap(input.first?["content"] as? String)
+        XCTAssertTrue(systemPrompt.contains("理解并完整执行当前节点要求"))
+        XCTAssertTrue(systemPrompt.contains("回答直接、清晰"))
+        XCTAssertFalse(systemPrompt.contains("图片或视频提示词"))
+        XCTAssertFalse(systemPrompt.contains("主体、构图"))
         XCTAssertEqual(input.last?["role"] as? String, "user")
         let content = try XCTUnwrap(input.last?["content"] as? [[String: Any]])
         XCTAssertTrue(content.contains { $0["type"] as? String == "input_image" })
