@@ -251,6 +251,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
 
     func retrySelectedRun() {
         guard let task = selectedTask,
+              task.canRetryExecution,
               !isRetrying,
               let session = workspaceLifecycleState.activeSession else { return }
         let token = retryState.begin(

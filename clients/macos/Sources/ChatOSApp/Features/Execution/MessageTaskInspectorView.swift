@@ -106,8 +106,7 @@ struct MessageTaskInspectorView: View {
             isLoadingModelOutput: viewModel.isLoadingModelOutput,
             allowsTextSelection: true
         )
-        if (task.normalizedStatus == "blocked" || task.normalizedStatus == "failed"),
-           task.lastRunID != nil {
+        if task.canRetryExecution {
             blockedActions(task)
         }
     }

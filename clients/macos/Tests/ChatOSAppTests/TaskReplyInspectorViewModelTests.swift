@@ -215,7 +215,10 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
     }
 
     func testRetryFailureRemainsVisibleWithLoadedTask() async throws {
-        let service = TaskReplyInspectorServiceStub(failRetryRequest: true)
+        let service = TaskReplyInspectorServiceStub(
+            failRetryRequest: true,
+            taskStatus: "blocked"
+        )
         let viewModel = TaskReplyInspectorViewModel(
             selection: makeSelection(section: .detail),
             service: service
@@ -250,6 +253,27 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         }
 
         XCTAssertNil(viewModel.task?.lastRunID)
+    }
+
+    func testDependencyBlockedTaskDoesNotSubmitRetry() async throws {
+        let service = TaskReplyInspectorServiceStub(
+            latestRunID: nil,
+            taskStatus: "blocked",
+            prerequisiteTaskIDs: ["task-0"]
+        )
+        let viewModel = TaskReplyInspectorViewModel(
+            selection: makeSelection(section: .process, runID: nil),
+            service: service
+        )
+
+        viewModel.load()
+        try await waitUntilLoaded(viewModel)
+        viewModel.retry()
+        try await Task.sleep(for: .milliseconds(30))
+
+        let retriedTaskIDs = await service.retriedTaskIDs()
+        XCTAssertEqual(retriedTaskIDs, [])
+        XCTAssertEqual(viewModel.task?.presentationStatus, .dependencyBlocked)
     }
 
     func testStalledToolTaskRequiresDiagnosisBeforeAnyForceRestart() async throws {
@@ -296,7 +320,10 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
     }
 
     func testStopRejectsLateRetryResponse() async throws {
-        let service = TaskReplyInspectorServiceStub(delayRetryRequest: true)
+        let service = TaskReplyInspectorServiceStub(
+            delayRetryRequest: true,
+            taskStatus: "blocked"
+        )
         let viewModel = TaskReplyInspectorViewModel(
             selection: makeSelection(section: .detail),
             service: service
@@ -348,7 +375,10 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
     }
 
     func testChangingRetryTargetRejectsLateRetryResponse() async throws {
-        let service = TaskReplyInspectorServiceStub(delayRetryRequest: true)
+        let service = TaskReplyInspectorServiceStub(
+            delayRetryRequest: true,
+            taskStatus: "blocked"
+        )
         let viewModel = TaskReplyInspectorViewModel(
             selection: makeSelection(section: .detail),
             service: service
@@ -537,6 +567,7 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
     private let fetchTaskDelayMilliseconds: Int
     private let delayRetryRequest: Bool
     private let taskStatus: String
+    private let prerequisiteTaskIDs: [String]
     private let stalledTool: Bool
     private let delayRunRequest: Bool
     private let delayFirstTaskRequest: Bool
@@ -556,6 +587,7 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         fetchTaskDelayMilliseconds: Int = 0,
         delayRetryRequest: Bool = false,
         taskStatus: String = "succeeded",
+        prerequisiteTaskIDs: [String] = [],
         stalledTool: Bool = false,
         delayRunRequest: Bool = false,
         delayFirstTaskRequest: Bool = false
@@ -566,6 +598,7 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         self.fetchTaskDelayMilliseconds = fetchTaskDelayMilliseconds
         self.delayRetryRequest = delayRetryRequest
         self.taskStatus = taskStatus
+        self.prerequisiteTaskIDs = prerequisiteTaskIDs
         self.stalledTool = stalledTool
         self.delayRunRequest = delayRunRequest
         self.delayFirstTaskRequest = delayFirstTaskRequest
@@ -723,7 +756,8 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
                     startedAt: Date().addingTimeInterval(-120),
                     lastProgressAt: Date().addingTimeInterval(-120)
                 )
-            ) : nil
+            ) : nil,
+            prerequisiteTaskIDs: prerequisiteTaskIDs
         )
     }
 }

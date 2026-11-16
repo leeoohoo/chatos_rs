@@ -269,11 +269,20 @@ struct PetActivityPanelScopeTests {
             source: .taskExecution,
             kind: .reviewing,
             title: "需要检查",
-            route: .init(taskID: "task-1")
+            route: .init(taskID: "task-1", runID: "run-1")
         )
 
         #expect(PetActivityPresentation.canLoadTask(activity))
         #expect(PetActivityPresentation.canRetry(activity))
         #expect(PetActivityPresentation.canCancel(activity))
+
+        let dependencyBlocked = PetActivity(
+            id: "task-execution:task-2",
+            source: .taskExecution,
+            kind: .blocked,
+            title: "前置任务未满足，任务未启动",
+            route: .init(taskID: "task-2")
+        )
+        #expect(!PetActivityPresentation.canRetry(dependencyBlocked))
     }
 }

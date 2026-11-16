@@ -355,10 +355,11 @@ final class TaskReplyInspectorViewModel: ObservableObject {
 
     func retry() {
         guard let callback = selection.reply.taskCallback,
-              !(task?.id ?? callback.taskID).isEmpty,
+              let task,
+              task.canRetryExecution,
               !isRetrying,
               let inspectorSession = lifecycleState.activeSession else { return }
-        let taskID = task?.id ?? callback.taskID
+        let taskID = task.id
         let selection = selection
         let instruction = retryInstruction
         let lookup = lookup(callback, selection: selection)

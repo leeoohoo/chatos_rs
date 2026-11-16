@@ -210,7 +210,7 @@ struct TaskReplyInspectorContent: View {
                 .appFont(.caption)
                 .foregroundStyle(.orange)
         }
-        if task.normalizedStatus == "blocked" || task.normalizedStatus == "failed" {
+        if task.canRetryExecution {
             blockedActions(task)
         }
     }

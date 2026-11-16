@@ -100,8 +100,15 @@ final class MessageTaskAcceptanceTests: XCTestCase {
 
         XCTAssertTrue(prerequisite.blocksDependentExecution)
         XCTAssertTrue(task.wasPreventedFromStartingByPrerequisite)
+        XCTAssertFalse(task.canRetryExecution)
         XCTAssertEqual(task.dependencyBlockingPrerequisites, [prerequisite])
         XCTAssertEqual(task.presentationStatus, .dependencyBlocked)
+
+        XCTAssertTrue(MessageTask(
+            id: "blocked",
+            title: "Blocked execution",
+            status: "blocked"
+        ).canRetryExecution)
     }
 
     func testSuccessfulGateDoesNotBecomeBlockedByAcceptancePresentation() {

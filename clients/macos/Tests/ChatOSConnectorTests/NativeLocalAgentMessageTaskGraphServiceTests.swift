@@ -271,6 +271,24 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertEqual(Array(lifecycle.suffix(2)), ["command:retry_task", "wake"])
     }
 
+    func testRetryLocalizesUnsatisfiedPrerequisiteConflict() async throws {
+        let host = LocalTaskHostStub(retryPrerequisiteConflict: true)
+        let service = NativeLocalAgentMessageTaskGraphService(host: host)
+        await service.configure(ownerUserID: "user-1")
+
+        do {
+            _ = try await service.retryRun(
+                messageID: "message-1",
+                taskID: "task-2",
+                lookup: .init(turnID: "turn-1"),
+                instruction: nil
+            )
+            XCTFail("Expected the prerequisite conflict to remain visible")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "该任务尚未启动，必须先处理未满足的前置任务。")
+        }
+    }
+
     func testRestartRunningTaskReleasesOldPluginAfterDurableResetAndWakesScheduler() async throws {
         let host = LocalTaskHostStub()
         let service = NativeLocalAgentMessageTaskGraphService(
@@ -723,9 +741,11 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
     private var commands: [Data] = []
     private var lifecycle: [String] = []
     private let runError: String?
+    private let retryPrerequisiteConflict: Bool
 
-    init(runError: String? = nil) {
+    init(runError: String? = nil, retryPrerequisiteConflict: Bool = false) {
         self.runError = runError
+        self.retryPrerequisiteConflict = retryPrerequisiteConflict
     }
 
     func start(ownerUserID: String) async throws {}
@@ -755,6 +775,13 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
         case "get_task_graph", "cancel_task", "restart_task":
             return try json(["type": "task_graph", "graph": graph()])
         case "retry_task":
+            if retryPrerequisiteConflict {
+                throw NativeLocalAgentHostError.hostError(
+                    code: "conflict",
+                    message: "storage conflict: task prerequisites are not satisfied: task-2",
+                    retryable: false
+                )
+            }
             return try json(["type": "task_graph", "graph": graph()])
         case "get_run":
             return try json([
