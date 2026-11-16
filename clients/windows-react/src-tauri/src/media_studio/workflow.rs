@@ -22,6 +22,11 @@ use crate::{
 const MAXIMUM_MANIFEST_BYTES: usize = 2 * 1_024 * 1_024;
 const MAXIMUM_IMAGE_BYTES: usize = 20 * 1_024 * 1_024;
 const MAXIMUM_TEXT_LENGTH: usize = 20_000;
+const MEDIA_WORKFLOW_SYSTEM_PROMPT: &str = r#"你是 AI 创作工作流中的文本节点。完整执行节点要求，输出可直接交给下游文本、图片或视频节点使用的成品，而不是简短建议、过程说明或任务摘要。
+
+准确分析所有提供的图片和当前工作文本，不臆造不可见信息。严格遵循用户指定的语言、格式和篇幅；用户未限制篇幅时，应提供完成任务所需的充分细节。
+
+当节点要求生成图片或视频提示词时，直接给出完整、可复制使用的专业提示词：明确每份参考素材的用途、需要保留与修改的内容，并覆盖主体、构图、姿态、镜头、光线、色彩、材质、环境及必要的约束或负面要求。不要只解释应该怎么写。"#;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -292,7 +297,12 @@ impl MediaStudioWorkflowStore {
             &workflow
                 .input_images
                 .iter()
-                .chain(workflow.nodes.iter().flat_map(|node| node.reference_images.iter()))
+                .chain(
+                    workflow
+                        .nodes
+                        .iter()
+                        .flat_map(|node| node.reference_images.iter()),
+                )
                 .cloned()
                 .collect::<Vec<_>>(),
             &workflow.id,
@@ -504,13 +514,14 @@ pub(crate) async fn run_media_studio_workflow(
                 if current_images.len() + references.len() > 1 {
                     return Err("视频节点最多只能接收一张首帧图片。".into());
                 }
-                let input_image = current_images
-                    .first()
-                    .or_else(|| references.first())
-                    .map(|image| super::video_provider::VideoInput {
-                        mime_type: image.mime_type.clone(),
-                        bytes: image.bytes.clone(),
-                    });
+                let input_image =
+                    current_images
+                        .first()
+                        .or_else(|| references.first())
+                        .map(|image| super::video_provider::VideoInput {
+                            mime_type: image.mime_type.clone(),
+                            bytes: image.bytes.clone(),
+                        });
                 let result = generate_workflow_video(
                     &authentication,
                     &manager,
@@ -527,8 +538,7 @@ pub(crate) async fn run_media_studio_workflow(
                         last_frame_image: None,
                         reference_video: None,
                         reference_audio: None,
-                        reference_purpose:
-                            super::video_provider::VideoReferencePurpose::Reference,
+                        reference_purpose: super::video_provider::VideoReferencePurpose::Reference,
                         client_request_id: format!("{}-{}", request.client_request_id, node.id),
                     },
                     &preview_token,
@@ -565,7 +575,8 @@ async fn generate_workflow_video(
     let model = models
         .pop()
         .ok_or_else(|| "所选视频模型已不可用。".to_owned())?;
-    let runtime = super::video_provider::resolve_video_model(owner, &request.model_config_id, model)?;
+    let runtime =
+        super::video_provider::resolve_video_model(owner, &request.model_config_id, model)?;
     let wire = super::video_provider::make_video_create_request(&runtime, &request)?;
     let response = manager
         .provider_client
@@ -608,7 +619,10 @@ async fn generate_workflow_video(
         authentication
             .require_session_generation(owner, generation)
             .await?;
-        let start = manager.video_jobs.begin_poll(owner, generation, presentation_id, &snapshot.job_id)?;
+        let start =
+            manager
+                .video_jobs
+                .begin_poll(owner, generation, presentation_id, &snapshot.job_id)?;
         let super::video_job::VideoPollStart::Work(work) = start else {
             let super::video_job::VideoPollStart::Snapshot(snapshot) = start else {
                 unreachable!()
@@ -684,14 +698,38 @@ async fn generate_workflow_text(
         .base_url
         .clone()
         .ok_or_else(|| "模型配置没有 API 地址。".to_owned())?;
+    let context_window_tokens = model
+        .context_window_tokens
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value >= 2_048)
+        .ok_or_else(|| "文本模型缺少有效上下文窗口。".to_owned())?;
+    let output_reserve_tokens = model
+        .output_reserve_tokens
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value >= 256)
+        .ok_or_else(|| "文本模型缺少有效输出预留。".to_owned())?;
+    let model_capability_revision = model
+        .model_capability_revision
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "文本模型缺少 capability revision。".to_owned())?;
+    let protocol_overhead_estimator_id = model
+        .protocol_overhead_estimator_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "文本模型缺少协议开销估算器。".to_owned())?;
+    if output_reserve_tokens >= context_window_tokens
+        || model
+            .max_output_tokens
+            .is_some_and(|value| value <= 0 || value as usize > output_reserve_tokens)
+    {
+        return Err("文本模型能力快照无效。".into());
+    }
     let config = ModelRuntimeConfig {
-        model_capability_revision: model.model_capability_revision.clone().unwrap_or_default(),
-        context_window_tokens: model.context_window_tokens.unwrap_or_default().max(0) as usize,
-        output_reserve_tokens: model.output_reserve_tokens.unwrap_or_default().max(0) as usize,
-        protocol_overhead_estimator_id: model
-            .protocol_overhead_estimator_id
-            .clone()
-            .unwrap_or_default(),
+        model_capability_revision,
+        context_window_tokens,
+        output_reserve_tokens,
+        protocol_overhead_estimator_id,
         tokenizer_id: model.tokenizer_id.clone(),
         base_url,
         api_key,
@@ -710,7 +748,11 @@ async fn generate_workflow_text(
         &handler,
         &config,
         prompt,
-        SimplePromptOptions { max_output_tokens: model.max_output_tokens, ..Default::default() },
+        SimplePromptOptions {
+            system_prompt: Some(MEDIA_WORKFLOW_SYSTEM_PROMPT.to_owned()),
+            max_output_tokens: model.max_output_tokens,
+            ..Default::default()
+        },
         |value, input_as_list| {
             if images.is_empty() {
                 return build_responses_text_input(value, input_as_list);

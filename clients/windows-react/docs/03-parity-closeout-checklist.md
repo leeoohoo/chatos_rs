@@ -34,6 +34,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 同步 `3.0.9.10` macOS 最新工作流 Inspector 布局修正：macOS `MediaStudioWorkflowWorkspace` 已将右侧 Inspector 加宽到 `520px`，Windows React `media-workflow__editor-grid` 现同步为 `520px`，避免节点运行说明、结果摘要和错误信息在 Windows 工作面被过度压缩。
 
+- 2026-11-16 同步 `3.0.9.10` 工作流文本节点质量边界：Windows 现在向文本节点传递与 macOS 同源的专用成品提示词 system prompt，并在请求前校验 capability revision、上下文窗口、输出预留、协议开销估算器及 `max_output_tokens` 上限；能力快照不完整或输出预算越界时失败关闭，不再发送不受约束的工作流请求。
+
 - 2026-11-16 尝试用 Windows 原生 ConPTY/PowerShell 直接产生 1 MiB 输出并验证终止、轮询上限和资源释放；进程在 15 秒门限内没有进入终止态。临时压力测试已撤回，未把失败结果提交为产品代码；该结果反向确认终端大输出与长稳仍未完成，后续需要修复 PTY 生命周期/背压后再建立门禁。
 
 - 2026-11-16 收紧 Windows ConPTY 会话生命周期：本机终端现在按 `portable-pty` 约束保留 slave 句柄到 wait 路径确认退出，并在 spawn 后再接管 reader/writer，避免短命子进程因过早关闭 slave 收到伪 `CTRL+C`；`local_terminal` 定向回归 `5 passed, 0 failed`，Rustfmt 和 Clippy `-D warnings` 通过。当前机器的原生 ConPTY 探针即使在该修复后启动 `cmd.exe`/PowerShell 仍未在门限内进入退出态，因此大输出/自然退出门禁继续保持未完成，不把环境失败写成产品通过。
