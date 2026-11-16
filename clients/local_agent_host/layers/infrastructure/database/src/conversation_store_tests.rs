@@ -9,6 +9,7 @@ use chatos_local_agent_protocol::{
     LocalConversationResourceKind, ResumeConversationTurnCommand,
 };
 use serde_json::{json, Value};
+use sqlx::Acquire;
 
 #[path = "requirement_plan_tests.rs"]
 mod requirement_plan_tests;
@@ -954,6 +955,114 @@ async fn history_pages_never_split_a_turn_from_its_user_message() {
     all_message_ids.sort_unstable();
     all_message_ids.dedup();
     assert_eq!(all_message_ids.len(), 6);
+}
+
+#[tokio::test]
+async fn history_pages_keep_ten_thousand_messages_bounded_and_cursor_stable() {
+    const MESSAGE_COUNT: usize = 10_000;
+    const PAGE_SIZE: u32 = 100;
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create(&storage, "conversation-history-10k").await;
+
+    let mut connection = storage.pool.acquire().await.expect("connection");
+    let mut transaction = connection.begin().await.expect("transaction");
+    for index in 0..MESSAGE_COUNT {
+        let ordinal = i64::try_from(index + 1).expect("ordinal");
+        let run_id = format!("run-history-10k-{index}");
+        let turn_id = format!("turn-history-10k-{index}");
+        let message_id = format!("message-history-10k-{index}");
+        let timestamp = 10_000_i64 + ordinal;
+        sqlx::query(
+            "INSERT INTO local_agent_runs(\
+             run_id, owner_user_id, owner_entity_type, owner_entity_id, profile_key,\
+             model_config_ref, model_config_revision, capability_policy_revision, input_json, status,\
+             iteration, model_attempt, max_iterations, version, terminal_outcome_json, checkpoint_json,\
+             created_at_unix_ms, updated_at_unix_ms\
+             ) VALUES(?, 'user-1', 'conversation_turn', ?, 'main_chat',\
+             'model-1', 'revision-1', 'policy-1', '{}', 'succeeded',\
+             0, 1, 8, 1, 'null', 'null', ?, ?)",
+        )
+        .bind(&run_id)
+        .bind(&turn_id)
+        .bind(timestamp)
+        .bind(timestamp)
+        .execute(&mut *transaction)
+        .await
+        .expect("insert run");
+        sqlx::query(
+            "INSERT INTO local_conversation_turns(\
+             turn_id, conversation_id, user_message_id, run_id, status,\
+             created_at_unix_ms, updated_at_unix_ms\
+             ) VALUES(?, 'conversation-history-10k', ?, ?, 'succeeded', ?, ?)",
+        )
+        .bind(&turn_id)
+        .bind(&message_id)
+        .bind(&run_id)
+        .bind(timestamp)
+        .bind(timestamp)
+        .execute(&mut *transaction)
+        .await
+        .expect("insert turn");
+        sqlx::query(
+            "INSERT INTO local_conversation_messages(\
+             message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json,\
+             created_at_unix_ms\
+             ) VALUES(?, 'conversation-history-10k', ?, ?, 'user', ?, '{}', ?)",
+        )
+        .bind(&message_id)
+        .bind(&turn_id)
+        .bind(ordinal)
+        .bind(serde_json::to_string(&json!({"text": format!("message {index}")})).unwrap())
+        .bind(timestamp)
+        .execute(&mut *transaction)
+        .await
+        .expect("insert message");
+    }
+    transaction.commit().await.expect("commit history fixture");
+    drop(connection);
+
+    let mut before_cursor = None;
+    let mut total_messages = 0;
+    let mut pages = 0;
+    let mut previous_oldest = MESSAGE_COUNT + 1;
+    loop {
+        let page = storage
+            .get_conversation_history(
+                "user-1",
+                "conversation-history-10k",
+                before_cursor
+                    .as_deref()
+                    .map(str::parse)
+                    .transpose()
+                    .unwrap(),
+                PAGE_SIZE,
+            )
+            .await
+            .expect("history page");
+        assert!(page.messages.len() <= PAGE_SIZE as usize);
+        let oldest = page
+            .messages
+            .first()
+            .expect("page must contain messages")
+            .ordinal as usize;
+        assert!(oldest < previous_oldest);
+        assert!(page
+            .messages
+            .windows(2)
+            .all(|messages| messages[0].ordinal < messages[1].ordinal));
+        total_messages += page.messages.len();
+        pages += 1;
+        previous_oldest = oldest;
+        before_cursor = page.next_before_cursor;
+        if before_cursor.is_none() {
+            break;
+        }
+    }
+
+    assert_eq!(total_messages, MESSAGE_COUNT);
+    assert_eq!(pages, MESSAGE_COUNT / PAGE_SIZE as usize);
 }
 
 #[tokio::test]
