@@ -15,6 +15,8 @@ interface MediaWorkflowState {
   draft: MediaWorkflow | null;
   isLoading: boolean;
   isSaving: boolean;
+  isRunning: boolean;
+  runResult: import("../domain/mediaWorkflow").MediaWorkflowRunResult | null;
   errorMessage: string | null;
   activate(port: MediaStudioPort, ownerUserId: string): Promise<void>;
   create(modelConfigId?: string): void;
@@ -25,6 +27,7 @@ interface MediaWorkflowState {
   removeNode(nodeId: string): void;
   moveNode(nodeId: string, direction: -1 | 1): void;
   save(port: MediaStudioPort): Promise<void>;
+  run(port: MediaStudioPort): Promise<void>;
   remove(port: MediaStudioPort, workflowId?: string): Promise<void>;
   dismissError(): void;
   reset(): void;
@@ -41,6 +44,8 @@ export const useMediaWorkflowStore = create<MediaWorkflowState>((set, get) => ({
   draft: null,
   isLoading: false,
   isSaving: false,
+  isRunning: false,
+  runResult: null,
   errorMessage: null,
 
   async activate(port, ownerInput) {
@@ -65,17 +70,17 @@ export const useMediaWorkflowStore = create<MediaWorkflowState>((set, get) => ({
     const existing = get().workflows.length;
     const workflow = newMediaWorkflow(modelConfigId);
     workflow.name = `工作流 ${existing + 1}`;
-    set({ selectedWorkflowId: workflow.id, draft: workflow, errorMessage: null });
+    set({ selectedWorkflowId: workflow.id, draft: workflow, errorMessage: null, runResult: null });
   },
 
   open(workflow) {
     const parsed = mediaWorkflowSchema.parse(workflow);
-    set({ selectedWorkflowId: parsed.id, draft: structuredClone(parsed), errorMessage: null });
+    set({ selectedWorkflowId: parsed.id, draft: structuredClone(parsed), errorMessage: null, runResult: null });
   },
 
   close() {
     if (get().isSaving) return;
-    set({ selectedWorkflowId: null, draft: null, errorMessage: null });
+    set({ selectedWorkflowId: null, draft: null, errorMessage: null, runResult: null });
   },
 
   updateDraft(update) {
@@ -151,8 +156,35 @@ export const useMediaWorkflowStore = create<MediaWorkflowState>((set, get) => ({
     }
   },
 
+  async run(port) {
+    const ownerUserId = get().ownerUserId;
+    const draft = get().draft;
+    if (!ownerUserId || !draft || get().isRunning) return;
+    const parsed = mediaWorkflowSchema.safeParse(draft);
+    if (!parsed.success) {
+      set({ errorMessage: parsed.error.issues[0]?.message ?? "工作流内容无效。" });
+      return;
+    }
+    const saved = get().workflows.find((workflow) => workflow.id === parsed.data.id);
+    if (!saved || saved.updatedAtUnixMs !== parsed.data.updatedAtUnixMs) {
+      await get().save(port);
+      if (get().errorMessage || !get().draft) return;
+    }
+    set({ isRunning: true, errorMessage: null, runResult: null });
+    try {
+      const result = await port.runWorkflow({
+        ownerUserId,
+        workflowId: parsed.data.id,
+        clientRequestId: crypto.randomUUID(),
+      });
+      set({ isRunning: false, runResult: result });
+    } catch (error) {
+      set({ isRunning: false, errorMessage: errorMessage(error) });
+    }
+  },
+
   dismissError() { set({ errorMessage: null }); },
   reset() {
-    set({ ownerUserId: null, workflows: [], selectedWorkflowId: null, draft: null, isLoading: false, isSaving: false, errorMessage: null });
+    set({ ownerUserId: null, workflows: [], selectedWorkflowId: null, draft: null, isLoading: false, isSaving: false, isRunning: false, runResult: null, errorMessage: null });
   },
 }));

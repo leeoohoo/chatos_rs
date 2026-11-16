@@ -403,6 +403,7 @@ pub(crate) struct MediaWorkflowRunResult {
     pub status: String,
     pub final_text: String,
     pub image_record_ids: Vec<String>,
+    pub video_record_ids: Vec<String>,
     pub error_message: Option<String>,
 }
 
@@ -433,6 +434,7 @@ pub(crate) async fn run_media_studio_workflow(
         &workflow.id,
     )?;
     let mut image_record_ids = Vec::new();
+    let mut video_record_ids = Vec::new();
     for node in &workflow.nodes {
         authentication
             .require_session_generation(&request.owner_user_id, generation)
@@ -490,7 +492,40 @@ pub(crate) async fn run_media_studio_workflow(
                 current_images = vec![next_image];
             }
             MediaWorkflowNodeKind::Video => {
-                return Err("Windows 工作流视频节点执行器尚未接入持久视频任务。".into());
+                if current_images.len() + references.len() > 1 {
+                    return Err("视频节点最多只能接收一张首帧图片。".into());
+                }
+                let input_image = current_images
+                    .first()
+                    .or_else(|| references.first())
+                    .map(|image| super::video_provider::VideoInput {
+                        mime_type: image.mime_type.clone(),
+                        bytes: image.bytes.clone(),
+                    });
+                let result = generate_workflow_video(
+                    &authentication,
+                    &manager,
+                    &request.owner_user_id,
+                    generation,
+                    &workflow.id,
+                    super::video_provider::VideoGenerationRequest {
+                        model_config_id: node.model_config_id.clone(),
+                        prompt,
+                        size: node.video_size.clone(),
+                        seconds: node.video_seconds as u8,
+                        ratio: node.video_ratio.clone(),
+                        input_image,
+                        last_frame_image: None,
+                        reference_video: None,
+                        reference_audio: None,
+                        reference_purpose:
+                            super::video_provider::VideoReferencePurpose::Reference,
+                        client_request_id: format!("{}-{}", request.client_request_id, node.id),
+                    },
+                    &preview_token,
+                )
+                .await?;
+                video_record_ids.push(result.id);
             }
         }
     }
@@ -500,8 +535,113 @@ pub(crate) async fn run_media_studio_workflow(
         status: "completed".into(),
         final_text: current_text,
         image_record_ids,
+        video_record_ids,
         error_message: None,
     })
+}
+
+async fn generate_workflow_video(
+    authentication: &AuthenticationManager,
+    manager: &super::MediaStudioManager,
+    owner: &str,
+    generation: u64,
+    presentation_id: &str,
+    request: super::video_provider::VideoGenerationRequest,
+    preview_token: &str,
+) -> Result<super::video_history::VideoHistoryItem, String> {
+    let mut models = authentication
+        .resolved_models_for_owner(owner, vec![request.model_config_id.clone()])
+        .await
+        .map_err(|error| error.message)?;
+    let model = models
+        .pop()
+        .ok_or_else(|| "所选视频模型已不可用。".to_owned())?;
+    let runtime = super::video_provider::resolve_video_model(owner, &request.model_config_id, model)?;
+    let wire = super::video_provider::make_video_create_request(&runtime, &request)?;
+    let response = manager
+        .provider_client
+        .post(wire.url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .bearer_auth(&runtime.api_key)
+        .body(wire.body)
+        .send()
+        .await
+        .map_err(|_| "无法连接视频模型服务。".to_owned())?;
+    let status = response.status();
+    let body = super::read_bounded_response(
+        response,
+        super::video_provider::MAXIMUM_VIDEO_JOB_RESPONSE_BYTES,
+        "无法读取视频模型响应。",
+        "模型返回的视频任务数据过大。",
+    )
+    .await?;
+    if !status.is_success() {
+        return Err(format!("创建视频任务失败（HTTP {}）。", status.as_u16()));
+    }
+    let provider_job = super::video_provider::parse_video_job(&body, &runtime.api_key)?;
+    authentication
+        .require_session_generation(owner, generation)
+        .await?;
+    let snapshot = manager.video_jobs.register(
+        owner,
+        generation,
+        presentation_id,
+        request,
+        runtime,
+        provider_job,
+    )?;
+    if snapshot.terminal {
+        return workflow_video_snapshot_result(snapshot);
+    }
+    let mut snapshot = snapshot;
+    loop {
+        authentication
+            .require_session_generation(owner, generation)
+            .await?;
+        let start = manager.video_jobs.begin_poll(owner, generation, presentation_id, &snapshot.job_id)?;
+        let super::video_job::VideoPollStart::Work(work) = start else {
+            let super::video_job::VideoPollStart::Snapshot(snapshot) = start else {
+                unreachable!()
+            };
+            let snapshot = *snapshot;
+            if snapshot.terminal {
+                return workflow_video_snapshot_result(snapshot);
+            }
+            continue;
+        };
+        snapshot = match super::advance_video_job(
+            authentication,
+            manager,
+            owner,
+            generation,
+            preview_token,
+            &work,
+        )
+        .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                let _ = manager.video_jobs.fail(&work, error.clone());
+                return Err(error);
+            }
+        };
+        if snapshot.terminal {
+            return workflow_video_snapshot_result(snapshot);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+}
+
+fn workflow_video_snapshot_result(
+    snapshot: super::video_job::MediaStudioVideoJobSnapshot,
+) -> Result<super::video_history::VideoHistoryItem, String> {
+    if let Some(result) = snapshot.result {
+        return Ok(result);
+    }
+    Err(snapshot
+        .error_message
+        .unwrap_or_else(|| "视频生成失败。".into()))
 }
 
 async fn generate_workflow_text(
@@ -523,7 +663,7 @@ async fn generate_workflow_text(
         .ok_or_else(|| "所选文本模型已不可用。".to_owned())?;
     if !model.enabled
         || !model.has_api_key
-        || (!current_images.is_empty() && !model.supports_images)
+        || (!(current_images.is_empty() && references.is_empty()) && !model.supports_images)
     {
         return Err("文本模型不可用或不支持当前图片输入。".into());
     }

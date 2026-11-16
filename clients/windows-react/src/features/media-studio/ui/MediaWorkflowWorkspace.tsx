@@ -65,6 +65,7 @@ function WorkflowEditor({
         <input aria-label="工作流名称" maxLength={128} onChange={(event) => state.updateDraft((workflow) => ({ ...workflow, name: event.target.value }))} value={draft.name} />
         <span className="media-workflow__toolbar-spacer" />
         <button disabled={state.isSaving} onClick={() => void state.remove(port)} type="button">删除</button>
+        <button disabled={state.isSaving || state.isRunning} onClick={() => void state.run(port)} type="button">{state.isRunning ? "运行中…" : "运行"}</button>
         <button className="media-primary-button" disabled={state.isSaving} onClick={() => void state.save(port)} type="button">{state.isSaving ? "保存中…" : "保存"}</button>
       </header>
       <div className="media-workflow__editor-grid">
@@ -86,7 +87,7 @@ function WorkflowEditor({
           {canAddNode && <div className="media-workflow__add-node"><span>添加节点</span>{(["text", "image", "video"] as MediaWorkflowNodeKind[]).map((kind) => <button key={kind} onClick={() => state.addNode(kind, models[0]?.id)} type="button">＋ {mediaWorkflowNodeLabel(kind)}</button>)}</div>}
           {!canAddNode && draft.nodes.length >= 8 && <small className="media-workflow__limit">最多支持 8 个节点。</small>}
         </section>
-        <aside className="media-workflow__inspector"><h3>运行说明</h3><p>节点按从上到下的顺序执行。视频节点只能出现一次并且必须是最后一个节点。</p><p className="media-workflow__notice">工作流保存和账号隔离已可用；执行器会在下一段接入现有图片/视频持久任务。</p></aside>
+        <aside className="media-workflow__inspector"><h3>运行说明</h3><p>节点按从上到下的顺序执行。视频节点只能出现一次并且必须是最后一个节点。</p><p className="media-workflow__notice">点击“运行”会先保存当前草稿，再串行调用文本、图片和视频节点；图片与视频结果会进入对应历史记录。</p>{state.runResult && <div className="media-workflow__run-result" role="status"><strong>运行完成</strong>{state.runResult.finalText && <p>{state.runResult.finalText}</p>}<small>图片记录 {state.runResult.imageRecordIds.length} 条 · 视频记录 {state.runResult.videoRecordIds.length} 条</small></div>}</aside>
       </div>
       {state.errorMessage && <WorkflowError />}
     </div>

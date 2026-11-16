@@ -56,6 +56,18 @@ export const mediaWorkflowSchema = z.object({
 
 export const mediaWorkflowListSchema = z.array(mediaWorkflowSchema).max(1_000);
 
+export const mediaWorkflowRunResultSchema = z.object({
+  workflowId: uuid,
+  clientRequestId: identifier,
+  status: z.literal("completed"),
+  finalText: boundedText,
+  imageRecordIds: z.array(uuid).max(8),
+  videoRecordIds: z.array(uuid).max(1),
+  errorMessage: boundedText.nullable(),
+}).strict();
+
+export type MediaWorkflowRunResult = z.infer<typeof mediaWorkflowRunResultSchema>;
+
 export type MediaWorkflowNodeKind = z.infer<typeof mediaWorkflowNodeKindSchema>;
 export type MediaWorkflowImageReference = z.infer<typeof mediaWorkflowImageReferenceSchema>;
 export type MediaWorkflowNode = z.infer<typeof mediaWorkflowNodeSchema>;

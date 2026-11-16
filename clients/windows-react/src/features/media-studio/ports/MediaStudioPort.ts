@@ -11,7 +11,7 @@ import type {
   MediaStudioVideoHistoryPage,
   MediaStudioVideoJobSnapshot,
 } from "../domain/mediaStudio";
-import type { MediaWorkflow } from "../domain/mediaWorkflow";
+import type { MediaWorkflow, MediaWorkflowRunResult } from "../domain/mediaWorkflow";
 
 export interface MediaStudioPresentationScope {
   ownerUserId: string;
@@ -33,6 +33,11 @@ export interface MediaStudioPort {
   listWorkflows(ownerUserId: string): Promise<MediaWorkflow[]>;
   saveWorkflow(ownerUserId: string, workflow: MediaWorkflow): Promise<void>;
   deleteWorkflow(ownerUserId: string, workflowId: string): Promise<void>;
+  runWorkflow(request: {
+    ownerUserId: string;
+    workflowId: string;
+    clientRequestId: string;
+  }): Promise<MediaWorkflowRunResult>;
   listModels(ownerUserId: string): Promise<MediaStudioModel[]>;
   loadImageHistory(request: MediaStudioHistoryRequest): Promise<MediaStudioHistoryPage>;
   loadVideoHistory(request: {

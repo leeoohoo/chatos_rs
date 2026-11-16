@@ -25,6 +25,23 @@ describe("media workflow store", () => {
     useMediaWorkflowStore.getState().addNode("video", "video-model");
     expect(useMediaWorkflowStore.getState().draft?.nodes.filter((node) => node.kind === "video")).toHaveLength(1);
   });
+
+  it("saves a draft before running and exposes the terminal result", async () => {
+    const port = mediaPort([]);
+    useMediaWorkflowStore.getState().create("image-model");
+    useMediaWorkflowStore.getState().updateDraft((workflow) => ({ ...workflow, inputPrompt: "hello" }));
+    await useMediaWorkflowStore.getState().activate(port, "alice");
+    useMediaWorkflowStore.getState().create("image-model");
+    useMediaWorkflowStore.getState().updateDraft((workflow) => ({
+      ...workflow,
+      inputPrompt: "hello",
+      nodes: workflow.nodes.map((node) => ({ ...node, prompt: "draw" })),
+    }));
+    await useMediaWorkflowStore.getState().run(port);
+    expect(port.saveWorkflow).toHaveBeenCalledTimes(1);
+    expect(port.runWorkflow).toHaveBeenCalledTimes(1);
+    expect(useMediaWorkflowStore.getState().runResult?.status).toBe("completed");
+  });
 });
 
 function mediaPort(workflows: ReturnType<typeof newMediaWorkflow>[]): MediaStudioPort {
@@ -32,6 +49,15 @@ function mediaPort(workflows: ReturnType<typeof newMediaWorkflow>[]): MediaStudi
     listWorkflows: vi.fn(async () => workflows),
     saveWorkflow: vi.fn(async () => undefined),
     deleteWorkflow: vi.fn(async () => undefined),
+    runWorkflow: vi.fn(async ({ workflowId, clientRequestId }) => ({
+      workflowId,
+      clientRequestId,
+      status: "completed" as const,
+      finalText: "",
+      imageRecordIds: [],
+      videoRecordIds: [],
+      errorMessage: null,
+    })),
     listModels: vi.fn(async () => []),
     loadImageHistory: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     loadVideoHistory: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),

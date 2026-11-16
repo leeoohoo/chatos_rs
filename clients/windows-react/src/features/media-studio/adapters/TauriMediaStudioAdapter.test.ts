@@ -68,6 +68,31 @@ describe("TauriMediaStudioAdapter", () => {
     });
   });
 
+  it("runs a workflow through the typed native envelope", async () => {
+    const result = {
+      workflowId: "55555555-5555-4555-8555-555555555555",
+      clientRequestId: "request-1",
+      status: "completed" as const,
+      finalText: "done",
+      imageRecordIds: [],
+      videoRecordIds: [],
+      errorMessage: null,
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(result);
+    await expect(new TauriMediaStudioAdapter().runWorkflow({
+      ownerUserId: OWNER_ID,
+      workflowId: result.workflowId,
+      clientRequestId: result.clientRequestId,
+    })).resolves.toEqual(result);
+    expect(invoke).toHaveBeenCalledWith("run_media_studio_workflow", {
+      request: {
+        ownerUserId: OWNER_ID,
+        workflowId: result.workflowId,
+        clientRequestId: result.clientRequestId,
+      },
+    });
+  });
+
   it("loads a bounded page with explicit nullable native arguments", async () => {
     vi.mocked(invoke).mockResolvedValue(historyPage());
     await new TauriMediaStudioAdapter().loadImageHistory({ ownerUserId: OWNER_ID });

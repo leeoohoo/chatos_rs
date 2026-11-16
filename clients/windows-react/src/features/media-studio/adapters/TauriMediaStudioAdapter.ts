@@ -16,7 +16,12 @@ import {
   mediaStudioVideoHistoryPageSchema,
   mediaStudioVideoJobSnapshotSchema,
 } from "../domain/mediaStudio";
-import { mediaWorkflowListSchema, mediaWorkflowSchema, type MediaWorkflow } from "../domain/mediaWorkflow";
+import {
+  mediaWorkflowListSchema,
+  mediaWorkflowRunResultSchema,
+  mediaWorkflowSchema,
+  type MediaWorkflow,
+} from "../domain/mediaWorkflow";
 import type {
   MediaStudioHistoryReference,
   MediaStudioPort,
@@ -51,6 +56,17 @@ export class TauriMediaStudioAdapter implements MediaStudioPort {
         workflowId: mediaWorkflowSchema.shape.id.parse(workflowId),
       },
     });
+  }
+
+  async runWorkflow(request: Parameters<MediaStudioPort["runWorkflow"]>[0]) {
+    const ownerUserId = ownerUserIdSchema.parse(request.ownerUserId);
+    const workflowId = mediaWorkflowSchema.shape.id.parse(request.workflowId);
+    const clientRequestId = ownerUserIdSchema.parse(request.clientRequestId);
+    return mediaWorkflowRunResultSchema.parse(
+      await invoke("run_media_studio_workflow", {
+        request: { ownerUserId, workflowId, clientRequestId },
+      }),
+    );
   }
 
   async listModels(ownerUserId: string) {
