@@ -26,6 +26,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 对已安装的 Windows x64 Computer Use worker 连续执行 100 次 `npm run smoke:windows:screen`：`100/100` 通过、失败数 `0`，总耗时 `133,513 ms`，单次 `p50=1,326 ms`、`p95=1,340 ms`、最大 `2,104 ms`。每次均覆盖 `--doctor`、真实 MCP `initialize`/`tools/list`、Skill gate 映射、权限快照和 `observe_screen` 截图；这是本机重复启动/屏幕采集短稳定性基线，不替代 8 小时长稳、签名发布或干净 VM 验收。
 
+- 2026-11-16 同步并合并 `origin/3.0.9.8` 从 `6ef0a7bd4` 到 `b33093796` 的 4 个上游提交（Memory 传输断言断线重试、macOS 任务审查按 task id 重试/依赖阻断区分、微信审查登录与 Companion 会话）。合并提交 `958c53f58` 已推送到 `3.0.9.3.1`；共享 Windows Host/Memory 代码回归通过：Local Agent Host `161 passed`、Memory SDK `43 passed`、Connector auth middleware `4 passed`、Windows Tauri `591 passed, 0 failed, 6 ignored`。上游没有修改 Windows React UI，但共享 Host/Memory 变化已由本机测试覆盖。
+
 - 2026-11-16 在上述修复后重新执行完整本机门禁：Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `591 passed, 0 failed, 6 ignored`（597 个测试）；React/Vitest 为 `143` 个测试文件、`529 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture`、`npm run audit:bundle` 和 `npm run tauri -- build --no-bundle` 全部通过。当前工作区干净，代码提交 `d1bdeef93` 与文档提交均已推送到 `origin/3.0.9.3.1`。
 
 - 2026-11-16 网络恢复后的最终门禁复跑：`origin/3.0.9.8` 的头 `6ef0a7bd4` 已由当前 `3.0.9.3.1` 包含（`git rev-list HEAD..origin/3.0.9.8` 为 `0`，反向为 `436`），没有需要合并的上游提交；当前工作区仍干净。Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `590 passed, 0 failed, 6 ignored`（118.77 秒），React/Vitest 为 `143` 个测试文件、`529 passed, 0 failed`（35.73 秒），`npm run typecheck`、`npm run build`、`npm run audit:architecture` 和 `npm run audit:bundle` 全部通过（Bundle `456.93 KiB` raw / `137.70 KiB` gzip）。本轮只更新回归记录，没有改动运行逻辑或远端数据。
