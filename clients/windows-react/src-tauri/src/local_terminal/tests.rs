@@ -287,10 +287,18 @@ async fn windows_native_pty_drains_megabyte_output_and_exits() {
 #[cfg(windows)]
 #[tokio::test]
 async fn windows_native_pty_repeats_cursor_handshake_and_exit_without_leaking_sessions() {
+    let resources = MachineResourceGovernor::default();
     for iteration in 0..3 {
         let directory = tempfile::tempdir().unwrap();
         let launch = LocalTerminalLaunch::for_platform(directory.path().to_path_buf()).unwrap();
-        let session = ManagedLocalTerminal::spawn(
+        let permit = resources
+            .acquire(
+                MachineResourceKind::CodeReadWorker,
+                MachineResourcePriority::Interactive,
+            )
+            .await
+            .unwrap();
+        let session = ManagedLocalTerminal::spawn_with_permit(
             LocalTerminalIdentity {
                 session_id: format!("local-terminal-windows-repeat-{iteration}"),
                 owner_user_id: "owner-1".into(),
@@ -301,8 +309,10 @@ async fn windows_native_pty_repeats_cursor_handshake_and_exit_without_leaking_se
             launch,
             80,
             24,
+            Some(permit),
         )
         .unwrap();
+        assert_eq!(resources.used_resource_units(), 1);
         session.send(b"\x1b[1;1R").unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         session.send(b"exit\r\n").unwrap();
@@ -331,5 +341,10 @@ async fn windows_native_pty_repeats_cursor_handshake_and_exit_without_leaking_se
             "PowerShell repeat {iteration} exit code"
         );
         session.close();
+        assert_eq!(
+            resources.used_resource_units(),
+            0,
+            "PowerShell repeat {iteration} released its resource permit"
+        );
     }
 }
