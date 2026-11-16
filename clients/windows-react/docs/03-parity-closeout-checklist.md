@@ -26,6 +26,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 尝试用 Windows 原生 ConPTY/PowerShell 直接产生 1 MiB 输出并验证终止、轮询上限和资源释放；进程在 15 秒门限内没有进入终止态。临时压力测试已撤回，未把失败结果提交为产品代码；该结果反向确认终端大输出与长稳仍未完成，后续需要修复 PTY 生命周期/背压后再建立门禁。
 
+- 2026-11-16 收紧 Windows 本机终端启动环境：PowerShell 现在固定使用 `-NoLogo -NoProfile`，避免用户 profile 改写受控环境、输出和退出语义；Windows 启动参数与 allowlisted environment 回归 `5 passed, 0 failed`。这改善了确定性，但不替代尚未通过的 ConPTY 大输出压力测试。
+
 - 2026-11-16 完成当前 HEAD 的完整 Tauri bundle 与安装包回归：`npm run tauri -- build` 成功生成 NSIS `ChatOS_3.0.9_x64-setup.exe`（SHA-256 `9f500a8aa7252eef084d35b3cdebebc3ae0939872e1a3a3aa6386a543b50c0`）和 MSI `ChatOS_3.0.9_x64_en-US.msi`（SHA-256 `35fd95bd85f805670cbabfc99d6b0bc6f896a788394158c3d003817092c126ea`）。`smoke-installed-app.ps1` 在隔离目录执行安装、2 次真实 `ChatOS` 原生窗口启动、资源与 sidecar hash 校验、自动退出、卸载和用户数据清理，全部通过（安装/卸载退出码 `0`，启动退出码 `0`，`p50=2,599 ms`、`p95=3,004 ms`）；报告为 `%TEMP%\\chatos-windows-install-smoke-latest.json`。`smoke-installed-hook.ps1` 同包通过已安装 Host health、Hook Bundle 存储/激活、`continue=false` 阻断、Host 重启恢复和卸载（全部退出码 `0`），报告为 `%TEMP%\\chatos-windows-installed-hook-smoke-latest.json`。
 
 - 2026-11-16 完成当前 MSI 的真实升级/失败保护回归：以仓库现有 `ChatOS_0.1.0_x64_en-US.msi` 为 legacy、当前 `ChatOS_3.0.9_x64_en-US.msi` 为 current，`smoke-msi-upgrade.ps1` 全部通过。覆盖旧版安装与启动、截断升级包拒绝（`1620`）、事务故障注入回滚（`1603`，旧版 ProductCode/文件字节/AppData sentinel 恢复）、正常升级（`0`）、降级保护文案、运行中应用升级（Restart Manager 关闭旧进程且 `PendingFileRenameOperations` 未改变）、升级后启动和最终卸载；报告为 `%TEMP%\\chatos-windows-msi-upgrade-smoke-latest.json`。该结果关闭本机安装/升级事务和正常运行中升级风险，但不替代正式代码签名、SmartScreen、强制文件锁/需重启 VM 场景。

@@ -88,6 +88,21 @@ fn local_launch_uses_a_fixed_shell_and_allowlisted_environment() {
     assert!(!keys.contains(&"OPENAI_API_KEY"));
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_local_launch_does_not_load_user_profile() {
+    let directory = tempfile::tempdir().unwrap();
+    let launch = LocalTerminalLaunch::for_platform(directory.path().to_path_buf()).unwrap();
+    assert_eq!(launch.arguments, vec!["-NoLogo", "-NoProfile"]);
+    assert_eq!(launch.shell_name, "PowerShell");
+    assert!(launch.environment.iter().all(|(key, _)| {
+        matches!(
+            key.as_str(),
+            "COLORTERM" | "HOME" | "PATH" | "SystemRoot" | "TERM" | "USERPROFILE" | "WINDIR"
+        )
+    }));
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn native_pty_streams_output_and_exit_as_ordered_events() {

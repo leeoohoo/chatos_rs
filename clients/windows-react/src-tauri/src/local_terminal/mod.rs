@@ -369,7 +369,7 @@ impl LocalTerminalLaunch {
         ];
         Ok(Self {
             executable,
-            arguments: vec!["-NoLogo".into()],
+            arguments: vec!["-NoLogo".into(), "-NoProfile".into()],
             environment,
             initial_working_directory: working_directory.to_string_lossy().into_owned(),
             working_directory,
