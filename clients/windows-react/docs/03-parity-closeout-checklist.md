@@ -22,6 +22,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-17 运行中复核 8 小时隔离 Release：Worker 仍存活约 `1.05` 小时，正式 EXE 进程路径为 `target-shared/release/chatos-windows-react.exe`，工作集约 `37.82 MB`、私有内存约 `9.97 MB`、`33` 个线程、`436` 个 handles；仅观察到其 `WebView2`/`conhost` 子进程，未见异常进程树。旧版长稳脚本仍只在最终阶段写报告，因此本条运行中资源样本不能替代最终 `8 小时`报告。
 
+- 2026-11-17 02:52 继续复核同一 8 小时隔离 Release：Worker（PID `20680`）和正式 EXE（PID `30548`）均仍存活，已运行约 `1.55` 小时；窗口标题保持 `ChatOS`，进程响应正常，工作集约 `37.82 MiB`、私有内存约 `9.97 MiB`、`33` 个线程、`436` 个 handles。最终 JSON 尚未生成，故本条仍只是运行中证据，不能替代完整 `8 小时`报告。
+
 - 2026-11-17 只读核验本机网络强制前置条件：`MpsSvc` Windows Firewall 服务为 `Running/Automatic`，Domain/Private/Public 三个配置文件均为 `AllowOutbound`，本地规则由 GPO 管理且没有应用级目标规则；`CheckNetIsolation LoopbackExempt -s` 返回空列表。该结果与现有代码审计一致：当前 `controlled` capability 仍不是目标/目的地级 WFP 或等价出站强制，不能将其写成已完成。
 
 - 2026-11-17 对当前保留的 `target-shared/release/chatos-windows-react.exe` 做 Authenticode 只读核验，状态为 `NotSigned`，没有签名证书；因此正式代码签名、证书校验和 SmartScreen 信誉仍保持为外部发布依赖，未将本机可启动误记为正式发布验收。
