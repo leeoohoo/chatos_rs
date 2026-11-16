@@ -24,6 +24,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-17 将 ConPTY 的光标查询应答、PowerShell 自然退出和会话释放固化为产品单测：Windows `local_terminal` 定向回归 `8 passed, 0 failed`，其中新增测试连续启动 3 个独立会话，逐一验证 `exit_code=0`，并断言生产 `CodeReadWorker` permit 每轮从 active `1` 回到 `0`；本轮测试生成的 `target-shared/debug` 已在确认无构建或 ChatOS 进程后删除。该门禁防止短时重复启动回归，但不替代 8 小时长稳和更大规模性能基线。
 
+- 2026-11-17 收紧 Controlled Network 目标匹配器：实际连接目标现在与签名策略使用同一套域名标签约束，带下划线、首尾连字符、单标签和其他非法主机名即使命中 `*.example.com` 也会失败关闭；策略/URL 定向回归 `6 passed, 0 failed`，Rustfmt 与 Clippy `-D warnings` 通过。该修正只关闭匹配输入绕过，不等于目标级 WFP/等价出站规则已经接入。
+
 - 2026-11-17 全量 Tauri Rust 回归首次暴露 AppContainer Git fixture 在 `where.exe` 选中 Codex 私有 Git 时的环境依赖（Win32 2）；测试现优先选择标准 `Program Files\\Git\\cmd\\git.exe`，仅在其不存在时回退 PATH。修正后 AppContainer 模块 `16 passed, 0 failed`，Tauri `--all-targets` 为 `599 passed, 0 failed, 6 ignored`；Rustfmt 与 Clippy `-D warnings` 均通过。该修正只稳定测试 fixture，不改变运行时隔离逻辑。
 
 - 2026-11-17 在本机补跑全部默认 ignored 的 Windows 外部集成回归：设置 `CHATOS_LOCAL_AGENT_HOST_TEST_PATH` 指向当前 Release Host 后，Host sidecar 健康握手/账号隔离为 `2 passed, 0 failed`；标准 Git、Node/npm 和公开网络可用时，Plugin installer 的 Git HTTPS、Node MCP、npm Registry 获取与 npm MCP 隔离预检为 `4 passed, 0 failed`。这些测试仍保留 ignored 标记，避免无外部依赖的 CI 默认运行；本轮不把公开服务、Node/npm 或 Release sidecar 的可用性误记为发布环境保证。

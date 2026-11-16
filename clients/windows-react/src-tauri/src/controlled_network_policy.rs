@@ -212,21 +212,7 @@ fn normalize_host(value: &str) -> Result<String, String> {
                 return Err("Controlled Network policy IP literals are not allowed.".into())
             }
         };
-    let labels = domain.split('.').collect::<Vec<_>>();
-    if labels.len() < 2
-        || domain.len() > MAX_HOST_BYTES
-        || labels.iter().any(|label| {
-            label.is_empty()
-                || label.len() > 63
-                || label.starts_with('-')
-                || label.ends_with('-')
-                || !label
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        })
-    {
-        return Err("Controlled Network policy host is invalid.".into());
-    }
+    validate_domain_labels(&domain, "Controlled Network policy host")?;
     Ok(if wildcard {
         format!("*.{domain}")
     } else {
@@ -243,11 +229,34 @@ fn normalize_destination_host(value: &str) -> Result<String, String> {
         return Err("Controlled Network destination host is invalid.".into());
     }
     match Host::parse(value).map_err(|_| "Controlled Network destination host is invalid.")? {
-        Host::Domain(domain) => Ok(domain.to_ascii_lowercase()),
+        Host::Domain(domain) => {
+            let domain = domain.to_ascii_lowercase();
+            validate_domain_labels(&domain, "Controlled Network destination host")?;
+            Ok(domain)
+        }
         Host::Ipv4(_) | Host::Ipv6(_) => {
             Err("Controlled Network destination IP literals are not allowed.".into())
         }
     }
+}
+
+fn validate_domain_labels(domain: &str, label: &str) -> Result<(), String> {
+    let labels = domain.split('.').collect::<Vec<_>>();
+    if labels.len() < 2
+        || domain.len() > MAX_HOST_BYTES
+        || labels.iter().any(|label| {
+            label.is_empty()
+                || label.len() > 63
+                || label.starts_with('-')
+                || label.ends_with('-')
+                || !label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+    {
+        return Err(format!("{label} is invalid."));
+    }
+    Ok(())
 }
 
 fn decode_prefixed_base64(
@@ -380,5 +389,32 @@ mod tests {
             Utc.with_ymd_and_hms(2026, 11, 13, 23, 0, 0).unwrap(),
         )
         .is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_destination_labels_before_wildcard_matching() {
+        let (policy, public_key) = signed_policy();
+        let verified = verify_controlled_network_policy(
+            &policy,
+            "owner-1",
+            "device-1",
+            "workspace-1",
+            "S-1-5-21-100-200-300-400",
+            "network-key-1",
+            &public_key,
+            Utc.with_ymd_and_hms(2026, 11, 13, 23, 0, 0).unwrap(),
+        )
+        .unwrap();
+        for destination in [
+            "bad_label.example.com",
+            "-bad.example.com",
+            "bad-.example.com",
+            "example",
+        ] {
+            assert!(
+                !verified.allows_destination(destination, 443),
+                "malformed destination should be rejected: {destination}"
+            );
+        }
     }
 }
