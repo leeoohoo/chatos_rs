@@ -89,7 +89,7 @@ public protocol MessageTaskGraphServicing: Sendable {
     ) async throws -> MessageTaskRunDetail
     func retryRun(
         messageID: String,
-        runID: String,
+        taskID: String,
         lookup: MessageTaskLookup?,
         instruction: String?
     ) async throws -> MessageTaskRun

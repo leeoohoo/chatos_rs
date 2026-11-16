@@ -232,7 +232,7 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
 
         _ = try await service.retryRun(
             messageID: "message-1",
-            runID: "run-task-2",
+            taskID: "task-2",
             lookup: .init(turnID: "turn-1"),
             instruction: "Use the local fallback"
         )
@@ -245,6 +245,30 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
             Array(lifecycle.suffix(3)),
             ["release:run-task-2", "command:retry_task", "wake"]
         )
+    }
+
+    func testRetryDoesNotRequireAnActiveOrHistoricalRun() async throws {
+        let host = LocalTaskHostStub()
+        let service = NativeLocalAgentMessageTaskGraphService(
+            host: host,
+            afterRetry: {
+                await host.recordWake()
+            }
+        )
+        await service.configure(ownerUserID: "user-1")
+
+        _ = try await service.retryRun(
+            messageID: "message-1",
+            taskID: "task-1",
+            lookup: .init(turnID: "turn-1"),
+            instruction: nil
+        )
+
+        let command = try await host.lastCommand()
+        let lifecycle = await host.recordedLifecycle()
+        XCTAssertEqual(command["type"], .string("retry_task"))
+        XCTAssertEqual(command["task_id"], .string("task-1"))
+        XCTAssertEqual(Array(lifecycle.suffix(2)), ["command:retry_task", "wake"])
     }
 
     func testRestartRunningTaskReleasesOldPluginAfterDurableResetAndWakesScheduler() async throws {

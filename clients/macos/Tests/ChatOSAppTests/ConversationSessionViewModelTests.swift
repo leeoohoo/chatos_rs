@@ -1354,7 +1354,7 @@ private actor TaskCancellationMessageTaskGraphServiceStub: MessageTaskGraphServi
 
     func retryRun(
         messageID _: String,
-        runID _: String,
+        taskID _: String,
         lookup _: MessageTaskLookup?,
         instruction _: String?
     ) async throws -> MessageTaskRun {
@@ -1508,7 +1508,7 @@ private actor DelayedMessageTaskGraphServiceStub: MessageTaskGraphServicing {
 
     func retryRun(
         messageID _: String,
-        runID _: String,
+        taskID _: String,
         lookup _: MessageTaskLookup?,
         instruction _: String?
     ) async throws -> MessageTaskRun {

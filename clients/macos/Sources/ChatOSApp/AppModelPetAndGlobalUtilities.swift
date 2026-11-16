@@ -217,18 +217,18 @@ extension AppModel {
     }
 
     func retryPetActivity(_ activity: PetActivity, instruction: String) async throws {
-        guard let runID = activity.route.runID?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !runID.isEmpty else {
+        guard let taskID = activity.route.taskID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !taskID.isEmpty else {
             throw PetActivityActionError.retryUnavailable
         }
         let messageID = activity.route.messageID?.trimmingCharacters(in: .whitespacesAndNewlines)
-            .petNonEmpty ?? "local-run:\(runID)"
+            .petNonEmpty ?? "local-task:\(taskID)"
         guard let messageTaskGraphService else {
             throw PetActivityActionError.retryUnavailable
         }
         _ = try await messageTaskGraphService.retryRun(
             messageID: messageID,
-            runID: runID,
+            taskID: taskID,
             lookup: MessageTaskLookup(
                 sessionID: activity.route.conversationID,
                 turnID: activity.route.turnID

@@ -80,7 +80,7 @@ enum PetActivityPresentation {
     }
 
     static func canRetry(_ activity: PetActivity) -> Bool {
-        displayText(activity.route.runID) != nil
+        displayText(activity.route.taskID) != nil
     }
 
     static func canLoadTask(_ activity: PetActivity) -> Bool {

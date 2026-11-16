@@ -59,13 +59,13 @@ public struct MessageTaskGraphUseCase: Sendable {
     @discardableResult
     public func retryRun(
         messageID: String,
-        runID: String,
+        taskID: String,
         lookup: MessageTaskLookup?,
         instruction: String?
     ) async throws -> MessageTaskRun {
         try await graphService.retryRun(
             messageID: messageID,
-            runID: runID,
+            taskID: taskID,
             lookup: lookup,
             instruction: instruction
         )

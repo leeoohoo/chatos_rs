@@ -261,7 +261,7 @@ struct TaskReplyInspectorContent: View {
                 }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(task.lastRunID == nil || viewModel.isRetrying)
+            .disabled(viewModel.isRetrying)
         }
         .padding(14)
         .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))

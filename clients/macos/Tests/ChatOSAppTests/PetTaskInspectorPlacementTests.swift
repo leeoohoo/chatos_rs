@@ -269,7 +269,7 @@ struct PetActivityPanelScopeTests {
             source: .taskExecution,
             kind: .reviewing,
             title: "需要检查",
-            route: .init(taskID: "task-1", runID: "run-1")
+            route: .init(taskID: "task-1")
         )
 
         #expect(PetActivityPresentation.canLoadTask(activity))

@@ -424,11 +424,11 @@ private actor CancellationMessageTaskGraphServiceStub: MessageTaskGraphServicing
 
     func retryRun(
         messageID _: String,
-        runID: String,
+        taskID: String,
         lookup _: MessageTaskLookup?,
         instruction _: String?
     ) async throws -> MessageTaskRun {
-        .init(id: runID, taskID: "task-running")
+        .init(id: "retry-\(taskID)", taskID: taskID)
     }
 
     func cancelTask(
@@ -496,11 +496,11 @@ private actor DelayedWorkspaceRefreshInspectorServiceStub: MessageTaskGraphServi
 
     func retryRun(
         messageID _: String,
-        runID: String,
+        taskID: String,
         lookup _: MessageTaskLookup?,
         instruction _: String?
     ) async throws -> MessageTaskRun {
-        .init(id: runID, taskID: "task-1")
+        .init(id: "retry-\(taskID)", taskID: taskID)
     }
 
     func cancelTask(
@@ -553,11 +553,11 @@ private actor NonCancellableInspectorMessageTaskGraphServiceStub: MessageTaskGra
 
     func retryRun(
         messageID _: String,
-        runID: String,
+        taskID: String,
         lookup _: MessageTaskLookup?,
         instruction _: String?
     ) async throws -> MessageTaskRun {
-        .init(id: runID, taskID: "task-a")
+        .init(id: "retry-\(taskID)", taskID: taskID)
     }
 
     func cancelTask(
@@ -621,11 +621,11 @@ private actor SequencedInspectorMessageTaskGraphServiceStub: MessageTaskGraphSer
 
     func retryRun(
         messageID _: String,
-        runID: String,
+        taskID: String,
         lookup _: MessageTaskLookup?,
         instruction _: String?
     ) async throws -> MessageTaskRun {
-        .init(id: runID, taskID: "task-a")
+        .init(id: "retry-\(taskID)", taskID: taskID)
     }
 
     func cancelTask(
@@ -685,14 +685,14 @@ private actor DelayedRetryMessageTaskGraphServiceStub: MessageTaskGraphServicing
 
     func retryRun(
         messageID _: String,
-        runID: String,
+        taskID: String,
         lookup _: MessageTaskLookup?,
         instruction _: String?
     ) async throws -> MessageTaskRun {
         await withCheckedContinuation { continuation in
             retryContinuation = continuation
         }
-        return .init(id: runID, taskID: "task-a")
+        return .init(id: "retry-\(taskID)", taskID: taskID)
     }
 
     func cancelTask(
@@ -745,11 +745,11 @@ private actor DelayedPollingMessageTaskGraphServiceStub: MessageTaskGraphServici
 
     func retryRun(
         messageID: String,
-        runID: String,
+        taskID: String,
         lookup: MessageTaskLookup?,
         instruction: String?
     ) async throws -> MessageTaskRun {
-        .init(id: runID, taskID: "task-1")
+        .init(id: "retry-\(taskID)", taskID: taskID)
     }
 
     func cancelTask(
@@ -813,11 +813,11 @@ private actor SameTaskReloadMessageTaskGraphServiceStub: MessageTaskGraphServici
 
     func retryRun(
         messageID: String,
-        runID: String,
+        taskID: String,
         lookup: MessageTaskLookup?,
         instruction: String?
     ) async throws -> MessageTaskRun {
-        .init(id: runID, taskID: "task-a")
+        .init(id: "retry-\(taskID)", taskID: taskID)
     }
 
     func cancelTask(
@@ -865,11 +865,11 @@ private actor SwitchingMessageTaskGraphServiceStub: MessageTaskGraphServicing {
 
     func retryRun(
         messageID: String,
-        runID: String,
+        taskID: String,
         lookup: MessageTaskLookup?,
         instruction: String?
     ) async throws -> MessageTaskRun {
-        .init(id: runID, taskID: "task-b")
+        .init(id: "retry-\(taskID)", taskID: taskID)
     }
 
     func cancelTask(
@@ -925,11 +925,11 @@ private actor MessageTaskGraphServiceStub: MessageTaskGraphServicing {
 
     func retryRun(
         messageID: String,
-        runID: String,
+        taskID: String,
         lookup: MessageTaskLookup?,
         instruction: String?
     ) async throws -> MessageTaskRun {
-        MessageTaskRun(id: runID, taskID: "task-1")
+        MessageTaskRun(id: "retry-\(taskID)", taskID: taskID)
     }
 
     func cancelTask(

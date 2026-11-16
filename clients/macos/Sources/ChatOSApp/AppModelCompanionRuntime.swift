@@ -78,7 +78,7 @@ enum PetActivityActionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .retryUnavailable:
-            "当前事件缺少重试所需的任务运行信息，请打开详情处理。"
+            "当前事件缺少重试所需的任务信息，请打开详情处理。"
         case .cancelUnavailable:
             "当前事件缺少取消任务所需的信息，请打开详情处理。"
         case .promptUnavailable:
