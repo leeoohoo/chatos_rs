@@ -1,6 +1,6 @@
 # Windows React 与 macOS 功能拉齐关闭清单
 
-更新时间：2026-11-16
+更新时间：2026-11-17
 
 分支：`3.0.9.3.1`
 
@@ -15,6 +15,10 @@ Windows 产品版本：`3.0.9`
 ### 2026-11-14 最新同步与回归
 
 ### 2026-11-16 全量离线回归复核
+
+### 2026-11-17 短时稳定性复核
+
+- 2026-11-17 在当前工作树重复执行 Windows 原生 ConPTY 回归 5 轮：每轮均通过 PowerShell 自然退出与至少 1 MiB 输出排空（`2 passed, 0 failed`），5/5 轮均在 15 秒门限内完成；该结果加强短时退出/背压稳定性证据，但不替代 8 小时长稳与更大规模性能基线。
 
 - 2026-11-16 重新生成当前 HEAD 的 Windows Release（`AWS_LC_SYS_PREBUILT_NASM=1 npm run tauri -- build --no-bundle`）并做原生窗口 smoke：产物为 `target-shared/release/chatos-windows-react.exe`，SHA-256 `843046802714c526beb33a2db8f46567644e80606ff1f2ee14b466f592d7feaf`。真实窗口标题为 `ChatOS`，登录页无障碍树暴露标题、`auth-username`、`auth-password`、登录和创建账号入口；没有自动填充、读取或提交认证信息，随后正常关闭窗口。由于 Computer Use 禁止代理认证窗口，登录后页面和依赖登录的 Run/视觉逐态仍不写成已验收。
 
