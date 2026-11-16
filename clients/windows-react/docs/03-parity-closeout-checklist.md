@@ -28,6 +28,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 补跑当前工作树 React/Vitest 与 TypeScript 门禁：`143` 个测试文件、`529 passed, 0 failed`（`23.37s`），`npm run typecheck` 通过。该结果与本轮 Tauri 全量回归配套，确认任务审查、消息 Composer、Plugin、媒体、Story 和设置页面的前端契约没有回归。
 
+- 2026-11-16 在上述回归后补跑 `npm run audit:architecture` 与 `npm run audit:bundle`，均通过；当前入口 Bundle 为 `456.93 KiB raw / 137.70 KiB gzip`。本轮工作区无代码改动，仅追加可复核门禁记录。
+
 - 2026-11-16 完成 Computer Use 安装后 Windows 实测：已安装的 `Visual Computer Use 0.9.0` x64 worker 通过 `--doctor`（`screenCaptureAvailable=true`、`inputDesktopAvailable=true`、`allGranted=true`），真实 stdio MCP `initialize`/`tools/list` 暴露 11 个工具，`check_permissions` 与 `observe_screen` 均返回有效结构化结果和带虚拟准星的真实截图。安装后首次尝试从 UI 切换本机 Plugin 时复现 Marketplace 短暂不可用导致的“无法确认 Plugin 来源”误拦截；Windows 宿主已改为对已安装、`local-plugin-*`/`local-release-*` 的本机包允许独立启停，同时继续对 Marketplace 包执行来源门禁。`plugin_settings` 定向回归 `19 passed, 0 failed`，Release 构建成功并已推送提交 `d1bdeef93`。重启后的正式 Release 需要重新登录才能继续 UI 开关闭环；Computer Use 安全规则不允许代理认证窗口，因此未伪造登录后视觉证据。
 
 - 2026-11-16 使用已安装的 Windows x64 worker 完成专用输入 smoke：为避免 Notepad 历史文档污染，创建一个空临时文件并由 worker 激活其 Notepad 窗口，依次执行真实 `Ctrl+A`、`type_text("chatos-worker-input-smoke")`、`Ctrl+S`、`Alt+F4`；所有 MCP action 均无错误，保存后文件内容精确匹配，随后关闭 Notepad、worker 并删除该临时文件。该结果关闭 Windows Computer Use 的专用输入闭环缺口；不替代正式签名 Marketplace 发布、干净 VM 和管理员/UIPI 目标矩阵。
