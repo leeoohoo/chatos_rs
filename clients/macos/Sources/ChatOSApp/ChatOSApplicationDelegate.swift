@@ -76,6 +76,7 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindowController: NSWindowController?
     private var mainWindowPresentationGeneration = 0
     private var didReceiveFileOpenRequest = false
+    private var workflowTerminationTask: Task<Void, Never>?
 
     override init() {
         // ChatOS is also the owner of the pet overlay, global utilities, and the
@@ -148,6 +149,20 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
         performanceAcceptanceLoadDriver?.stop()
         performanceAcceptanceLoadDriver = nil
         model.prepareForApplicationTermination()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard model.mediaStudio.hasPendingWorkflowPersistence else { return .terminateNow }
+        guard workflowTerminationTask == nil else { return .terminateLater }
+        workflowTerminationTask = Task { [weak self] in
+            guard let self else {
+                sender.reply(toApplicationShouldTerminate: true)
+                return
+            }
+            await model.mediaStudio.waitForWorkflowPersistence()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationDidHide(_ notification: Notification) {

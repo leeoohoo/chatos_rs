@@ -224,6 +224,28 @@ final class MediaStudioViewModelTests: XCTestCase {
         XCTAssertNil(weakViewModel)
     }
 
+    func testSaveCompletionDoesNotOverwriteNodeAddedWhileSaving() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MediaStudioWorkflowSaveTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let viewModel = MediaStudioViewModel(
+            service: MediaStudioWorkloadCatalogService(),
+            workflowStore: MediaStudioWorkflowStore(root: root)
+        )
+        viewModel.bindAccount(userID: "alice")
+        viewModel.reloadModels()
+        try await waitUntil { !viewModel.isLoadingModels }
+        viewModel.createWorkflow()
+        try await waitUntil { !viewModel.isSavingWorkflow }
+
+        viewModel.saveSelectedWorkflow()
+        viewModel.addWorkflowNode(.text)
+        try await waitUntil { !viewModel.isSavingWorkflow }
+
+        XCTAssertEqual(viewModel.selectedWorkflow?.nodes.count, 2)
+        XCTAssertNil(viewModel.workflowSavedAt)
+    }
+
     private func waitUntil(
         _ condition: @escaping @MainActor () async -> Bool
     ) async throws {

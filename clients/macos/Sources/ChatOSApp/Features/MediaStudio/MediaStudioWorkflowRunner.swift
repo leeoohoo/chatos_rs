@@ -1,10 +1,16 @@
 import ChatOSCore
 import Foundation
 
-enum MediaStudioWorkflowRunEvent: Sendable {
+enum MediaStudioWorkflowNodeResult: Equatable, Sendable {
+    case text(String)
+    case images(MediaStudioImageHistoryItem)
+    case video(MediaStudioVideoHistoryItem)
+}
+
+enum MediaStudioWorkflowRunEvent: Equatable, Sendable {
     case started(UUID)
     case progress(UUID, VideoGenerationProgress)
-    case completed(UUID, String)
+    case completed(UUID, MediaStudioWorkflowNodeResult)
 }
 
 struct MediaStudioWorkflowRunResult: Sendable {
@@ -48,7 +54,7 @@ struct MediaStudioWorkflowRunner: Sendable {
                     prompt: prompt,
                     images: images + references
                 ))
-                await event(.completed(node.id, text))
+                await event(.completed(node.id, .text(text)))
             case .image:
                 let inputs = images + references
                 guard inputs.count <= MediaStudioWorkflowValidator.maximumReferenceCount else {
@@ -77,7 +83,7 @@ struct MediaStudioWorkflowRunner: Sendable {
                     fileURL: url
                 )]
                 imageHistory.append(item)
-                await event(.completed(node.id, "已生成图片"))
+                await event(.completed(node.id, .images(item)))
             case .video:
                 let firstFrame = references.first ?? images.last
                 let outcome = try await videoGenerator.submit(
@@ -98,7 +104,7 @@ struct MediaStudioWorkflowRunner: Sendable {
                     throw MediaStudioWorkflowRunError.videoPersistenceFailed
                 }
                 videoHistory.append(item)
-                await event(.completed(node.id, "已生成视频"))
+                await event(.completed(node.id, .video(item)))
             }
         }
         return .init(

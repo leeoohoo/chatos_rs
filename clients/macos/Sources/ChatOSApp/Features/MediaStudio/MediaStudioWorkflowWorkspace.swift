@@ -5,6 +5,8 @@ import SwiftUI
 struct MediaStudioWorkflowWorkspace: View {
     @ObservedObject var viewModel: MediaStudioViewModel
     @State private var confirmsWorkflowDeletion = false
+    @State private var resultImagePreview: MediaStudioImagePreviewRequest?
+    @State private var resultVideoPreview: MediaStudioVideoPreviewRequest?
 
     var body: some View {
         Group {
@@ -41,6 +43,12 @@ struct MediaStudioWorkflowWorkspace: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("工作流配置和已上传的节点图片会从本机删除；生成记录不受影响。")
+        }
+        .sheet(item: $resultImagePreview) { request in
+            MediaStudioImagePreview(request: request)
+        }
+        .sheet(item: $resultVideoPreview) { request in
+            MediaStudioVideoPreview(item: request)
         }
     }
 
@@ -160,6 +168,11 @@ struct MediaStudioWorkflowWorkspace: View {
                 .disabled(viewModel.isRunningWorkflow || viewModel.isSavingWorkflow)
             Spacer()
             if viewModel.isSavingWorkflow { ProgressView().controlSize(.small) }
+            else if viewModel.workflowSavedAt != nil {
+                Label("已保存", systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            }
             Button("保存", action: viewModel.saveSelectedWorkflow)
                 .disabled(viewModel.isSavingWorkflow || viewModel.isRunningWorkflow)
             if viewModel.isRunningWorkflow {
@@ -303,6 +316,7 @@ struct MediaStudioWorkflowWorkspace: View {
     private func nodeInspector(_ node: MediaStudioWorkflowNode) -> some View {
         Group {
             inspectorTitle(title(for: node.kind), subtitle: "配置模型、提示词和节点图片")
+            nodeResult(viewModel.workflowNodeStates[node.id])
             fieldLabel("节点类型")
             Picker("", selection: Binding(
                 get: { node.kind },
@@ -357,6 +371,67 @@ struct MediaStudioWorkflowWorkspace: View {
             }
             .disabled(viewModel.isRunningWorkflow)
         }
+    }
+
+    @ViewBuilder
+    private func nodeResult(_ state: MediaStudioViewModel.WorkflowNodeState?) -> some View {
+        switch state {
+        case let .running(progress):
+            resultContainer {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(progress ?? "正在运行…")
+                }
+            }
+        case let .completed(.text(text)):
+            resultContainer {
+                ScrollView {
+                    Text(text)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 220)
+            }
+        case let .completed(.images(item)):
+            resultContainer {
+                ForEach(Array(item.images.enumerated()), id: \.element.id) { index, asset in
+                    Button {
+                        resultImagePreview = .init(images: item.images, selectedIndex: index)
+                    } label: {
+                        GeneratedMediaAssetView(asset: asset, compact: true)
+                    }
+                    .buttonStyle(.plain)
+                    .help("放大查看图片")
+                }
+            }
+        case let .completed(.video(item)):
+            resultContainer {
+                Button {
+                    resultVideoPreview = .init(item)
+                } label: {
+                    Label("播放生成视频", systemImage: "play.rectangle.fill")
+                }
+            }
+        case let .failed(message):
+            resultContainer {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+        case nil:
+            EmptyView()
+        }
+    }
+
+    private func resultContainer<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            fieldLabel("本次运行结果")
+            content()
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.24), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var videoOptions: some View {
