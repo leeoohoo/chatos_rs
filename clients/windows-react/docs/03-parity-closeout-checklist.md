@@ -20,6 +20,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 使用已安装的 Windows x64 worker 完成专用输入 smoke：为避免 Notepad 历史文档污染，创建一个空临时文件并由 worker 激活其 Notepad 窗口，依次执行真实 `Ctrl+A`、`type_text("chatos-worker-input-smoke")`、`Ctrl+S`、`Alt+F4`；所有 MCP action 均无错误，保存后文件内容精确匹配，随后关闭 Notepad、worker 并删除该临时文件。该结果关闭 Windows Computer Use 的专用输入闭环缺口；不替代正式签名 Marketplace 发布、干净 VM 和管理员/UIPI 目标矩阵。
 
+- 2026-11-16 补做已安装 Windows x64 worker 的鼠标输入闭环：对专用空临时文件打开的 Notepad，先用真实 `move_mouse` 移到文本区域并执行 `click`，再执行 `Ctrl+A`、`type_text("chatos-worker-pointer-smoke")`、`Ctrl+S`、`Alt+F4`；`move_mouse`、`click`、快捷键和输入均返回无错误，关闭后读取文件内容与目标文本精确匹配。此前一次含连字符的尝试因测试清理脚本参数写错而未形成有效证据，本次用正确 JSON-RPC `arguments` 参数重跑通过；临时文件、Notepad 和 worker 均已清理。该结果关闭本机鼠标移动/点击/键盘输入/保存回归缺口，不替代正式签名 Marketplace 发布、干净 VM 和管理员/UIPI 目标矩阵。
+
 - 2026-11-16 在上述修复后重新执行完整本机门禁：Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `591 passed, 0 failed, 6 ignored`（597 个测试）；React/Vitest 为 `143` 个测试文件、`529 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture`、`npm run audit:bundle` 和 `npm run tauri -- build --no-bundle` 全部通过。当前工作区干净，代码提交 `d1bdeef93` 与文档提交均已推送到 `origin/3.0.9.3.1`。
 
 - 2026-11-16 网络恢复后的最终门禁复跑：`origin/3.0.9.8` 的头 `6ef0a7bd4` 已由当前 `3.0.9.3.1` 包含（`git rev-list HEAD..origin/3.0.9.8` 为 `0`，反向为 `436`），没有需要合并的上游提交；当前工作区仍干净。Windows Tauri `cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml --lib` 为 `590 passed, 0 failed, 6 ignored`（118.77 秒），React/Vitest 为 `143` 个测试文件、`529 passed, 0 failed`（35.73 秒），`npm run typecheck`、`npm run build`、`npm run audit:architecture` 和 `npm run audit:bundle` 全部通过（Bundle `456.93 KiB` raw / `137.70 KiB` gzip）。本轮只更新回归记录，没有改动运行逻辑或远端数据。
