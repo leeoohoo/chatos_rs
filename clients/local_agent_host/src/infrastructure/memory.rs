@@ -74,7 +74,7 @@ impl RuntimeContextAssertionProvider for LocalConnectorRuntimeContextAssertionPr
         };
         let response: LocalRuntimeContextAssertionResponse = self
             .client
-            .post_with_user_auth(
+            .post_retryable_with_user_auth(
                 self.endpoint.as_str(),
                 &LocalRuntimeContextAssertionRequest {
                     runtime_kind: "local_agent",

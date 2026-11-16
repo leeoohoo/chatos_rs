@@ -28,8 +28,13 @@ struct RefreshAccessTokenResponse {
     token: String,
 }
 
-fn should_retry_connect_error(error: &reqwest::Error, completed_retries: usize) -> bool {
-    error.is_connect() && completed_retries < CONNECT_RETRY_DELAYS.len()
+fn should_retry_send_error(
+    error: &reqwest::Error,
+    completed_retries: usize,
+    retry_request_errors: bool,
+) -> bool {
+    completed_retries < CONNECT_RETRY_DELAYS.len()
+        && (error.is_connect() || (retry_request_errors && error.is_request()))
 }
 
 impl MemoryEngineClient {
@@ -37,6 +42,34 @@ impl MemoryEngineClient {
     /// session, including its shared token rotation and single-flight refresh.
     /// System keys and internal Memory credentials are never sent to it.
     pub async fn post_with_user_auth<T, B>(&self, endpoint: &str, body: &B) -> Result<T, String>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        self.post_with_user_auth_retry_policy(endpoint, body, false)
+            .await
+    }
+
+    /// Replays transient failures only when the caller guarantees that repeating the POST is safe.
+    pub async fn post_retryable_with_user_auth<T, B>(
+        &self,
+        endpoint: &str,
+        body: &B,
+    ) -> Result<T, String>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        self.post_with_user_auth_retry_policy(endpoint, body, true)
+            .await
+    }
+
+    async fn post_with_user_auth_retry_policy<T, B>(
+        &self,
+        endpoint: &str,
+        body: &B,
+        retry_request_errors: bool,
+    ) -> Result<T, String>
     where
         T: DeserializeOwned,
         B: Serialize + ?Sized,
@@ -62,8 +95,14 @@ impl MemoryEngineClient {
                     .to_string(),
             );
         }
-        self.send_json_to_url(Method::POST, url.as_str(), url.path(), Some(body))
-            .await
+        self.send_json_to_url(
+            Method::POST,
+            url.as_str(),
+            url.path(),
+            Some(body),
+            retry_request_errors,
+        )
+        .await
     }
 
     pub(super) async fn send_json<T, B>(
@@ -77,7 +116,7 @@ impl MemoryEngineClient {
         B: Serialize + ?Sized,
     {
         let url = format!("{}{}", self.base_url, path);
-        self.send_json_to_url(method, &url, path, body).await
+        self.send_json_to_url(method, &url, path, body, false).await
     }
 
     async fn send_json_to_url<T, B>(
@@ -86,6 +125,7 @@ impl MemoryEngineClient {
         url: &str,
         path: &str,
         body: Option<&B>,
+        retry_request_errors: bool,
     ) -> Result<T, String>
     where
         T: DeserializeOwned,
@@ -106,7 +146,13 @@ impl MemoryEngineClient {
                 };
                 match req.send().await {
                     Ok(resp) => break resp,
-                    Err(err) if should_retry_connect_error(&err, connect_retry_index) => {
+                    Err(err)
+                        if should_retry_send_error(
+                            &err,
+                            connect_retry_index,
+                            retry_request_errors,
+                        ) =>
+                    {
                         let delay = CONNECT_RETRY_DELAYS[connect_retry_index];
                         connect_retry_index += 1;
                         tokio::time::sleep(delay).await;
@@ -403,7 +449,7 @@ mod user_auth_tests;
 mod tests {
     use super::{
         append_optional_bool_query, append_optional_i64_query, append_optional_query,
-        normalize_base_url, should_retry_connect_error, CONNECT_RETRY_DELAYS, SOURCE_SCOPE,
+        normalize_base_url, should_retry_send_error, CONNECT_RETRY_DELAYS, SOURCE_SCOPE,
         TOKEN_AUDIENCE,
     };
     use crate::MemoryEngineClient;
@@ -465,14 +511,16 @@ mod tests {
             .await
             .expect_err("unused local port should refuse the connection");
 
-        assert!(should_retry_connect_error(&error, 0));
-        assert!(should_retry_connect_error(
+        assert!(should_retry_send_error(&error, 0, false));
+        assert!(should_retry_send_error(
             &error,
-            CONNECT_RETRY_DELAYS.len() - 1
+            CONNECT_RETRY_DELAYS.len() - 1,
+            false
         ));
-        assert!(!should_retry_connect_error(
+        assert!(!should_retry_send_error(
             &error,
-            CONNECT_RETRY_DELAYS.len()
+            CONNECT_RETRY_DELAYS.len(),
+            false
         ));
     }
 
