@@ -672,7 +672,7 @@ async fn generate_workflow_text(
         .ok_or_else(|| "所选文本模型已不可用。".to_owned())?;
     if !model.enabled
         || !model.has_api_key
-        || (!(current_images.is_empty() && references.is_empty()) && !model.supports_images)
+        || !(model.supports_images || current_images.is_empty() && references.is_empty())
     {
         return Err("文本模型不可用或不支持当前图片输入。".into());
     }

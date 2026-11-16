@@ -26,6 +26,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 尝试用 Windows 原生 ConPTY/PowerShell 直接产生 1 MiB 输出并验证终止、轮询上限和资源释放；进程在 15 秒门限内没有进入终止态。临时压力测试已撤回，未把失败结果提交为产品代码；该结果反向确认终端大输出与长稳仍未完成，后续需要修复 PTY 生命周期/背压后再建立门禁。
 
+- 2026-11-16 收紧 Windows ConPTY 会话生命周期：本机终端现在按 `portable-pty` 约束保留 slave 句柄到 wait 路径确认退出，并在 spawn 后再接管 reader/writer，避免短命子进程因过早关闭 slave 收到伪 `CTRL+C`；`local_terminal` 定向回归 `5 passed, 0 failed`，Rustfmt 和 Clippy `-D warnings` 通过。当前机器的原生 ConPTY 探针即使在该修复后启动 `cmd.exe`/PowerShell 仍未在门限内进入退出态，因此大输出/自然退出门禁继续保持未完成，不把环境失败写成产品通过。
+
 - 2026-11-16 收紧 Windows 本机终端启动环境：PowerShell 现在固定使用 `-NoLogo -NoProfile`，避免用户 profile 改写受控环境、输出和退出语义；Windows 启动参数与 allowlisted environment 回归 `5 passed, 0 failed`。这改善了确定性，但不替代尚未通过的 ConPTY 大输出压力测试。
 
 - 2026-11-16 完成当前 HEAD 的完整 Tauri bundle 与安装包回归：`npm run tauri -- build` 成功生成 NSIS `ChatOS_3.0.9_x64-setup.exe`（SHA-256 `9f500a8aa7252eef084d35b3cdebebc3ae0939872e1a3a3aa6386a543b50c0`）和 MSI `ChatOS_3.0.9_x64_en-US.msi`（SHA-256 `35fd95bd85f805670cbabfc99d6b0bc6f896a788394158c3d003817092c126ea`）。`smoke-installed-app.ps1` 在隔离目录执行安装、2 次真实 `ChatOS` 原生窗口启动、资源与 sidecar hash 校验、自动退出、卸载和用户数据清理，全部通过（安装/卸载退出码 `0`，启动退出码 `0`，`p50=2,599 ms`、`p95=3,004 ms`）；报告为 `%TEMP%\\chatos-windows-install-smoke-latest.json`。`smoke-installed-hook.ps1` 同包通过已安装 Host health、Hook Bundle 存储/激活、`continue=false` 阻断、Host 重启恢复和卸载（全部退出码 `0`），报告为 `%TEMP%\\chatos-windows-installed-hook-smoke-latest.json`。

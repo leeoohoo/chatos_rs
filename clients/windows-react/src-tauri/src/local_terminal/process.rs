@@ -22,6 +22,8 @@ pub(super) struct ManagedLocalTerminal {
     pub(super) shell_name: String,
     master: StandardMutex<Option<Box<dyn MasterPty + Send>>>,
     writer: StandardMutex<Option<Box<dyn Write + Send>>>,
+    #[cfg(windows)]
+    slave: StandardMutex<Option<Box<dyn portable_pty::SlavePty + Send>>>,
     termination: Arc<PtyProcessTermination>,
     state: StandardMutex<LocalTerminalSessionState>,
     changed: Notify,
@@ -93,14 +95,6 @@ impl ManagedLocalTerminal {
                 pixel_height: 0,
             })
             .map_err(|_| terminal_launch_error())?;
-        let reader = pty
-            .master
-            .try_clone_reader()
-            .map_err(|_| terminal_launch_error())?;
-        let writer = pty
-            .master
-            .take_writer()
-            .map_err(|_| terminal_launch_error())?;
         let mut command = CommandBuilder::new(&launch.executable);
         command.args(&launch.arguments);
         command.env_clear();
@@ -112,7 +106,22 @@ impl ManagedLocalTerminal {
             .slave
             .spawn_command(command)
             .map_err(|_| terminal_launch_error())?;
+        // ConPTY treats the slave handle as part of the child console
+        // lifetime.  Dropping it immediately after spawn can inject a
+        // control-C into short-lived children on Windows, so retain it
+        // until the wait path has observed process termination.
+        #[cfg(windows)]
+        let slave = pty.slave;
+        #[cfg(not(windows))]
         drop(pty.slave);
+        let reader = pty
+            .master
+            .try_clone_reader()
+            .map_err(|_| terminal_launch_error())?;
+        let writer = pty
+            .master
+            .take_writer()
+            .map_err(|_| terminal_launch_error())?;
         let process_group = process_group(&*pty.master);
         let termination = match PtyProcessTermination::attach(&*child, process_group) {
             Ok(termination) => Arc::new(termination),
@@ -127,6 +136,8 @@ impl ManagedLocalTerminal {
             shell_name: launch.shell_name.clone(),
             master: StandardMutex::new(Some(pty.master)),
             writer: StandardMutex::new(Some(writer)),
+            #[cfg(windows)]
+            slave: StandardMutex::new(Some(slave)),
             termination: termination.clone(),
             state: StandardMutex::new(LocalTerminalSessionState {
                 running: true,
@@ -252,6 +263,10 @@ impl ManagedLocalTerminal {
         if let Ok(mut master) = self.master.lock() {
             master.take();
         }
+        #[cfg(windows)]
+        if let Ok(mut slave) = self.slave.lock() {
+            slave.take();
+        }
         drop(state);
         self.release_resource();
         self.changed.notify_waiters();
@@ -269,6 +284,10 @@ impl ManagedLocalTerminal {
         }
         if let Ok(mut writer) = self.writer.lock() {
             writer.take();
+        }
+        #[cfg(windows)]
+        if let Ok(mut slave) = self.slave.lock() {
+            slave.take();
         }
         self.release_resource();
         self.changed.notify_waiters();
