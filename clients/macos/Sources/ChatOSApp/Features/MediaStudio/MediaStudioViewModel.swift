@@ -83,10 +83,6 @@ final class MediaStudioViewModel: ObservableObject {
     @Published private(set) var isSavingWorkflow = false
     @Published private(set) var isRunningWorkflow = false
     @Published private(set) var workflowNodeStates: [UUID: WorkflowNodeState] = [:]
-    @Published var isPresentingWorkflowRunInput = false
-    @Published var workflowRunPrompt = ""
-    @Published private(set) var workflowRunImages: [ImageGenerationInputImage] = []
-    @Published private(set) var isLoadingWorkflowRunImages = false
 
     private let service: any MediaGenerationServicing
     private let imageGenerationUseCase: MediaStudioImageGenerationUseCase
@@ -125,7 +121,6 @@ final class MediaStudioViewModel: ObservableObject {
     private var imageReferenceState = MediaStudioImageReferenceState()
     private var workflowPersistenceTask: Task<Void, Never>?
     private var workflowRunTask: Task<Void, Never>?
-    private var workflowRunImageTask: Task<Void, Never>?
     private var hasLoadedWorkflows = false
 
     init(
@@ -195,7 +190,6 @@ final class MediaStudioViewModel: ObservableObject {
         videoAudioTask?.cancel()
         workflowPersistenceTask?.cancel()
         workflowRunTask?.cancel()
-        workflowRunImageTask?.cancel()
         inputArtifacts.removeAll()
     }
 
@@ -445,50 +439,17 @@ final class MediaStudioViewModel: ObservableObject {
     }
 
     func openWorkflow(_ workflow: MediaStudioWorkflow) {
-        guard let ownerID else { return }
-        resetWorkflowRunInput()
         selectedWorkflowID = workflow.id
         selectedWorkflowNodeID = workflow.nodes.first?.id
         workflowNodeStates = [:]
-        workflowRunPrompt = workflow.inputPrompt
-        guard !workflow.inputImages.isEmpty else {
-            editSelectedWorkflow { $0.inputPrompt = "" }
-            return
-        }
-        let session = sessionID
-        let store = workflowStore
-        isLoadingWorkflowRunImages = true
-        workflowRunImageTask = Task { [weak self] in
-            let result: Result<[ImageGenerationInputImage], Error>
-            do {
-                result = .success(try await store.resolveImages(
-                    workflow.inputImages,
-                    workflowID: workflow.id,
-                    owner: ownerID
-                ))
-            } catch {
-                result = .failure(error)
-            }
-            guard let self, self.ownerID == ownerID, self.sessionID == session,
-                  self.selectedWorkflowID == workflow.id, !Task.isCancelled else { return }
-            switch result {
-            case let .success(images):
-                self.workflowRunImages = images
-                self.editSelectedWorkflow {
-                    $0.inputPrompt = ""
-                    $0.inputImages = []
-                }
-            case let .failure(error):
-                self.errorMessage = error.localizedDescription
-            }
-            self.isLoadingWorkflowRunImages = false
-            self.workflowRunImageTask = nil
+        editSelectedWorkflow {
+            $0.inputPrompt = ""
+            $0.inputImages = []
         }
     }
 
     func closeWorkflow() {
         guard !isRunningWorkflow else { return }
-        resetWorkflowRunInput()
         selectedWorkflowID = nil
         selectedWorkflowNodeID = nil
         workflowNodeStates = [:]
@@ -511,7 +472,6 @@ final class MediaStudioViewModel: ObservableObject {
 
     func saveSelectedWorkflow() {
         guard let ownerID, var workflow = selectedWorkflow else { return }
-        resetWorkflowRunInput()
         workflow.updatedAt = Date()
         persist(workflow, owner: ownerID, selectAfterSave: false)
     }
@@ -666,67 +626,18 @@ final class MediaStudioViewModel: ObservableObject {
         }
     }
 
-    func presentWorkflowRunInput() {
-        guard selectedWorkflow != nil, !isRunningWorkflow else { return }
-        errorMessage = nil
-        isPresentingWorkflowRunInput = true
-    }
-
-    func importWorkflowRunImage(from url: URL) {
-        guard let ownerID, let workflowID = selectedWorkflowID,
-              !isRunningWorkflow, !isLoadingWorkflowRunImages else { return }
-        guard workflowRunImages.count < MediaStudioWorkflowValidator.maximumReferenceCount else {
-            errorMessage = "本次运行最多上传 8 张图片。"
-            return
-        }
-        let session = sessionID
-        let artifacts = inputArtifacts
-        isLoadingWorkflowRunImages = true
-        workflowRunImageTask?.cancel()
-        workflowRunImageTask = Task { [weak self] in
-            let result: Result<ImageGenerationInputImage, Error>
-            do {
-                result = .success(try await artifacts.importImage(from: url))
-            } catch {
-                result = .failure(error)
-            }
-            guard let self, self.ownerID == ownerID, self.sessionID == session,
-                  self.selectedWorkflowID == workflowID, !Task.isCancelled else {
-                if case let .success(image) = result { artifacts.removeIfManaged(image.fileURL) }
-                return
-            }
-            switch result {
-            case let .success(image): self.workflowRunImages.append(image)
-            case let .failure(error): self.errorMessage = error.localizedDescription
-            }
-            self.isLoadingWorkflowRunImages = false
-            self.workflowRunImageTask = nil
-        }
-    }
-
-    func removeWorkflowRunImage(at index: Int) {
-        guard workflowRunImages.indices.contains(index), !isRunningWorkflow else { return }
-        let image = workflowRunImages.remove(at: index)
-        inputArtifacts.removeIfManaged(image.fileURL)
-    }
-
     func runSelectedWorkflow() {
         guard let ownerID, let workflow = selectedWorkflow,
               let runner = workflowRunner, !isRunningWorkflow,
-              !isLoadingModels, !isLoadingHistory, !isLoadingWorkflowRunImages else {
+              !isLoadingModels, !isLoadingHistory else {
             if workflowRunner == nil { errorMessage = "工作流文本服务尚未配置。" }
             return
         }
-        let input = MediaStudioWorkflowRunInput(
-            prompt: workflowRunPrompt,
-            images: workflowRunImages
-        )
-        do { try validateModels(for: workflow, inputImages: input.images) } catch {
+        do { try validateModels(for: workflow) } catch {
             errorMessage = error.localizedDescription
             return
         }
         let session = sessionID
-        isPresentingWorkflowRunInput = false
         isRunningWorkflow = true
         workflowNodeStates = [:]
         errorMessage = nil
@@ -735,7 +646,6 @@ final class MediaStudioViewModel: ObservableObject {
             do {
                 let result = try await runner.run(
                     workflow,
-                    input: input,
                     owner: ownerID,
                     sessionEpoch: session
                 ) { [weak self] event in
@@ -816,12 +726,9 @@ final class MediaStudioViewModel: ObservableObject {
         }
     }
 
-    private func validateModels(
-        for workflow: MediaStudioWorkflow,
-        inputImages: [ImageGenerationInputImage]
-    ) throws {
+    private func validateModels(for workflow: MediaStudioWorkflow) throws {
         try MediaStudioWorkflowValidator.validate(workflow)
-        var hasImages = !inputImages.isEmpty
+        var hasImages = false
         for node in workflow.nodes {
             switch node.kind {
             case .text:
@@ -842,16 +749,6 @@ final class MediaStudioViewModel: ObservableObject {
                 }
             }
         }
-    }
-
-    private func resetWorkflowRunInput() {
-        workflowRunImageTask?.cancel()
-        workflowRunImageTask = nil
-        isLoadingWorkflowRunImages = false
-        isPresentingWorkflowRunInput = false
-        workflowRunPrompt = ""
-        for image in workflowRunImages { inputArtifacts.removeIfManaged(image.fileURL) }
-        workflowRunImages = []
     }
 
     private func applyWorkflowEvent(_ event: MediaStudioWorkflowRunEvent) {
@@ -1417,7 +1314,6 @@ final class MediaStudioViewModel: ObservableObject {
         workflowPersistenceTask = nil
         workflowRunTask?.cancel()
         workflowRunTask = nil
-        resetWorkflowRunInput()
         hasLoaded = false
         hasLoadedHistory = false
         hasLoadedWorkflows = false

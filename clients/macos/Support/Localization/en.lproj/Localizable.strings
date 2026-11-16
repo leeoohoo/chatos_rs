@@ -807,9 +807,5 @@
 "视频节点" = "Video Node";
 "运行工作流" = "Run Workflow";
 "还没有工作流" = "No Workflows Yet";
-"上传本次需要处理的原图或参考图。" = "Upload the source or reference images for this run.";
 "开始" = "Start";
 "新建一个流程，依次连接文本、图片或视频节点。" = "Create a workflow and connect text, image, or video nodes in sequence.";
-"本次运行输入" = "Input for This Run";
-"本次需求" = "Request for This Run";
-"这些内容只用于本次运行，不会保存到工作流。" = "This content is used only for this run and is not saved to the workflow.";

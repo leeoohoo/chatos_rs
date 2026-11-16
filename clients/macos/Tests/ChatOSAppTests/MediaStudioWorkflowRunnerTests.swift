@@ -18,7 +18,6 @@ final class MediaStudioWorkflowRunnerTests: XCTestCase {
 
         let result = try await runner.run(
             workflow,
-            input: .init(prompt: "seed", images: []),
             owner: "alice",
             sessionEpoch: UUID()
         ) { _ in }
@@ -26,7 +25,8 @@ final class MediaStudioWorkflowRunnerTests: XCTestCase {
         XCTAssertEqual(result.text, "second output")
         let requests = await text.requests
         XCTAssertEqual(requests.count, 2)
-        XCTAssertTrue(requests[0].prompt.contains("seed"))
+        XCTAssertFalse(requests[0].prompt.contains("legacy input must not be used"))
+        XCTAssertTrue(requests[0].prompt.contains("first instruction"))
         XCTAssertTrue(requests[1].prompt.contains("first output"))
     }
 
@@ -47,7 +47,6 @@ final class MediaStudioWorkflowRunnerTests: XCTestCase {
         do {
             _ = try await runner.run(
                 workflow,
-                input: .init(prompt: "", images: []),
                 owner: "alice",
                 sessionEpoch: UUID()
             ) { _ in }
