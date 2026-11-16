@@ -88,6 +88,24 @@ function Assert-DirectoryIsNew {
     New-Item -ItemType Directory -Path $Path -Force | Out-Null
 }
 
+function Write-StabilityReport {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][object]$Value
+    )
+
+    $temporaryPath = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        $Value | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $temporaryPath -Encoding utf8
+        Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 $resolvedExecutable = (Resolve-Path -LiteralPath $ExecutablePath).Path
 if (-not (Test-Path -LiteralPath $resolvedExecutable -PathType Leaf) -or
     [System.IO.Path]::GetExtension($resolvedExecutable) -ne ".exe") {
@@ -139,6 +157,7 @@ try {
         throw "Release executable did not expose a native '$ExpectedWindowTitle' window."
     }
     $report.nativeWindowObserved = $true
+    Write-StabilityReport -Path $ReportPath -Value $report
 
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     while ($watch.Elapsed.TotalSeconds -lt $DurationSeconds) {
@@ -154,6 +173,7 @@ try {
             threadCount = $launched.Threads.Count
             windowTitle = $launched.MainWindowTitle
         }
+        Write-StabilityReport -Path $ReportPath -Value $report
         $remaining = $DurationSeconds - $watch.Elapsed.TotalSeconds
         if ($remaining -gt 0) {
             Start-Sleep -Seconds ([Math]::Max(1, [Math]::Min($SampleIntervalSeconds, [int][Math]::Ceiling($remaining))))
@@ -210,7 +230,7 @@ finally {
         }
     }
     $report.completedAtUtc = [DateTimeOffset]::UtcNow.ToString("O")
-    $report | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $ReportPath -Encoding utf8
+    Write-StabilityReport -Path $ReportPath -Value $report
     Write-Host "Windows long stability report: $ReportPath"
 }
 
