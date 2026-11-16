@@ -22,6 +22,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-17 全量 Tauri Rust 回归首次暴露 AppContainer Git fixture 在 `where.exe` 选中 Codex 私有 Git 时的环境依赖（Win32 2）；测试现优先选择标准 `Program Files\\Git\\cmd\\git.exe`，仅在其不存在时回退 PATH。修正后 AppContainer 模块 `16 passed, 0 failed`，Tauri `--all-targets` 为 `599 passed, 0 failed, 6 ignored`；Rustfmt 与 Clippy `-D warnings` 均通过。该修正只稳定测试 fixture，不改变运行时隔离逻辑。
 
+- 2026-11-17 在本机补跑全部默认 ignored 的 Windows 外部集成回归：设置 `CHATOS_LOCAL_AGENT_HOST_TEST_PATH` 指向当前 Release Host 后，Host sidecar 健康握手/账号隔离为 `2 passed, 0 failed`；标准 Git、Node/npm 和公开网络可用时，Plugin installer 的 Git HTTPS、Node MCP、npm Registry 获取与 npm MCP 隔离预检为 `4 passed, 0 failed`。这些测试仍保留 ignored 标记，避免无外部依赖的 CI 默认运行；本轮不把公开服务、Node/npm 或 Release sidecar 的可用性误记为发布环境保证。
+
 - 2026-11-16 重新生成当前 HEAD 的 Windows Release（`AWS_LC_SYS_PREBUILT_NASM=1 npm run tauri -- build --no-bundle`）并做原生窗口 smoke：产物为 `target-shared/release/chatos-windows-react.exe`，SHA-256 `843046802714c526beb33a2db8f46567644e80606ff1f2ee14b466f592d7feaf`。真实窗口标题为 `ChatOS`，登录页无障碍树暴露标题、`auth-username`、`auth-password`、登录和创建账号入口；没有自动填充、读取或提交认证信息，随后正常关闭窗口。由于 Computer Use 禁止代理认证窗口，登录后页面和依赖登录的 Run/视觉逐态仍不写成已验收。
 
 - 2026-11-16 在当前 HEAD 与该 Release 构建后重跑受控网络与 Plugin 应用 runtime 定向回归：`controlled_network_policy`（含认证 client URL）为 `5 passed, 0 failed`，`plugin_application` 为 `36 passed, 0 failed`。这确认策略签名/目的地匹配输入和受限 Plugin runtime 没有回归，但仍不等于目标级 WFP/等价出站规则已经接入；测试生成的 `target-shared/debug` 已在确认无 cargo/rustc/npm/ChatOS 构建进程后删除。
