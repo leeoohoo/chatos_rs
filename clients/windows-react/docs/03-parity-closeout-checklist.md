@@ -24,6 +24,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 重新执行 Controlled Network 定向回归：Local Connector backend `controlled_network` 为 `6 passed, 0 failed`；Windows Tauri `controlled_network_policy` 在设置 `AWS_LC_SYS_PREBUILT_NASM=1` 后为 `5 passed, 0 failed`。覆盖策略 URL 上下文编码、owner/device/workspace/SID 绑定、Ed25519 签名、过期、域名/IP/通配符/端口和未知 key 拒绝。该结果确认策略生成与验签稳定；目标/目的地级 WFP/等价出站强制仍未实现，因此继续保留为未完成项。
 
+- 2026-11-16 使用 `AWS_LC_SYS_PREBUILT_NASM=1` 重跑当前工作树 Windows Tauri 全量单测：`591 passed, 0 failed, 6 ignored`（`90.90s`）。AppContainer、任务审查、Plugin runtime、媒体、Story、远程连接、权限审批、Controlled Network 和项目运行等现有本机门禁均通过；6 项仍为明确要求外部 sidecar/环境的 ignored 测试。本轮没有运行逻辑改动，工作区保持干净。
+
 - 2026-11-16 完成 Computer Use 安装后 Windows 实测：已安装的 `Visual Computer Use 0.9.0` x64 worker 通过 `--doctor`（`screenCaptureAvailable=true`、`inputDesktopAvailable=true`、`allGranted=true`），真实 stdio MCP `initialize`/`tools/list` 暴露 11 个工具，`check_permissions` 与 `observe_screen` 均返回有效结构化结果和带虚拟准星的真实截图。安装后首次尝试从 UI 切换本机 Plugin 时复现 Marketplace 短暂不可用导致的“无法确认 Plugin 来源”误拦截；Windows 宿主已改为对已安装、`local-plugin-*`/`local-release-*` 的本机包允许独立启停，同时继续对 Marketplace 包执行来源门禁。`plugin_settings` 定向回归 `19 passed, 0 failed`，Release 构建成功并已推送提交 `d1bdeef93`。重启后的正式 Release 需要重新登录才能继续 UI 开关闭环；Computer Use 安全规则不允许代理认证窗口，因此未伪造登录后视觉证据。
 
 - 2026-11-16 使用已安装的 Windows x64 worker 完成专用输入 smoke：为避免 Notepad 历史文档污染，创建一个空临时文件并由 worker 激活其 Notepad 窗口，依次执行真实 `Ctrl+A`、`type_text("chatos-worker-input-smoke")`、`Ctrl+S`、`Alt+F4`；所有 MCP action 均无错误，保存后文件内容精确匹配，随后关闭 Notepad、worker 并删除该临时文件。该结果关闭 Windows Computer Use 的专用输入闭环缺口；不替代正式签名 Marketplace 发布、干净 VM 和管理员/UIPI 目标矩阵。
