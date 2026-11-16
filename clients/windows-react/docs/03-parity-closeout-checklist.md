@@ -22,6 +22,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 对同一未签名 NSIS 安装包补做 10 次隔离冷启动回归：每次都观察到安装路径下真实 `ChatOS` 原生窗口、进程路径和应用自退出，安装/卸载退出码均为 `0`，sidecar/resource 校验、用户数据隔离与清理均通过；启动耗时 `p50=2,623 ms`、`p95=2,967 ms`，报告为 `%TEMP%\\chatos-windows-install-smoke-10-latest.json`。该结果加强本机短时稳定性基线，但仍不替代 8 小时长稳、干净 VM 首次扫描或正式签名 SmartScreen 验收。
 
+- 2026-11-16 重新执行 Controlled Network 定向回归：Local Connector backend `controlled_network` 为 `6 passed, 0 failed`；Windows Tauri `controlled_network_policy` 在设置 `AWS_LC_SYS_PREBUILT_NASM=1` 后为 `5 passed, 0 failed`。覆盖策略 URL 上下文编码、owner/device/workspace/SID 绑定、Ed25519 签名、过期、域名/IP/通配符/端口和未知 key 拒绝。该结果确认策略生成与验签稳定；目标/目的地级 WFP/等价出站强制仍未实现，因此继续保留为未完成项。
+
 - 2026-11-16 完成 Computer Use 安装后 Windows 实测：已安装的 `Visual Computer Use 0.9.0` x64 worker 通过 `--doctor`（`screenCaptureAvailable=true`、`inputDesktopAvailable=true`、`allGranted=true`），真实 stdio MCP `initialize`/`tools/list` 暴露 11 个工具，`check_permissions` 与 `observe_screen` 均返回有效结构化结果和带虚拟准星的真实截图。安装后首次尝试从 UI 切换本机 Plugin 时复现 Marketplace 短暂不可用导致的“无法确认 Plugin 来源”误拦截；Windows 宿主已改为对已安装、`local-plugin-*`/`local-release-*` 的本机包允许独立启停，同时继续对 Marketplace 包执行来源门禁。`plugin_settings` 定向回归 `19 passed, 0 failed`，Release 构建成功并已推送提交 `d1bdeef93`。重启后的正式 Release 需要重新登录才能继续 UI 开关闭环；Computer Use 安全规则不允许代理认证窗口，因此未伪造登录后视觉证据。
 
 - 2026-11-16 使用已安装的 Windows x64 worker 完成专用输入 smoke：为避免 Notepad 历史文档污染，创建一个空临时文件并由 worker 激活其 Notepad 窗口，依次执行真实 `Ctrl+A`、`type_text("chatos-worker-input-smoke")`、`Ctrl+S`、`Alt+F4`；所有 MCP action 均无错误，保存后文件内容精确匹配，随后关闭 Notepad、worker 并删除该临时文件。该结果关闭 Windows Computer Use 的专用输入闭环缺口；不替代正式签名 Marketplace 发布、干净 VM 和管理员/UIPI 目标矩阵。
