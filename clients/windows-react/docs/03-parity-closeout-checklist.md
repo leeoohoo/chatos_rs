@@ -36,6 +36,7 @@ Windows 产品版本：`3.0.9`
 - 2026-11-16 修正 ConPTY 压力探针：PowerShell 启动时会先发出 `ESC[6n` 光标位置查询，原始 PTY 测试已按真实终端回复 `ESC[1;1R`，不再把未实现终端仿真误判为产品失败。新增真实 Windows `local_terminal` 回归：PowerShell `exit` 在 15 秒内自然终止，并连续产生至少 1 MiB 输出后在同一门限内终止；两项均 `1 passed, 0 failed`。这关闭了本机自然退出/1 MiB 背压门禁，但不替代 8 小时长稳与更大规模性能基线。
 - 2026-11-16 在提交 `d34ff709c` 后完成全量门禁复核：Windows Tauri Rust `597 passed, 0 failed, 6 ignored`（603 项）；React/Vitest `145` 个测试文件、`536 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture` 和 `npm run audit:bundle` 均通过，入口 Bundle `456.97 KiB raw / 137.71 KiB gzip`。确认无构建或 ChatOS 进程后，清理本轮生成的 `target-shared/debug`（约 4.2 GiB）和历史 `target-shared/x86_64-pc-windows-msvc`（约 0.77 GiB），当前 `target-shared/release` 保持不变。
 - 2026-11-16 为万级消息性能基线补充真实 Host SQLite 回归（提交 `ccdfca086`）：写入 10,000 条账号隔离会话消息，按协议上限每页 100 条读取 100 页；每页严格有界、消息顺序稳定、游标单调递减且最终完整覆盖 10,000 条，单测耗时约 1.4 秒。数据库 crate 全量回归 `222 passed, 0 failed`，Clippy `-D warnings` 和 Rustfmt 均通过。这关闭了万级消息分页/游标的代码基线缺口，但不替代真实 Release 窗口渲染和 8 小时长稳验收。
+- 2026-11-16 将项目目录边界回归扩大到 11,000 个真实文件：目录列表仍严格截断到 5,000 项并标记 `is_truncated`，文件名搜索在调用方上限内返回并标记截断；定向 `project_filesystem` 测试通过（约 2.9 秒），Windows Tauri Clippy `-D warnings` 和 Rustfmt 通过。该证据加强大目录短时性能/边界基线，但不替代 8 小时长稳与真实窗口滚动验收。
 
 - 2026-11-16 收紧 Windows 本机终端启动环境：PowerShell 现在固定使用 `-NoLogo -NoProfile`，避免用户 profile 改写受控环境、输出和退出语义；Windows 启动参数与 allowlisted environment 回归 `5 passed, 0 failed`。这改善了确定性，但不替代尚未通过的 ConPTY 大输出压力测试。
 
