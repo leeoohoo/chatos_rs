@@ -1173,7 +1173,7 @@ mod tests {
     #[test]
     fn large_directories_are_bounded_for_listing_and_name_search() {
         let root = tempfile::tempdir().unwrap();
-        for index in 0..(MAXIMUM_DIRECTORY_ENTRIES + 1_000) {
+        for index in 0..(MAXIMUM_DIRECTORY_ENTRIES * 2 + 1_000) {
             fs::write(
                 root.path().join(format!("entry-{index:05}-needle.txt")),
                 "needle",
