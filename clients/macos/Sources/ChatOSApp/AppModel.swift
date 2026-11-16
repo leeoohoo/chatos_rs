@@ -144,6 +144,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let agentGroupChatScheduler: LocalAgentGroupChatScheduler
     let machineResourceSnapshotProvider: NativeClientMachineResourceSnapshotProvider
     let machineResourcePressureMonitor: ClientMachineResourcePressureMonitor
+    let machineConcurrencyAllocator: ClientMachineConcurrencyAllocator
     let agentGroupChatBuilderService: LocalAgentBuilderService
     let notepadService: NativeLocalAgentNotepadService
     let wechatCompanionService: ChatOSWeChatCompanionService
@@ -531,6 +532,16 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 await localAgentHost?.updateResourcePressure(level)
             }
         )
+        self.machineConcurrencyAllocator = ClientMachineConcurrencyAllocator(
+            budget: RuntimeConfiguration.clientResourceBudget,
+            governor: .shared,
+            hostSnapshot: {
+                await localAgentHost?.resourceSnapshot()
+            },
+            hostTargetUpdate: { target in
+                await localAgentHost?.updateConcurrencyTarget(target) ?? false
+            }
+        )
         self.agentGroupChatBuilderService = LocalAgentBuilderService(
             groupChatService: agentGroupChatService,
             projectsService: localProjectsService,
@@ -702,6 +713,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             refreshLocalAgentControlPlane(ownerUserID: ownerUserID, force: true)
         }
         machineResourcePressureMonitor.start()
+        Task { await machineConcurrencyAllocator.start() }
         authentication.start()
     }
 

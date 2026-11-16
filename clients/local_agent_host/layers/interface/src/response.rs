@@ -63,6 +63,7 @@ pub enum HostResult {
     },
     SchedulerPressureUpdated {
         pressure_level: crate::LocalAgentResourcePressureLevel,
+        target_concurrent_work_items: usize,
         effective_maximum_concurrent_work_items: usize,
     },
     SchedulerAdmissionUpdated {
@@ -245,6 +246,7 @@ pub enum HostResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalAgentHostSchedulerSnapshot {
     pub maximum_concurrent_work_items: usize,
+    pub target_concurrent_work_items: usize,
     pub effective_maximum_concurrent_work_items: usize,
     pub pressure_level: crate::LocalAgentResourcePressureLevel,
     pub active_work_items: usize,

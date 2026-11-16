@@ -23,6 +23,7 @@ final class NativeClientResourceBudgetPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(machine.maximumAgentRuns, native.swiftAgentRuns)
+        XCTAssertFalse(native.allowsDynamicBorrowing)
         XCTAssertEqual(
             machine.reservedHostResourceUnits,
             native.localAgentHostWorkItems * ClientMachineResourceBudget.agentRunUnitCost
@@ -40,8 +41,11 @@ final class NativeClientResourceBudgetPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(budget.totalLogicalJobs, 10)
-        XCTAssertEqual(budget.localAgentHostWorkItems, 2)
-        XCTAssertEqual(budget.swiftAgentRuns, 8)
+        XCTAssertEqual(budget.localAgentHostWorkItems, 5)
+        XCTAssertEqual(budget.swiftAgentRuns, 5)
+        XCTAssertEqual(budget.maximumLocalAgentHostWorkItems, 9)
+        XCTAssertEqual(budget.maximumSwiftAgentRuns, 9)
+        XCTAssertTrue(budget.allowsDynamicBorrowing)
         XCTAssertEqual(
             budget.localAgentHostWorkItems + budget.swiftAgentRuns,
             budget.totalLogicalJobs
@@ -59,6 +63,7 @@ final class NativeClientResourceBudgetPolicyTests: XCTestCase {
         XCTAssertEqual(budget.totalLogicalJobs, 5)
         XCTAssertEqual(budget.localAgentHostWorkItems, 4)
         XCTAssertEqual(budget.swiftAgentRuns, 1)
+        XCTAssertFalse(budget.allowsDynamicBorrowing)
     }
 
     func testInvalidConfigurationFallsBackToAdaptiveBounds() {
@@ -87,16 +92,16 @@ final class NativeClientResourceBudgetPolicyTests: XCTestCase {
             physicalMemoryBytes: 8 * 1_024 * 1_024 * 1_024
         )
         XCTAssertEqual(memoryBound.totalLogicalJobs, 3)
-        XCTAssertEqual(memoryBound.localAgentHostWorkItems, 1)
-        XCTAssertEqual(memoryBound.swiftAgentRuns, 2)
+        XCTAssertEqual(memoryBound.localAgentHostWorkItems, 2)
+        XCTAssertEqual(memoryBound.swiftAgentRuns, 1)
 
         let processorBound = NativeClientResourceBudgetPolicy.recommended(
             logicalProcessorCount: 8,
             physicalMemoryBytes: 96 * 1_024 * 1_024 * 1_024
         )
         XCTAssertEqual(processorBound.totalLogicalJobs, 6)
-        XCTAssertEqual(processorBound.localAgentHostWorkItems, 1)
-        XCTAssertEqual(processorBound.swiftAgentRuns, 5)
+        XCTAssertEqual(processorBound.localAgentHostWorkItems, 3)
+        XCTAssertEqual(processorBound.swiftAgentRuns, 3)
     }
 
     func testExecutionGovernorCancellationReturnsQueueCapacity() async throws {

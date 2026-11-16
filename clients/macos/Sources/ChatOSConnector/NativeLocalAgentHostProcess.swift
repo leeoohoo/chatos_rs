@@ -82,7 +82,10 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         try validateMemoryConfiguration(configuration)
         guard NativeLocalAgentConcurrencyPolicy.validated(
             configuration.maximumConcurrentWorkItems
-        ) != nil else {
+        ) != nil,
+              (1...configuration.maximumConcurrentWorkItems).contains(
+                configuration.initialConcurrentWorkItems
+              ) else {
             throw NativeLocalAgentHostError.invalidConfiguration(
                 "Local Agent Host concurrency is outside the supported range."
             )
@@ -341,6 +344,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         }
         return .init(
             maximumConcurrentWorkItems: scheduler.maximumConcurrentWorkItems,
+            targetConcurrentWorkItems: scheduler.targetConcurrentWorkItems,
             effectiveMaximumConcurrentWorkItems:
                 scheduler.effectiveMaximumConcurrentWorkItems,
             pressureLevel: scheduler.pressureLevel,
@@ -355,6 +359,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
 
     func updateSchedulerPressure(
         _ pressureLevel: NativeLocalAgentHostPressureLevel,
+        targetConcurrentWorkItems: Int,
         timeoutMilliseconds: Int
     ) async throws {
         let commandID = "native-pressure-\(UUID().uuidString.lowercased())"
@@ -363,7 +368,8 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             commandId: commandID,
             command: .init(
                 type: "set_scheduler_pressure",
-                pressureLevel: pressureLevel
+                pressureLevel: pressureLevel,
+                targetConcurrentWorkItems: targetConcurrentWorkItems
             )
         )
         let payload = try await roundTripAsync(
@@ -379,6 +385,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
               response.ok,
               response.result?.type == "scheduler_pressure_updated",
               response.result?.pressureLevel == pressureLevel,
+              response.result?.targetConcurrentWorkItems == targetConcurrentWorkItems,
               let effective = response.result?.effectiveMaximumConcurrentWorkItems,
               NativeLocalAgentConcurrencyPolicy.validated(effective) != nil else {
             throw NativeLocalAgentHostError.invalidResponse
@@ -621,6 +628,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             "--database", database.path,
             "--owner-user-id", ownerUserID,
             "--max-concurrent-work-items", String(configuration.maximumConcurrentWorkItems),
+            "--initial-concurrent-work-items", String(configuration.initialConcurrentWorkItems),
         ]
         if let baseURL = configuration.memoryBaseURL,
            let sourceID = configuration.memorySourceID {
@@ -912,6 +920,7 @@ struct NativeLocalAgentHealthResult: Codable, Equatable {
 
 struct NativeLocalAgentHealthScheduler: Codable, Equatable {
     let maximumConcurrentWorkItems: Int
+    let targetConcurrentWorkItems: Int
     let effectiveMaximumConcurrentWorkItems: Int
     let pressureLevel: NativeLocalAgentHostPressureLevel
     let activeWorkItems: Int
@@ -923,6 +932,7 @@ struct NativeLocalAgentHealthScheduler: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case maximumConcurrentWorkItems
+        case targetConcurrentWorkItems
         case effectiveMaximumConcurrentWorkItems
         case pressureLevel
         case activeWorkItems
@@ -938,6 +948,10 @@ struct NativeLocalAgentHealthScheduler: Codable, Equatable {
         maximumConcurrentWorkItems = try container.decode(
             Int.self,
             forKey: .maximumConcurrentWorkItems
+        )
+        targetConcurrentWorkItems = try container.decode(
+            Int.self,
+            forKey: .targetConcurrentWorkItems
         )
         effectiveMaximumConcurrentWorkItems = try container.decode(
             Int.self,
@@ -966,6 +980,7 @@ struct NativeLocalAgentHealthScheduler: Codable, Equatable {
 
     var isValid: Bool {
         NativeLocalAgentConcurrencyPolicy.validated(maximumConcurrentWorkItems) != nil
+            && (1...maximumConcurrentWorkItems).contains(targetConcurrentWorkItems)
             && (1...maximumConcurrentWorkItems).contains(
                 effectiveMaximumConcurrentWorkItems
             )
@@ -987,6 +1002,7 @@ private struct NativeLocalAgentSchedulerPressureRequest: Codable {
 private struct NativeLocalAgentSchedulerPressureCommand: Codable {
     let type: String
     let pressureLevel: NativeLocalAgentHostPressureLevel
+    let targetConcurrentWorkItems: Int
 }
 
 private struct NativeLocalAgentSchedulerPressureResponse: Codable {
@@ -999,6 +1015,7 @@ private struct NativeLocalAgentSchedulerPressureResponse: Codable {
 private struct NativeLocalAgentSchedulerPressureResult: Codable {
     let type: String
     let pressureLevel: NativeLocalAgentHostPressureLevel
+    let targetConcurrentWorkItems: Int
     let effectiveMaximumConcurrentWorkItems: Int
 }
 

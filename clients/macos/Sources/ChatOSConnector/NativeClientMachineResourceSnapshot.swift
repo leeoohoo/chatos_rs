@@ -188,7 +188,7 @@ public struct NativeClientMachineResourceSnapshotProvider: Sendable {
         let sharedPool = machineSnapshot.map {
             NativeClientSharedResourcePoolSnapshot(
                 poolID: poolID,
-                configuredResourceUnits: $0.budget.availableResourceUnits,
+                configuredResourceUnits: $0.budget.maximumAvailableResourceUnits,
                 availableResourceUnits: $0.capacity.effectiveResourceUnits,
                 maximumBackgroundResourceUnits: $0.capacity.maximumBackgroundResourceUnits,
                 usedResourceUnits: $0.usedResourceUnits,

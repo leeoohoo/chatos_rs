@@ -365,6 +365,14 @@ impl LocalAgentHostAssembly {
         Ok(self)
     }
 
+    pub fn with_target_concurrent_work_items(mut self, target: usize) -> Result<Self, String> {
+        let coordinator = Arc::try_unwrap(self.coordinator).map_err(|_| {
+            "Local Agent coordinator concurrency must be configured before sharing".to_string()
+        })?;
+        self.coordinator = Arc::new(coordinator.with_target_concurrent_work_items(target)?);
+        Ok(self)
+    }
+
     pub fn runtime(&self) -> Arc<LocalAgentRuntime> {
         Arc::clone(&self.runtime)
     }

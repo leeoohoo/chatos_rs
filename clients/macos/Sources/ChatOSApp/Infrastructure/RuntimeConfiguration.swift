@@ -23,6 +23,10 @@ enum RuntimeConfiguration {
         clientResourceBudget.localAgentHostWorkItems
     }
 
+    static var localAgentHostSchedulerMaximumConcurrentWorkItems: Int {
+        clientResourceBudget.maximumLocalAgentHostWorkItems
+    }
+
     static var swiftAgentMaximumConcurrentRuns: Int {
         clientResourceBudget.swiftAgentRuns
     }
@@ -84,7 +88,8 @@ enum RuntimeConfiguration {
             databaseURL: database,
             memoryBaseURL: memoryBaseURL,
             memorySourceID: nonEmptyEnvironmentValue("CHATOS_MEMORY_SOURCE_ID") ?? "chatos",
-            maximumConcurrentWorkItems: localAgentMaximumConcurrentWorkItems
+            maximumConcurrentWorkItems: localAgentHostSchedulerMaximumConcurrentWorkItems,
+            initialConcurrentWorkItems: localAgentMaximumConcurrentWorkItems
         )
     }
 

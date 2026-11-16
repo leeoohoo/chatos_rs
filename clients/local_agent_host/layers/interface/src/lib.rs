@@ -137,7 +137,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 52;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 53;
 /// Maximum bytes in one physical IPC frame. The high bit of the frame prefix is reserved
 /// as the continuation flag, so this limit must stay below `i32::MAX`.
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
@@ -264,7 +264,8 @@ pub enum HostCommand {
 impl HostCommand {
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            Self::Health | Self::SetSchedulerPressure(_) | Self::SetSchedulerAdmission(_) => Ok(()),
+            Self::Health | Self::SetSchedulerAdmission(_) => Ok(()),
+            Self::SetSchedulerPressure(command) => command.validate(),
             Self::GetMemorySyncStatus(command) => command.validate(),
             Self::PutModelConfigSnapshot(command) => command.validate(),
             Self::GetModelConfigSnapshot(command) => command.validate(),
@@ -364,6 +365,16 @@ pub enum LocalAgentResourcePressureLevel {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SetSchedulerPressureCommand {
     pub pressure_level: LocalAgentResourcePressureLevel,
+    pub target_concurrent_work_items: usize,
+}
+
+impl SetSchedulerPressureCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=16).contains(&self.target_concurrent_work_items) {
+            return Err("target_concurrent_work_items must be between 1 and 16".to_string());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

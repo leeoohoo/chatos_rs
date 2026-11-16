@@ -583,6 +583,7 @@ fn read_only_ipc_does_not_wake_scheduler_or_signal_activity() {
             chatos_local_agent_protocol::SetSchedulerPressureCommand {
                 pressure_level:
                     chatos_local_agent_protocol::LocalAgentResourcePressureLevel::Elevated,
+                target_concurrent_work_items: 1,
             },
         ),
         HostCommand::SetSchedulerAdmission(

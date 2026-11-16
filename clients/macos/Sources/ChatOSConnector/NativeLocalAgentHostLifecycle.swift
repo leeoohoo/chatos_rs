@@ -14,7 +14,7 @@ public extension Notification.Name {
 }
 
 enum NativeLocalAgentHostProtocol {
-    static let version = 52
+    static let version = 53
 }
 
 public enum NativeLocalAgentHostPressureLevel: String, Codable, Sendable, Comparable {
@@ -40,6 +40,7 @@ public enum NativeLocalAgentHostPressureLevel: String, Codable, Sendable, Compar
 
 public struct NativeLocalAgentHostResourceSnapshot: Sendable, Equatable {
     public let maximumConcurrentWorkItems: Int
+    public let targetConcurrentWorkItems: Int
     public let effectiveMaximumConcurrentWorkItems: Int
     public let pressureLevel: NativeLocalAgentHostPressureLevel
     public let activeWorkItems: Int
@@ -51,6 +52,7 @@ public struct NativeLocalAgentHostResourceSnapshot: Sendable, Equatable {
 
     public init(
         maximumConcurrentWorkItems: Int,
+        targetConcurrentWorkItems: Int? = nil,
         effectiveMaximumConcurrentWorkItems: Int,
         pressureLevel: NativeLocalAgentHostPressureLevel,
         activeWorkItems: Int,
@@ -61,6 +63,8 @@ public struct NativeLocalAgentHostResourceSnapshot: Sendable, Equatable {
         admissionInFlightWorkItems: Int = 0
     ) {
         self.maximumConcurrentWorkItems = maximumConcurrentWorkItems
+        self.targetConcurrentWorkItems = targetConcurrentWorkItems
+            ?? effectiveMaximumConcurrentWorkItems
         self.effectiveMaximumConcurrentWorkItems = effectiveMaximumConcurrentWorkItems
         self.pressureLevel = pressureLevel
         self.activeWorkItems = activeWorkItems
@@ -92,13 +96,27 @@ public struct NativeClientResourceBudget: Sendable, Equatable {
     public let totalLogicalJobs: Int
     public let localAgentHostWorkItems: Int
     public let swiftAgentRuns: Int
+    public let allowsDynamicBorrowing: Bool
 
-    public init(totalLogicalJobs: Int, localAgentHostWorkItems: Int) {
+    public init(
+        totalLogicalJobs: Int,
+        localAgentHostWorkItems: Int,
+        allowsDynamicBorrowing: Bool = true
+    ) {
         precondition(totalLogicalJobs >= 2)
         precondition((1..<totalLogicalJobs).contains(localAgentHostWorkItems))
         self.totalLogicalJobs = totalLogicalJobs
         self.localAgentHostWorkItems = localAgentHostWorkItems
         self.swiftAgentRuns = totalLogicalJobs - localAgentHostWorkItems
+        self.allowsDynamicBorrowing = allowsDynamicBorrowing
+    }
+
+    public var maximumLocalAgentHostWorkItems: Int {
+        allowsDynamicBorrowing ? totalLogicalJobs - 1 : localAgentHostWorkItems
+    }
+
+    public var maximumSwiftAgentRuns: Int {
+        allowsDynamicBorrowing ? totalLogicalJobs - 1 : swiftAgentRuns
     }
 }
 
@@ -145,14 +163,14 @@ public enum NativeClientResourceBudgetPolicy {
         let total = configuredTotalLogicalJobs.flatMap(validatedTotal) ?? adaptiveTotal
         // Keep one slot for the Swift Agent runtime. A legacy Host override remains useful,
         // but it no longer permits the two runtimes to multiply their independent defaults.
-        // Give Host roughly one quarter of the budget; Swift keeps the remaining independent Run
-        // lanes so long model/network waits do not strand otherwise idle process capacity.
-        let recommendedHost = max(1, total / 4)
-        let requestedHost = configuredHostWorkItems
-            .flatMap(NativeLocalAgentConcurrencyPolicy.validated) ?? recommendedHost
+        let configuredHost = configuredHostWorkItems
+            .flatMap(NativeLocalAgentConcurrencyPolicy.validated)
+        let recommendedHost = (total + 1) / 2
+        let requestedHost = configuredHost ?? recommendedHost
         return .init(
             totalLogicalJobs: total,
-            localAgentHostWorkItems: min(total - 1, requestedHost)
+            localAgentHostWorkItems: min(total - 1, requestedHost),
+            allowsDynamicBorrowing: configuredHost == nil
         )
     }
 
@@ -172,6 +190,7 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
     public let memorySourceID: String?
     public let memoryTimeoutMilliseconds: Int
     public let maximumConcurrentWorkItems: Int
+    public let initialConcurrentWorkItems: Int
 
     public init(
         executableURL: URL,
@@ -187,7 +206,8 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
         memoryBaseURL: URL? = nil,
         memorySourceID: String? = nil,
         memoryTimeoutMilliseconds: Int = 30_000,
-        maximumConcurrentWorkItems: Int = NativeLocalAgentConcurrencyPolicy.adaptiveDefault
+        maximumConcurrentWorkItems: Int = NativeLocalAgentConcurrencyPolicy.adaptiveDefault,
+        initialConcurrentWorkItems: Int? = nil
     ) {
         self.executableURL = executableURL
         self.databaseURL = databaseURL
@@ -199,6 +219,8 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
         self.memorySourceID = memorySourceID
         self.memoryTimeoutMilliseconds = memoryTimeoutMilliseconds
         self.maximumConcurrentWorkItems = maximumConcurrentWorkItems
+        self.initialConcurrentWorkItems = initialConcurrentWorkItems
+            ?? maximumConcurrentWorkItems
     }
 }
 
@@ -236,6 +258,8 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
     private var credentialFingerprint: Data?
     private var workersEnabled = false
     private var pressureLevel: NativeLocalAgentHostPressureLevel = .normal
+    private var targetConcurrentWorkItems: Int
+    private var schedulerStateApplication: Task<Bool, Never>?
     private var pendingRecoveryLevel: NativeLocalAgentHostPressureLevel?
     private var pressureRecoveryTask: Task<Void, Never>?
     private var pressureRecoveryGeneration: UInt64 = 0
@@ -252,6 +276,7 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         precondition(pressureRecoveryDelay >= .zero)
         self.configuration = configuration
         self.pressureRecoveryDelay = pressureRecoveryDelay
+        self.targetConcurrentWorkItems = configuration.initialConcurrentWorkItems
     }
 
     public var isRunning: Bool {
@@ -291,6 +316,14 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         }
     }
 
+    public func updateConcurrencyTarget(_ target: Int) async -> Bool {
+        guard (1...configuration.maximumConcurrentWorkItems).contains(target) else {
+            return false
+        }
+        targetConcurrentWorkItems = target
+        return await applySchedulerStateToRunningProcess()
+    }
+
     private func completePressureRecovery(
         generation: UInt64,
         level: NativeLocalAgentHostPressureLevel
@@ -311,15 +344,35 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
     }
 
     private func applyPressureToRunningProcess() async {
-        guard let process = managedProcess, process.process.isRunning else { return }
-        do {
-            try await process.updateSchedulerPressure(
-                pressureLevel,
-                timeoutMilliseconds: 1_000
-            )
-        } catch {
+        _ = await applySchedulerStateToRunningProcess()
+    }
+
+    private func applySchedulerStateToRunningProcess() async -> Bool {
+        guard let process = managedProcess, process.process.isRunning else { return true }
+        let previous = schedulerStateApplication
+        let pressureLevel = pressureLevel
+        let targetConcurrentWorkItems = targetConcurrentWorkItems
+        let application = Task.detached {
+            _ = await previous?.value
+            guard process.process.isRunning else { return false }
+            do {
+                try await process.updateSchedulerPressure(
+                    pressureLevel,
+                    targetConcurrentWorkItems: targetConcurrentWorkItems,
+                    timeoutMilliseconds: 1_000
+                )
+                return true
+            } catch {
+                return false
+            }
+        }
+        schedulerStateApplication = application
+        let succeeded = await application.value
+        guard managedProcess?.identity == process.identity else { return false }
+        if !succeeded {
             await invalidateAfterTransportFailure(process)
         }
+        return succeeded
     }
 
     /// Returns a point-in-time Host scheduler view without launching or recovering the Host.
@@ -773,6 +826,7 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
             do {
                 try await managed.updateSchedulerPressure(
                     pressureLevel,
+                    targetConcurrentWorkItems: targetConcurrentWorkItems,
                     timeoutMilliseconds: 1_000
                 )
             } catch {

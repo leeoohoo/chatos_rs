@@ -104,6 +104,7 @@ extension AppModel {
 
     func prepareForApplicationTermination() {
         machineResourcePressureMonitor.stop()
+        Task { await machineConcurrencyAllocator.stop() }
         cancelAccountScopedBackgroundTasks()
         languagePreferencesLoadTask?.cancel()
         languagePreferencesLoadTask = nil
