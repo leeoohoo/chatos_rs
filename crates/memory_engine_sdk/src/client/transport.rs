@@ -544,11 +544,15 @@ mod tests {
                 )
                 .expect("write response");
         });
-        let client = MemoryEngineClient::new_platform(
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .no_proxy()
+            .build()
+            .expect("loopback test client");
+        let client = MemoryEngineClient::new_platform_with_http_client(
             format!("http://{address}/api/memory-engine/v1"),
-            Duration::from_secs(2),
-        )
-        .expect("client");
+            http,
+        );
 
         let response: serde_json::Value = client
             .send_json(reqwest::Method::GET, "/retry-probe", Option::<&()>::None)

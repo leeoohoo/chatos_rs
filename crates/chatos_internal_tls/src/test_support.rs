@@ -96,10 +96,10 @@ fn run_generator(
         // execute a `.sh` file directly (it reports ERROR_BAD_EXE_FORMAT),
         // while the Windows test environment provides WSL's `bash.exe`.
         // Convert drive paths to WSL mount paths before invoking the script.
-        return Command::new("bash")
+        Command::new("bash")
             .arg(wsl_path(generator_script))
             .arg(wsl_path(material_dir))
-            .status();
+            .status()
     }
 
     #[cfg(not(windows))]
