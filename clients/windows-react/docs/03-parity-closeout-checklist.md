@@ -40,6 +40,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-17 只读核验本机网络强制前置条件：`MpsSvc` Windows Firewall 服务为 `Running/Automatic`，Domain/Private/Public 三个配置文件均为 `AllowOutbound`，本地规则由 GPO 管理且没有应用级目标规则；`CheckNetIsolation LoopbackExempt -s` 返回空列表。该结果与现有代码审计一致：当前 `controlled` capability 仍不是目标/目的地级 WFP 或等价出站强制，不能将其写成已完成。
 
+- 2026-11-17 继续完成生产调用图审计：`AuthenticationApiClient::controlled_network_policy` 与 `verify_controlled_network_policy` 当前都只在测试中使用，真实 Agent Plugin/Plugin Application 启动链仅把 `network.client` 映射为 AppContainer `controlled` 字符串，而该字符串仍授予宽泛 `internetClient` capability；已验签 host/port 没有进入进程启动或系统过滤器。因此剩余工作不是普通用户态匹配器，而是新的特权 Network Guard/WFP 服务（或等价受信系统组件）、受认证 IPC、AppContainer SID/进程租约、默认拒绝规则、安装/卸载恢复和正式签名/干净 VM 取证。仓库历史中已删除的 C#/内核驱动只作为威胁模型参考，不直接恢复；本机普通权限无法把未加载、未验签的过滤代码冒充真实闭环。
+
 - 2026-11-17 对当前保留的 `target-shared/release/chatos-windows-react.exe` 做 Authenticode 只读核验，状态为 `NotSigned`，没有签名证书；因此正式代码签名、证书校验和 SmartScreen 信誉仍保持为外部发布依赖，未将本机可启动误记为正式发布验收。
 
 - 2026-11-17 在当前 HEAD（已包含 `origin/3.0.9.10` 最新提交）重新执行 Windows Tauri 全量回归：`cargo test --all-targets` 为 `601 passed, 0 failed, 6 ignored`，覆盖 AppContainer、受控网络策略、ConPTY/终端、任务审查、Plugin、项目运行、媒体和安装相关 native contract；本轮没有代码行为改动。测试完成后确认没有 debug 构建进程，删除本轮生成的 `target-shared/debug`，保留正式 `target-shared/release` 和正在运行的 8 小时 Release 长稳任务。
@@ -484,7 +486,7 @@ Windows 产品版本：`3.0.9`
 - [x] 重新构建 Release EXE 后完成真实窗口只读验收：`target-shared/release/chatos-windows-react.exe`（2026-11-15 20:01:19，SHA-256 `DAEA4ABE9FD9A1F1A345D9D184DF35BAF0555A786EBFD2A0285853FDCBE1D5C5`）启动后 Host 显示“本地服务已就绪”，团队运行详情实际出现“工具调用”区域；现有两条修复前失败 Run 均诚实显示“本次 Run 没有已记录的工具调用”。任务板仍为空，未发送新团队消息、未重试旧 Run。
 - [ ] Computer Use / 屏幕采集的受信发布闭环。Windows Worker 源码、x64/arm64 构建、doctor/屏幕采集 smoke 和正式 Release 消息输入/清空 smoke 已通过，但当前用户 Plugin 目录为空；还需产出跨平台 `.tgz`、进入签名 Marketplace Release，并从 Windows 客户端完成安装、启用及安装后权限/屏幕采集闭环。
 - [x] GitHub Release / 本机程序 MCP 的安装闭环。Windows 对公开 GitHub Release 固定 tag、官方 asset 地址、大小、SHA-256、ZIP/TAR.GZ 归档路径、重复/大小写冲突、链接/特殊文件和解压上限做安全预检；本机来源只接受用户明确给出的绝对普通 `.exe`。两类来源都会生成受信 `chatos.plugin.json`，复用原子安装、完整性记录、回滚和安装记录链，并在确认前后真实执行 MCP `initialize`/`tools/list`，工具清单变化会使确认指纹失效。线上公开 Release 的端到端验证仍需稳定的真实 fixture；本机已完成完整 fixture 与安全边界回归。提交 `1a9cfe01e`。
-- [ ] 访问控制的文件与网络隔离。AppContainer 文件/网络拒绝、`disabled`/`loopback`/`controlled` capability token、句柄绑定的非空目录逐项 DACL 快照、父目录临时 `FILE_TRAVERSE` 与按 SID 恢复、运行期新增项 SID 清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 拒绝，带最小环境、一次性输出捕获、长驻交互 stdio、多 workspace 租约、超时与 Job Object 回收的可复用启动器，以及独立 profile SID/journal 崩溃恢复已经通过；Agent Plugin MCP 与任务终端已迁移到独立 AppContainer，Agent Plugin 的 `network.client` 已按 manifest 映射到 `controlled`，Plugin 应用后端已接入生产受限启动路径并使用宿主 loopback 代理。普通用户调用 `CheckNetIsolation LoopbackExempt` 会被系统拒绝（Win32 5），当前剩余本机实现是细粒度目标/目的地出站规则；正式签名 Release/干净 VM 的代理取证仍需外部环境。迁移完成前继续只发布账号上下文、审批策略和现有 Job Object 进程树回收。
+- [ ] 访问控制的文件与网络隔离。AppContainer 文件/网络拒绝、`disabled`/`loopback`/`controlled` capability token、句柄绑定的非空目录逐项 DACL 快照、父目录临时 `FILE_TRAVERSE` 与按 SID 恢复、运行期新增项 SID 清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 拒绝，带最小环境、一次性输出捕获、长驻交互 stdio、多 workspace 租约、超时与 Job Object 回收的可复用启动器，以及独立 profile SID/journal 崩溃恢复已经通过；Agent Plugin MCP 与任务终端已迁移到独立 AppContainer，Plugin 应用后端已接入生产受限启动路径并使用宿主 loopback 代理。生产调用图复核确认 `network.client` 目前仍只映射到宽泛 `internetClient` capability，已验签 host/port 策略没有接入运行时。真正关闭本项需要新的特权 Network Guard/WFP 服务或等价受信系统组件、受认证 IPC、AppContainer SID/进程租约、默认拒绝、安装/卸载恢复，以及正式签名 Release/管理员环境/干净 VM 取证；普通用户调用系统网络隔离配置已返回 Win32 5。迁移完成前继续只发布账号上下文、审批策略和现有 Job Object 进程树回收，不把策略单测写成网络强制。
 
 ### P2：平台/发布质量
 
@@ -510,5 +512,5 @@ Windows 产品版本：`3.0.9`
 2. [已完成] Plugin 安装助手专用 capability、受限平台工具与原生 ChatOS Plugin 本地目录 inspect/install 闭环。
 3. [已完成] Git、固定版本 npm 来源、普通 npm MCP、常见 stdio MCP JSON、portable Agent、Codex、Claude、独立 Skill、skills-only、设置页本机目录 typed 导入与 Windows Credential Manager Secret resolver 均已完成。
 4. [外部依赖] 完成 Computer Use `.tgz`、Marketplace 签名发布/客户端安装闭环，以及 Windows 安装包正式代码签名。
-5. [进行中] Windows AppContainer 启动、文件/网络拒绝、disabled/loopback/controlled 网络 capability、句柄绑定的非空目录逐项 ACL 租约、父目录临时 `FILE_TRAVERSE`、v1/v2/v3 journal 恢复和可复用受限进程启动器已完成；任务终端已迁移，Agent Plugin 的 `network.client` 已按 manifest 选择 `controlled`/`disabled`，Plugin 应用后端已接入宿主 loopback 代理。下一步实现细粒度目标/目的地出站规则，并在正式签名 Release/干净 VM 取证后开放第 31 页开关。审批策略和审批人已经接入真实执行门禁。
+5. [外部系统交付] Windows AppContainer 启动、文件/网络拒绝、disabled/loopback/controlled capability token、句柄绑定的非空目录逐项 ACL 租约、父目录临时 `FILE_TRAVERSE`、v1/v2/v3 journal 恢复和可复用受限进程启动器已完成；任务终端已迁移，Plugin 应用后端已接入宿主 loopback 代理。目标/目的地出站强制仍需新的特权 Network Guard/WFP 服务或等价系统组件，并在正式签名 Release、管理员安装与干净 VM 完成真实 allow/deny、崩溃恢复和卸载取证后才能开放第 31 页开关。审批策略和审批人已经接入真实执行门禁。
 6. [待验证] 工具恢复后完成 31 页原生逐页视觉、缩放和无障碍验收；升级、失败前置保护、事务中途故障回滚、客户端运行中升级、Release Host ready、8 小时长稳及安装包冷启动基线已完成，后续在一次性 VM 补强制锁/需重启场景并继续首屏与 Git Diff 实机性能基线。
