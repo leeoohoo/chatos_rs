@@ -59,8 +59,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
     func testAllChatToolsHaveCentralSkillCoverage() {
         let report = LocalAgentChatToolProvider.skillCoverageReport()
 
-        XCTAssertEqual(report.totalTools, 34)
-        XCTAssertEqual(report.coveredTools, 34)
+        XCTAssertEqual(report.totalTools, 36)
+        XCTAssertEqual(report.coveredTools, 36)
         XCTAssertTrue(report.isComplete)
         XCTAssertTrue(report.issues.isEmpty)
     }
@@ -479,6 +479,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "todo_schedule_state", "todo_start_next", "agent_cycle_complete",
                 "team_asset_list", "team_asset_get", "team_asset_create",
                 "team_asset_update", "team_asset_archive",
+                "team_asset_review_list", "team_asset_review_resolve",
                 "project_dashboard_get", "project_dashboard_update",
             ]
         )
@@ -584,7 +585,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "team_ref": teamReference,
                 "category": "overview",
                 "title": "项目概览",
-                "markdown": "# 项目概览\n\n来自已核验事实。",
+                "markdown": "# 项目概览\n\n来自已核验事实。\n",
             ])
         ))
         XCTAssertFalse(createdAsset.isError)
@@ -594,6 +595,10 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         )
         let assetReference = try XCTUnwrap(createdAssetJSON["asset_ref"] as? String)
         XCTAssertEqual(createdAssetJSON["revision"] as? Int, 1)
+        XCTAssertEqual(
+            createdAssetJSON["markdown"] as? String,
+            "# 项目概览\n\n来自已核验事实。\n"
+        )
 
         let updatedAsset = try await provider.execute(.init(
             id: "update-existing-asset",
@@ -602,7 +607,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "asset_ref": assetReference,
                 "category": "overview",
                 "title": "项目概览",
-                "markdown": "# 项目概览\n\n已合并当前进度。",
+                "markdown": "# 项目概览\n\n已合并当前进度。\n",
             ])
         ))
         XCTAssertFalse(updatedAsset.isError)
@@ -610,7 +615,10 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             JSONSerialization.jsonObject(with: Data(updatedAsset.content.utf8)) as? [String: Any]
         )
         XCTAssertEqual(updatedAssetJSON["revision"] as? Int, 2)
-        XCTAssertEqual(updatedAssetJSON["markdown"] as? String, "# 项目概览\n\n已合并当前进度。")
+        XCTAssertEqual(
+            updatedAssetJSON["markdown"] as? String,
+            "# 项目概览\n\n已合并当前进度。\n"
+        )
 
         let updatedDashboard = try await provider.execute(.init(
             id: "create-project-dashboard",
@@ -1799,6 +1807,200 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         ))
         XCTAssertFalse(requestedManagement.isError, requestedManagement.content)
         XCTAssertFalse(requestedManagement.content.contains(manager.id))
+    }
+
+    func testManagerCycleRequiresPendingAssetReviewsToBeResolved() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let service = NativeAgentGroupChatService(databaseURL: url)
+        let store = try await service.store()
+        let manager = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "项目经理",
+                rolePrompt: "维护任务与共享资产。",
+                modelConfigID: "model",
+                professionKey: "project_manager"
+            )
+        )
+        let worker = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(name: "执行者", rolePrompt: "执行任务。", modelConfigID: "model")
+        )
+        let room = try await store.createManagedRoom(
+            ownerUserID: "alice",
+            projectID: "asset-review-cycle-project",
+            draft: .init(name: "资产闭环团队"),
+            projectManagerAgentID: manager.id
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: worker.id,
+            draft: .init(role: "执行者")
+        )
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            requestKey: "asset-review-cycle-todo",
+            draft: .init(
+                title: "验证事件架构",
+                teamRoomID: room.id,
+                creatorAgentID: manager.id
+            ),
+            nowUnixMs: 100
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            update: .init(status: .inProgress),
+            nowUnixMs: 101
+        )
+        _ = try await store.appendAgentTodoProgress(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            kind: .completed,
+            runID: "asset-review-executor-run",
+            stage: "completed",
+            detail: "已完成验证。",
+            assetUpdateSuggestions: [
+                .init(
+                    category: .architecture,
+                    title: "事件驱动架构",
+                    markdown: "采用事件驱动并保持幂等。\n",
+                    rationale: "集成测试已经验证。"
+                ),
+            ],
+            nowUnixMs: 102
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            update: .init(status: .completed, result: "验证通过"),
+            nowUnixMs: 103
+        )
+        let incoming = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "请检查任务结果",
+                mentionedAgentIDs: [manager.id]
+            ),
+            limits: .init()
+        ).message
+        let claimedDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: manager.id,
+            nowUnixMs: incoming.createdAtUnixMs + 1
+        )
+        let delivery = try XCTUnwrap(claimedDelivery)
+        let provider = try await LocalAgentRelayMCPServer(
+            service: service,
+            now: { incoming.createdAtUnixMs + 2 }
+        ).connect(context: try .init(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            roomID: room.id,
+            agentID: manager.id,
+            deliveryID: delivery.id,
+            triggerMessageID: delivery.messageID,
+            rootMessageID: delivery.rootMessageID,
+            runID: "asset-review-manager-run",
+            hopCount: 0,
+            lane: .manager
+        ))
+        try await activateProductSkill("chatos-team-knowledge", on: provider)
+        _ = try await provider.execute(.init(
+            id: "read-before-review-completion",
+            name: LocalAgentChatToolProvider.readAllUnreadToolName,
+            arguments: "{}"
+        ))
+        let blockedCompletion = try await provider.execute(.init(
+            id: "complete-with-pending-review",
+            name: LocalAgentChatToolProvider.completeManagerCycleToolName,
+            arguments: "{}"
+        ))
+        XCTAssertTrue(blockedCompletion.isError)
+        XCTAssertTrue(blockedCompletion.content.contains("team_asset_reviews_pending"))
+        XCTAssertTrue(blockedCompletion.content.contains("team_asset_review_list"))
+
+        let workspace = try await provider.execute(.init(
+            id: "review-workspace",
+            name: LocalAgentChatToolProvider.workspaceSnapshotToolName,
+            arguments: "{}"
+        ))
+        let workspaceJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(workspace.content.utf8)) as? [String: Any]
+        )
+        let teamReference = try XCTUnwrap(
+            (workspaceJSON["teams"] as? [[String: Any]])?.first?["team_ref"] as? String
+        )
+        let listed = try await provider.execute(.init(
+            id: "list-pending-asset-reviews",
+            name: LocalAgentChatToolProvider.teamAssetReviewListToolName,
+            arguments: try toolArguments(["team_ref": teamReference])
+        ))
+        let listedJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(listed.content.utf8)) as? [[String: Any]]
+        )
+        XCTAssertEqual(listedJSON.count, 1)
+        XCTAssertEqual(listedJSON.first?["source_todo_title"] as? String, todo.title)
+        XCTAssertEqual(listedJSON.first?["markdown"] as? String, "采用事件驱动并保持幂等。\n")
+        let reviewReference = try XCTUnwrap(listedJSON.first?["review_ref"] as? String)
+
+        let createdAsset = try await provider.execute(.init(
+            id: "apply-reviewed-asset",
+            name: LocalAgentChatToolProvider.teamAssetCreateToolName,
+            arguments: try toolArguments([
+                "team_ref": teamReference,
+                "category": "architecture",
+                "title": "事件驱动架构",
+                "markdown": "采用事件驱动并保持幂等。\n",
+            ])
+        ))
+        let createdAssetJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(createdAsset.content.utf8)) as? [String: Any]
+        )
+        let assetReference = try XCTUnwrap(createdAssetJSON["asset_ref"] as? String)
+        let readBack = try await provider.execute(.init(
+            id: "read-applied-asset",
+            name: LocalAgentChatToolProvider.teamAssetGetToolName,
+            arguments: try toolArguments(["asset_ref": assetReference])
+        ))
+        XCTAssertEqual(
+            (try JSONSerialization.jsonObject(
+                with: Data(readBack.content.utf8)
+            ) as? [String: Any])?["markdown"] as? String,
+            "采用事件驱动并保持幂等。\n"
+        )
+        let resolved = try await provider.execute(.init(
+            id: "resolve-applied-asset-review",
+            name: LocalAgentChatToolProvider.teamAssetReviewResolveToolName,
+            arguments: try toolArguments([
+                "review_ref": reviewReference,
+                "outcome": "applied",
+                "asset_ref": assetReference,
+            ])
+        ))
+        XCTAssertFalse(resolved.isError, resolved.content)
+        XCTAssertTrue(resolved.content.contains(#""status":"applied""#))
+
+        let completed = try await provider.execute(.init(
+            id: "complete-after-asset-review",
+            name: LocalAgentChatToolProvider.completeManagerCycleToolName,
+            arguments: "{}"
+        ))
+        XCTAssertFalse(completed.isError, completed.content)
+        let completedDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: delivery.id
+        )
+        XCTAssertEqual(completedDelivery?.status, .completed)
     }
 
     func testOrdinaryAssigneeCanPersistProgressAndCompleteItsOwnTodo() async throws {

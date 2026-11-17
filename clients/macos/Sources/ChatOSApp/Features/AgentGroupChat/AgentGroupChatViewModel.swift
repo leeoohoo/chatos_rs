@@ -94,6 +94,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var teams: [ProjectAgentRoom] = []
     @Published var teamTodos: [LocalAgentTodo] = []
     @Published var teamAssets: [LocalAgentTeamAsset] = []
+    @Published var pendingTeamAssetReviews: [LocalAgentTeamAssetReview] = []
     @Published var projectDashboard: LocalAgentProjectDashboard?
     @Published var teamAssetRevisions: [String: [LocalAgentTeamAssetRevision]] = [:]
     @Published var loadingTeamAssetRevisionIDs: Set<String> = []
@@ -343,6 +344,7 @@ final class AgentGroupChatViewModel: ObservableObject {
             publishIfChanged([], at: \.pendingMembershipProposals)
             publishIfChanged([], at: \.teamTodos)
             publishIfChanged([], at: \.teamAssets)
+            publishIfChanged([], at: \.pendingTeamAssetReviews)
             publishIfChanged(nil, at: \.projectDashboard)
             publishIfChanged([], at: \.recentRuns)
             publishIfChanged([:], at: \.recentRunDeliveries)
@@ -411,6 +413,14 @@ final class AgentGroupChatViewModel: ObservableObject {
                     includeArchived: false
                 )
                 try Task.checkCancellation()
+                let pendingTeamAssetReviews = try await store.listTeamAssetReviews(
+                    ownerUserID: ownerUserID,
+                    teamRoomID: room.id,
+                    reviewerAgentID: nil,
+                    status: .pending,
+                    limit: 500
+                )
+                try Task.checkCancellation()
                 let projectDashboard = try await store.projectDashboard(
                     ownerUserID: ownerUserID,
                     teamRoomID: room.id
@@ -471,6 +481,10 @@ final class AgentGroupChatViewModel: ObservableObject {
                 self.publishIfChanged(pendingMembershipProposals, at: \.pendingMembershipProposals)
                 self.publishIfChanged(teamTodos, at: \.teamTodos)
                 self.publishIfChanged(teamAssets, at: \.teamAssets)
+                self.publishIfChanged(
+                    pendingTeamAssetReviews,
+                    at: \.pendingTeamAssetReviews
+                )
                 self.publishIfChanged(projectDashboard, at: \.projectDashboard)
                 let activeAssetIDs = Set(teamAssets.map(\.id))
                 self.publishIfChanged(

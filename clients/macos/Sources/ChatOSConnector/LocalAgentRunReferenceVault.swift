@@ -52,6 +52,11 @@ actor LocalAgentRunReferenceVault {
         let revision: Int
     }
 
+    struct TeamAssetReviewAuthority: Codable, Sendable {
+        let reviewID: String
+        let teamRoomID: String
+    }
+
     private struct StringAuthority: Codable, Sendable {
         let value: String
     }
@@ -94,6 +99,7 @@ actor LocalAgentRunReferenceVault {
     private var plugins: [String: LocalAgentTodoPluginOption] = [:]
     private var attachments: [String: AttachmentAuthority] = [:]
     private var teamAssets: [String: TeamAssetAuthority] = [:]
+    private var teamAssetReviews: [String: TeamAssetReviewAuthority] = [:]
     private var documents: [String: DocumentAuthority] = [:]
     private var createdDocumentBytes = 0
     private var sendReceipts: [String: SendReceipt] = [:]
@@ -365,6 +371,29 @@ actor LocalAgentRunReferenceVault {
             prefix: "team_asset_",
             kind: "team_asset",
             as: TeamAssetAuthority.self
+        )
+    }
+
+    func teamAssetReviewReference(reviewID: String, teamRoomID: String) -> String {
+        if let existing = teamAssetReviews.first(where: {
+            $0.value.reviewID == reviewID && $0.value.teamRoomID == teamRoomID
+        })?.key { return existing }
+        let authority = TeamAssetReviewAuthority(reviewID: reviewID, teamRoomID: teamRoomID)
+        let reference = sealedReference(
+            prefix: "team_asset_review_",
+            kind: "team_asset_review",
+            authority: authority
+        )
+        teamAssetReviews[reference] = authority
+        return reference
+    }
+
+    func teamAssetReviewAuthority(reference: String) -> TeamAssetReviewAuthority? {
+        teamAssetReviews[reference] ?? openedReference(
+            reference,
+            prefix: "team_asset_review_",
+            kind: "team_asset_review",
+            as: TeamAssetReviewAuthority.self
         )
     }
 

@@ -183,8 +183,8 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             $0.providerID == ProductToolProviderID.localAgentChat
         }.flatMap(\.toolNames)
 
-        XCTAssertEqual(providerTools.count, 91)
-        XCTAssertEqual(Set(providerTools).count, 91)
+        XCTAssertEqual(providerTools.count, 93)
+        XCTAssertEqual(Set(providerTools).count, 93)
         // The two agent_skill_* names are intentionally shared by Main Chat and the
         // Task Execution capability broker; provider identity selects their source.
         for toolName in [
@@ -196,8 +196,8 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             )
         }
         XCTAssertEqual(nativeBuiltinTools.count, 27)
-        XCTAssertEqual(localAgentChatTools.count, 34)
-        XCTAssertEqual(Set(localAgentChatTools).count, 34)
+        XCTAssertEqual(localAgentChatTools.count, 36)
+        XCTAssertEqual(Set(localAgentChatTools).count, 36)
         XCTAssertEqual(
             bindings.filter {
                 $0.providerID == ProductToolProviderID.capabilityBroker

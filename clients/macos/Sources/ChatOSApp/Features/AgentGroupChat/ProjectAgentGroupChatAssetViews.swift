@@ -6,6 +6,9 @@ import SwiftUI
 
 struct TeamAssetsView: View {
     let assets: [LocalAgentTeamAsset]
+    let pendingReviews: [LocalAgentTeamAssetReview]
+    let todosByID: [String: LocalAgentTodo]
+    let profilesByID: [String: LocalAgentProfile]
     let onCreate: () -> Void
     let onEdit: (LocalAgentTeamAsset) -> Void
     let onHistory: (LocalAgentTeamAsset) -> Void
@@ -33,6 +36,9 @@ struct TeamAssetsView: View {
             Divider()
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
+                    if !pendingReviews.isEmpty {
+                        pendingReviewSection
+                    }
                     if assets.isEmpty {
                         ContentUnavailableView(
                             "还没有共享资产",
@@ -55,6 +61,59 @@ struct TeamAssetsView: View {
                 .padding(18)
             }
         }
+    }
+
+    private var pendingReviewSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "tray.full.fill")
+                    .foregroundStyle(.orange)
+                Text("待项目经理审核 \(pendingReviews.count) 条")
+                    .appFont(.headline)
+                Spacer()
+                Text("写入资产或明确拒绝后才算处理完成")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(pendingReviews) { review in
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(review.suggestion.title)
+                            .appFont(.body.weight(.semibold))
+                        Text(review.suggestion.category.displayName)
+                            .appFont(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(AppPalette.surfaceSubtle, in: Capsule())
+                        Spacer()
+                        Text("待审核")
+                            .appFont(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                    }
+                    Text(review.suggestion.rationale)
+                        .appFont(.callout)
+                        .foregroundStyle(.secondary)
+                    Text(reviewSource(review))
+                        .appFont(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(12)
+                .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 10))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.orange.opacity(0.28), lineWidth: 1)
+                }
+            }
+        }
+        .padding(14)
+        .background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func reviewSource(_ review: LocalAgentTeamAssetReview) -> String {
+        let todoTitle = todosByID[review.todoID]?.title ?? "Todo"
+        let agentName = profilesByID[review.sourceAgentID]?.draft.name ?? "Agent"
+        return "来源：\(todoTitle) · \(agentName)"
     }
 
     private func assetCard(_ asset: LocalAgentTeamAsset) -> some View {

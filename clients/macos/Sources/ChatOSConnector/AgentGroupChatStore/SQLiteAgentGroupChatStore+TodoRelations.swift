@@ -199,7 +199,11 @@ extension SQLiteAgentGroupChatStore {
             try AgentGroupChatValidation.identifier(source.messageID, field: "sourceMessage")
         }
         return try transaction {
-            guard try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID) != nil else {
+            guard try readTodo(
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todoID: todoID
+            ) != nil else {
                 throw AgentGroupChatError.notFound
             }
             let messageRoomIDs = try AgentMessageRepository.roomIDs(
@@ -285,7 +289,11 @@ extension SQLiteAgentGroupChatStore {
         }
         guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
         return try transaction {
-            guard try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID) != nil else {
+            guard let todo = try readTodo(
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todoID: todoID
+            ) else {
                 throw AgentGroupChatError.notFound
             }
             let sequence = try AgentTodoRepository.nextProgressSequence(
@@ -319,6 +327,25 @@ extension SQLiteAgentGroupChatStore {
                     runID.map(Value.text) ?? .null, .text(kind.rawValue), .text(stage),
                     .text(detail), .text(encodedSuggestions), .integer(nowUnixMs),
                 ]
+            )
+            let reviews = assetUpdateSuggestions.enumerated().map { index, suggestion in
+                LocalAgentTeamAssetReview(
+                    id: UUID().uuidString.lowercased(),
+                    ownerUserID: ownerUserID,
+                    teamRoomID: todo.teamRoomID,
+                    todoID: todoID,
+                    todoEventID: progress.id,
+                    suggestionIndex: index,
+                    sourceAgentID: agentID,
+                    suggestion: suggestion,
+                    createdAtUnixMs: nowUnixMs,
+                    updatedAtUnixMs: nowUnixMs
+                )
+            }
+            try AgentTeamAssetReviewRepository.insert(
+                ownerUserID: ownerUserID,
+                reviews: reviews,
+                execute: execute
             )
             return progress
         }

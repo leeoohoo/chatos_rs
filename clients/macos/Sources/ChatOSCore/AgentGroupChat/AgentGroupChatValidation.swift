@@ -54,6 +54,15 @@ public enum AgentGroupChatValidation {
         }
     }
 
+    /// Markdown is file-like content: a trailing newline is valid and should be preserved.
+    public static func markdown(_ value: String, field: String, maximumLength: Int) throws {
+        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              value.count <= maximumLength,
+              !value.contains("\0") else {
+            throw AgentGroupChatError.invalidField(field)
+        }
+    }
+
     public static func timestamps(_ createdAtUnixMs: Int64, _ updatedAtUnixMs: Int64) throws {
         guard createdAtUnixMs >= 0, updatedAtUnixMs >= createdAtUnixMs else {
             throw AgentGroupChatError.invalidField("timestamps")

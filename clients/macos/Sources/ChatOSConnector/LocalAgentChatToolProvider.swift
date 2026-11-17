@@ -41,6 +41,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let teamAssetCreateToolName = "team_asset_create"
     public static let teamAssetUpdateToolName = "team_asset_update"
     public static let teamAssetArchiveToolName = "team_asset_archive"
+    public static let teamAssetReviewListToolName = "team_asset_review_list"
+    public static let teamAssetReviewResolveToolName = "team_asset_review_resolve"
     public static let projectDashboardGetToolName = "project_dashboard_get"
     public static let projectDashboardUpdateToolName = "project_dashboard_update"
     public static let agentSkillActivateToolName = "agent_skill_activate"
@@ -154,6 +156,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 Self.teamAssetCreateToolName,
                 Self.teamAssetUpdateToolName,
                 Self.teamAssetArchiveToolName,
+                Self.teamAssetReviewListToolName,
+                Self.teamAssetReviewResolveToolName,
                 Self.projectDashboardUpdateToolName,
             ]
             definitions.removeAll { projectManagerOnly.contains($0.name) }
@@ -285,6 +289,10 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await updateTeamAsset(call)
         case Self.teamAssetArchiveToolName:
             return try await archiveTeamAsset(call)
+        case Self.teamAssetReviewListToolName:
+            return try await listTeamAssetReviews(call)
+        case Self.teamAssetReviewResolveToolName:
+            return try await resolveTeamAssetReview(call)
         case Self.projectDashboardGetToolName:
             return try await getProjectDashboard(call)
         case Self.projectDashboardUpdateToolName:
@@ -400,7 +408,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
              todoCompleteToolName, todoBlockToolName:
             ProductToolSkillBindingID.todoExecution
         case teamAssetListToolName, teamAssetGetToolName, teamAssetCreateToolName,
-             teamAssetUpdateToolName, teamAssetArchiveToolName:
+             teamAssetUpdateToolName, teamAssetArchiveToolName,
+             teamAssetReviewListToolName, teamAssetReviewResolveToolName:
             ProductToolSkillBindingID.teamKnowledge
         case projectDashboardGetToolName, projectDashboardUpdateToolName:
             ProductToolSkillBindingID.projectDashboard

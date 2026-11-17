@@ -298,4 +298,189 @@ extension LocalAgentChatToolProvider {
         return try Self.outcome(["status": asset.status.rawValue])
     }
 
+    func listTeamAssetReviews(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        guard context.lane == .manager else { throw AgentGroupChatError.permissionDenied }
+        let arguments = try Self.arguments(call)
+        let teamRoomID: String?
+        if let teamReference = try Self.optionalString(arguments, key: "team_ref") {
+            guard let resolved = await references.teamID(reference: teamReference) else {
+                return Self.structuredFailure(
+                    code: "invalid_team_ref",
+                    field: "team_ref",
+                    message: "团队引用无效或已经过期，请重新调用 agent_workspace_snapshot。",
+                    retryable: true,
+                    nextTool: Self.workspaceSnapshotToolName
+                )
+            }
+            guard try await isProjectManager(teamRoomID: resolved) else {
+                return Self.structuredFailure(
+                    code: "project_manager_required",
+                    field: "team_ref",
+                    message: "只有该团队明确指定的项目经理可以审核共享资产建议。",
+                    retryable: false
+                )
+            }
+            teamRoomID = resolved
+        } else {
+            teamRoomID = nil
+        }
+        let reviews = try await store.listTeamAssetReviews(
+            ownerUserID: context.ownerUserID,
+            teamRoomID: teamRoomID,
+            reviewerAgentID: context.agentID,
+            status: .pending,
+            limit: 500
+        )
+        return try Self.outcome(try await teamAssetReviewResponses(reviews))
+    }
+
+    func resolveTeamAssetReview(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        guard context.lane == .manager else { throw AgentGroupChatError.permissionDenied }
+        let arguments = try Self.arguments(call)
+        let reviewReference = try Self.requiredString(arguments, key: "review_ref")
+        guard let reviewAuthority = await references.teamAssetReviewAuthority(
+            reference: reviewReference
+        ), let review = try await store.teamAssetReview(
+            ownerUserID: context.ownerUserID,
+            reviewID: reviewAuthority.reviewID
+        ), review.teamRoomID == reviewAuthority.teamRoomID else {
+            return Self.structuredFailure(
+                code: "invalid_team_asset_review_ref",
+                field: "review_ref",
+                message: "审核引用无效或已经过期，请重新调用 team_asset_review_list。",
+                retryable: true,
+                nextTool: Self.teamAssetReviewListToolName
+            )
+        }
+        guard try await isProjectManager(teamRoomID: review.teamRoomID) else {
+            return Self.structuredFailure(
+                code: "project_manager_required",
+                field: "review_ref",
+                message: "只有该团队明确指定的项目经理可以处理共享资产建议。",
+                retryable: false
+            )
+        }
+
+        let outcome = try Self.requiredString(arguments, key: "outcome")
+        let status: LocalAgentTeamAssetReviewStatus
+        let resolvedAssetID: String?
+        let resolvedAssetRevision: Int?
+        let reason = try Self.optionalString(arguments, key: "reason") ?? ""
+        switch outcome {
+        case LocalAgentTeamAssetReviewStatus.applied.rawValue:
+            let assetReference = try Self.requiredString(arguments, key: "asset_ref")
+            guard let asset = await references.teamAssetAuthority(reference: assetReference),
+                  asset.teamRoomID == review.teamRoomID else {
+                return Self.structuredFailure(
+                    code: "invalid_team_asset_ref",
+                    field: "asset_ref",
+                    message: "必须提供同一团队刚由 team_asset_create/update 返回的当前资产引用。",
+                    retryable: true,
+                    nextTool: Self.teamAssetListToolName
+                )
+            }
+            status = .applied
+            resolvedAssetID = asset.assetID
+            resolvedAssetRevision = asset.revision
+        case LocalAgentTeamAssetReviewStatus.rejected.rawValue:
+            guard !reason.isEmpty else {
+                return Self.structuredFailure(
+                    code: "team_asset_review_reason_required",
+                    field: "reason",
+                    message: "拒绝共享资产建议必须给出可追溯的事实理由。",
+                    retryable: true
+                )
+            }
+            guard try Self.optionalString(arguments, key: "asset_ref") == nil else {
+                return Self.structuredFailure(
+                    code: "team_asset_review_asset_not_allowed",
+                    field: "asset_ref",
+                    message: "拒绝建议时不要提供 asset_ref。",
+                    retryable: true
+                )
+            }
+            status = .rejected
+            resolvedAssetID = nil
+            resolvedAssetRevision = nil
+        default:
+            return Self.structuredFailure(
+                code: "invalid_team_asset_review_outcome",
+                field: "outcome",
+                message: "outcome 只能是 applied 或 rejected。",
+                retryable: true
+            )
+        }
+        let updated = try await store.resolveTeamAssetReview(
+            ownerUserID: context.ownerUserID,
+            reviewID: review.id,
+            reviewerAgentID: context.agentID,
+            status: status,
+            resolvedAssetID: resolvedAssetID,
+            resolvedAssetRevision: resolvedAssetRevision,
+            reason: reason,
+            nowUnixMs: now()
+        )
+        return try Self.outcome(try await teamAssetReviewResponse(updated))
+    }
+
+    private func teamAssetReviewResponses(
+        _ reviews: [LocalAgentTeamAssetReview]
+    ) async throws -> [TeamAssetReviewResponse] {
+        let todos = try await store.todos(
+            ownerUserID: context.ownerUserID,
+            todoIDs: reviews.map(\.todoID)
+        )
+        var responses: [TeamAssetReviewResponse] = []
+        for review in reviews {
+            responses.append(try await teamAssetReviewResponse(review, todo: todos[review.todoID]))
+        }
+        return responses
+    }
+
+    private func teamAssetReviewResponse(
+        _ review: LocalAgentTeamAssetReview,
+        todo: LocalAgentTodo? = nil
+    ) async throws -> TeamAssetReviewResponse {
+        let sourceTodo = if let todo {
+            todo
+        } else {
+            try await store.todos(
+                ownerUserID: context.ownerUserID,
+                todoIDs: [review.todoID]
+            )[review.todoID]
+        }
+        let resolvedReference: String?
+        if let assetID = review.resolvedAssetID, let revision = review.resolvedAssetRevision {
+            resolvedReference = await references.teamAssetReference(
+                assetID: assetID,
+                teamRoomID: review.teamRoomID,
+                revision: revision
+            )
+        } else {
+            resolvedReference = nil
+        }
+        return TeamAssetReviewResponse(
+            reviewReference: await references.teamAssetReviewReference(
+                reviewID: review.id,
+                teamRoomID: review.teamRoomID
+            ),
+            teamReference: await references.teamReference(teamID: review.teamRoomID),
+            todoReference: await references.todoReference(
+                todoID: review.todoID,
+                agentID: review.sourceAgentID,
+                teamRoomID: review.teamRoomID
+            ),
+            sourceAgentReference: await references.agentReference(agentID: review.sourceAgentID),
+            sourceTodoTitle: sourceTodo?.title ?? "",
+            category: review.suggestion.category.rawValue,
+            title: review.suggestion.title,
+            markdown: review.suggestion.markdown,
+            rationale: review.suggestion.rationale,
+            status: review.status.rawValue,
+            resolvedAssetReference: resolvedReference,
+            reviewReason: review.reviewReason,
+            createdAtUnixMs: review.createdAtUnixMs
+        )
+    }
+
 }

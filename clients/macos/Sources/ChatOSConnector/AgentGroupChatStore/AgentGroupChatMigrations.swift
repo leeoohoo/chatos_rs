@@ -573,5 +573,11 @@ enum AgentGroupChatMigrations {
             )
         }
         try migrateAttachmentSyncAndMetrics(handle)
+        if !hasMigration(36) {
+            try execute(teamAssetReviewsDefinition)
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (36)"
+            )
+        }
     }
 }

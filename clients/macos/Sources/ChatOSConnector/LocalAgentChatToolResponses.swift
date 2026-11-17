@@ -289,6 +289,34 @@ extension LocalAgentChatToolProvider {
         }
     }
 
+    struct TeamAssetReviewResponse: Encodable {
+        let reviewReference: String
+        let teamReference: String
+        let todoReference: String
+        let sourceAgentReference: String
+        let sourceTodoTitle: String
+        let category: String
+        let title: String
+        let markdown: String
+        let rationale: String
+        let status: String
+        let resolvedAssetReference: String?
+        let reviewReason: String
+        let createdAtUnixMs: Int64
+
+        enum CodingKeys: String, CodingKey {
+            case reviewReference = "review_ref"
+            case teamReference = "team_ref"
+            case todoReference = "todo_ref"
+            case sourceAgentReference = "source_agent_ref"
+            case sourceTodoTitle = "source_todo_title"
+            case category, title, markdown, rationale, status
+            case resolvedAssetReference = "resolved_asset_ref"
+            case reviewReason = "review_reason"
+            case createdAtUnixMs = "created_at_unix_ms"
+        }
+    }
+
     struct TodoDependencyResponse: Encodable {
         let todoReference: String
         let title: String

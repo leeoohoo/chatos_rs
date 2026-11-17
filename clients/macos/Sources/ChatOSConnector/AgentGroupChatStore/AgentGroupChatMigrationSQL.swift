@@ -73,6 +73,63 @@ extension AgentGroupChatMigrations {
         );
         """
 
+    static let teamAssetReviewsDefinition = """
+        CREATE TABLE IF NOT EXISTS local_agent_team_asset_reviews (
+            owner_user_id TEXT NOT NULL,
+            id TEXT NOT NULL,
+            team_room_id TEXT NOT NULL,
+            todo_id TEXT NOT NULL,
+            todo_event_id TEXT NOT NULL,
+            suggestion_index INTEGER NOT NULL CHECK(suggestion_index >= 0),
+            source_agent_id TEXT NOT NULL,
+            category TEXT NOT NULL CHECK(category IN (
+                'overview', 'current_progress', 'tech_stack', 'architecture',
+                'conventions', 'decision', 'reference'
+            )),
+            title TEXT NOT NULL,
+            markdown TEXT NOT NULL,
+            rationale TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pending', 'applied', 'rejected')),
+            resolved_asset_id TEXT,
+            resolved_asset_revision INTEGER CHECK(resolved_asset_revision > 0),
+            reviewed_by_agent_id TEXT,
+            review_reason TEXT NOT NULL DEFAULT '',
+            created_at_unix_ms INTEGER NOT NULL,
+            updated_at_unix_ms INTEGER NOT NULL,
+            PRIMARY KEY(owner_user_id, id),
+            UNIQUE(owner_user_id, todo_event_id, suggestion_index),
+            CHECK(
+                (status = 'pending' AND resolved_asset_id IS NULL
+                    AND resolved_asset_revision IS NULL
+                    AND reviewed_by_agent_id IS NULL AND review_reason = '')
+                OR (status = 'applied' AND resolved_asset_id IS NOT NULL
+                    AND resolved_asset_revision IS NOT NULL
+                    AND reviewed_by_agent_id IS NOT NULL)
+                OR (status = 'rejected' AND resolved_asset_id IS NULL
+                    AND resolved_asset_revision IS NULL
+                    AND reviewed_by_agent_id IS NOT NULL AND length(review_reason) > 0)
+            ),
+            FOREIGN KEY(owner_user_id, team_room_id)
+                REFERENCES project_agent_rooms(owner_user_id, id) ON DELETE CASCADE,
+            FOREIGN KEY(owner_user_id, todo_id)
+                REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE,
+            FOREIGN KEY(owner_user_id, todo_event_id)
+                REFERENCES local_agent_todo_events(owner_user_id, id) ON DELETE CASCADE,
+            FOREIGN KEY(owner_user_id, source_agent_id)
+                REFERENCES local_agent_profiles(owner_user_id, id),
+            FOREIGN KEY(owner_user_id, resolved_asset_id)
+                REFERENCES local_agent_team_assets(owner_user_id, id),
+            FOREIGN KEY(owner_user_id, reviewed_by_agent_id)
+                REFERENCES local_agent_profiles(owner_user_id, id)
+        );
+        CREATE INDEX IF NOT EXISTS local_agent_team_asset_reviews_queue
+            ON local_agent_team_asset_reviews(
+                owner_user_id, team_room_id, status, created_at_unix_ms, id
+            );
+        CREATE INDEX IF NOT EXISTS local_agent_team_asset_reviews_todo
+            ON local_agent_team_asset_reviews(owner_user_id, todo_id);
+        """
+
     static func deliveryTableDefinition(name: String, triggerKinds: String) -> String {
         """
         CREATE TABLE \(name) (

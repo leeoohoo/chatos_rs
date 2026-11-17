@@ -324,6 +324,27 @@ public protocol AgentGroupChatStore: Sendable {
         assetID: String,
         limit: Int
     ) async throws -> [LocalAgentTeamAssetRevision]
+    func listTeamAssetReviews(
+        ownerUserID: String,
+        teamRoomID: String?,
+        reviewerAgentID: String?,
+        status: LocalAgentTeamAssetReviewStatus?,
+        limit: Int
+    ) async throws -> [LocalAgentTeamAssetReview]
+    func teamAssetReview(
+        ownerUserID: String,
+        reviewID: String
+    ) async throws -> LocalAgentTeamAssetReview?
+    func resolveTeamAssetReview(
+        ownerUserID: String,
+        reviewID: String,
+        reviewerAgentID: String,
+        status: LocalAgentTeamAssetReviewStatus,
+        resolvedAssetID: String?,
+        resolvedAssetRevision: Int?,
+        reason: String,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentTeamAssetReview
     func listTodoTeamAssetSnapshots(
         ownerUserID: String,
         todoID: String

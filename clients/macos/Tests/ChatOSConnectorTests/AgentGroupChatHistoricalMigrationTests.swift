@@ -164,7 +164,7 @@ final class AgentGroupChatHistoricalMigrationTests: XCTestCase {
                 url,
                 sql: "SELECT CAST(version AS TEXT) FROM local_agent_group_chat_schema_migrations ORDER BY version"
             ),
-            (1...35).map(String.init)
+            (1...36).map(String.init)
         )
         XCTAssertEqual(
             try strings(
