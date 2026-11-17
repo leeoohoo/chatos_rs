@@ -9,7 +9,7 @@ use chatos_ai_runtime::{
 };
 use chatos_local_agent_ports::{
     AuthoritativeConversationPage, AuthoritativeConversationRecord,
-    LocalConversationTranscriptSource, LocalMemoryOutboxStore,
+    LocalConversationTranscriptSource, LocalMemoryContextCacheStore, LocalMemoryOutboxStore,
 };
 use futures::{stream, StreamExt, TryStreamExt};
 use memory_engine_sdk::{
@@ -19,7 +19,7 @@ use memory_engine_sdk::{
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use crate::{LocalMemoryOutboxWriter, LocalMemorySyncWorker};
+use crate::{LocalMemoryContextCache, LocalMemoryOutboxWriter, LocalMemorySyncWorker};
 
 const TRANSCRIPT_PROCESS_RECORD_CONCURRENCY: usize = 4;
 
@@ -272,7 +272,7 @@ impl LocalMemoryRuntimeConfig {
         tenant_id: impl Into<String>,
     ) -> Result<LocalMemoryRuntimeServices, String>
     where
-        S: LocalMemoryOutboxStore + 'static,
+        S: LocalMemoryOutboxStore + LocalMemoryContextCacheStore + 'static,
     {
         let source_id = required("Memory source_id", &self.source_id)?;
         self.access_token.as_ref().ok_or_else(|| {
@@ -283,8 +283,10 @@ impl LocalMemoryRuntimeConfig {
             runtime_context_assertion_endpoint(&self.base_url)?,
             client.clone(),
         );
+        let cache_store: Arc<dyn LocalMemoryContextCacheStore> = store.clone();
         let composer = MemoryContextComposer::from_client(client.clone())
-            .with_runtime_context_assertion_provider(assertion_provider.clone());
+            .with_runtime_context_assertion_provider(assertion_provider.clone())
+            .with_resilient_cache(LocalMemoryContextCache::new(cache_store));
         let remote_writer: Arc<dyn MemoryRecordWriter> = Arc::new(
             MemoryEngineRecordWriter::from_client(
                 client.clone(),

@@ -163,7 +163,11 @@ struct TeamTodoBoardView: View {
                         color: .green
                     )
                 } else if run?.status == .needsReview {
-                    metadataBadge("写入中断，未落盘", systemImage: "exclamationmark.triangle.fill", color: .orange)
+                    metadataBadge(
+                        run?.receiptCount == 0 ? "启动中断，未执行工具" : "执行中断，需检查结果",
+                        systemImage: "exclamationmark.triangle.fill",
+                        color: .orange
+                    )
                 } else if !todo.result.isEmpty {
                     metadataBadge(
                         todo.executionPlan.builtinCapabilities.contains(.projectWrite)

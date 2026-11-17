@@ -385,12 +385,12 @@ fn direct_composer_rejects_mismatched_scope_source_key() {
     assert!(err.contains("source_id mismatch"));
 }
 
-struct TestContextCache;
+struct TestContextCache(Option<ComposeContextResponse>);
 
 #[async_trait::async_trait]
 impl MemoryContextCache for TestContextCache {
     async fn load(&self, _scope: &MemoryScope) -> Result<Option<ComposeContextResponse>, String> {
-        panic!("compose failures must not read stale cached context")
+        Ok(self.0.clone())
     }
 
     async fn store(
@@ -403,7 +403,7 @@ impl MemoryContextCache for TestContextCache {
 }
 
 #[tokio::test]
-async fn composer_fails_closed_when_remote_is_offline() {
+async fn composer_uses_fresh_cache_when_remote_is_temporarily_unavailable() {
     use axum::{http::StatusCode, Router};
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -425,7 +425,24 @@ async fn composer_fails_closed_when_remote_is_offline() {
     });
     let scope = MemoryScope::thread("user-1", "local_agent", "conversation-1")
         .with_subject_id("agent:test-agent")
+        .with_policy(ComposeContextPolicy {
+            max_memory_tokens: 1_000,
+            max_recent_record_tokens: 600,
+            max_thread_summary_tokens: 200,
+            max_project_memory_tokens: 100,
+            max_agent_memory_tokens: 100,
+        })
         .with_compose_context(None, None, "capability-v1");
+    let cached = ComposeContextResponse {
+        thread_id: scope.thread_id.clone(),
+        blocks: vec![ComposeContextBlock {
+            block_type: "thread_summary".to_string(),
+            text: "cached context".to_string(),
+            ..Default::default()
+        }],
+        recent_records: Vec::new(),
+        meta: ComposeContextMeta::default(),
+    };
     let composer = MemoryContextComposer::new_direct(
         format!("http://{address}"),
         Duration::from_secs(1),
@@ -433,9 +450,35 @@ async fn composer_fails_closed_when_remote_is_offline() {
     )
     .expect("composer")
     .with_runtime_context_assertion_issuer(test_assertion_issuer())
-    .with_resilient_cache(TestContextCache);
-    assert!(composer.compose(&scope).await.is_err());
+    .with_resilient_cache(TestContextCache(Some(cached)));
+    let response = composer.compose(&scope).await.expect("cached fallback");
+    assert_eq!(response.blocks[0].text, "cached context");
+
+    let composer = MemoryContextComposer::new_direct(
+        format!("http://{address}"),
+        Duration::from_secs(1),
+        "local_agent",
+    )
+    .expect("composer")
+    .with_runtime_context_assertion_issuer(test_assertion_issuer())
+    .with_resilient_cache(TestContextCache(None));
+    let response = composer.compose(&scope).await.expect("empty fallback");
+    assert!(response.blocks.is_empty());
+    assert!(response.recent_records.is_empty());
     server.abort();
+}
+
+#[test]
+fn only_transient_memory_failures_are_degraded() {
+    assert!(super::is_transient_memory_error(
+        "stage=decode_json is_timeout=true is_connect=false"
+    ));
+    assert!(super::is_transient_memory_error(
+        "status=503 Service Unavailable"
+    ));
+    assert!(!super::is_transient_memory_error(
+        "status=400 Bad Request detail=invalid scope"
+    ));
 }
 
 #[tokio::test]

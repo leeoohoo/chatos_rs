@@ -208,7 +208,7 @@ pub(crate) fn scope_job_request(scope: &EngineSubjectMemoryScope) -> RunSubjectM
         tenant_id: scope.tenant_id.clone(),
         source_id: scope.source_id.clone(),
         subject_id: scope.subject_id.clone(),
-        memory_type: scope.memory_type.clone(),
+        memory_type: canonical_scope_memory_type(scope.memory_type.as_str()).to_string(),
         source_thread_label: scope.source_thread_label.clone(),
         relation_subject_id: scope.relation_subject_id.clone(),
         source_summary_type: scope.source_summary_type.clone(),
@@ -218,8 +218,27 @@ pub(crate) fn scope_job_request(scope: &EngineSubjectMemoryScope) -> RunSubjectM
     }
 }
 
+fn canonical_scope_memory_type(memory_type: &str) -> &str {
+    match memory_type {
+        // Legacy scope rows used the derivation kind as their stored memory type.
+        "project_memory" => "project_summary",
+        value => value,
+    }
+}
+
 fn subject_memory_scope_concurrency(config: &AppConfig, limit: i64) -> usize {
     limit
         .max(1)
         .min(config.worker_subject_memory_concurrency.max(1) as i64) as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_scope_memory_type;
+
+    #[test]
+    fn legacy_project_scope_uses_the_canonical_memory_type() {
+        assert_eq!(canonical_scope_memory_type("project_memory"), "project_summary");
+        assert_eq!(canonical_scope_memory_type("agent_memory"), "agent_memory");
+    }
 }

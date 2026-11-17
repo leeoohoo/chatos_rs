@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use memory_engine_sdk::{
-    ComposeContextPolicy, ComposeContextResponse, MemoryEngineClient,
+    ComposeContextMeta, ComposeContextPolicy, ComposeContextResponse, MemoryEngineClient,
     RunThreadActiveSummaryResponse, RuntimeContextAssertionIssuer, SdkComposeContextRequest,
     SdkUpsertThreadRequest,
 };
@@ -220,7 +220,34 @@ impl MemoryContextComposer {
     }
 
     pub async fn compose(&self, scope: &MemoryScope) -> Result<ComposeContextResponse, String> {
-        let response = self.compose_once(scope).await?;
+        let response = match self.compose_once(scope).await {
+            Ok(response) => response,
+            Err(error) if is_transient_memory_error(error.as_str()) => {
+                let Some(cache) = self.resilient_cache.as_ref() else {
+                    return Err(error);
+                };
+                match cache.load(scope).await {
+                    Ok(Some(response)) => {
+                        warn!(
+                            error = error.as_str(),
+                            "retained Memory temporarily unavailable; using fresh local context cache"
+                        );
+                        return Ok(response);
+                    }
+                    Ok(None) => warn!(
+                        error = error.as_str(),
+                        "retained Memory temporarily unavailable and no fresh local cache exists; continuing without Memory context"
+                    ),
+                    Err(cache_error) => warn!(
+                        error = error.as_str(),
+                        cache_error = cache_error.as_str(),
+                        "retained Memory and local context cache temporarily unavailable; continuing without Memory context"
+                    ),
+                }
+                return Ok(empty_context(scope));
+            }
+            Err(error) => return Err(error),
+        };
         if response.meta.needs_compaction {
             let composer = self.clone();
             let scope = scope.clone();
@@ -503,6 +530,23 @@ fn normalized(value: &str) -> Option<String> {
         None
     } else {
         Some(value.to_string())
+    }
+}
+
+fn is_transient_memory_error(error: &str) -> bool {
+    error.contains("is_timeout=true")
+        || error.contains("is_connect=true")
+        || [502, 503, 504]
+            .iter()
+            .any(|status| error.contains(format!("status={status} ").as_str()))
+}
+
+fn empty_context(scope: &MemoryScope) -> ComposeContextResponse {
+    ComposeContextResponse {
+        thread_id: scope.thread_id.clone(),
+        blocks: Vec::new(),
+        recent_records: Vec::new(),
+        meta: ComposeContextMeta::default(),
     }
 }
 
