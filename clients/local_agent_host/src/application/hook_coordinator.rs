@@ -722,7 +722,11 @@ impl LocalHookCoordinator {
         if run.owner_entity_type == "conversation_turn" {
             let conversation_id = required_input_string(run, "conversation_id")?;
             let turn_id = required_input_string(run, "turn_id")?;
-            let prompt = required_input_string(run, "message")?;
+            let prompt = run
+                .input
+                .get("message")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("{} Run is missing message", run.run_id))?;
             if let Some(marker) = latest_compaction_marker(run)? {
                 events.push(HookEvent::new_for_owner_with_sequence(
                     &run.owner_user_id,
@@ -2499,6 +2503,34 @@ mod tests {
         assert!(combined.contains("session context"));
         assert!(combined.contains("prompt context"));
         assert!(!combined.contains("private failure"));
+    }
+
+    #[tokio::test]
+    async fn attachment_only_prompt_is_valid_hook_context() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-1",
+            vec![hook("prompt", "UserPromptSubmit", "prompt context")],
+        )
+        .await;
+        let coordinator = LocalHookCoordinator::new(runtime, runner.clone(), None).unwrap();
+        let mut attachment_run = run("run-attachment-only");
+        attachment_run.input["message"] = json!("");
+        attachment_run.input["attachments"] = json!([{
+            "attachment_id": "attachment-1",
+            "authorized_local_ref": "local-attachment:1"
+        }]);
+
+        let context = coordinator
+            .prefixed_context(&claim(attachment_run))
+            .await
+            .expect("attachment-only prompt context");
+
+        assert_eq!(runner.events(), vec!["UserPromptSubmit"]);
+        assert!(context.iter().any(|item| item["content"]
+            .as_str()
+            .is_some_and(|value| value.contains("prompt context"))));
     }
 
     #[tokio::test]

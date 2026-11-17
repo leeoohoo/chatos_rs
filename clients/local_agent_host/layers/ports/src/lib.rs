@@ -727,6 +727,13 @@ pub trait LocalConversationStore: Send + Sync {
         authorized_local_ref: &str,
     ) -> Result<Option<LocalConversationAttachmentRecord>, ClientStorageError>;
 
+    async fn list_recent_conversation_attachments(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+        turn_limit: u32,
+    ) -> Result<Vec<LocalConversationAttachmentRecord>, ClientStorageError>;
+
     async fn get_conversation_history(
         &self,
         owner_user_id: &str,

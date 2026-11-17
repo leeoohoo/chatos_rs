@@ -11,7 +11,7 @@ use chatos_local_agent_protocol::{
     LocalConversationAttachmentSpec, LocalConversationDetail, LocalConversationMessageRecord,
     LocalConversationMessageRole, LocalConversationPage, LocalConversationRecord,
     LocalConversationTurnRecord, LocalConversationTurnStart, LocalConversationTurnStatus,
-    StartConversationTurnCommand,
+    StartConversationTurnCommand, LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
 };
 use serde_json::json;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
@@ -130,6 +130,46 @@ impl LocalConversationStore for SqliteClientStorage {
         .db()?
         .map(decode_attachment)
         .transpose()
+    }
+
+    async fn list_recent_conversation_attachments(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+        turn_limit: u32,
+    ) -> Result<Vec<LocalConversationAttachmentRecord>, ClientStorageError> {
+        if turn_limit == 0 || turn_limit > LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE {
+            return Err(ClientStorageError::InvalidState(format!(
+                "conversation attachment turn limit must be between 1 and \
+                 {LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE}"
+            )));
+        }
+        let mut connection = self.pool.acquire().await.db()?;
+        if fetch_conversation_record_for_owner(&mut connection, owner_user_id, conversation_id)
+            .await?
+            .is_none()
+        {
+            return Err(ClientStorageError::NotFound(conversation_id.to_string()));
+        }
+        sqlx::query(
+            "SELECT a.attachment_id, a.conversation_id, a.turn_id, a.message_id, a.ordinal, \
+             a.display_name, a.media_type, a.byte_size, a.sha256, a.authorized_local_ref, \
+             a.metadata_json, a.created_at_unix_ms \
+             FROM (SELECT turn_id, created_at_unix_ms FROM local_conversation_turns \
+                   WHERE conversation_id = ? \
+                   ORDER BY created_at_unix_ms DESC, turn_id DESC LIMIT ?) recent \
+             JOIN local_conversation_messages m ON m.turn_id = recent.turn_id \
+             JOIN local_conversation_message_attachments a ON a.message_id = m.message_id \
+             ORDER BY recent.created_at_unix_ms, recent.turn_id, m.ordinal, a.ordinal",
+        )
+        .bind(conversation_id)
+        .bind(i64::from(turn_limit))
+        .fetch_all(&mut *connection)
+        .await
+        .db()?
+        .into_iter()
+        .map(decode_attachment)
+        .collect()
     }
 
     async fn get_conversation_history(
