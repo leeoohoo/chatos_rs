@@ -101,6 +101,9 @@ extension tabs. Chrome can execute that command without resolving its debugger r
 another task owns the foreground tab; press/release still carry the target coordinates and remain
 fully isolated per task.
 
+Browser plugin 0.1.27 closes the Browser Bridge connection when session initialization fails, so a
+transient Chrome tab-editing error does not leave retries blocked by a stale MCP client.
+
 Production and local staged builds compile the fixed Chrome Web Store extension ID into the Browser
 MCP binary. The MCP-owned Bridge creates a fresh, single-use credential for every MCP process and
 cleans it up when the process exits. `CHATOS_BROWSER_EXTENSION_ID` can still override the store ID
