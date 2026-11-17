@@ -34,6 +34,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-17 补跑无障碍与任务审查相关前端 UI 门禁：设置焦点管理、访问控制、模型/插件/全局工具、常规设置、宠物设置、项目运行、工具审批和 Run Inspector 共 `12` 个测试文件、`32 passed, 0 failed`；覆盖 modal 可访问名称、焦点捕获/恢复、键盘交互及任务审查页签语义。该结果加强代码层门禁，不替代固定分辨率/缩放矩阵、屏幕阅读器实机和登录后原生视觉取证。
 
+- 2026-11-17 新增 Release Host ready 冷启动基线：当前 `target-shared/release/chatos_local_agent_host.exe`（SHA-256 `b7e07055aabe1178bfd0c7095b837c6152d9454f2dd4226aa56f45a2e9702a0c`）以全新隔离数据库连续启动 `10` 次，协议 v53 `health` 握手全部成功，`p50=171 ms`、`p95/max=189 ms`，每轮退出码均为 `0` 且临时目录全部清理；报告为 `%TEMP%\chatos-windows-host-ready.json`。本轮同时发现安装 Hook smoke 仍硬编码旧协议 v52，已同步到 v53；未生成新安装包，因此不把脚本修正写成新一轮安装包 Hook 验收。
+
 - 2026-11-17 只读核验本机网络强制前置条件：`MpsSvc` Windows Firewall 服务为 `Running/Automatic`，Domain/Private/Public 三个配置文件均为 `AllowOutbound`，本地规则由 GPO 管理且没有应用级目标规则；`CheckNetIsolation LoopbackExempt -s` 返回空列表。该结果与现有代码审计一致：当前 `controlled` capability 仍不是目标/目的地级 WFP 或等价出站强制，不能将其写成已完成。
 
 - 2026-11-17 对当前保留的 `target-shared/release/chatos-windows-react.exe` 做 Authenticode 只读核验，状态为 `NotSigned`，没有签名证书；因此正式代码签名、证书校验和 SmartScreen 信誉仍保持为外部发布依赖，未将本机可启动误记为正式发布验收。
@@ -490,7 +492,7 @@ Windows 产品版本：`3.0.9`
 - [ ] Windows 安装包代码签名、发布证书、签名校验和 SmartScreen 信誉验证。仓库可生成安装包，但本机未配置正式签名身份。
 - [ ] Windows Installer 无法由 Restart Manager 正常关闭的强制文件锁及需重启场景仍需在一次性 Windows VM 中补验；本机已通过 MSI smoke 验证正常运行中的应用可由 Restart Manager 关闭、事务故障回滚和升级失败保护，未留下 pending rename。本机已有其他软件留下的待重启文件操作，不能为了测试篡改系统队列。历史 `0.1.0` 安装包自身允许降级，已发布二进制无法由新版本追溯修改。
 - [ ] 固定分辨率与 100%/125%/150% 缩放的原生截图对照、键盘导航、焦点顺序、屏幕阅读器标签和对比度验收。设置模态层的可访问性基础已补齐：生产 Tauri 窗口将设置页发布为 `role=dialog` + `aria-modal=true`，背景主导航在模态打开时从 accessibility tree 隐藏，Tab 在设置层内循环，Escape 关闭并恢复背景焦点；提交 `4526d26c3`。随后提交 `a3ec4b759` 将同一 Tab/Shift+Tab 边界推广到所有现有 `aria-modal=true` 对话框，并在对话框出现时自动聚焦首个可用控件；提交 `a43bf5815` 为最后 6 个无名 modal 补齐 accessible name；随后 `eb130ee0d` 将这条规则纳入 `audit:architecture`，并修复静态审计发现的 12 个遗漏 modal（模型供应商删除确认与 Story Studio 多个确认/编辑层），现在 22 个文件中的全部 `aria-modal=true` 都由持续审计强制要求 `aria-label` 或 `aria-labelledby`。前端 `141` 个测试文件 / `522` 项通过，TypeScript typecheck 通过，最新 Tauri Release accessibility tree 已核验。完整缩放矩阵、31 页截图对照、屏幕阅读器/对比度仍需继续验收。
-- [ ] Host ready、首屏会话、万级消息、大目录、Git Diff、终端大输出和 8 小时运行的 Windows 性能/稳定性基线；安装包隔离冷启动基线已经完成。
+- [ ] 首屏会话、Git Diff 实机渲染和 8 小时运行的 Windows 性能/稳定性基线仍需关闭；Release Host ready（10 次全新数据库冷启动）、万级消息分页、大目录边界、终端 1 MiB 输出和安装包隔离冷启动基线已经完成。
 - [ ] 本批未签名 EXE/sidecar 在全新安装路径的首次启动仍需正式环境复验：本机当前安装包 5 次隔离启动均通过，`p50=2,329 ms`、`p95=2,735 ms`，但历史同一最终哈希曾出现超过门限的首次启动波动。需结合正式代码签名与一次性干净 Windows VM 复验首次扫描/冷启动门限。
 
 ## D. 已确认的平台差异，不伪装为缺陷已修复
