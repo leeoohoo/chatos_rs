@@ -24,6 +24,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-17 02:52 继续复核同一 8 小时隔离 Release：Worker（PID `20680`）和正式 EXE（PID `30548`）均仍存活，已运行约 `1.55` 小时；窗口标题保持 `ChatOS`，进程响应正常，工作集约 `37.82 MiB`、私有内存约 `9.97 MiB`、`33` 个线程、`436` 个 handles。最终 JSON 尚未生成，故本条仍只是运行中证据，不能替代完整 `8 小时`报告。
 
+- 2026-11-17 08:24 继续复核同一 8 小时隔离 Release：Worker 和正式 EXE 已连续运行约 `7.07` 小时，窗口标题仍为 `ChatOS`，进程响应正常；工作集约 `37.79 MiB`、私有内存约 `9.97 MiB`、`33` 个线程、`436` 个 handles，未见相较前序样本的资源增长。最终 JSON 尚未生成，本条仍不替代完整 `8 小时`报告。
+
 - 2026-11-17 补跑任务审查优先级相关的前端契约回归：Agent Management、Run Inspector（入口/分区/领域）与 Pet 状态共 `6` 个测试文件、`37 passed, 0 failed`；覆盖 `reviewing_followup` / `waiting_confirmation` 的展示标签、持续轮询、活动任务投影和宠物摘要门禁。该结果确认代码层投影稳定，但不替代登录后原生窗口逐态视觉取证。
 
 - 2026-11-17 重新构建 Windows Computer Use worker：`npm run build:windows` 在本机成功生成 self-contained `win-x64` 与 `win-arm64` worker；随后 `npm run smoke:windows:screen` 通过 doctor、MCP `initialize`/`tools/list`、权限检查和真实 `observe_screen`。该结果关闭 Windows worker 本机编译/屏幕采集回归，不替代需要 macOS Swift/Xcode 的跨平台 `.tgz` 组合、Marketplace 签名发布和安装后受信闭环。
