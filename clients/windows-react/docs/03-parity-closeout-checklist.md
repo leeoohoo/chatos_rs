@@ -26,6 +26,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-17 08:24 继续复核同一 8 小时隔离 Release：Worker 和正式 EXE 已连续运行约 `7.07` 小时，窗口标题仍为 `ChatOS`，进程响应正常；工作集约 `37.79 MiB`、私有内存约 `9.97 MiB`、`33` 个线程、`436` 个 handles，未见相较前序样本的资源增长。最终 JSON 尚未生成，本条仍不替代完整 `8 小时`报告。
 
+- 2026-11-17 完成同一正式 Release 的完整 8 小时隔离长稳：严格报告门禁确认请求时长 `28,800` 秒、实际墙钟 `28,800.60` 秒、`60` 秒间隔共 `480` 个样本，全部窗口标题均为 `ChatOS`；`nativeWindowObserved=true`，应用正常退出且 `processExitCode=0`。工作集从启动阶段 `26.49 MiB` 到末样本 `37.79 MiB`、峰值 `37.85 MiB`，私有内存从 `4.77 MiB` 到 `9.97 MiB`、峰值 `10.13 MiB`，线程数范围 `10–38`；隔离用户数据目录已删除，Worker/Release PID 均退出，未遗留 ChatOS、Host、Cargo、rustc 或 npm 构建进程。正式报告为 `%TEMP%\chatos-windows-long-stability-8h.json`，并由 `verify-long-stability-report.ps1` 再次验证通过。
+
 - 2026-11-17 补跑任务审查优先级相关的前端契约回归：Agent Management、Run Inspector（入口/分区/领域）与 Pet 状态共 `6` 个测试文件、`37 passed, 0 failed`；覆盖 `reviewing_followup` / `waiting_confirmation` 的展示标签、持续轮询、活动任务投影和宠物摘要门禁。该结果确认代码层投影稳定，但不替代登录后原生窗口逐态视觉取证。
 
 - 2026-11-17 重新构建 Windows Computer Use worker：`npm run build:windows` 在本机成功生成 self-contained `win-x64` 与 `win-arm64` worker；随后 `npm run smoke:windows:screen` 通过 doctor、MCP `initialize`/`tools/list`、权限检查和真实 `observe_screen`。该结果关闭 Windows worker 本机编译/屏幕采集回归，不替代需要 macOS Swift/Xcode 的跨平台 `.tgz` 组合、Marketplace 签名发布和安装后受信闭环。
@@ -492,7 +494,7 @@ Windows 产品版本：`3.0.9`
 - [ ] Windows 安装包代码签名、发布证书、签名校验和 SmartScreen 信誉验证。仓库可生成安装包，但本机未配置正式签名身份。
 - [ ] Windows Installer 无法由 Restart Manager 正常关闭的强制文件锁及需重启场景仍需在一次性 Windows VM 中补验；本机已通过 MSI smoke 验证正常运行中的应用可由 Restart Manager 关闭、事务故障回滚和升级失败保护，未留下 pending rename。本机已有其他软件留下的待重启文件操作，不能为了测试篡改系统队列。历史 `0.1.0` 安装包自身允许降级，已发布二进制无法由新版本追溯修改。
 - [ ] 固定分辨率与 100%/125%/150% 缩放的原生截图对照、键盘导航、焦点顺序、屏幕阅读器标签和对比度验收。设置模态层的可访问性基础已补齐：生产 Tauri 窗口将设置页发布为 `role=dialog` + `aria-modal=true`，背景主导航在模态打开时从 accessibility tree 隐藏，Tab 在设置层内循环，Escape 关闭并恢复背景焦点；提交 `4526d26c3`。随后提交 `a3ec4b759` 将同一 Tab/Shift+Tab 边界推广到所有现有 `aria-modal=true` 对话框，并在对话框出现时自动聚焦首个可用控件；提交 `a43bf5815` 为最后 6 个无名 modal 补齐 accessible name；随后 `eb130ee0d` 将这条规则纳入 `audit:architecture`，并修复静态审计发现的 12 个遗漏 modal（模型供应商删除确认与 Story Studio 多个确认/编辑层），现在 22 个文件中的全部 `aria-modal=true` 都由持续审计强制要求 `aria-label` 或 `aria-labelledby`。前端 `141` 个测试文件 / `522` 项通过，TypeScript typecheck 通过，最新 Tauri Release accessibility tree 已核验。完整缩放矩阵、31 页截图对照、屏幕阅读器/对比度仍需继续验收。
-- [ ] 首屏会话、Git Diff 实机渲染和 8 小时运行的 Windows 性能/稳定性基线仍需关闭；Release Host ready（10 次全新数据库冷启动）、万级消息分页、大目录边界、终端 1 MiB 输出和安装包隔离冷启动基线已经完成。
+- [ ] 首屏会话和 Git Diff 实机渲染的 Windows 性能/稳定性基线仍需关闭；Release Host ready（10 次全新数据库冷启动）、万级消息分页、大目录边界、终端 1 MiB 输出、完整 8 小时运行和安装包隔离冷启动基线已经完成。
 - [ ] 本批未签名 EXE/sidecar 在全新安装路径的首次启动仍需正式环境复验：本机当前安装包 5 次隔离启动均通过，`p50=2,329 ms`、`p95=2,735 ms`，但历史同一最终哈希曾出现超过门限的首次启动波动。需结合正式代码签名与一次性干净 Windows VM 复验首次扫描/冷启动门限。
 
 ## D. 已确认的平台差异，不伪装为缺陷已修复
@@ -509,4 +511,4 @@ Windows 产品版本：`3.0.9`
 3. [已完成] Git、固定版本 npm 来源、普通 npm MCP、常见 stdio MCP JSON、portable Agent、Codex、Claude、独立 Skill、skills-only、设置页本机目录 typed 导入与 Windows Credential Manager Secret resolver 均已完成。
 4. [外部依赖] 完成 Computer Use `.tgz`、Marketplace 签名发布/客户端安装闭环，以及 Windows 安装包正式代码签名。
 5. [进行中] Windows AppContainer 启动、文件/网络拒绝、disabled/loopback/controlled 网络 capability、句柄绑定的非空目录逐项 ACL 租约、父目录临时 `FILE_TRAVERSE`、v1/v2/v3 journal 恢复和可复用受限进程启动器已完成；任务终端已迁移，Agent Plugin 的 `network.client` 已按 manifest 选择 `controlled`/`disabled`，Plugin 应用后端已接入宿主 loopback 代理。下一步实现细粒度目标/目的地出站规则，并在正式签名 Release/干净 VM 取证后开放第 31 页开关。审批策略和审批人已经接入真实执行门禁。
-6. [待验证] 工具恢复后完成 31 页原生逐页视觉、缩放和无障碍验收；升级、失败前置保护、事务中途故障回滚、客户端运行中升级及安装包冷启动基线已完成，后续在一次性 VM 补强制锁/需重启场景并继续 Host ready、首屏与长稳性能基线。
+6. [待验证] 工具恢复后完成 31 页原生逐页视觉、缩放和无障碍验收；升级、失败前置保护、事务中途故障回滚、客户端运行中升级、Release Host ready、8 小时长稳及安装包冷启动基线已完成，后续在一次性 VM 补强制锁/需重启场景并继续首屏与 Git Diff 实机性能基线。
