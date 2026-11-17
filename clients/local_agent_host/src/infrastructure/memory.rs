@@ -9,9 +9,9 @@ use chatos_ai_runtime::{
 };
 use chatos_local_agent_ports::{
     AuthoritativeConversationPage, AuthoritativeConversationRecord,
-    LocalConversationTranscriptSource, LocalMemoryOutboxStore,
+    LocalConversationTranscriptSource, LocalMemoryContextCacheStore, LocalMemoryOutboxStore,
 };
-use futures::future::try_join_all;
+use futures::{stream, StreamExt, TryStreamExt};
 use memory_engine_sdk::{
     CompactTurnsResponse, MemoryEngineClient, SdkGetTurnProcessRecordsRequest,
     SdkListCompactTurnsRequest, TurnProcessRecordsResponse,
@@ -19,7 +19,9 @@ use memory_engine_sdk::{
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use crate::{LocalMemoryOutboxWriter, LocalMemorySyncWorker};
+use crate::{LocalMemoryContextCache, LocalMemoryOutboxWriter, LocalMemorySyncWorker};
+
+const TRANSCRIPT_PROCESS_RECORD_CONCURRENCY: usize = 4;
 
 pub struct LocalMemoryRuntimeServices {
     pub runner: ContextualTurnRunner,
@@ -175,21 +177,28 @@ impl LocalConversationTranscriptSource for MemoryConversationTranscriptSource {
                 },
             )
             .await?;
-        let process_pages = try_join_all(page.items.iter().filter(|item| item.has_process).map(
-            |item| async move {
+        let process_turn_ids = page
+            .items
+            .iter()
+            .filter(|item| item.has_process)
+            .map(|item| item.turn_id.clone())
+            .collect::<Vec<_>>();
+        let process_pages = stream::iter(process_turn_ids)
+            .map(|turn_id| async move {
                 self.client
                     .get_turn_process_records(
                         thread_id,
-                        item.turn_id.as_str(),
+                        turn_id.as_str(),
                         SdkGetTurnProcessRecordsRequest {
                             tenant_id: tenant_id.to_string(),
                             record_type: Some("message".to_string()),
                         },
                     )
                     .await
-            },
-        ))
-        .await?;
+            })
+            .buffer_unordered(TRANSCRIPT_PROCESS_RECORD_CONCURRENCY)
+            .try_collect::<Vec<_>>()
+            .await?;
         let mut process_by_turn = process_pages
             .into_iter()
             .map(|page| (page.turn_id, page.items))
@@ -263,7 +272,7 @@ impl LocalMemoryRuntimeConfig {
         tenant_id: impl Into<String>,
     ) -> Result<LocalMemoryRuntimeServices, String>
     where
-        S: LocalMemoryOutboxStore + 'static,
+        S: LocalMemoryOutboxStore + LocalMemoryContextCacheStore + 'static,
     {
         let source_id = required("Memory source_id", &self.source_id)?;
         self.access_token.as_ref().ok_or_else(|| {
@@ -274,8 +283,10 @@ impl LocalMemoryRuntimeConfig {
             runtime_context_assertion_endpoint(&self.base_url)?,
             client.clone(),
         );
+        let cache_store: Arc<dyn LocalMemoryContextCacheStore> = store.clone();
         let composer = MemoryContextComposer::from_client(client.clone())
-            .with_runtime_context_assertion_provider(assertion_provider.clone());
+            .with_runtime_context_assertion_provider(assertion_provider.clone())
+            .with_resilient_cache(LocalMemoryContextCache::new(cache_store));
         let remote_writer: Arc<dyn MemoryRecordWriter> = Arc::new(
             MemoryEngineRecordWriter::from_client(
                 client.clone(),
@@ -377,12 +388,21 @@ mod tests {
     use super::*;
     use memory_engine_sdk::{EngineRecord, TurnRecordSlice};
     use serde_json::json;
-    use std::sync::Mutex;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex,
+    };
 
     struct TranscriptClientFixture {
         compact_page: Mutex<Option<CompactTurnsResponse>>,
         process_pages: Mutex<HashMap<String, TurnProcessRecordsResponse>>,
         compact_requests: Mutex<Vec<SdkListCompactTurnsRequest>>,
+    }
+
+    struct ConcurrentTranscriptClientFixture {
+        compact_page: Mutex<Option<CompactTurnsResponse>>,
+        active_process_requests: AtomicUsize,
+        peak_process_requests: AtomicUsize,
     }
 
     #[async_trait]
@@ -411,6 +431,38 @@ mod tests {
                 .unwrap()
                 .remove(turn_id)
                 .ok_or_else(|| format!("missing process page for {turn_id}"))
+        }
+    }
+
+    #[async_trait]
+    impl MemoryTranscriptClient for ConcurrentTranscriptClientFixture {
+        async fn list_compact_turns(
+            &self,
+            _thread_id: &str,
+            _request: SdkListCompactTurnsRequest,
+        ) -> Result<CompactTurnsResponse, String> {
+            self.compact_page
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or_else(|| "compact page already consumed".to_string())
+        }
+
+        async fn get_turn_process_records(
+            &self,
+            _thread_id: &str,
+            turn_id: &str,
+            _request: SdkGetTurnProcessRecordsRequest,
+        ) -> Result<TurnProcessRecordsResponse, String> {
+            let active = self.active_process_requests.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak_process_requests
+                .fetch_max(active, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            self.active_process_requests.fetch_sub(1, Ordering::SeqCst);
+            Ok(TurnProcessRecordsResponse {
+                turn_id: turn_id.to_string(),
+                items: Vec::new(),
+            })
         }
     }
 
@@ -591,5 +643,58 @@ mod tests {
             Some(conversation_id)
         );
         assert_eq!(requests[0].limit, Some(10));
+    }
+
+    #[tokio::test]
+    async fn transcript_process_records_use_bounded_concurrency() {
+        let conversation_id = "conversation-1";
+        let items = (0..10)
+            .map(|index| {
+                let turn_id = format!("turn-{index}");
+                TurnRecordSlice {
+                    turn_id: turn_id.clone(),
+                    user_record: record(
+                        &format!("user-{index}"),
+                        &turn_id,
+                        conversation_id,
+                        "user",
+                        "request",
+                        "2026-11-07T01:00:00Z",
+                    ),
+                    final_assistant_record: None,
+                    has_process: true,
+                    tool_call_count: 0,
+                    thinking_count: 0,
+                    process_message_count: 1,
+                }
+            })
+            .collect();
+        let fixture = Arc::new(ConcurrentTranscriptClientFixture {
+            compact_page: Mutex::new(Some(CompactTurnsResponse {
+                items,
+                has_more: false,
+                next_before: None,
+            })),
+            active_process_requests: AtomicUsize::new(0),
+            peak_process_requests: AtomicUsize::new(0),
+        });
+        let source = MemoryConversationTranscriptSource {
+            client: fixture.clone(),
+        };
+
+        source
+            .list_conversation_records(
+                "tenant-1",
+                "client-agent:agent:jiguli",
+                conversation_id,
+                None,
+                10,
+            )
+            .await
+            .expect("read transcript");
+
+        let peak = fixture.peak_process_requests.load(Ordering::SeqCst);
+        assert!(peak > 1);
+        assert!(peak <= TRANSCRIPT_PROCESS_RECORD_CONCURRENCY);
     }
 }

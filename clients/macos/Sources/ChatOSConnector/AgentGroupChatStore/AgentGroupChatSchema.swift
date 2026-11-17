@@ -393,6 +393,7 @@ enum AgentGroupChatSchema {
             ON local_project_creation_proposals(owner_user_id, room_id, status, created_at_unix_ms, id);
 
         \(AgentGroupChatMigrations.teamAssetsDefinition)
+        \(AgentGroupChatMigrations.teamAssetReviewsDefinition)
 
         CREATE TABLE IF NOT EXISTS local_agent_todo_asset_snapshots (
             owner_user_id TEXT NOT NULL,

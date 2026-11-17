@@ -577,7 +577,7 @@ public struct LocalAgentTeamAsset: Codable, Sendable, Equatable, Identifiable {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(teamRoomID, field: "teamID")
         try AgentGroupChatValidation.text(title, field: "teamAssetTitle", maximumLength: 240)
-        try AgentGroupChatValidation.optionalText(
+        try AgentGroupChatValidation.markdown(
             markdown,
             field: "teamAssetMarkdown",
             maximumLength: 128_000
@@ -757,7 +757,7 @@ public struct LocalAgentTeamAssetUpdateSuggestion: Codable, Sendable, Equatable 
             field: "teamAssetSuggestionTitle",
             maximumLength: 240
         )
-        try AgentGroupChatValidation.text(
+        try AgentGroupChatValidation.markdown(
             markdown,
             field: "teamAssetSuggestionMarkdown",
             maximumLength: 128_000
@@ -767,6 +767,114 @@ public struct LocalAgentTeamAssetUpdateSuggestion: Codable, Sendable, Equatable 
             field: "teamAssetSuggestionRationale",
             maximumLength: 4_000
         )
+    }
+}
+
+public enum LocalAgentTeamAssetReviewStatus: String, Codable, Sendable, CaseIterable {
+    case pending
+    case applied
+    case rejected
+}
+
+/// Durable review state for one executor-proposed team knowledge update. The candidate remains
+/// attached to its Todo event; this record tracks the project manager's explicit decision.
+public struct LocalAgentTeamAssetReview: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let ownerUserID: String
+    public let teamRoomID: String
+    public let todoID: String
+    public let todoEventID: String
+    public let suggestionIndex: Int
+    public let sourceAgentID: String
+    public let suggestion: LocalAgentTeamAssetUpdateSuggestion
+    public let status: LocalAgentTeamAssetReviewStatus
+    public let resolvedAssetID: String?
+    public let resolvedAssetRevision: Int?
+    public let reviewedByAgentID: String?
+    public let reviewReason: String
+    public let createdAtUnixMs: Int64
+    public let updatedAtUnixMs: Int64
+
+    public init(
+        id: String,
+        ownerUserID: String,
+        teamRoomID: String,
+        todoID: String,
+        todoEventID: String,
+        suggestionIndex: Int,
+        sourceAgentID: String,
+        suggestion: LocalAgentTeamAssetUpdateSuggestion,
+        status: LocalAgentTeamAssetReviewStatus = .pending,
+        resolvedAssetID: String? = nil,
+        resolvedAssetRevision: Int? = nil,
+        reviewedByAgentID: String? = nil,
+        reviewReason: String = "",
+        createdAtUnixMs: Int64,
+        updatedAtUnixMs: Int64
+    ) {
+        self.id = id
+        self.ownerUserID = ownerUserID
+        self.teamRoomID = teamRoomID
+        self.todoID = todoID
+        self.todoEventID = todoEventID
+        self.suggestionIndex = suggestionIndex
+        self.sourceAgentID = sourceAgentID
+        self.suggestion = suggestion
+        self.status = status
+        self.resolvedAssetID = resolvedAssetID
+        self.resolvedAssetRevision = resolvedAssetRevision
+        self.reviewedByAgentID = reviewedByAgentID
+        self.reviewReason = reviewReason
+        self.createdAtUnixMs = createdAtUnixMs
+        self.updatedAtUnixMs = updatedAtUnixMs
+    }
+
+    public func validate() throws {
+        try AgentGroupChatValidation.identifier(id, field: "teamAssetReviewID")
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(teamRoomID, field: "teamRoomID")
+        try AgentGroupChatValidation.identifier(todoID, field: "todoID")
+        try AgentGroupChatValidation.identifier(todoEventID, field: "todoEventID")
+        try AgentGroupChatValidation.identifier(sourceAgentID, field: "sourceAgentID")
+        try suggestion.validate()
+        guard suggestionIndex >= 0 else {
+            throw AgentGroupChatError.invalidField("teamAssetReviewSuggestionIndex")
+        }
+        if let resolvedAssetID {
+            try AgentGroupChatValidation.identifier(resolvedAssetID, field: "resolvedAssetID")
+        }
+        if let resolvedAssetRevision, resolvedAssetRevision <= 0 {
+            throw AgentGroupChatError.invalidField("resolvedAssetRevision")
+        }
+        if let reviewedByAgentID {
+            try AgentGroupChatValidation.identifier(
+                reviewedByAgentID,
+                field: "reviewedByAgentID"
+            )
+        }
+        try AgentGroupChatValidation.optionalText(
+            reviewReason,
+            field: "teamAssetReviewReason",
+            maximumLength: 4_000
+        )
+        switch status {
+        case .pending:
+            guard resolvedAssetID == nil, resolvedAssetRevision == nil,
+                  reviewedByAgentID == nil, reviewReason.isEmpty else {
+                throw AgentGroupChatError.invalidField("teamAssetReviewResolution")
+            }
+        case .applied:
+            guard resolvedAssetID != nil, resolvedAssetRevision != nil,
+                  reviewedByAgentID != nil else {
+                throw AgentGroupChatError.invalidField("teamAssetReviewResolution")
+            }
+        case .rejected:
+            guard resolvedAssetID == nil, resolvedAssetRevision == nil,
+                  reviewedByAgentID != nil, !reviewReason.isEmpty else {
+                throw AgentGroupChatError.invalidField("teamAssetReviewResolution")
+            }
+        }
+        try AgentGroupChatValidation.timestamps(createdAtUnixMs, updatedAtUnixMs)
     }
 }
 

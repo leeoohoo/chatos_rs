@@ -195,6 +195,45 @@ extension SQLiteAgentGroupChatStoreTests {
             teamRoomID: room.id
         )
         XCTAssertEqual(unchanged?.revision, 2)
+
+        let verboseUpdate = LocalAgentProjectDashboardUpdate(
+            phase: "联调阶段",
+            health: .onTrack,
+            summary: String(repeating: "过长的内部技术记录", count: 100)
+        )
+        do {
+            _ = try await store.upsertProjectDashboard(
+                ownerUserID: "alice",
+                teamRoomID: room.id,
+                editorAgentID: manager.id,
+                expectedRevision: 2,
+                update: verboseUpdate,
+                nowUnixMs: 107
+            )
+            XCTFail("An oversized manager brief was accepted")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .invalidField("dashboardSummary"))
+        }
+
+        let noisyStepsUpdate = LocalAgentProjectDashboardUpdate(
+            phase: "联调阶段",
+            health: .onTrack,
+            summary: "面向用户的项目结论。",
+            nextSteps: Array(repeating: "一个明确动作", count: 6)
+        )
+        do {
+            _ = try await store.upsertProjectDashboard(
+                ownerUserID: "alice",
+                teamRoomID: room.id,
+                editorAgentID: manager.id,
+                expectedRevision: 2,
+                update: noisyStepsUpdate,
+                nowUnixMs: 108
+            )
+            XCTFail("Too many dashboard next steps were accepted")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .invalidField("dashboardNextSteps"))
+        }
     }
 
     func testTodoCompletionProgressPersistsAssetSuggestionsAndStatusCallsThemOut() async throws {
@@ -237,7 +276,7 @@ extension SQLiteAgentGroupChatStoreTests {
         let suggestion = LocalAgentTeamAssetUpdateSuggestion(
             category: .architecture,
             title: "架构决策",
-            markdown: "采用事件驱动更新。",
+            markdown: "采用事件驱动更新。\n",
             rationale: "执行验证已确认该方案通过验收。"
         )
         _ = try await store.updateAgentTodo(
@@ -258,12 +297,23 @@ extension SQLiteAgentGroupChatStoreTests {
             assetUpdateSuggestions: [suggestion],
             nowUnixMs: 201
         )
+        _ = try await store.appendAgentTodoProgress(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            kind: .completed,
+            runID: "run-suggestion-replay",
+            stage: "completed",
+            detail: "重放同一完成结果",
+            assetUpdateSuggestions: [suggestion],
+            nowUnixMs: 202
+        )
         _ = try await store.updateAgentTodo(
             ownerUserID: "alice",
             agentID: worker.id,
             todoID: todo.id,
             update: .init(status: .completed, result: "验证完成"),
-            nowUnixMs: 202
+            nowUnixMs: 203
         )
         let progress = try await store.listAgentTodoProgress(
             ownerUserID: "alice",
@@ -272,12 +322,25 @@ extension SQLiteAgentGroupChatStoreTests {
             limit: 10
         )
         XCTAssertEqual(progress.last?.assetUpdateSuggestions, [suggestion])
+        let reviews = try await store.listTeamAssetReviews(
+            ownerUserID: "alice",
+            teamRoomID: room.id,
+            reviewerAgentID: manager.id,
+            status: .pending,
+            limit: 10
+        )
+        XCTAssertEqual(reviews.count, 1)
+        XCTAssertEqual(
+            reviews.first?.todoEventID,
+            progress.first(where: { !$0.assetUpdateSuggestions.isEmpty })?.id
+        )
+        XCTAssertEqual(reviews.first?.suggestion, suggestion)
         let deliveries = try await store.enqueueAgentTodoStatus(
             ownerUserID: "alice",
             agentID: worker.id,
             todoID: todo.id,
             excludingAgentID: worker.id,
-            nowUnixMs: 203
+            nowUnixMs: 204
         )
         let managerStatus = try XCTUnwrap(deliveries.first)
         let message = try await store.message(
@@ -286,5 +349,189 @@ extension SQLiteAgentGroupChatStoreTests {
             messageID: managerStatus.messageID
         )
         XCTAssertTrue(try XCTUnwrap(message).content.contains("共享资产更新建议：1 条"))
+    }
+
+    func testTeamAssetReviewRequiresManagerCurrentRevisionAndExplicitRejection() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let manager = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "项目经理",
+                rolePrompt: "审核团队资产。",
+                modelConfigID: "model",
+                professionKey: "project_manager"
+            )
+        )
+        let worker = try await makeAgent(store, name: "执行者")
+        let room = try await store.createManagedRoom(
+            ownerUserID: "alice",
+            projectID: "asset-review-project",
+            draft: .init(name: "资产审核团队"),
+            projectManagerAgentID: manager.id
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: worker.id,
+            draft: .init(role: "执行者")
+        )
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            requestKey: "asset-review-todo",
+            draft: .init(title: "验证架构", teamRoomID: room.id, creatorAgentID: manager.id),
+            nowUnixMs: 100
+        )
+        _ = try await store.appendAgentTodoProgress(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            kind: .completed,
+            runID: "asset-review-run",
+            stage: "completed",
+            detail: "完成并提交两条建议",
+            assetUpdateSuggestions: [
+                .init(
+                    category: .architecture,
+                    title: "事件驱动架构",
+                    markdown: "采用事件驱动。\n",
+                    rationale: "已通过验证。"
+                ),
+                .init(
+                    category: .currentProgress,
+                    title: "临时进度",
+                    markdown: "一次性状态。\n",
+                    rationale: "执行过程生成。"
+                ),
+            ],
+            nowUnixMs: 101
+        )
+        let reviews = try await store.listTeamAssetReviews(
+            ownerUserID: "alice",
+            teamRoomID: room.id,
+            reviewerAgentID: manager.id,
+            status: .pending,
+            limit: 10
+        )
+        XCTAssertEqual(reviews.count, 2)
+
+        let firstAsset = try await store.upsertTeamAsset(
+            ownerUserID: "alice",
+            teamRoomID: room.id,
+            assetID: nil,
+            editorAgentID: manager.id,
+            category: .architecture,
+            title: "事件驱动架构",
+            markdown: "采用事件驱动。\n",
+            expectedRevision: nil,
+            nowUnixMs: 102
+        )
+        XCTAssertEqual(firstAsset.markdown, "采用事件驱动。\n")
+        let currentAsset = try await store.upsertTeamAsset(
+            ownerUserID: "alice",
+            teamRoomID: room.id,
+            assetID: firstAsset.id,
+            editorAgentID: manager.id,
+            category: .architecture,
+            title: "事件驱动架构",
+            markdown: "采用事件驱动，并记录边界。\n",
+            expectedRevision: firstAsset.revision,
+            nowUnixMs: 103
+        )
+        XCTAssertEqual(currentAsset.markdown, "采用事件驱动，并记录边界。\n")
+
+        do {
+            _ = try await store.resolveTeamAssetReview(
+                ownerUserID: "alice",
+                reviewID: reviews[0].id,
+                reviewerAgentID: worker.id,
+                status: .applied,
+                resolvedAssetID: currentAsset.id,
+                resolvedAssetRevision: currentAsset.revision,
+                reason: "",
+                nowUnixMs: 104
+            )
+            XCTFail("A non-manager resolved an asset review")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .permissionDenied)
+        }
+        do {
+            _ = try await store.resolveTeamAssetReview(
+                ownerUserID: "alice",
+                reviewID: reviews[0].id,
+                reviewerAgentID: manager.id,
+                status: .applied,
+                resolvedAssetID: firstAsset.id,
+                resolvedAssetRevision: firstAsset.revision,
+                reason: "",
+                nowUnixMs: 105
+            )
+            XCTFail("A stale asset revision resolved a review")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .conflict)
+        }
+        let applied = try await store.resolveTeamAssetReview(
+            ownerUserID: "alice",
+            reviewID: reviews[0].id,
+            reviewerAgentID: manager.id,
+            status: .applied,
+            resolvedAssetID: currentAsset.id,
+            resolvedAssetRevision: currentAsset.revision,
+            reason: "",
+            nowUnixMs: 106
+        )
+        XCTAssertEqual(applied.status, .applied)
+        XCTAssertEqual(applied.resolvedAssetRevision, currentAsset.revision)
+        let replayedApplied = try await store.resolveTeamAssetReview(
+            ownerUserID: "alice",
+            reviewID: reviews[0].id,
+            reviewerAgentID: manager.id,
+            status: .applied,
+            resolvedAssetID: currentAsset.id,
+            resolvedAssetRevision: currentAsset.revision,
+            reason: "",
+            nowUnixMs: 107
+        )
+        XCTAssertEqual(replayedApplied, applied)
+
+        do {
+            _ = try await store.resolveTeamAssetReview(
+                ownerUserID: "alice",
+                reviewID: reviews[1].id,
+                reviewerAgentID: manager.id,
+                status: .rejected,
+                resolvedAssetID: nil,
+                resolvedAssetRevision: nil,
+                reason: "",
+                nowUnixMs: 108
+            )
+            XCTFail("A rejection without a reason was accepted")
+        } catch {
+            XCTAssertEqual(
+                error as? AgentGroupChatError,
+                .invalidField("teamAssetReviewReason")
+            )
+        }
+        let rejected = try await store.resolveTeamAssetReview(
+            ownerUserID: "alice",
+            reviewID: reviews[1].id,
+            reviewerAgentID: manager.id,
+            status: .rejected,
+            resolvedAssetID: nil,
+            resolvedAssetRevision: nil,
+            reason: "这是一次性状态，Todo 进度已完整保留。",
+            nowUnixMs: 109
+        )
+        XCTAssertEqual(rejected.status, .rejected)
+        let remaining = try await store.listTeamAssetReviews(
+            ownerUserID: "alice",
+            teamRoomID: room.id,
+            reviewerAgentID: manager.id,
+            status: .pending,
+            limit: 10
+        )
+        XCTAssertTrue(remaining.isEmpty)
     }
 }

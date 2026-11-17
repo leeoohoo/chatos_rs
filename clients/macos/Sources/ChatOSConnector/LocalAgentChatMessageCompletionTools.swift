@@ -33,6 +33,22 @@ extension LocalAgentChatToolProvider {
         delivery.targetAgentID == context.agentID else {
             throw AgentGroupChatError.conflict
         }
+        let pendingAssetReviews = try await store.listTeamAssetReviews(
+            ownerUserID: context.ownerUserID,
+            teamRoomID: nil,
+            reviewerAgentID: context.agentID,
+            status: .pending,
+            limit: 1
+        )
+        if !pendingAssetReviews.isEmpty {
+            return Self.structuredFailure(
+                code: "team_asset_reviews_pending",
+                field: "manager_cycle",
+                message: "仍有执行者提交的共享资产建议待审核。请先应用到团队资产，或给出事实理由明确拒绝。",
+                retryable: true,
+                nextTool: Self.teamAssetReviewListToolName
+            )
+        }
         let scheduling = try await store.agentTodoScheduleState(
             ownerUserID: context.ownerUserID,
             agentID: context.agentID

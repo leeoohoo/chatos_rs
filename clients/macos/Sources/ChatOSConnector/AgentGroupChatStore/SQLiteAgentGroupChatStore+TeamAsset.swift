@@ -58,7 +58,7 @@ extension SQLiteAgentGroupChatStore {
             try AgentGroupChatValidation.identifier(editorAgentID, field: "editorAgentID")
         }
         try AgentGroupChatValidation.text(title, field: "teamAssetTitle", maximumLength: 240)
-        try AgentGroupChatValidation.optionalText(
+        try AgentGroupChatValidation.markdown(
             markdown,
             field: "teamAssetMarkdown",
             maximumLength: 128_000

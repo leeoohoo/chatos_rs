@@ -6,6 +6,33 @@ import SQLite3
 import XCTest
 
 extension SQLiteAgentGroupChatStoreTests {
+    func testMigration36RestoresTeamAssetReviewQueue() throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        do {
+            let initialStore = try SQLiteAgentGroupChatStore(databaseURL: url)
+            withExtendedLifetime(initialStore) {}
+        }
+        try executeSQLite(
+            url,
+            sql: """
+            DROP TABLE local_agent_team_asset_reviews;
+            DELETE FROM local_agent_group_chat_schema_migrations WHERE version = 36;
+            """
+        )
+
+        let migratedStore = try SQLiteAgentGroupChatStore(databaseURL: url)
+        withExtendedLifetime(migratedStore) {}
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'local_agent_team_asset_reviews'"
+        ), 1)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM local_agent_group_chat_schema_migrations WHERE version = 36"
+        ), 1)
+    }
+
     func testMigration17RebuildsRoomTableWithCompositeManagerForeignKey() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }

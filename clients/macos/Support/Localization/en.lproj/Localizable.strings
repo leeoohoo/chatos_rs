@@ -555,6 +555,9 @@
 "分类" = "Category";
 "参数" = "Arguments";
 "团队共享资产" = "Team Shared Assets";
+"待项目经理审核 %lld 条" = "%lld Awaiting Project Manager Review";
+"写入资产或明确拒绝后才算处理完成" = "Complete each review by applying it to an asset or explicitly rejecting it.";
+"待审核" = "Pending Review";
 "团队区域" = "Team Area";
 "在这里维护项目背景、进度、技术栈和架构决策。" = "Maintain the project background, progress, technology stack, and architecture decisions here.";
 "工具调用" = "Tool Calls";
@@ -724,6 +727,8 @@
 "当前阶段" = "Current Phase";
 "查看完整任务板" = "View Full Task Board";
 "查看运行依据" = "View Run Evidence";
+"历史简报包含较多技术记录，已默认收起。最新状态请看当前阶段、里程碑和执行情况。" = "This older brief contains extensive technical records and is collapsed by default. Use the current phase, milestones, and execution status for the latest state.";
+"查看历史完整记录" = "View Full Historical Brief";
 "每页" = "Per Page";
 "渐进披露层级" = "Progressive Disclosure Level";
 "渐进披露结构" = "Progressive Disclosure Structure";

@@ -57,6 +57,21 @@ extension SQLiteAgentGroupChatStore {
         try AgentGroupChatValidation.identifier(teamRoomID, field: "teamRoomID")
         try AgentGroupChatValidation.identifier(editorAgentID, field: "dashboardEditorAgentID")
         guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        try AgentGroupChatValidation.text(
+            update.summary,
+            field: "dashboardSummary",
+            maximumLength: 800
+        )
+        guard update.nextSteps.count <= 5 else {
+            throw AgentGroupChatError.invalidField("dashboardNextSteps")
+        }
+        for step in update.nextSteps {
+            try AgentGroupChatValidation.text(
+                step,
+                field: "dashboardNextStep",
+                maximumLength: 240
+            )
+        }
 
         return try transaction {
             guard let room = try readRoom(ownerUserID: ownerUserID, roomID: teamRoomID),

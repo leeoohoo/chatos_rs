@@ -210,6 +210,11 @@ struct ProjectAgentGroupChatView: View {
         case .assets:
             TeamAssetsView(
                 assets: viewModel.teamAssets,
+                pendingReviews: viewModel.pendingTeamAssetReviews,
+                todosByID: Dictionary(
+                    uniqueKeysWithValues: viewModel.teamTodos.map { ($0.id, $0) }
+                ),
+                profilesByID: viewModel.profilesByID,
                 onCreate: {
                     editingAsset = nil
                     showsAssetEditor = true

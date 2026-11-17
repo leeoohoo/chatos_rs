@@ -177,6 +177,7 @@ public extension ToolSkillCoverageCatalog {
                     toolNames: [
                         "team_asset_list", "team_asset_get", "team_asset_create",
                         "team_asset_update", "team_asset_archive",
+                        "team_asset_review_list", "team_asset_review_resolve",
                     ],
                     routerSkillName: "chatos-team-knowledge",
                     specialistSkillName: "chatos-team-knowledge"

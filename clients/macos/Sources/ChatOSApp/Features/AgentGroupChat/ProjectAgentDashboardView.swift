@@ -17,6 +17,9 @@ struct ProjectAgentDashboardView: View {
 
     @State private var milestonePage = 0
     @State private var milestonePageSize = 5
+    @State private var isLegacyBriefExpanded = false
+
+    private let managerBriefMaximumLength = 800
 
     private var needsReviewRuns: [LocalAgentGroupChatRun] {
         runs.filter { $0.checkpoint.status == .needsReview }
@@ -234,17 +237,50 @@ struct ProjectAgentDashboardView: View {
                 "项目经理简报",
                 subtitle: dashboard.map { "第 \($0.revision) 版" } ?? "尚未维护"
             )
-            Text(dashboard?.summary ?? "项目经理会在收到任务状态、调研和审批变化后维护阶段判断、风险与下一步。")
-                .appFont(.body)
-                .foregroundStyle(dashboard == nil ? .secondary : .primary)
-                .textSelection(.enabled)
-            if let steps = dashboard?.nextSteps, !steps.isEmpty {
+            if let summary = dashboard?.summary, summary.count > managerBriefMaximumLength {
+                Label(
+                    "历史简报包含较多技术记录，已默认收起。最新状态请看当前阶段、里程碑和执行情况。",
+                    systemImage: "text.badge.checkmark"
+                )
+                .appFont(.callout)
+                .foregroundStyle(.secondary)
+                DisclosureGroup("查看历史完整记录", isExpanded: $isLegacyBriefExpanded) {
+                    ScrollView {
+                        Text(summary)
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if let steps = dashboard?.nextSteps, !steps.isEmpty {
+                            Divider()
+                            Text("下一步").appFont(.caption.weight(.semibold))
+                            ForEach(Array(steps.prefix(5).enumerated()), id: \.offset) { index, step in
+                                Text("\(index + 1). \(step)")
+                                    .appFont(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 220)
+                    .padding(.top, 6)
+                }
+                .appFont(.caption.weight(.medium))
+            } else {
+                Text(dashboard?.summary ?? "项目经理会在收到任务状态、调研和审批变化后维护阶段判断、风险与下一步。")
+                    .appFont(.body)
+                    .foregroundStyle(dashboard == nil ? .secondary : .primary)
+                    .textSelection(.enabled)
+            }
+            if let steps = dashboard?.nextSteps,
+               !steps.isEmpty,
+               dashboard?.summary.count ?? 0 <= managerBriefMaximumLength {
                 Divider()
                 Text("下一步").appFont(.caption.weight(.semibold))
                 ForEach(Array(steps.prefix(5).enumerated()), id: \.offset) { index, step in
                     Text("\(index + 1). \(step)")
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
             }
             HStack {

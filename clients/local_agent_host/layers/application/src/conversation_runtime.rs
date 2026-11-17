@@ -28,16 +28,9 @@ impl LocalAgentRuntime {
         conversation_id: &str,
     ) -> Result<Vec<LocalConversationAttachmentRecord>, LocalAgentRuntimeError> {
         Ok(self
-            .authoritative_conversation_history(
-                chatos_local_agent_protocol::GetConversationHistoryCommand {
-                    owner_user_id: owner_user_id.to_string(),
-                    conversation_id: conversation_id.to_string(),
-                    before_cursor: None,
-                    limit: 100,
-                },
-            )
-            .await?
-            .attachments)
+            .store
+            .list_recent_conversation_attachments(owner_user_id, conversation_id, 100)
+            .await?)
     }
 
     /// Resolves one opaque reference inside the source conversation boundary.
@@ -2244,6 +2237,43 @@ mod tests {
         assert!(history_error
             .to_string()
             .contains("Memory transcript source is required"));
+    }
+
+    #[tokio::test]
+    async fn recent_attachment_catalog_uses_local_index_without_memory_transcript() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+        runtime.initialize("user-1").await.expect("initialize");
+        runtime
+            .try_handle(request(
+                "create-local-attachment-conversation",
+                HostCommand::CreateConversation(create_conversation()),
+            ))
+            .await
+            .expect("create conversation");
+        runtime
+            .try_handle(request(
+                "start-local-attachment-turn",
+                HostCommand::StartConversationTurn(start_turn(1)),
+            ))
+            .await
+            .expect("start turn");
+
+        let attachments = runtime
+            .recent_conversation_attachments("user-1", "conversation-1")
+            .await
+            .expect("read local attachment catalog");
+
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].attachment_id, "attachment-1");
+        assert_eq!(
+            attachments[0].authorized_local_ref,
+            "local-attachment:authority-1"
+        );
     }
 
     #[tokio::test]
