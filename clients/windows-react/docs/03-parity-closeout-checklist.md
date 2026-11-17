@@ -18,6 +18,14 @@ Windows 产品版本：`3.0.9`
 
 ### 2026-11-17 短时稳定性复核
 
+### 2026-11-17 `3.0.9.10` 最新对照复核
+
+- 重新执行 `git fetch origin --prune --tags` 后，远端最新版本分支仍为 `origin/3.0.9.10`，头提交为 `37a7ad4cc`，没有出现 `3.0.9.11`。当前 Windows 分支已通过合并提交 `a6fffc816` 包含该远端头，并已推送到 `origin/3.0.9.3.1`。
+- `3.0.9.10` 的 Local Agent 会话上下文、Memory compose 故障存活、Browser session 初始化清理、Browser `0.1.27` 与部署用户增长校验均位于共享 Rust/Plugin/脚本层，Windows 合并后直接复用。重新执行 Windows Tauri `cargo test --all-targets` 为 `601 passed, 0 failed, 6 ignored`；React/Vitest 为 `145` 个测试文件、`536 passed, 0 failed`，TypeScript typecheck 与 architecture audit 均通过。测试生成的 `target-shared/debug` 中间产物约 `3.31 GB`，确认没有占用进程后已删除；正式 Release 产物未修改。
+- macOS 工作流的专用文本成品提示词、模型 capability/上下文/输出预算失败关闭和 `520px` Inspector 宽度已经在 Windows 跟进。仍未跟进的是逐节点运行/成功/失败结果、图片/视频节点结果直接预览，以及 macOS 新增的过期保存拒绝和并发资产清理保护；Windows 当前只能在整个工作流完成后显示最终文本与图片/视频记录数量。
+- Local Agent Host v53 的 `target_concurrent_work_items` 协议字段和压力更新基础已进入 Windows，但 Windows `MachineResourceGovernor` 仍使用 Host 固定预留与 App 固定剩余池，没有 macOS `ClientMachineConcurrencyAllocator` 在 Host 与 App 之间按活动/排队状态动态借用逻辑，因此“动态并发借用”仍是实际功能差距。
+- Windows 已有团队共享资产的创建、读取、版本、归档、Run-scoped `asset_ref` 和项目经理权限控制，但尚未实现 `3.0.9.10` 的共享资产审核闭环：执行 Todo 的 `asset_update_suggestions_json` 仍固定写入空数组；缺少 durable review 表、pending/applied/rejected 状态、`team_asset_review_list` / `team_asset_review_resolve`、cycle 完成前强制清空待审核项，以及团队资产页的待审核来源展示。项目经理简报目前始终单行省略，也没有 macOS 对超过 800 字历史简报的可展开收起呈现。
+
 - 2026-11-17 在当前 HEAD 重跑 Windows React 前端门禁：Vitest `145` 个测试文件、`536 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture` 和 `npm run audit:bundle` 均通过，入口 Bundle 为 `456.97 KiB raw / 137.71 KiB gzip`。本轮未修改前端运行逻辑，结果只证明合并后的前端契约、类型、架构边界和 Bundle 预算无回归，不替代原生逐页视觉和发布环境验收。
 
 - 2026-11-17 运行中复核 8 小时隔离 Release：Worker 仍存活约 `1.05` 小时，正式 EXE 进程路径为 `target-shared/release/chatos-windows-react.exe`，工作集约 `37.82 MB`、私有内存约 `9.97 MB`、`33` 个线程、`436` 个 handles；仅观察到其 `WebView2`/`conhost` 子进程，未见异常进程树。旧版长稳脚本仍只在最终阶段写报告，因此本条运行中资源样本不能替代最终 `8 小时`报告。
