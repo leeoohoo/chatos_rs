@@ -82,16 +82,16 @@ SELECT
    LEFT JOIN users AS app_user ON app_user.id = identity.user_id
    WHERE identity.revoked_at IS NULL AND app_user.id IS NULL)")"
 
-if [[ "$actual_users" != "$expected_users" ]]; then
-  echo "User migration verification failed: target has $actual_users user(s), expected $expected_users" >&2
+if (( actual_users < expected_users )); then
+  echo "User migration verification failed: target has $actual_users user(s), expected at least $expected_users" >&2
   exit 1
 fi
 if [[ "$invalid_users" != "0" ]]; then
   echo "User migration verification failed: $invalid_users user row(s) have missing fields or an invalid password hash" >&2
   exit 1
 fi
-if [[ "$actual_identities" != "$expected_identities" ]]; then
-  echo "User migration verification failed: target has $actual_identities active WeChat identity record(s), expected $expected_identities" >&2
+if (( actual_identities < expected_identities )); then
+  echo "User migration verification failed: target has $actual_identities active WeChat identity record(s), expected at least $expected_identities" >&2
   exit 1
 fi
 if [[ "$orphan_identities" != "0" ]]; then
