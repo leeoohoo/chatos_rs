@@ -1,6 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex as StdMutex;
+    use std::sync::{
+        Mutex as StdMutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
 
     use async_trait::async_trait;
     use browser_cdp_protocol::{
@@ -113,11 +116,17 @@ mod tests {
         snapshot_href: Option<String>,
         visibility_state: &'static str,
         mouse_events: StdMutex<Vec<String>>,
+        connected: AtomicBool,
+        fail_create_once: AtomicBool,
+        close_count: AtomicUsize,
     }
 
     #[async_trait]
     impl BrowserBackend for ObservedLinkBackend {
         async fn open(&self, request: OpenBrowserRequest) -> CoreResult<BrowserDescriptor> {
+            if self.connected.swap(true, Ordering::SeqCst) {
+                return Err(CoreError::Backend("already connected".into()));
+            }
             Ok(BrowserDescriptor {
                 mode: request.mode,
                 product: "paired-chrome".into(),
@@ -131,6 +140,9 @@ mod tests {
         }
 
         async fn create_target(&self, url: &str) -> CoreResult<TargetDescriptor> {
+            if self.fail_create_once.swap(false, Ordering::SeqCst) {
+                return Err(CoreError::Backend("temporary tab creation failure".into()));
+            }
             Ok(TargetDescriptor {
                 id: "task-tab".into(),
                 title: Some("Start".into()),
@@ -206,7 +218,11 @@ mod tests {
             }
         }
 
-        async fn close(&self) -> CoreResult<()> { Ok(()) }
+        async fn close(&self) -> CoreResult<()> {
+            self.connected.store(false, Ordering::SeqCst);
+            self.close_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
     }
 
     struct ObservedLinkBackendFactory {
@@ -297,6 +313,9 @@ mod tests {
             snapshot_href: Some("https://www.minimax.io/news/h3".into()),
             visibility_state: "visible",
             mouse_events: StdMutex::new(Vec::new()),
+            connected: AtomicBool::new(false),
+            fail_create_once: AtomicBool::new(false),
+            close_count: AtomicUsize::new(0),
         });
         let runtime = BrowserRuntime::new(
             vec![Arc::new(ObservedLinkBackendFactory { backend: backend.clone() })],
@@ -338,6 +357,9 @@ mod tests {
             snapshot_href: None,
             visibility_state: "hidden",
             mouse_events: StdMutex::new(Vec::new()),
+            connected: AtomicBool::new(false),
+            fail_create_once: AtomicBool::new(false),
+            close_count: AtomicUsize::new(0),
         });
         let runtime = BrowserRuntime::new(
             vec![Arc::new(ObservedLinkBackendFactory { backend: backend.clone() })],
@@ -363,5 +385,53 @@ mod tests {
             *backend.mouse_events.lock().unwrap(),
             vec!["mousePressed".to_string(), "mouseReleased".to_string()],
         );
+    }
+
+    #[tokio::test]
+    async fn open_session_closes_backend_after_initialization_failure() {
+        let backend = Arc::new(ObservedLinkBackend {
+            page: StdMutex::new(PageState {
+                url: "about:blank".into(),
+                title: "Start".into(),
+                ready_state: "complete".into(),
+                document_id: "doc-1".into(),
+            }),
+            methods: StdMutex::new(Vec::new()),
+            snapshot_href: None,
+            visibility_state: "visible",
+            mouse_events: StdMutex::new(Vec::new()),
+            connected: AtomicBool::new(false),
+            fail_create_once: AtomicBool::new(true),
+            close_count: AtomicUsize::new(0),
+        });
+        let runtime = BrowserRuntime::new(
+            vec![Arc::new(ObservedLinkBackendFactory {
+                backend: backend.clone(),
+            })],
+            std::env::temp_dir(),
+        );
+        let request = OpenBrowserRequest {
+            mode: BrowserMode::ChromeExtension,
+            headless: false,
+            persistent_profile: false,
+            session_name: Some("retry test".into()),
+        };
+
+        let error = runtime
+            .open_session(request.clone())
+            .await
+            .expect_err("first tab creation should fail");
+        assert!(matches!(error, CoreError::Backend(ref message) if message == "temporary tab creation failure"));
+        assert_eq!(backend.close_count.load(Ordering::SeqCst), 1);
+
+        let session = runtime
+            .open_session(request)
+            .await
+            .expect("retry should reconnect after cleanup");
+        runtime
+            .close_session(&session.browser_session_id)
+            .await
+            .expect("close retried session");
+        assert_eq!(backend.close_count.load(Ordering::SeqCst), 2);
     }
 }

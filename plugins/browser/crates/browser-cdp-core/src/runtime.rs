@@ -201,35 +201,46 @@ impl BrowserRuntime {
             .ok_or_else(|| CoreError::Unsupported(format!("browser mode {:?}", request.mode)))?;
         let backend = factory.create(request.mode).await?;
         let browser = backend.open(request.clone()).await?;
-        let mut targets = backend.list_targets().await?;
-        if request.mode == BrowserMode::ChromeExtension
-            && browser
-                .capabilities
-                .iter()
-                .any(|capability| capability == "native_tab_groups")
-        {
-            targets.insert(0, backend.create_target("about:blank").await?);
-        } else if targets.is_empty() {
-            targets.push(backend.create_target("about:blank").await?);
-        }
+        let initialized: CoreResult<_> = async {
+            let mut targets = backend.list_targets().await?;
+            if request.mode == BrowserMode::ChromeExtension
+                && browser
+                    .capabilities
+                    .iter()
+                    .any(|capability| capability == "native_tab_groups")
+            {
+                targets.insert(0, backend.create_target("about:blank").await?);
+            } else if targets.is_empty() {
+                targets.push(backend.create_target("about:blank").await?);
+            }
 
-        let mut tabs = HashMap::new();
-        let mut active_tab_id = None;
-        for target in targets.into_iter().filter(|target| target.kind == "page") {
-            let tab_id = opaque_id("tab");
-            let backend_session_id = backend.attach_target(&target.id).await?;
-            active_tab_id.get_or_insert_with(|| tab_id.clone());
-            tabs.insert(
-                tab_id.clone(),
-                TabState {
-                    public_id: tab_id,
-                    backend_target_id: target.id,
-                    backend_session_id,
-                    title: target.title,
-                    url: target.url,
-                },
-            );
+            let mut tabs = HashMap::new();
+            let mut active_tab_id = None;
+            for target in targets.into_iter().filter(|target| target.kind == "page") {
+                let tab_id = opaque_id("tab");
+                let backend_session_id = backend.attach_target(&target.id).await?;
+                active_tab_id.get_or_insert_with(|| tab_id.clone());
+                tabs.insert(
+                    tab_id.clone(),
+                    TabState {
+                        public_id: tab_id,
+                        backend_target_id: target.id,
+                        backend_session_id,
+                        title: target.title,
+                        url: target.url,
+                    },
+                );
+            }
+            Ok((tabs, active_tab_id))
         }
+        .await;
+        let (tabs, active_tab_id) = match initialized {
+            Ok(initialized) => initialized,
+            Err(error) => {
+                let _ = backend.close().await;
+                return Err(error);
+            }
+        };
         let browser_session_id = opaque_id("bs");
         let session = BrowserSession {
             mode: request.mode,
