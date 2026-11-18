@@ -39,6 +39,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-18 固定分辨率/高缩放原生走查发现并关闭团队总览横向溢出：在正式 Release 的 `1183 × 762` 逻辑窗口中，旧版总览摘要三列和卡片双列的最小宽度会挤出底部横向滚动条。Windows 现于 `1280px` 及以下将摘要、指标和总览卡片安全纵向重排，右侧团队成员栏、长简报入口和全部状态入口保持可达。重新嵌入前端资源并启动 `target-shared/release/chatos-windows-react.exe` 后，同一窗口只保留正常纵向滚动，横向滚动条已消失；本机 Host 与测试账号会话均正常恢复。对应门禁为 React/Vitest `146` 个文件、`557 passed`，TypeScript、production build、architecture audit、bundle audit（入口 `459.96 KiB raw / 138.97 KiB gzip`）与 `git diff --check` 全部通过。该结果关闭团队总览这一页的高缩放溢出，不替代其余 30 页、100%/125%/150% 完整矩阵、屏幕阅读器和对比度验收。
 
+- 2026-11-18 原生 Run 检查器走查发现并关闭 Markdown 结果竖排：事件时间线的通用后代 `article` 网格选择器会误中嵌套的安全 Markdown 预览，把结果首段挤进 8px 列并逐字竖排，同时覆盖工具调用卡片布局。Windows 现只为显式 `agent-team-run-detail__event` 元素应用时间线网格，Markdown 文章和工具调用保持各自布局；持续门禁禁止恢复宽泛后代选择器。重新构建正式 Release 后复测真实 `Windows 团队需求调研回归` Run（25 条事件、4 次模型调用）：结果首段与 4 条列表均正常横排，`todo complete` / `todo progress append` 工具摘要和事件时间线同时可读。对应门禁为 React/Vitest `146` 个文件、`558 passed`，TypeScript、production build、architecture audit、bundle audit（入口 `459.96 KiB raw / 138.99 KiB gzip`）与 `git diff --check` 全部通过。
+
 - 2026-11-17 在当前 HEAD 重跑 Windows React 前端门禁：Vitest `145` 个测试文件、`536 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture` 和 `npm run audit:bundle` 均通过，入口 Bundle 为 `456.97 KiB raw / 137.71 KiB gzip`。本轮未修改前端运行逻辑，结果只证明合并后的前端契约、类型、架构边界和 Bundle 预算无回归，不替代原生逐页视觉和发布环境验收。
 
 - 2026-11-17 运行中复核 8 小时隔离 Release：Worker 仍存活约 `1.05` 小时，正式 EXE 进程路径为 `target-shared/release/chatos-windows-react.exe`，工作集约 `37.82 MB`、私有内存约 `9.97 MB`、`33` 个线程、`436` 个 handles；仅观察到其 `WebView2`/`conhost` 子进程，未见异常进程树。旧版长稳脚本仍只在最终阶段写报告，因此本条运行中资源样本不能替代最终 `8 小时`报告。

@@ -2405,7 +2405,7 @@ function AgentTeamRunDetailSheet({
                 {detail.events.length === 0 ? (
                   <p className="agent-team-run-detail__empty">本次 Run 还没有执行事件。</p>
                 ) : detail.events.map((event) => (
-                  <article key={event.eventId}>
+                  <article className="agent-team-run-detail__event" key={event.eventId}>
                     <span aria-hidden="true" />
                     <div>
                       <header><strong>{event.eventType}</strong><time>{formatTeamMessageTime(event.createdAtUnixMs)}</time></header>

@@ -569,12 +569,12 @@
 .agent-team-run-detail__tool > span { flex: none; color: var(--secondary); font-size: 8px; }
 .agent-team-run-detail__body > section { display: grid; gap: 8px; }
 .agent-team-run-detail__body > section h3 { margin: 0; }
-.agent-team-run-detail__body > section article { display: grid; grid-template-columns: 8px minmax(0,1fr); gap: 9px; border-bottom: 1px solid rgba(60,60,67,.07); padding: 7px 2px 9px; }
-.agent-team-run-detail__body > section article > span { width: 7px; height: 7px; margin-top: 4px; border-radius: 50%; background: var(--accent); }
-.agent-team-run-detail__body > section article header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.agent-team-run-detail__body > section article strong { font-size: 9.5px; }
-.agent-team-run-detail__body > section article time,.agent-team-run-detail__body > section article small { color: var(--secondary); font-size: 8px; }
-.agent-team-run-detail__body > section article p,.agent-team-run-detail__empty { margin: 4px 0 0; color: var(--secondary); font-size: 9px; line-height: 1.45; }
+.agent-team-run-detail__event { display: grid; grid-template-columns: 8px minmax(0,1fr); gap: 9px; border-bottom: 1px solid rgba(60,60,67,.07); padding: 7px 2px 9px; }
+.agent-team-run-detail__event > span { width: 7px; height: 7px; margin-top: 4px; border-radius: 50%; background: var(--accent); }
+.agent-team-run-detail__event header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.agent-team-run-detail__event strong { font-size: 9.5px; }
+.agent-team-run-detail__event time,.agent-team-run-detail__event small { color: var(--secondary); font-size: 8px; }
+.agent-team-run-detail__event p,.agent-team-run-detail__empty { margin: 4px 0 0; color: var(--secondary); font-size: 9px; line-height: 1.45; }
 .agent-team-run-detail__body > section > button { justify-self: center; min-height: 26px; border: 0; border-radius: 7px; padding: 4px 10px; color: var(--accent); background: rgba(10,132,255,.09); font-size: 9px; font-weight: 620; }
 .agent-team-run-detail > footer { display: flex; flex: none; justify-content: flex-end; border-top: 1px solid var(--separator); padding: 10px 16px; background: rgba(255,255,255,.66); }
 .agent-team-run-detail > footer button { min-height: 29px; border: 0; border-radius: 8px; padding: 5px 13px; color: white; background: var(--accent); font-size: 10px; font-weight: 650; }

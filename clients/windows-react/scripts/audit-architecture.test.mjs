@@ -45,4 +45,9 @@ describe("agent management responsive layout", () => {
     expect(compactRule).toContain(".agent-team-dashboard-metrics { flex-wrap: wrap; }");
     expect(compactRule).toContain(".agent-team-overview__body { grid-template-columns: minmax(0,1fr); }");
   });
+
+  it("keeps Run event grid styles away from nested Markdown articles", () => {
+    expect(agentManagementStylesheet).toContain(".agent-team-run-detail__event { display: grid;");
+    expect(agentManagementStylesheet).not.toContain(".agent-team-run-detail__body > section article {");
+  });
 });
