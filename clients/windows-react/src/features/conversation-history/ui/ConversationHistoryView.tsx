@@ -28,6 +28,9 @@ import { SafeMarkdownPreview } from "../../notepad/ui/SafeMarkdownPreview";
 import { useConversationHistoryStore } from "../application/conversationHistoryStore";
 import type { ConversationHistorySnapshot } from "../domain/conversationHistory";
 import type { ConversationHistoryPort } from "../ports/ConversationHistoryPort";
+import { useConversationTimelineViewport } from "./conversationTimelineViewport";
+
+const EMPTY_TIMELINE_MESSAGES: ConversationHistorySnapshot["messages"] = [];
 
 export function ConversationHistoryView({
   ownerUserId,
@@ -69,6 +72,13 @@ export function ConversationHistoryView({
   const askUserError = useAskUserStore((state) => state.loadError);
   const activateAskUser = useAskUserStore((state) => state.activate);
   const refreshAskUser = useAskUserStore((state) => state.refresh);
+  const timelineViewport = useConversationTimelineViewport({
+    active: phase.kind === "ready",
+    conversationKey: `${ownerUserId}:${conversationId}`,
+    isLoadingOlder: phase.kind === "ready" && phase.isLoadingOlder,
+    messages: phase.kind === "ready" ? phase.snapshot.messages : EMPTY_TIMELINE_MESSAGES,
+    onLoadOlder: () => loadOlder(port),
+  });
 
   useEffect(() => {
     void load(port, ownerUserId, conversationId);
@@ -121,7 +131,6 @@ export function ConversationHistoryView({
   for (const message of phase.snapshot.messages) lastMessageByTurn.set(message.turn_id, message.message_id);
   const loadedTurnIds = new Set(phase.snapshot.turns.map((turn) => turn.turn_id));
   const unattached = unattachedPendingPrompts(scopedPrompts, loadedTurnIds);
-
   return (
     <section className="conversation-screen">
       <ConversationRealtimeObserver
@@ -136,61 +145,80 @@ export function ConversationHistoryView({
           <h1>{title}</h1>
         </header>
       ) : null}
-      <div className="conversation-history" aria-label="会话记录">
-        {phase.snapshot.next_before_cursor != null && (
-          <button className="history-more" type="button" disabled={phase.isLoadingOlder} onClick={() => void loadOlder(port)}>
-            {phase.isLoadingOlder ? "正在加载…" : "加载更早消息"}
-          </button>
-        )}
-        {phase.olderError && <p className="history-error">{phase.olderError}</p>}
-        {phase.refreshError && <p className="history-error">{phase.refreshError}</p>}
-        <div className="message-list">
-          {phase.snapshot.messages.map((message) => (
-            <ConversationMessage
-              after={lastMessageByTurn.get(message.turn_id) === message.message_id ? (
-                <AskUserPromptList
-                  prompts={promptsForTurn(scopedPrompts, message.turn_id)}
-                  port={askUserPort}
-                  onResolved={reconcile}
-                />
-              ) : null}
-              assistantName={assistantName}
-              content={message.content}
-              createdAtUnixMs={message.created_at_unix_ms}
-              key={message.message_id}
-              role={message.role}
-            >
-              <MessageAttachments
-                attachmentPort={attachmentPort}
-                attachments={phase.snapshot.attachments.filter(
-                  (attachment) => attachment.message_id === message.message_id,
-                )}
-                conversationId={conversationId}
-                ownerUserId={ownerUserId}
-              />
-              {message.role === "user" && (
-                <RunInspectorLauncher
-                  lookup={{
-                    ownerUserId,
-                    conversationId,
-                    turnId: message.turn_id,
-                    userMessageId: message.message_id,
-                  }}
-                  port={runInspectorPort}
-                />
-              )}
-            </ConversationMessage>
-          ))}
+      <div className="conversation-timeline">
+        <div
+          aria-label="会话记录"
+          className="conversation-history"
+          onScroll={timelineViewport.onScroll}
+          ref={timelineViewport.scrollRef}
+        >
+          <div className="conversation-history__content" ref={timelineViewport.contentRef}>
+            {phase.snapshot.next_before_cursor != null && (
+              <button className="history-more" type="button" disabled={phase.isLoadingOlder} onClick={timelineViewport.requestOlder}>
+                {phase.isLoadingOlder ? "正在加载…" : "加载更早消息"}
+              </button>
+            )}
+            {phase.olderError && <p className="history-error">{phase.olderError}</p>}
+            {phase.refreshError && <p className="history-error">{phase.refreshError}</p>}
+            <div className="message-list">
+              {phase.snapshot.messages.map((message) => (
+                <ConversationMessage
+                  after={lastMessageByTurn.get(message.turn_id) === message.message_id ? (
+                    <AskUserPromptList
+                      prompts={promptsForTurn(scopedPrompts, message.turn_id)}
+                      port={askUserPort}
+                      onResolved={reconcile}
+                    />
+                  ) : null}
+                  assistantName={assistantName}
+                  content={message.content}
+                  createdAtUnixMs={message.created_at_unix_ms}
+                  key={message.message_id}
+                  role={message.role}
+                >
+                  <MessageAttachments
+                    attachmentPort={attachmentPort}
+                    attachments={phase.snapshot.attachments.filter(
+                      (attachment) => attachment.message_id === message.message_id,
+                    )}
+                    conversationId={conversationId}
+                    ownerUserId={ownerUserId}
+                  />
+                  {message.role === "user" && (
+                    <RunInspectorLauncher
+                      lookup={{
+                        ownerUserId,
+                        conversationId,
+                        turnId: message.turn_id,
+                        userMessageId: message.message_id,
+                      }}
+                      port={runInspectorPort}
+                    />
+                  )}
+                </ConversationMessage>
+              ))}
+            </div>
+            {unattached.length > 0 && (
+              <section className="ask-user-unattached" aria-label="等待回复的任务">
+                <header><strong>等待你的回复</strong><small>对应消息尚未加载，仍可直接处理</small></header>
+                <AskUserPromptList prompts={unattached} port={askUserPort} onResolved={reconcile} />
+              </section>
+            )}
+            {askUserLoading && <span className="ask-user-loading"><span className="mini-spinner" />正在检查交互请求…</span>}
+            {askUserError && <p className="history-error">交互请求刷新失败：{askUserError}</p>}
+            {phase.snapshot.messages.length === 0 && <p className="conversation-empty">还没有消息</p>}
+          </div>
         </div>
-        {unattached.length > 0 && (
-          <section className="ask-user-unattached" aria-label="等待回复的任务">
-            <header><strong>等待你的回复</strong><small>对应消息尚未加载，仍可直接处理</small></header>
-            <AskUserPromptList prompts={unattached} port={askUserPort} onResolved={reconcile} />
-          </section>
-        )}
-        {askUserLoading && <span className="ask-user-loading"><span className="mini-spinner" />正在检查交互请求…</span>}
-        {askUserError && <p className="history-error">交互请求刷新失败：{askUserError}</p>}
-        {phase.snapshot.messages.length === 0 && <p className="conversation-empty">还没有消息</p>}
+        {timelineViewport.unreadNewerCount > 0 ? (
+          <button
+            aria-live="polite"
+            className="conversation-newer"
+            onClick={timelineViewport.jumpToLatest}
+            type="button"
+          >
+            ↓ {timelineViewport.unreadNewerCount} 条新任务动态
+          </button>
+        ) : null}
       </div>
       <ConversationComposer
         ownerUserId={ownerUserId}
