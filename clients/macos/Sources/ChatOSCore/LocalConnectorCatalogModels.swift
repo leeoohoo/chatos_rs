@@ -423,12 +423,22 @@ public struct LocalConnectorPluginApplicationContext: Codable, Sendable, Equatab
 }
 
 public struct LocalConnectorPluginApplicationLaunch: Codable, Sendable, Equatable {
+    public static let authenticationHeaderName = "X-ChatOS-Plugin-Token"
+    public static let healthChallengeHeaderName = "X-ChatOS-Plugin-Challenge"
+    public static let healthProofHeaderName = "X-ChatOS-Plugin-Proof"
+
     public var application: LocalConnectorPluginApplication
     public var url: URL
     public var websiteDataStoreID: UUID?
     public var releaseID: String
     public var version: String
     public var artifactSHA256: String
+    /// Ephemeral startup credential; intentionally excluded from Codable persistence.
+    public var authenticationToken: String? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case application, url, websiteDataStoreID, releaseID, version, artifactSHA256
+    }
 
     public init(
         application: LocalConnectorPluginApplication,
@@ -436,7 +446,8 @@ public struct LocalConnectorPluginApplicationLaunch: Codable, Sendable, Equatabl
         websiteDataStoreID: UUID? = nil,
         releaseID: String = "",
         version: String = "",
-        artifactSHA256: String = ""
+        artifactSHA256: String = "",
+        authenticationToken: String? = nil
     ) {
         self.application = application
         self.url = url
@@ -444,6 +455,7 @@ public struct LocalConnectorPluginApplicationLaunch: Codable, Sendable, Equatabl
         self.releaseID = releaseID
         self.version = version
         self.artifactSHA256 = artifactSHA256
+        self.authenticationToken = authenticationToken
     }
 }
 

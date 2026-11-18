@@ -70,7 +70,7 @@ struct NativePluginRuntimeTests {
         rmdir "$CHATOS_PLUGIN_CACHE_DIR.lock"
         sleep 60 &
         echo $! > "$CHATOS_PLUGIN_DATA_DIR/child.pid"
-        exec node -e 'const fs=require("node:fs");const http=require("node:http");const watcher=fs.watch(process.env.CHATOS_PLUGIN_DATA_DIR,()=>{});const port=Number(process.env.CHATOS_PLUGIN_APP_PORT);const server=http.createServer((req,res)=>{res.writeHead(200,{"content-type":"text/html"});res.end(process.env.CHATOS_PLUGIN_RELEASE_ID)});server.on("close",()=>watcher.close());server.listen(port,"127.0.0.1")'
+        exec node -e 'const crypto=require("node:crypto");const fs=require("node:fs");const http=require("node:http");const watcher=fs.watch(process.env.CHATOS_PLUGIN_DATA_DIR,()=>{});const port=Number(process.env.CHATOS_PLUGIN_APP_PORT);const server=http.createServer((req,res)=>{const challenge=req.headers["x-chatos-plugin-challenge"];if(challenge)res.setHeader("x-chatos-plugin-proof",crypto.createHmac("sha256",process.env.CHATOS_PLUGIN_APP_TOKEN).update(challenge).digest("base64url"));if(!challenge&&req.headers["x-chatos-plugin-token"]!==process.env.CHATOS_PLUGIN_APP_TOKEN){res.writeHead(401);res.end();return}res.writeHead(200,{"content-type":"text/html"});res.end(process.env.CHATOS_PLUGIN_RELEASE_ID)});server.on("close",()=>watcher.close());server.listen(port,"127.0.0.1")'
         """#
         try Data(script.utf8).write(to: launcher)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcher.path)
@@ -139,7 +139,14 @@ struct NativePluginRuntimeTests {
                 projectName: nil
             )
         )
-        let body = try await URLSession.shared.data(from: launch.url).0
+        let unauthenticatedResponse = try await URLSession.shared.data(from: launch.url).1
+        #expect((unauthenticatedResponse as? HTTPURLResponse)?.statusCode == 401)
+        var request = URLRequest(url: launch.url)
+        request.setValue(
+            launch.authenticationToken,
+            forHTTPHeaderField: LocalConnectorPluginApplicationLaunch.authenticationHeaderName
+        )
+        let body = try await URLSession.shared.data(for: request).0
         #expect(String(decoding: body, as: UTF8.self) == "release-demo")
         #expect(FileManager.default.fileExists(
             atPath: runtimeRoot.appendingPathComponent("data", isDirectory: true).path
@@ -165,7 +172,12 @@ struct NativePluginRuntimeTests {
                 projectName: nil
             )
         )
-        let updatedBody = try await URLSession.shared.data(from: updatedLaunch.url).0
+        var updatedRequest = URLRequest(url: updatedLaunch.url)
+        updatedRequest.setValue(
+            updatedLaunch.authenticationToken,
+            forHTTPHeaderField: LocalConnectorPluginApplicationLaunch.authenticationHeaderName
+        )
+        let updatedBody = try await URLSession.shared.data(for: updatedRequest).0
         #expect(String(decoding: updatedBody, as: UTF8.self) == "release-demo-2")
         await runtime.stopAll()
         #expect(!processExists(childPID))

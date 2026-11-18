@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  pluginLocalHttpAuthentication,
   readPluginLocalHttpEndpoint,
   startPluginDirectoryMonitor
 } from '../../shared/local-http-application-runtime.js';
@@ -9,11 +10,12 @@ import { DiagramDocumentStore, RevisionConflictError } from './document-store.js
 import { runtimeDataScopeFingerprint } from './generation-guides.js';
 import { assertDiagramDocument, type DiagramDocument, type DiagramKind } from './schema.js';
 
-const { host, port } = readPluginLocalHttpEndpoint({
+const endpoint = readPluginLocalHttpEndpoint({
   defaultPort: 4178,
   legacyHostEnvironmentKey: 'DIAGRAM_STUDIO_HOST',
   legacyPortEnvironmentKey: 'DIAGRAM_STUDIO_PORT'
 });
+const { host, port } = endpoint;
 const store = new DiagramDocumentStore();
 await store.initialize();
 
@@ -35,6 +37,7 @@ const defaultProjectId = defaultProject.projectId;
 
 const app = express();
 app.disable('x-powered-by');
+app.use(pluginLocalHttpAuthentication(endpoint));
 app.use(express.json({ limit: '8mb' }));
 
 const subscribers = new Set<express.Response>();

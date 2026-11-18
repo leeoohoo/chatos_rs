@@ -470,7 +470,14 @@ private struct RestrictedPluginWebView: NSViewRepresentable {
             if url.isFileURL {
                 webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
             } else {
-                webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+                var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+                if let authenticationToken = launch.authenticationToken {
+                    request.setValue(
+                        authenticationToken,
+                        forHTTPHeaderField: LocalConnectorPluginApplicationLaunch.authenticationHeaderName
+                    )
+                }
+                webView.load(request)
             }
         }
 

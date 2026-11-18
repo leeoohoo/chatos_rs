@@ -1,14 +1,17 @@
 import ChatOSProcessRuntime
 import ChatOSCore
 import ChatOSNetworking
+import CryptoKit
 import Darwin
 import Foundation
+import Security
 
 actor NativePluginApplicationRuntime {
     private struct RunningApplication {
         var processID: pid_t
         var baseURL: URL
         var healthPath: String
+        var authenticationToken: String
         var releaseID: String
         var artifactSHA256: String
         var standardOutput: Pipe
@@ -55,14 +58,19 @@ actor NativePluginApplicationRuntime {
            current.releaseID == record.releaseID,
            current.artifactSHA256 == record.artifactSHA256,
            Self.isProcessRunning(current.processID),
-           await isHealthy(baseURL: current.baseURL, healthPath: current.healthPath) {
+           await isHealthy(
+               baseURL: current.baseURL,
+               healthPath: current.healthPath,
+               authenticationToken: current.authenticationToken
+           ) {
             return .init(
                 application: application,
                 url: current.baseURL,
                 websiteDataStoreID: websiteDataStoreID,
                 releaseID: record.releaseID,
                 version: record.version,
-                artifactSHA256: record.artifactSHA256
+                artifactSHA256: record.artifactSHA256,
+                authenticationToken: current.authenticationToken
             )
         }
         await stop(key: key)
@@ -109,6 +117,7 @@ actor NativePluginApplicationRuntime {
         let port = try availableLoopbackPort()
         let baseURL = URL(string: "http://127.0.0.1:\(port)/")!
         let healthPath = try validatedHealthPath(runtime.healthPath)
+        let authenticationToken = try Self.secureRandomToken()
         let timeoutMilliseconds = min(120_000, max(100, runtime.launchTimeoutMs ?? 15_000))
 
         let dataURL = resolvedContext.dataURL
@@ -129,7 +138,9 @@ actor NativePluginApplicationRuntime {
                 installationURL: installationURL,
                 dataURL: dataURL,
                 cacheURL: cacheURL,
-                port: port
+                port: port,
+                healthPath: healthPath,
+                authenticationToken: authenticationToken
             ),
             // CHATOS_PLUGIN_* application values are Host-owned. A manifest
             // context must not replace the assigned loopback endpoint or its
@@ -203,6 +214,7 @@ actor NativePluginApplicationRuntime {
             processID: launchedProcessID,
             baseURL: baseURL,
             healthPath: healthPath,
+            authenticationToken: authenticationToken,
             releaseID: record.releaseID,
             artifactSHA256: record.artifactSHA256,
             standardOutput: output,
@@ -215,6 +227,7 @@ actor NativePluginApplicationRuntime {
                 processID: launchedProcessID,
                 baseURL: baseURL,
                 healthPath: healthPath,
+                authenticationToken: authenticationToken,
                 timeoutMilliseconds: timeoutMilliseconds
             )
         } catch {
@@ -227,7 +240,8 @@ actor NativePluginApplicationRuntime {
             websiteDataStoreID: websiteDataStoreID,
             releaseID: record.releaseID,
             version: record.version,
-            artifactSHA256: record.artifactSHA256
+            artifactSHA256: record.artifactSHA256,
+            authenticationToken: authenticationToken
         )
     }
 
@@ -273,6 +287,7 @@ actor NativePluginApplicationRuntime {
         processID: pid_t,
         baseURL: URL,
         healthPath: String,
+        authenticationToken: String,
         timeoutMilliseconds: UInt64
     ) async throws {
         let clock = ContinuousClock()
@@ -281,7 +296,11 @@ actor NativePluginApplicationRuntime {
             guard Self.isProcessRunning(processID) else {
                 throw NativeConnectorError.pluginInstallation("Plugin 应用后端在启动阶段退出")
             }
-            if await isHealthy(baseURL: baseURL, healthPath: healthPath) { return }
+            if await isHealthy(
+                baseURL: baseURL,
+                healthPath: healthPath,
+                authenticationToken: authenticationToken
+            ) { return }
             try await Task.sleep(for: .milliseconds(80))
         }
         throw NativeConnectorError.pluginInstallation("等待 Plugin 应用后端就绪超时")
@@ -320,20 +339,61 @@ actor NativePluginApplicationRuntime {
         return try body(pointers + [nil])
     }
 
-    private func isHealthy(baseURL: URL, healthPath: String) async -> Bool {
-        guard let url = URL(string: healthPath, relativeTo: baseURL)?.absoluteURL else { return false }
+    private func isHealthy(
+        baseURL: URL,
+        healthPath: String,
+        authenticationToken: String
+    ) async -> Bool {
+        guard let url = URL(string: healthPath, relativeTo: baseURL)?.absoluteURL,
+              let challenge = try? Self.secureRandomToken() else { return false }
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 0.7
+        request.setValue(
+            challenge,
+            forHTTPHeaderField: LocalConnectorPluginApplicationLaunch.healthChallengeHeaderName
+        )
         do {
             let (_, response) = try await BoundedURLSessionDataLoader.load(
                 request: request,
                 maximumBytes: 64 * 1_024
             )
-            return (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } == true
+            guard let response = response as? HTTPURLResponse,
+                  (200..<300).contains(response.statusCode),
+                  let proof = response.value(
+                      forHTTPHeaderField: LocalConnectorPluginApplicationLaunch.healthProofHeaderName
+                  ),
+                  let proofData = Self.decodeBase64URL(proof) else { return false }
+            return HMAC<SHA256>.isValidAuthenticationCode(
+                proofData,
+                authenticating: Data(challenge.utf8),
+                using: SymmetricKey(data: Data(authenticationToken.utf8))
+            )
         } catch {
             return false
         }
+    }
+
+    private static func secureRandomToken() throws -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        let status = bytes.withUnsafeMutableBytes { buffer in
+            SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
+        }
+        guard status == errSecSuccess else {
+            throw NativeConnectorError.pluginInstallation("无法生成 Plugin 应用启动凭据")
+        }
+        return Data(bytes).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private static func decodeBase64URL(_ value: String) -> Data? {
+        var encoded = value
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
+        return Data(base64Encoded: encoded)
     }
 
     private func validatedHealthPath(_ value: String?) throws -> String {
