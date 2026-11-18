@@ -687,8 +687,8 @@
 "本项目的 Task 还没有发起调研。" = "本项目的 Task 还没有发起调研。";
 "提交并恢复任务" = "提交并恢复任务";
 "答案已保存，原 Agent Run 已恢复执行。" = "答案已保存，原 Agent Run 已恢复执行。";
-"需求调研已迁移" = "需求调研已迁移";
-"Task 调研现在由 Local Agent Host 保存并恢复原 Run，不再属于 Agent 群聊。" = "Task 调研现在由 Local Agent Host 保存并恢复原 Run，不再属于 Agent 群聊。";
+"项目需求调研" = "项目需求调研";
+"团队发起的正式调研由 Local Agent Host 保存；提交后会恢复原团队 Todo 并继续整理方案。" = "团队发起的正式调研由 Local Agent Host 保存；提交后会恢复原团队 Todo 并继续整理方案。";
 "打开需求调研" = "打开需求调研";
 "Agent 文档" = "Agent 文档";
 "显示当前账户由 Local Agent Host 保存的 Markdown 文档。" = "显示当前账户由 Local Agent Host 保存的 Markdown 文档。";

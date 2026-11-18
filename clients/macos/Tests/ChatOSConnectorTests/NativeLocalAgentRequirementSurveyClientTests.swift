@@ -33,6 +33,23 @@ final class NativeLocalAgentRequirementSurveyClientTests: XCTestCase {
         }
     }
 
+    func testTeamTodoFollowUpAndReturnRouteUseTheBoundTeamContext() async throws {
+        let host = RequirementSurveyHostStub(team: true, runStatus: "succeeded")
+        let client = NativeLocalAgentRequirementSurveyClient(host: host)
+        let result = try await client.resolve(
+            ownerUserID: "user-1",
+            surveyID: "survey-1",
+            expectedVersion: 1,
+            answers: [:]
+        )
+
+        let followUp = try await client.followUp(ownerUserID: "user-1", survey: result.survey)
+        let route = try await client.sourceTeamRoute(ownerUserID: "user-1", survey: result.survey)
+
+        XCTAssertEqual(followUp, .completed("## 需求方案\n交付虚构原型，分阶段验收。"))
+        XCTAssertEqual(route, .init(roomID: "team-1", todoID: "todo-1"))
+    }
+
     func testFollowUpRejectsCrossOwnerAndMismatchedConversation() async throws {
         for wrongOwner in [true, false] {
             let host = RequirementSurveyHostStub(mismatchedConversation: !wrongOwner)
@@ -100,11 +117,18 @@ final class NativeLocalAgentRequirementSurveyClientTests: XCTestCase {
 private actor RequirementSurveyHostStub: LocalAgentHostClientServicing {
     private var commands: [Data] = []
     private let main: Bool
+    private let team: Bool
     private let runStatus: String
     private let mismatchedConversation: Bool
 
-    init(main: Bool = false, runStatus: String = "continuation_ready", mismatchedConversation: Bool = false) {
+    init(
+        main: Bool = false,
+        team: Bool = false,
+        runStatus: String = "continuation_ready",
+        mismatchedConversation: Bool = false
+    ) {
         self.main = main
+        self.team = team
         self.runStatus = runStatus
         self.mismatchedConversation = mismatchedConversation
     }
@@ -117,13 +141,24 @@ private actor RequirementSurveyHostStub: LocalAgentHostClientServicing {
         let object = try JSONSerialization.jsonObject(with: command) as? [String: Any]
         switch object?["type"] as? String {
         case "get_run":
+            let input: [String: Any] = team ? [
+                "conversation_id": mismatchedConversation ? "other-conversation" : "conversation-1",
+                "team_executor_context": [
+                    "team_id": "team-1",
+                    "todo_id": "todo-1",
+                    "project_id": "project-1",
+                ],
+            ] : [
+                main ? "conversation_id" : "source_conversation_id":
+                    mismatchedConversation ? "other-conversation" : "conversation-1",
+            ]
             return try json(["type": "run", "run": [
                 "run_id": "run-1", "owner_user_id": "user-1",
-                "owner_entity_type": main ? "conversation_turn" : "task",
-                "owner_entity_id": main ? "turn-1" : "task-1",
+                "owner_entity_type": main || team ? "conversation_turn" : "task",
+                "owner_entity_id": main || team ? "turn-1" : "task-1",
                 "profile_key": main ? "main_chat" : "task_execution",
                 "capability_policy_revision": "policy-1",
-                "input": [main ? "conversation_id" : "source_conversation_id": mismatchedConversation ? "other-conversation" : "conversation-1"],
+                "input": input,
                 "status": runStatus, "version": 4,
                 "terminal_outcome": [
                     "content": "## 需求方案\n交付虚构原型，分阶段验收。",
@@ -174,7 +209,7 @@ private actor RequirementSurveyHostStub: LocalAgentHostClientServicing {
             "project_resource_id": "project-1",
             "source_conversation_id": "conversation-1",
             "source_run_id": "run-1",
-            "source_task_id": main ? NSNull() : "task-1",
+            "source_task_id": main ? NSNull() : (team ? "todo-1" : "task-1"),
             "title": "Confirm local scope",
             "description": "Choose how to continue",
             "questions": [

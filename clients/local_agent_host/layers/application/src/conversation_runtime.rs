@@ -1066,7 +1066,7 @@ fn normalized_team_executor_context(
     let capabilities = plan
         .get("builtin_capabilities")
         .and_then(serde_json::Value::as_array)
-        .filter(|values| values.len() <= 3)
+        .filter(|values| values.len() <= 5)
         .ok_or_else(|| invalid_agent_context("builtin_capabilities must be an array"))?;
     let mut unique = std::collections::HashSet::new();
     let mut enabled_builtin_kinds = Vec::with_capacity(capabilities.len());
@@ -1078,6 +1078,8 @@ fn normalized_team_executor_context(
             "project_read" => "CodeMaintainerRead",
             "project_write" if requires_execution => "CodeMaintainerWrite",
             "terminal" if requires_execution => "TerminalController",
+            "requirement_survey_read" => "RequirementSurveyRead",
+            "requirement_survey_write" if requires_execution => "RequirementSurveyWrite",
             _ => {
                 return Err(invalid_agent_context(
                     "execution_plan contains an unauthorized capability",
@@ -1941,6 +1943,17 @@ mod tests {
             Some(&project_resource()),
         )
         .is_err());
+        let mut survey = metadata.clone();
+        survey["agent_team_execution"]["execution_plan"]["builtin_capabilities"] =
+            json!(["requirement_survey_read", "requirement_survey_write"]);
+        let survey =
+            normalized_team_executor_context(&survey, "agent-team-executor-delivery-1", None)
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            survey["tool_options"]["enabled_builtin_kinds"],
+            json!(["RequirementSurveyRead", "RequirementSurveyWrite"])
+        );
         let mut escalated = metadata;
         escalated["agent_team_execution"]["execution_plan"]["builtin_capabilities"] =
             json!(["project_read", "admin"]);

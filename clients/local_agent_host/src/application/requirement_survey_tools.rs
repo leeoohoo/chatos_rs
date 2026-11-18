@@ -100,20 +100,44 @@ impl LocalRequirementSurveyToolExecutor {
         if parent.owner_user_id != self.owner_user_id {
             return Err("Requirement Survey Run does not belong to the active owner".to_string());
         }
-        let (conversation_field, source_task_id) = match (
+        let (conversation_field, source_task_id, team_project_id) = match (
             parent.profile_key.as_str(),
             parent.owner_entity_type.as_str(),
         ) {
-            ("main_chat", "conversation_turn") => ("conversation_id", None),
+            ("main_chat", "conversation_turn") => ("conversation_id", None, None),
             ("task_execution", "task") => (
                 "source_conversation_id",
                 Some(parent.owner_entity_id.clone()),
+                None,
             ),
-            _ => {
-                return Err(
-                    "Requirement Surveys require an active Main Chat turn or Task".to_string(),
+            ("task_execution", "conversation_turn") => {
+                let context = parent
+                    .input
+                    .get("team_executor_context")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| {
+                        "Requirement Surveys require an active project Main Chat, Task, or team Todo Run".to_string()
+                    })?;
+                let todo_id = context
+                    .get("todo_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| "team Requirement Survey has no bound Todo".to_string())?;
+                let project_id = context
+                    .get("project_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| "team Requirement Survey has no bound project".to_string())?;
+                (
+                    "conversation_id",
+                    Some(todo_id.to_string()),
+                    Some(project_id.to_string()),
                 )
             }
+            _ => return Err(
+                "Requirement Surveys require an active project Main Chat, Task, or team Todo Run"
+                    .to_string(),
+            ),
         };
         let conversation_id = parent
             .input
@@ -134,7 +158,7 @@ impl LocalRequirementSurveyToolExecutor {
         let HostResult::Conversation { conversation } = conversation else {
             return Err("Local Agent Host returned an unexpected Conversation result".to_string());
         };
-        if source_task_id.is_none()
+        if parent.owner_entity_type == "conversation_turn"
             && !conversation
                 .turns
                 .iter()
@@ -144,13 +168,21 @@ impl LocalRequirementSurveyToolExecutor {
                 "Requirement Survey Run does not match the source Main Chat turn".to_string(),
             );
         }
-        let resource = conversation
-            .conversation
-            .resource
-            .filter(|resource| resource.kind == LocalConversationResourceKind::Project)
-            .ok_or_else(|| {
-                "Requirement Surveys require a project-bound conversation".to_string()
-            })?;
+        let project_resource_id = if let Some(project_id) = team_project_id {
+            if conversation.conversation.resource.is_some() {
+                return Err("team executor conversation must remain internal".to_string());
+            }
+            project_id
+        } else {
+            conversation
+                .conversation
+                .resource
+                .filter(|resource| resource.kind == LocalConversationResourceKind::Project)
+                .ok_or_else(|| {
+                    "Requirement Surveys require a project-bound conversation".to_string()
+                })?
+                .resource_id
+        };
         let result = self
             .request(
                 invocation,
@@ -158,7 +190,7 @@ impl LocalRequirementSurveyToolExecutor {
                 HostCommand::CreateRequirementSurvey(CreateRequirementSurveyCommand {
                     survey_id: format!("local-survey-{}", invocation.invocation_id),
                     owner_user_id: self.owner_user_id.clone(),
-                    project_resource_id: resource.resource_id,
+                    project_resource_id,
                     source_conversation_id: conversation_id.to_string(),
                     source_run_id: parent.run_id,
                     source_task_id,
@@ -232,7 +264,7 @@ pub fn requirement_survey_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": REQUIREMENT_SURVEY_CREATE_TOOL,
-            "description": "Collect material project goals, audience, constraints, preferences and acceptance decisions in the Requirement Survey center. Main Chat can ask before creating Tasks; a Task can ask about newly discovered blockers. Call alone, then wait for submitted answers; never invent answers or dispatch dependent work while waiting.",
+            "description": "Collect material project goals, audience, constraints, preferences and acceptance decisions in the Requirement Survey center. Project Main Chat, an authorized Agent team survey Todo, or a blocked Task can ask. Call alone, then wait for submitted answers; never invent answers or dispatch dependent work while waiting.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -298,44 +330,60 @@ mod tests {
 
     #[tokio::test]
     async fn survey_tool_commit_suspends_and_resolution_resumes_the_source_run() {
-        survey_flow(false, true, false, false).await;
+        survey_flow(false, true, false, false, false).await;
     }
 
     #[tokio::test]
     async fn main_chat_survey_suspends_and_resumes_without_creating_a_task() {
-        survey_flow(true, true, false, false).await;
+        survey_flow(true, true, false, false, false).await;
+    }
+
+    #[tokio::test]
+    async fn team_todo_survey_uses_the_bound_project_and_resumes_the_same_run() {
+        survey_flow(false, false, false, false, true).await;
     }
 
     #[tokio::test]
     async fn contact_main_chat_cannot_create_a_project_survey() {
-        survey_flow(true, false, false, false).await;
+        survey_flow(true, false, false, false, false).await;
     }
 
     #[tokio::test]
     async fn survey_rejects_a_mixed_tool_batch_before_creating_a_form() {
-        survey_flow(true, true, true, false).await;
+        survey_flow(true, true, true, false, false).await;
     }
 
     #[tokio::test]
     async fn cancelling_main_chat_survey_updates_notice_and_removes_unanswerable_form() {
-        survey_flow(true, true, false, true).await;
+        survey_flow(true, true, false, true, false).await;
     }
 
-    async fn survey_flow(main_chat: bool, project_bound: bool, mixed_batch: bool, cancel: bool) {
+    async fn survey_flow(
+        main_chat: bool,
+        project_bound: bool,
+        mixed_batch: bool,
+        cancel: bool,
+        team_todo: bool,
+    ) {
         let storage = Arc::new(
             SqliteClientStorage::connect_memory()
                 .await
                 .expect("storage"),
         );
         let runtime = Arc::new(LocalAgentRuntime::new(storage));
+        let conversation_id = if team_todo {
+            "agent-team-executor-delivery-1"
+        } else {
+            "conversation-survey-flow"
+        };
         runtime
             .try_handle(envelope(
                 "conversation",
                 HostCommand::CreateConversation(CreateConversationCommand {
-                    conversation_id: "conversation-survey-flow".to_string(),
+                    conversation_id: conversation_id.to_string(),
                     owner_user_id: "user-1".to_string(),
                     title: "Project".to_string(),
-                    resource: Some(LocalConversationResourceBinding {
+                    resource: (!team_todo).then_some(LocalConversationResourceBinding {
                         kind: if project_bound {
                             LocalConversationResourceKind::Project
                         } else {
@@ -354,20 +402,64 @@ mod tests {
         runtime
             .try_handle(envelope(
                 "run",
-                if main_chat {
+                if main_chat || team_todo {
                     HostCommand::StartConversationTurn(StartConversationTurnCommand {
                         owner_user_id: "user-1".into(),
-                        conversation_id: "conversation-survey-flow".into(),
+                        conversation_id: conversation_id.into(),
                         expected_conversation_version: 1,
                         conversation_if_missing: None,
                         turn_id: "turn-survey-flow".into(),
                         message_id: "message-survey-flow".into(),
                         run_id: "run-survey-flow".into(),
                         message: "understand my goals first".into(),
-                        message_metadata: json!({
-                            "agent_id": "jiguli",
-                            "agent_name": "叽咕狸",
-                        }),
+                        message_metadata: if team_todo {
+                            json!({
+                                "source": "native_agent_team",
+                                "agent_execution_context": {
+                                    "schema_version": 2,
+                                    "room_id": "team-1",
+                                    "agent_id": "agent-1",
+                                    "agent_name": "产品经理",
+                                    "role_prompt": "负责项目需求。",
+                                    "profession_key": "project_manager",
+                                    "profession_label": "项目经理",
+                                    "profession_skill_ref": "AS-profession-project_manager-123456789abc",
+                                    "profession_skill_sha256": "a".repeat(64),
+                                    "profession_skill_markdown": "# 工作流\n先调研，再规划。",
+                                    "default_plugin_ids": [],
+                                    "default_skill_ids": [],
+                                    "project_id": "project-1",
+                                    "team_name": "Alpha 团队",
+                                    "team_goal": "交付 Alpha",
+                                    "team_role": "项目经理",
+                                    "team_responsibility": "负责需求与交付",
+                                    "is_project_manager": true
+                                },
+                                "agent_team_execution": {
+                                    "schema_version": 1,
+                                    "delivery_lane": "executor",
+                                    "trigger_kind": "todo",
+                                    "delivery_id": "delivery-1",
+                                    "todo_id": "todo-1",
+                                    "team_id": "team-1",
+                                    "agent_id": "agent-1",
+                                    "project_id": "project-1",
+                                    "execution_plan": {
+                                        "requires_execution": true,
+                                        "builtin_capabilities": [
+                                            "requirement_survey_read",
+                                            "requirement_survey_write"
+                                        ],
+                                        "plugins": []
+                                    }
+                                }
+                            })
+                        } else {
+                            json!({
+                                "agent_id": "jiguli",
+                                "agent_name": "叽咕狸",
+                            })
+                        },
                         attachments: vec![],
                         model_config_ref: "model-1".into(),
                         model_config_revision: "revision-1".into(),
@@ -385,7 +477,7 @@ mod tests {
                         model_config_revision: "revision-1".to_string(),
                         capability_policy_revision: "policy-1".to_string(),
                         input: json!({
-                            "source_conversation_id": "conversation-survey-flow",
+                            "source_conversation_id": conversation_id,
                             "prompt": "build"
                         }),
                         max_iterations: 8,
@@ -488,7 +580,7 @@ mod tests {
             .execute_tool(&tool_claim.invocation)
             .await
             .expect("execute survey tool");
-        if !project_bound {
+        if !project_bound && !team_todo {
             assert!(
                 matches!(first_outcome, LocalAgentToolOutcome::Failed { ref error, .. }
                 if error.contains("project-bound"))
@@ -525,7 +617,7 @@ mod tests {
                     "get-waiting-chat",
                     HostCommand::GetConversation(GetConversationCommand {
                         owner_user_id: "user-1".into(),
-                        conversation_id: "conversation-survey-flow".into(),
+                        conversation_id: conversation_id.into(),
                     }),
                 ))
                 .await
@@ -560,7 +652,13 @@ mod tests {
             stored,
             HostResult::RequirementSurvey { survey }
                 if survey.project_resource_id == "project-1"
-                    && survey.source_task_id.as_deref() == if main_chat { None } else { Some("task-1") }
+                    && survey.source_task_id.as_deref() == if main_chat {
+                        None
+                    } else if team_todo {
+                        Some("todo-1")
+                    } else {
+                        Some("task-1")
+                    }
         ));
         if cancel {
             let HostResult::Conversation { conversation } = runtime
@@ -568,7 +666,7 @@ mod tests {
                     "get-chat-before-cancel",
                     HostCommand::GetConversation(GetConversationCommand {
                         owner_user_id: "user-1".into(),
-                        conversation_id: "conversation-survey-flow".into(),
+                        conversation_id: conversation_id.into(),
                     }),
                 ))
                 .await
@@ -582,7 +680,7 @@ mod tests {
                     "cancel-survey-turn",
                     HostCommand::CancelConversationTurn(CancelConversationTurnCommand {
                         owner_user_id: "user-1".into(),
-                        conversation_id: "conversation-survey-flow".into(),
+                        conversation_id: conversation_id.into(),
                         expected_conversation_version: conversation.conversation.version,
                         turn_id: "turn-survey-flow".into(),
                         expected_run_version: None,
@@ -600,7 +698,7 @@ mod tests {
                     "get-chat-after-cancel",
                     HostCommand::GetConversation(GetConversationCommand {
                         owner_user_id: "user-1".into(),
-                        conversation_id: "conversation-survey-flow".into(),
+                        conversation_id: conversation_id.into(),
                     }),
                 ))
                 .await
@@ -678,6 +776,62 @@ mod tests {
             panic!("proposal claim")
         };
         let markdown = "## Fictional finance proposal\nLocal-only prototype. No real bookkeeping.";
+        if team_todo {
+            runtime
+                .try_handle(envelope(
+                    "forged-team-run",
+                    HostCommand::CreateRun(CreateRunCommand {
+                        run_id: "run-forged-team".into(),
+                        owner_user_id: "user-1".into(),
+                        owner_entity_type: "conversation_turn".into(),
+                        owner_entity_id: "turn-forged-team".into(),
+                        profile_key: "task_execution".into(),
+                        model_config_ref: "model-1".into(),
+                        model_config_revision: "revision-1".into(),
+                        capability_policy_revision: "policy-1".into(),
+                        input: json!({
+                            "conversation_id": conversation_id,
+                            "team_executor_context": {
+                                "todo_id": "todo-1",
+                                "project_id": "project-1"
+                            }
+                        }),
+                        max_iterations: 8,
+                    }),
+                ))
+                .await
+                .unwrap();
+            let HostResult::Claim {
+                claim: Some(forged_run),
+            } = runtime
+                .try_handle(envelope(
+                    "claim-forged-team-run",
+                    HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                        owner_user_id: "user-1".into(),
+                        worker_id: "forged-model-worker".into(),
+                        lease_duration_ms: 30_000,
+                    }),
+                ))
+                .await
+                .unwrap()
+            else {
+                panic!("forged team run claim")
+            };
+            assert_eq!(forged_run.run.run_id, "run-forged-team");
+            assert!(runtime
+                .try_handle(envelope(
+                    "forged-team-plan",
+                    HostCommand::SaveRequirementPlan(SaveRequirementPlanCommand {
+                        owner_user_id: "user-1".into(),
+                        survey_id: survey_id.clone(),
+                        source_run_id: forged_run.run.run_id,
+                        expected_revision: 0,
+                        markdown: markdown.into(),
+                    }),
+                ))
+                .await
+                .is_err());
+        }
         let mut publish = tool_claim.invocation.clone();
         publish.invocation_id = "publish-proposal".into();
         publish.tool_name = LOCAL_REQUIREMENT_PLAN_SAVE_TOOL_NAME.into();
@@ -785,7 +939,7 @@ mod tests {
                     "get-resolved-chat",
                     HostCommand::GetConversation(GetConversationCommand {
                         owner_user_id: "user-1".into(),
-                        conversation_id: "conversation-survey-flow".into(),
+                        conversation_id: conversation_id.into(),
                     }),
                 ))
                 .await

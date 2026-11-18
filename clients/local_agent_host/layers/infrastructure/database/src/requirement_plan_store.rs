@@ -83,6 +83,7 @@ pub(super) async fn save(
             .ok_or_else(|| ClientStorageError::NotFound(save.survey_id.clone()))?;
         let project: String = survey.try_get("project_resource_id").db()?;
         let mut conversation: String = survey.try_get("source_conversation_id").db()?;
+        let survey_source_task: Option<String> = survey.try_get("source_task_id").db()?;
         if run.owner_user_id != save.owner_user_id { return Err(ClientStorageError::NotFound(save.source_run_id.clone())); }
         match (run.profile_key.as_str(), run.owner_entity_type.as_str()) {
             ("main_chat", "conversation_turn") => {
@@ -94,8 +95,24 @@ pub(super) async fn save(
                 conversation = valid.ok_or_else(|| ClientStorageError::InvalidState("plan source Run belongs to another project or conversation".into()))?;
             }
             ("task_execution", "task") if survey.try_get::<String,_>("source_run_id").db()? == run.run_id
-                && survey.try_get::<Option<String>,_>("source_task_id").db()?.as_deref() == Some(run.owner_entity_id.as_str()) => {}
-            _ => return Err(ClientStorageError::InvalidState("plan requires its source Task or a project Main Chat Run".into())),
+                && survey_source_task.as_deref() == Some(run.owner_entity_id.as_str()) => {}
+            ("task_execution", "conversation_turn") if run.input.get("team_executor_context")
+                .and_then(Value::as_object)
+                .is_some_and(|team| {
+                    team.get("todo_id").and_then(Value::as_str)
+                        == survey_source_task.as_deref()
+                        && team.get("project_id").and_then(Value::as_str) == Some(project.as_str())
+                }) => {
+                let source_conversation = run.input.get("conversation_id").and_then(Value::as_str)
+                    .ok_or_else(|| ClientStorageError::InvalidState("team plan source Run has no conversation".into()))?;
+                let valid: Option<String> = sqlx::query_scalar("SELECT c.conversation_id FROM local_conversation_turns t JOIN local_conversations c \
+                    ON c.conversation_id = t.conversation_id WHERE t.run_id = ? AND t.turn_id = ? AND c.owner_user_id = ? \
+                    AND c.conversation_id = ? AND c.resource_kind IS NULL")
+                    .bind(&run.run_id).bind(&run.owner_entity_id).bind(&run.owner_user_id).bind(source_conversation)
+                    .fetch_optional(&mut *connection).await.db()?;
+                conversation = valid.ok_or_else(|| ClientStorageError::InvalidState("team plan source Run does not match its internal conversation turn".into()))?;
+            }
+            _ => return Err(ClientStorageError::InvalidState("plan requires a project Main Chat, Task, or team Todo source Run".into())),
         }
         if !matches!(run.status, LocalAgentRunStatus::ModelRunning | LocalAgentRunStatus::WaitingToolResult | LocalAgentRunStatus::Succeeded) {
             return Err(ClientStorageError::InvalidState("only active generation or its successful final reply can publish a plan".into()));

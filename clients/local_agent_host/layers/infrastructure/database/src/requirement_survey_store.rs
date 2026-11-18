@@ -438,29 +438,54 @@ async fn ensure_source_context(
             "survey source conversation does not match its Run".to_string(),
         ));
     }
-    let project_binding: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM local_conversations \
-         WHERE owner_user_id = ? AND conversation_id = ? \
-           AND resource_kind = 'project' AND resource_id = ?",
-    )
-    .bind(&survey.owner_user_id)
-    .bind(&survey.source_conversation_id)
-    .bind(&survey.project_resource_id)
-    .fetch_one(&mut *database)
-    .await
-    .db()?;
-    if project_binding != 1 {
-        return Err(ClientStorageError::Conflict(
-            "survey project does not match the source conversation binding".to_string(),
-        ));
-    }
-    if let Some(task_id) = survey.source_task_id.as_deref() {
-        let entity_type: String = row.try_get("owner_entity_type").db()?;
-        let entity_id: String = row.try_get("owner_entity_id").db()?;
-        if entity_type != "task" || entity_id != task_id {
+    let team_context = input
+        .get("team_executor_context")
+        .and_then(serde_json::Value::as_object);
+    if let Some(team) = team_context {
+        let valid = team.get("project_id").and_then(serde_json::Value::as_str)
+            == Some(survey.project_resource_id.as_str())
+            && team.get("todo_id").and_then(serde_json::Value::as_str)
+                == survey.source_task_id.as_deref()
+            && row.try_get::<String, _>("owner_entity_type").db()? == "conversation_turn";
+        let internal_conversation: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM local_conversations \
+             WHERE owner_user_id = ? AND conversation_id = ? AND resource_kind IS NULL",
+        )
+        .bind(&survey.owner_user_id)
+        .bind(&survey.source_conversation_id)
+        .fetch_one(&mut *database)
+        .await
+        .db()?;
+        if !valid || internal_conversation != 1 {
             return Err(ClientStorageError::Conflict(
-                "survey source task does not match its Run".to_string(),
+                "survey source team Todo does not match its Run".to_string(),
             ));
+        }
+    } else {
+        let project_binding: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM local_conversations \
+             WHERE owner_user_id = ? AND conversation_id = ? \
+               AND resource_kind = 'project' AND resource_id = ?",
+        )
+        .bind(&survey.owner_user_id)
+        .bind(&survey.source_conversation_id)
+        .bind(&survey.project_resource_id)
+        .fetch_one(&mut *database)
+        .await
+        .db()?;
+        if project_binding != 1 {
+            return Err(ClientStorageError::Conflict(
+                "survey project does not match the source conversation binding".to_string(),
+            ));
+        }
+        if let Some(task_id) = survey.source_task_id.as_deref() {
+            let entity_type: String = row.try_get("owner_entity_type").db()?;
+            let entity_id: String = row.try_get("owner_entity_id").db()?;
+            if entity_type != "task" || entity_id != task_id {
+                return Err(ClientStorageError::Conflict(
+                    "survey source task does not match its Run".to_string(),
+                ));
+            }
         }
     }
     Ok(())

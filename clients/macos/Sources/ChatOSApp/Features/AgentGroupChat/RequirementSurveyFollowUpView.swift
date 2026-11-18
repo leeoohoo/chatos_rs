@@ -18,6 +18,7 @@ struct RequirementSurveyFollowUpView: View {
     @State private var loadFailed = false
     @State private var plan: LocalAgentHostRequirementPlan?
     @State private var planFollowUp: RequirementSurveyFollowUp?
+    @State private var sourceTeamRoute: LocalAgentRequirementSurveyTeamRoute?
     @State private var confirming = false
     @State private var confirmationFailed = false
 
@@ -53,7 +54,15 @@ struct RequirementSurveyFollowUpView: View {
                         Text(RequirementPlanConfirmationPresentation.confirmedDetail)
                             .foregroundStyle(.secondary)
                         Button {
-                            _ = model.openConversation(plan.sourceConversationID)
+                            if let sourceTeamRoute {
+                                model.requestedAgentTeamNavigation = .init(
+                                    roomID: sourceTeamRoute.roomID,
+                                    todoID: sourceTeamRoute.todoID
+                                )
+                                model.selection = .agentGroupChat
+                            } else {
+                                _ = model.openConversation(plan.sourceConversationID)
+                            }
                         } label: {
                             Label(RequirementPlanConfirmationPresentation.returnToConversationTitle, systemImage: "bubble.left.and.bubble.right")
                         }
@@ -140,6 +149,10 @@ struct RequirementSurveyFollowUpView: View {
     private func refresh() async {
         do {
             let result = try await client.followUp(ownerUserID: survey.ownerUserID, survey: survey)
+            let teamRoute = try await client.sourceTeamRoute(
+                ownerUserID: survey.ownerUserID,
+                survey: survey
+            )
             let currentPlan = try await client.planClient.get(ownerUserID: survey.ownerUserID, survey: survey)
             var currentPlanFollowUp: RequirementSurveyFollowUp?
             if let currentPlan {
@@ -147,6 +160,7 @@ struct RequirementSurveyFollowUpView: View {
             }
             guard !Task.isCancelled else { return }
             followUp = result
+            sourceTeamRoute = teamRoute
             plan = currentPlan
             planFollowUp = currentPlanFollowUp
             loadFailed = false

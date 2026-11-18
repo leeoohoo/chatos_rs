@@ -107,6 +107,7 @@ extension NativeLocalConnectorService {
             (ProductToolProviderID.capabilityBroker, ProductToolSkillBindingID.capabilityBroker),
             (ProductToolProviderID.localAgentChat, ProductToolSkillBindingID.todoExecution),
             (ProductToolProviderID.localAgentChat, ProductToolSkillBindingID.teamKnowledge),
+            (ProductToolProviderID.requirementSurvey, ProductToolSkillBindingID.requirementDiscovery),
             (ProductToolProviderID.projectRead, ProductToolSkillBindingID.projectRead),
             (ProductToolProviderID.projectWrite, ProductToolSkillBindingID.projectWrite),
             (ProductToolProviderID.terminal, ProductToolSkillBindingID.terminalCommandExecution),

@@ -10,6 +10,7 @@ extension NativeLocalAgentPlatformToolCatalog {
     externalMCPConfigs: [NativeLocalAgentExternalMCPConfig]
   ) -> [LocalAgentJSONValue] {
     [attachmentReadTool]
+    + requirementSurveyTools
     + teamExecutorTools
     + NativeMCPCodeReadTools.toolDefinitions.compactMap { value in
       guard case .object(let tool) = value,
