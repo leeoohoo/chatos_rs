@@ -338,4 +338,28 @@ mod tests {
         fs::write(&file, b"file").unwrap();
         assert!(confined_connector_directory(&file).is_err());
     }
+
+    #[test]
+    fn corrupt_state_fails_closed_without_overwrite_or_plugin_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let connector = directory.path().join("NativeConnector");
+        let orphan = connector.join("Plugins").join("orphan");
+        fs::create_dir_all(&orphan).unwrap();
+        let marker = orphan.join("keep.txt");
+        fs::write(&marker, b"keep").unwrap();
+        let state_path = connector.join("state.json");
+        let corrupt = b"{not-json";
+        fs::write(&state_path, corrupt).unwrap();
+
+        assert!(ensure_owner_state(directory.path(), "owner-1").is_err());
+        assert!(read_owner_state(directory.path(), "owner-1").is_err());
+        assert!(
+            update_owner_state(directory.path(), "owner-1", |_| -> Result<(), String> {
+                panic!("a corrupt connector state must fail before applying updates")
+            })
+            .is_err()
+        );
+        assert_eq!(fs::read(&state_path).unwrap(), corrupt);
+        assert_eq!(fs::read(marker).unwrap(), b"keep");
+    }
 }

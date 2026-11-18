@@ -47,6 +47,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-19 Windows 已对齐 macOS 的审批决定日志损坏失败关闭合同。启动时若发现 JSON 解码失败、记录超限、非普通记录、读取失败、记录超出 16 KiB、字段非法或文件名与记录身份不匹配，journal 会保留不可用状态；后续恢复、记录和删除审批决定均返回统一安全错误，不再静默忽略坏记录后继续自动或会话审批，也不会覆盖或删除原始证据。合法旧记录仍按原合同恢复。临时目录回归逐项验证损坏、超限、错名和非法内容均失败关闭且原字节不变；全量 Windows Tauri Rust 为 `627 passed, 0 failed, 7 ignored`，Rustfmt、Clippy `-D warnings`、React/Vitest `147` 个文件 / `565 passed`、TypeScript、production build、architecture audit、bundle audit 与 `git diff --check` 均通过。`--no-bundle` Release 构建成功，EXE SHA-256 为 `24A79B4DAB882EC412687AFA2171A8EF0656E8ECE57841176490FDB72D752E41`。正式 Windows Release 真实恢复既有会话，Host 进入“本地服务已就绪”；命令审批页正常显示三种审批模式、空等待队列和既有审计记录，证明合法 journal 路径未被误伤。损坏场景仅使用隔离临时目录，没有修改真实用户审批数据。
 
+- 2026-11-19 复核 macOS `fix(connector): fail closed on corrupt state` 后确认 Windows 生产链已具备等价失败关闭：账号隔离 connector state 在 Host 进程 spawn 前同步准备，损坏 JSON、超限、非对象、异常文件或 reparse point 均直接阻止 Host 启动，不存在将读取错误降级为空状态的路径。新增 Windows 回归固定损坏状态不能被 `ensure`、读取或更新覆盖，更新闭包不会执行，旁侧 Plugin 文件保持原样；定向回归 `5 passed`，无并发 Windows Tauri 全量为 `628 passed, 0 failed, 7 ignored`，Rustfmt、Clippy `-D warnings` 与 `git diff --check` 均通过。该项只新增回归守卫和审计记录，没有改变生产二进制，继续复用同一 HEAD 已通过的 React/Vitest `565 passed`、前端生产门禁与正式 Release 原生回归；因此不复制 macOS 构造器改动，也不把既有 Windows 安全边界误报为新生产实现。
+
 - 2026-11-17 在当前 HEAD 重跑 Windows React 前端门禁：Vitest `145` 个测试文件、`536 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture` 和 `npm run audit:bundle` 均通过，入口 Bundle 为 `456.97 KiB raw / 137.71 KiB gzip`。本轮未修改前端运行逻辑，结果只证明合并后的前端契约、类型、架构边界和 Bundle 预算无回归，不替代原生逐页视觉和发布环境验收。
 
 - 2026-11-17 运行中复核 8 小时隔离 Release：Worker 仍存活约 `1.05` 小时，正式 EXE 进程路径为 `target-shared/release/chatos-windows-react.exe`，工作集约 `37.82 MB`、私有内存约 `9.97 MB`、`33` 个线程、`436` 个 handles；仅观察到其 `WebView2`/`conhost` 子进程，未见异常进程树。旧版长稳脚本仍只在最终阶段写报告，因此本条运行中资源样本不能替代最终 `8 小时`报告。
