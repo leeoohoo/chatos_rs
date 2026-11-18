@@ -244,6 +244,11 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             ])
             XCTAssertEqual(initialRelations.conversations.count, 2)
             let credentialStore = NativeLocalAgentModelCredentialStore(rootURL: root.appendingPathComponent("credentials"))
+            defer {
+                for model in ["test", "historical"] {
+                    try? credentialStore.delete(ownerUserID: "user-1", modelConfigRef: model)
+                }
+            }
             let modelSnapshots = ["test", "historical"].map { model in
                 LocalAgentModelConfigSnapshot(ownerUserID: "user-1", modelConfigRef: model,
                     modelConfigRevision: "revision-1", modelCapabilityRevision: "capability-v1",

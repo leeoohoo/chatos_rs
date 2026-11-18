@@ -150,7 +150,8 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         )
         self.secretStore = NativeConnectorSecretStore(
             rootURL: configuration.stateURL.deletingLastPathComponent()
-                .appendingPathComponent("Secrets", isDirectory: true)
+                .appendingPathComponent("Secrets", isDirectory: true),
+            migrateLegacyKeychain: true
         )
         let connectorRootURL = configuration.stateURL.deletingLastPathComponent()
         let pluginInstallationRootURL = connectorRootURL

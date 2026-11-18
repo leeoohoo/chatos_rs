@@ -1,18 +1,25 @@
 import ChatOSCore
 import Foundation
-import LocalAuthentication
-import Security
 
 actor KeychainCredentialStore: CredentialStoring {
     private static let maximumCredentialBytes = 64 * 1_024
+    private let keychain: KeychainSecretStore
+    private let account: String
     private let credentialURL: URL
     private var cachedAccessToken: String?
     private var hasLoadedAccessToken = false
 
     init(
         service: String = "com.chatos.swift-client.authentication",
-        account: String = "access-token"
+        account: String = "access-token",
+        legacyCredentialURL: URL? = nil
     ) {
+        self.keychain = KeychainSecretStore(service: service)
+        self.account = account
+        if let legacyCredentialURL {
+            self.credentialURL = legacyCredentialURL
+            return
+        }
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser
         self.credentialURL = support
@@ -23,21 +30,26 @@ actor KeychainCredentialStore: CredentialStoring {
 
     func loadAccessToken() async throws -> String? {
         if hasLoadedAccessToken { return cachedAccessToken }
-
-        if ProcessInfo.processInfo.environment["CHATOS_BUILD_SMOKE_TEST"] != "1",
-           !FileManager.default.fileExists(atPath: credentialURL.path),
-           let legacy = loadLegacyKeychainWithoutUI() {
-            try persist(legacy)
+        if ProcessInfo.processInfo.environment["CHATOS_BUILD_SMOKE_TEST"] == "1" {
+            hasLoadedAccessToken = true
+            return nil
         }
-        guard FileManager.default.fileExists(atPath: credentialURL.path) else {
+        let data: Data
+        if let stored = try keychain.load(account: account) {
+            data = stored
+            try deleteLegacyFile()
+        } else if FileManager.default.fileExists(atPath: credentialURL.path) {
+            data = try AppBoundedFileReader.read(
+                credentialURL,
+                maximumBytes: Self.maximumCredentialBytes
+            )
+            try keychain.save(data, account: account)
+            try deleteLegacyFile()
+        } else {
             cachedAccessToken = nil
             hasLoadedAccessToken = true
             return nil
         }
-        let data = try AppBoundedFileReader.read(
-            credentialURL,
-            maximumBytes: Self.maximumCredentialBytes
-        )
 
         let token = String(decoding: data, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -65,37 +77,20 @@ actor KeychainCredentialStore: CredentialStoring {
                 maximumBytes: Self.maximumCredentialBytes
             )
         }
-        try FileManager.default.createDirectory(
-            at: credentialURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try data.write(to: credentialURL, options: [.atomic])
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: credentialURL.path)
+        try keychain.save(data, account: account)
+        try deleteLegacyFile()
     }
 
     func deleteAccessToken() async throws {
-        if hasLoadedAccessToken, cachedAccessToken == nil { return }
-        if FileManager.default.fileExists(atPath: credentialURL.path) {
-            try FileManager.default.removeItem(at: credentialURL)
-        }
+        try deleteLegacyFile()
+        try keychain.delete(account: account)
         cachedAccessToken = nil
         hasLoadedAccessToken = true
     }
 
-    private func loadLegacyKeychainWithoutUI() -> Data? {
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "com.chatos.swift-client.authentication",
-            kSecAttrAccount as String: "access-token",
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationContext as String: context,
-        ]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
-        return result as? Data
+    private func deleteLegacyFile() throws {
+        if FileManager.default.fileExists(atPath: credentialURL.path) {
+            try FileManager.default.removeItem(at: credentialURL)
+        }
     }
 }

@@ -77,6 +77,10 @@ let package = Package(
                 .copy("AgentSkills/Skills"),
                 .copy("AgentSkills/Prompts"),
                 .copy("AgentSkills/Catalog/ChatOSSkillCatalog.json"),
+            ],
+            linkerSettings: [
+                .linkedFramework("LocalAuthentication"),
+                .linkedFramework("Security"),
             ]
         ),
         .target(

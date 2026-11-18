@@ -72,6 +72,12 @@ struct NativeConnectorStateStoreTests {
                 .appendingPathComponent("Secrets", isDirectory: true)
                 .appendingPathComponent("LocalAgentModels", isDirectory: true)
         )
+        defer {
+            try? credentialStore.delete(
+                ownerUserID: "owner-1",
+                modelConfigRef: "approval-model"
+            )
+        }
         try credentialStore.saveWithoutUserInteraction(
             "local-api-key",
             ownerUserID: "owner-1",
