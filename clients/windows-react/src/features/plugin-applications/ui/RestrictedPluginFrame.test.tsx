@@ -19,6 +19,10 @@ describe("RestrictedPluginFrame", () => {
       capabilities: ["host.context.read"],
     }), "http://127.0.0.1:43127");
     expect(frame).toHaveAttribute("sandbox", "allow-forms allow-same-origin allow-scripts");
+    expect(frame).toHaveAttribute(
+      "src",
+      `http://127.0.0.1:43127/__chatos_plugin_session?token=${"c".repeat(43)}`,
+    );
 
     window.dispatchEvent(new MessageEvent("message", {
       source: target,

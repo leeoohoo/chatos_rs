@@ -13,7 +13,12 @@ use crate::{
     platform_execution_context::resolve_project_root,
     terminal_runtime::process::ProcessTermination,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use reqwest::{redirect::Policy, Client};
+use ring::{
+    hmac,
+    rand::{SecureRandom, SystemRandom},
+};
 use rusqlite::{params, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,7 +37,7 @@ use std::{
     },
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufStream},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufStream},
     net::{TcpListener as TokioTcpListener, TcpStream},
     process::{Child, Command},
     sync::{Mutex, Notify, Semaphore},
@@ -60,6 +65,11 @@ const MAXIMUM_LOOPBACK_PROXY_HEADER_BYTES: usize = 256 * 1_024;
 const LOOPBACK_PROXY_CONNECT_TIMEOUT_MS: u64 = 700;
 const LOOPBACK_PROXY_IDLE_TIMEOUT_MS: u64 = 300_000;
 const HOST_CONTEXT_READ_CAPABILITY: &str = "host.context.read";
+const PLUGIN_AUTHENTICATION_HEADER: &str = "x-chatos-plugin-token";
+const PLUGIN_HEALTH_CHALLENGE_HEADER: &str = "x-chatos-plugin-challenge";
+const PLUGIN_HEALTH_PROOF_HEADER: &str = "x-chatos-plugin-proof";
+const PLUGIN_SESSION_COOKIE: &str = "CHATOS_PLUGIN_APP_SESSION";
+const PLUGIN_SESSION_BOOTSTRAP_PATH: &str = "/__chatos_plugin_session";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -179,6 +189,7 @@ struct RunningPluginApplication {
     version: String,
     base_url: String,
     health_path: String,
+    authentication_token: String,
     termination: RuntimeTermination,
     alive: AtomicBool,
     finished: Notify,
@@ -253,6 +264,7 @@ struct PreparedRuntimeProcess {
     proxy_port: u16,
     child_port: u16,
     health_path: String,
+    authentication_token: String,
     launch_timeout_ms: u64,
     #[cfg(windows)]
     network_policy: &'static str,
@@ -597,7 +609,7 @@ impl PluginApplicationRuntime {
             session_id,
             host_session_nonce,
             storage_partition_id: storage_partition_id(&application.id(), &runtime_key.scope_key),
-            url: process.base_url.clone(),
+            url: authenticated_launch_url(&process),
             bridge_origin,
             bridge_capabilities,
             context: presented_context,
@@ -746,17 +758,62 @@ impl PluginApplicationRuntime {
             process.base_url.trim_end_matches('/'),
             process.health_path
         );
+        let Ok(challenge) = secure_random_token() else {
+            return false;
+        };
         let Ok(response) = self
             .health_client
             .get(url)
+            .header(PLUGIN_HEALTH_CHALLENGE_HEADER, &challenge)
             .timeout(Duration::from_millis(HEALTH_REQUEST_TIMEOUT_MS))
             .send()
             .await
         else {
             return false;
         };
+        let Some(proof) = response
+            .headers()
+            .get(PLUGIN_HEALTH_PROOF_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| URL_SAFE_NO_PAD.decode(value).ok())
+        else {
+            return false;
+        };
         response.status().is_success()
+            && hmac::verify(
+                &hmac::Key::new(hmac::HMAC_SHA256, process.authentication_token.as_bytes()),
+                challenge.as_bytes(),
+                &proof,
+            )
+            .is_ok()
     }
+}
+
+fn authenticated_launch_url(process: &RunningPluginApplication) -> String {
+    format!(
+        "{}{}?token={}",
+        process.base_url.trim_end_matches('/'),
+        PLUGIN_SESSION_BOOTSTRAP_PATH,
+        process.authentication_token
+    )
+}
+
+fn secure_random_token() -> Result<String, String> {
+    let mut bytes = [0_u8; 32];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| "无法生成 Plugin 应用启动凭据。".to_owned())?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn health_proof(authentication_token: &str, challenge: &str) -> String {
+    URL_SAFE_NO_PAD.encode(
+        hmac::sign(
+            &hmac::Key::new(hmac::HMAC_SHA256, authentication_token.as_bytes()),
+            challenge.as_bytes(),
+        )
+        .as_ref(),
+    )
 }
 
 impl RunningPluginApplication {
@@ -1147,6 +1204,7 @@ async fn spawn_static_runtime(
     resolved: &ResolvedPluginApplication,
 ) -> Result<Arc<RunningPluginApplication>, String> {
     let assets = Arc::new(load_static_assets(resolved)?);
+    let authentication_token = secure_random_token()?;
     let listener = TokioTcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .await
         .map_err(|_| "无法启动静态 Plugin 应用服务。".to_owned())?;
@@ -1160,6 +1218,7 @@ async fn spawn_static_runtime(
         version: resolved.manifest.version.clone(),
         base_url: format!("http://127.0.0.1:{}/", address.port()),
         health_path: "/".into(),
+        authentication_token: authentication_token.clone(),
         termination: RuntimeTermination::Static(shutdown.clone()),
         alive: AtomicBool::new(true),
         finished: Notify::new(),
@@ -1169,6 +1228,7 @@ async fn spawn_static_runtime(
         process.clone(),
         listener,
         assets,
+        authentication_token,
         shutdown,
     ));
     Ok(process)
@@ -1266,6 +1326,7 @@ async fn run_static_server(
     process: Arc<RunningPluginApplication>,
     listener: TokioTcpListener,
     assets: Arc<HashMap<String, StaticAsset>>,
+    authentication_token: String,
     shutdown: Arc<StaticServerShutdown>,
 ) {
     let connections = Arc::new(Semaphore::new(MAXIMUM_STATIC_CONNECTIONS));
@@ -1284,9 +1345,10 @@ async fn run_static_server(
                     continue;
                 };
                 let assets = assets.clone();
+                let authentication_token = authentication_token.clone();
                 tokio::spawn(async move {
                     let _permit = permit;
-                    let _ = serve_static_request(stream, &assets).await;
+                    let _ = serve_static_request(stream, &assets, &authentication_token).await;
                 });
             }
         }
@@ -1299,6 +1361,7 @@ async fn run_static_server(
 async fn serve_static_request(
     mut stream: TcpStream,
     assets: &HashMap<String, StaticAsset>,
+    authentication_token: &str,
 ) -> Result<(), String> {
     let mut request = Vec::with_capacity(1_024);
     let mut buffer = [0_u8; 1_024];
@@ -1324,18 +1387,28 @@ async fn serve_static_request(
             break;
         }
     }
-    let first_line = request
-        .split(|byte| *byte == b'\n')
-        .next()
-        .and_then(|line| std::str::from_utf8(line).ok())
-        .map(str::trim_end)
-        .unwrap_or_default();
+    let request_text = std::str::from_utf8(&request).map_err(|_| plugin_runtime_error())?;
+    let first_line = request_text.lines().next().unwrap_or_default().trim_end();
     let mut parts = first_line.split_ascii_whitespace();
     let method = parts.next().unwrap_or_default();
     let target = parts.next().unwrap_or_default();
     let version = parts.next().unwrap_or_default();
     if parts.next().is_some() || !matches!(version, "HTTP/1.0" | "HTTP/1.1") {
         return write_static_response(&mut stream, "400 Bad Request", None, false).await;
+    }
+    match authorize_loopback_request(request_text, target, authentication_token, "/") {
+        Some(LoopbackRequestAuthorization::Bootstrap) => {
+            return write_session_bootstrap(&mut stream, authentication_token).await;
+        }
+        Some(LoopbackRequestAuthorization::Health(challenge)) => {
+            return write_health_response(
+                &mut stream,
+                &health_proof(authentication_token, &challenge),
+            )
+            .await;
+        }
+        Some(LoopbackRequestAuthorization::Session) => {}
+        None => return write_unauthorized_response(&mut stream).await,
     }
     if !matches!(method, "GET" | "HEAD") {
         return write_static_response(&mut stream, "405 Method Not Allowed", None, false).await;
@@ -1403,6 +1476,7 @@ fn prepare_runtime_process(
     if !valid_health_path(&health_path) {
         return Err(plugin_catalog_error());
     }
+    let authentication_token = secure_random_token()?;
     let mut environment = safe_process_environment();
     environment.extend(context.environment.clone());
     let sandbox_label = if cfg!(windows) {
@@ -1425,6 +1499,11 @@ fn prepare_runtime_process(
         ),
         ("CHATOS_PLUGIN_APP_HOST".into(), "127.0.0.1".into()),
         ("CHATOS_PLUGIN_APP_PORT".into(), child_port.to_string()),
+        ("CHATOS_PLUGIN_APP_HEALTH_PATH".into(), health_path.clone()),
+        (
+            "CHATOS_PLUGIN_APP_TOKEN".into(),
+            authentication_token.clone(),
+        ),
         (
             "CHATOS_PLUGIN_ID".into(),
             resolved.record.spec.plugin_id.clone(),
@@ -1476,6 +1555,7 @@ fn prepare_runtime_process(
         proxy_port,
         child_port,
         health_path,
+        authentication_token,
         launch_timeout_ms: runtime
             .launch_timeout_ms
             .unwrap_or(DEFAULT_LAUNCH_TIMEOUT_MS),
@@ -1487,6 +1567,8 @@ fn prepare_runtime_process(
 async fn start_loopback_proxy(
     proxy_port: u16,
     child_port: u16,
+    health_path: String,
+    authentication_token: String,
 ) -> Result<Arc<LoopbackProxyShutdown>, String> {
     let listener =
         TokioTcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), proxy_port))
@@ -1496,6 +1578,8 @@ async fn start_loopback_proxy(
     tokio::spawn(run_loopback_proxy(
         listener,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), child_port),
+        health_path,
+        authentication_token,
         shutdown.clone(),
     ));
     Ok(shutdown)
@@ -1504,6 +1588,8 @@ async fn start_loopback_proxy(
 async fn run_loopback_proxy(
     listener: TokioTcpListener,
     target: SocketAddr,
+    health_path: String,
+    authentication_token: String,
     shutdown: Arc<LoopbackProxyShutdown>,
 ) {
     let connections = Arc::new(Semaphore::new(MAXIMUM_LOOPBACK_PROXY_CONNECTIONS));
@@ -1521,7 +1607,13 @@ async fn run_loopback_proxy(
                 let Ok(permit) = connections.clone().try_acquire_owned() else {
                     continue;
                 };
-                tokio::spawn(proxy_loopback_connection(stream, target, permit));
+                tokio::spawn(proxy_loopback_connection(
+                    stream,
+                    target,
+                    health_path.clone(),
+                    authentication_token.clone(),
+                    permit,
+                ));
             }
         }
     }
@@ -1530,8 +1622,47 @@ async fn run_loopback_proxy(
 async fn proxy_loopback_connection(
     downstream: TcpStream,
     target: SocketAddr,
+    health_path: String,
+    authentication_token: String,
     _permit: tokio::sync::OwnedSemaphorePermit,
 ) {
+    let mut downstream = BufStream::new(downstream);
+    let Some(request_headers) = read_proxy_headers(&mut downstream).await else {
+        return;
+    };
+    if !valid_proxy_request(&request_headers) {
+        return;
+    }
+    let Ok(request_text) = std::str::from_utf8(&request_headers) else {
+        return;
+    };
+    let target_path = request_text
+        .lines()
+        .next()
+        .and_then(|line| line.split_ascii_whitespace().nth(1))
+        .unwrap_or_default();
+    match authorize_loopback_request(
+        request_text,
+        target_path,
+        &authentication_token,
+        &health_path,
+    ) {
+        Some(LoopbackRequestAuthorization::Bootstrap) => {
+            let _ = write_session_bootstrap(&mut downstream, &authentication_token).await;
+            return;
+        }
+        Some(LoopbackRequestAuthorization::Session)
+        | Some(LoopbackRequestAuthorization::Health(_)) => {}
+        None => {
+            let _ = write_unauthorized_response(&mut downstream).await;
+            return;
+        }
+    }
+    let Some(request_headers) =
+        inject_authentication_header(&request_headers, &authentication_token)
+    else {
+        return;
+    };
     let Ok(Ok(upstream)) = timeout(
         Duration::from_millis(LOOPBACK_PROXY_CONNECT_TIMEOUT_MS),
         TcpStream::connect(target),
@@ -1540,15 +1671,8 @@ async fn proxy_loopback_connection(
     else {
         return;
     };
-    let mut downstream = BufStream::new(downstream);
     let mut upstream = BufStream::new(upstream);
-    let Some(request_headers) = read_proxy_headers(&mut downstream).await else {
-        return;
-    };
-    if !valid_proxy_request(&request_headers)
-        || upstream.write_all(&request_headers).await.is_err()
-        || upstream.flush().await.is_err()
-    {
+    if upstream.write_all(&request_headers).await.is_err() || upstream.flush().await.is_err() {
         return;
     }
     let Some(response_headers) = read_proxy_headers(&mut upstream).await else {
@@ -1623,13 +1747,184 @@ fn valid_proxy_response(headers: &[u8]) -> bool {
         && status.as_bytes().iter().all(u8::is_ascii_digit)
 }
 
+enum LoopbackRequestAuthorization {
+    Bootstrap,
+    Health(String),
+    Session,
+}
+
+fn authorize_loopback_request(
+    request: &str,
+    target: &str,
+    authentication_token: &str,
+    health_path: &str,
+) -> Option<LoopbackRequestAuthorization> {
+    let method = request.lines().next()?.split_ascii_whitespace().next()?;
+    let bootstrap_prefix = format!("{PLUGIN_SESSION_BOOTSTRAP_PATH}?token=");
+    if method == "GET" {
+        if let Some(candidate) = target.strip_prefix(&bootstrap_prefix) {
+            if !candidate.contains('&') && secure_equal(candidate, authentication_token) {
+                return Some(LoopbackRequestAuthorization::Bootstrap);
+            }
+            return None;
+        }
+    }
+    let path = target.split_once('?').map_or(target, |(path, _)| path);
+    if path == health_path {
+        if let Some(challenge) = unique_header_value(request, PLUGIN_HEALTH_CHALLENGE_HEADER)
+            .filter(|challenge| valid_authentication_value(challenge))
+        {
+            return Some(LoopbackRequestAuthorization::Health(challenge.to_owned()));
+        }
+    }
+    let cookie = unique_header_value(request, "cookie")?;
+    let mut session_value = None;
+    for part in cookie.split(';') {
+        let Some((name, value)) = part.trim().split_once('=') else {
+            continue;
+        };
+        if name != PLUGIN_SESSION_COOKIE {
+            continue;
+        }
+        if session_value.replace(value).is_some() {
+            return None;
+        }
+    }
+    session_value
+        .filter(|value| secure_equal(value, authentication_token))
+        .map(|_| LoopbackRequestAuthorization::Session)
+}
+
+fn unique_header_value<'a>(request: &'a str, name: &str) -> Option<&'a str> {
+    let mut found = None;
+    for line in request.lines().skip(1) {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            break;
+        }
+        let (header_name, value) = line.split_once(':')?;
+        if header_name.eq_ignore_ascii_case(name) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(value.trim());
+        }
+    }
+    found
+}
+
+fn valid_authentication_value(value: &str) -> bool {
+    (32..=128).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn secure_equal(left: &str, right: &str) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let comparison_message = b"chatos-plugin-authentication-value";
+    let right_key = hmac::Key::new(hmac::HMAC_SHA256, right.as_bytes());
+    let left_key = hmac::Key::new(hmac::HMAC_SHA256, left.as_bytes());
+    let left_tag = hmac::sign(&left_key, comparison_message);
+    hmac::verify(&right_key, comparison_message, left_tag.as_ref()).is_ok()
+}
+
+fn inject_authentication_header(headers: &[u8], authentication_token: &str) -> Option<Vec<u8>> {
+    let request = std::str::from_utf8(headers).ok()?;
+    if has_header(request, PLUGIN_AUTHENTICATION_HEADER) {
+        return None;
+    }
+    let (boundary, separator) = headers
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|position| (position + 2, b"\r\n".as_slice()))
+        .or_else(|| {
+            headers
+                .windows(2)
+                .position(|window| window == b"\n\n")
+                .map(|position| (position + 1, b"\n".as_slice()))
+        })?;
+    let mut authenticated = Vec::with_capacity(headers.len() + authentication_token.len() + 32);
+    authenticated.extend_from_slice(&headers[..boundary]);
+    authenticated.extend_from_slice(PLUGIN_AUTHENTICATION_HEADER.as_bytes());
+    authenticated.extend_from_slice(b": ");
+    authenticated.extend_from_slice(authentication_token.as_bytes());
+    authenticated.extend_from_slice(separator);
+    authenticated.extend_from_slice(&headers[boundary..]);
+    Some(authenticated)
+}
+
+fn has_header(request: &str, name: &str) -> bool {
+    request
+        .lines()
+        .skip(1)
+        .take_while(|line| !line.trim().is_empty())
+        .any(|line| {
+            line.split_once(':')
+                .is_some_and(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
+        })
+}
+
+async fn write_session_bootstrap(
+    stream: &mut (impl AsyncWrite + Unpin),
+    authentication_token: &str,
+) -> Result<(), String> {
+    write_loopback_response(
+        stream,
+        &format!(
+            "HTTP/1.1 303 See Other\r\nLocation: /\r\nSet-Cookie: {PLUGIN_SESSION_COOKIE}={authentication_token}; HttpOnly; SameSite=Strict; Path=/\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ),
+    )
+    .await
+}
+
+async fn write_unauthorized_response(stream: &mut (impl AsyncWrite + Unpin)) -> Result<(), String> {
+    write_loopback_response(
+        stream,
+        "HTTP/1.1 401 Unauthorized\r\nCache-Control: no-store\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    )
+    .await
+}
+
+async fn write_health_response(
+    stream: &mut (impl AsyncWrite + Unpin),
+    proof: &str,
+) -> Result<(), String> {
+    write_loopback_response(
+        stream,
+        &format!(
+            "HTTP/1.1 200 OK\r\n{PLUGIN_HEALTH_PROOF_HEADER}: {proof}\r\nCache-Control: no-store\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ),
+    )
+    .await
+}
+
+async fn write_loopback_response(
+    stream: &mut (impl AsyncWrite + Unpin),
+    response: &str,
+) -> Result<(), String> {
+    stream
+        .write_all(response.as_bytes())
+        .await
+        .map_err(|_| plugin_runtime_error())?;
+    stream.flush().await.map_err(|_| plugin_runtime_error())
+}
+
 async fn spawn_runtime_process(
     resolved: &ResolvedPluginApplication,
     prepared: PreparedRuntimeProcess,
     resource_permit: Option<MachineResourcePermit>,
     #[cfg(windows)] sandbox: Option<Arc<WorkspaceLeaseManager>>,
 ) -> Result<Arc<RunningPluginApplication>, String> {
-    let proxy = start_loopback_proxy(prepared.proxy_port, prepared.child_port).await?;
+    let proxy = start_loopback_proxy(
+        prepared.proxy_port,
+        prepared.child_port,
+        prepared.health_path.clone(),
+        prepared.authentication_token.clone(),
+    )
+    .await?;
     #[cfg(windows)]
     if let Some(sandbox) = sandbox {
         return spawn_sandboxed_runtime(resolved, prepared, resource_permit, sandbox, proxy).await;
@@ -1670,6 +1965,7 @@ async fn spawn_runtime_process(
         version: resolved.manifest.version.clone(),
         base_url: prepared.base_url,
         health_path: prepared.health_path,
+        authentication_token: prepared.authentication_token,
         termination: RuntimeTermination::Process {
             process: termination,
             proxy: proxy.clone(),
@@ -1754,6 +2050,7 @@ async fn spawn_sandboxed_runtime(
         version: resolved.manifest.version.clone(),
         base_url: prepared.base_url,
         health_path: prepared.health_path,
+        authentication_token: prepared.authentication_token,
         termination: RuntimeTermination::Process {
             process: termination,
             proxy: proxy.clone(),
@@ -2292,19 +2589,36 @@ mod tests {
         let Ok(port) = std::env::var("CHATOS_PLUGIN_APP_PORT") else {
             return;
         };
+        let authentication_token = std::env::var("CHATOS_PLUGIN_APP_TOKEN").unwrap();
+        let health_path = std::env::var("CHATOS_PLUGIN_APP_HEALTH_PATH").unwrap();
         let listener = std::net::TcpListener::bind(format!("127.0.0.1:{port}")).unwrap();
         for stream in listener.incoming() {
             let mut stream = stream.unwrap();
             let mut request = [0_u8; 8 * 1_024];
             let count = stream.read(&mut request).unwrap_or(0);
-            let success = request[..count].starts_with(b"GET /api/health ");
+            let request = std::str::from_utf8(&request[..count]).unwrap_or_default();
+            let authenticated = unique_header_value(request, PLUGIN_AUTHENTICATION_HEADER)
+                .is_some_and(|value| secure_equal(value, &authentication_token));
+            let health = request.starts_with(&format!("GET {health_path} "));
+            let application = request.starts_with("GET / ");
+            let success = authenticated && (health || application);
+            let challenge = unique_header_value(request, PLUGIN_HEALTH_CHALLENGE_HEADER);
             let (status, body) = if success {
                 ("200 OK", "ok")
             } else {
                 ("404 Not Found", "missing")
             };
+            let proof = challenge
+                .filter(|_| authenticated && health)
+                .map(|challenge| {
+                    format!(
+                        "{PLUGIN_HEALTH_PROOF_HEADER}: {}\r\n",
+                        health_proof(&authentication_token, challenge)
+                    )
+                })
+                .unwrap_or_default();
             let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status}\r\n{proof}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
             stream.write_all(response.as_bytes()).unwrap();
@@ -2330,6 +2644,7 @@ mod tests {
         assert_ne!(first.session_id, second.session_id);
         assert_eq!(runtime.resources.used_resource_units(), 1);
         assert!(first.url.starts_with("http://127.0.0.1:"));
+        assert!(first.url.contains(PLUGIN_SESSION_BOOTSTRAP_PATH));
         assert_eq!(second.bridge_capabilities, ["host.context.read"]);
         assert_eq!(second.host_session_nonce.len(), 64);
         assert!(second
@@ -2341,6 +2656,38 @@ mod tests {
         assert!(!serialized.contains(&fixture.app_data.to_string_lossy().to_string()));
         assert!(!serialized.contains("API_TOKEN"));
         assert!(!serialized.contains("secret-reference"));
+
+        let client = Client::builder()
+            .redirect(Policy::none())
+            .no_proxy()
+            .build()
+            .unwrap();
+        assert_eq!(
+            client
+                .get(format!("{}/", first.bridge_origin))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        let bootstrap = client.get(&first.url).send().await.unwrap();
+        assert_eq!(bootstrap.status(), reqwest::StatusCode::SEE_OTHER);
+        assert_eq!(bootstrap.headers()["location"], "/");
+        assert_eq!(bootstrap.headers()["referrer-policy"], "no-referrer");
+        let set_cookie = bootstrap.headers()["set-cookie"].to_str().unwrap();
+        assert!(set_cookie.contains("; HttpOnly;"));
+        assert!(set_cookie.contains("; SameSite=Strict;"));
+        assert!(set_cookie.ends_with("; Path=/"));
+        let cookie = set_cookie.split(';').next().unwrap();
+        assert!(client
+            .get(format!("{}/", first.bridge_origin))
+            .header("cookie", cookie)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
 
         let bridge_request = PluginApplicationBridgeRequest {
             owner_user_id: "owner-1".into(),
@@ -2389,14 +2736,14 @@ mod tests {
         assert_ne!(runtime.epoch(), epoch);
         assert!(runtime.state.lock().await.processes.is_empty());
         assert_eq!(runtime.resources.used_resource_units(), 0);
-        let client = Client::builder()
+        let stop_client = Client::builder()
             .no_proxy()
             .timeout(Duration::from_millis(500))
             .build()
             .unwrap();
         let mut stopped = false;
         for _ in 0..20 {
-            if client.get(&first.url).send().await.is_err() {
+            if stop_client.get(&first.bridge_origin).send().await.is_err() {
                 stopped = true;
                 break;
             }
@@ -2432,8 +2779,37 @@ mod tests {
             .await
             .unwrap();
 
-        let client = Client::builder().no_proxy().build().unwrap();
-        let entry = client.get(&launch.url).send().await.unwrap();
+        let client = Client::builder()
+            .redirect(Policy::none())
+            .no_proxy()
+            .build()
+            .unwrap();
+        assert_eq!(
+            client
+                .get(format!("{}/", launch.bridge_origin))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        let bootstrap = client.get(&launch.url).send().await.unwrap();
+        assert_eq!(bootstrap.status(), reqwest::StatusCode::SEE_OTHER);
+        assert_eq!(bootstrap.headers()["location"], "/");
+        let cookie = bootstrap.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_owned();
+        assert!(!cookie.is_empty());
+        let entry = client
+            .get(format!("{}/", launch.bridge_origin))
+            .header("cookie", &cookie)
+            .send()
+            .await
+            .unwrap();
         assert!(entry.status().is_success());
         assert_eq!(
             entry.headers()["x-content-type-options"].to_str().unwrap(),
@@ -2450,7 +2826,8 @@ mod tests {
         assert!(entry.text().await.unwrap().contains("Static Plugin"));
 
         let script = client
-            .get(format!("{}app.js", launch.url))
+            .get(format!("{}/app.js", launch.bridge_origin))
+            .header("cookie", &cookie)
             .send()
             .await
             .unwrap();
@@ -2462,7 +2839,8 @@ mod tests {
         assert!(script.text().await.unwrap().contains("staticReady"));
         assert_eq!(
             client
-                .get(format!("{}private.txt", launch.url))
+                .get(format!("{}/private.txt", launch.bridge_origin))
+                .header("cookie", &cookie)
                 .send()
                 .await
                 .unwrap()
@@ -2487,6 +2865,73 @@ mod tests {
         assert_eq!(response.request_id, "static-context");
         runtime.reset().await;
         assert!(runtime.state.lock().await.processes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn authenticated_loopback_proxy_preserves_an_upgraded_bidirectional_stream() {
+        let authentication_token = "a".repeat(43);
+        let target_listener =
+            TokioTcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+                .await
+                .unwrap();
+        let target_port = target_listener.local_addr().unwrap().port();
+        let expected_token = authentication_token.clone();
+        let target = tokio::spawn(async move {
+            let (stream, _) = target_listener.accept().await.unwrap();
+            let mut stream = BufStream::new(stream);
+            let headers = read_proxy_headers(&mut stream).await.unwrap();
+            let request = std::str::from_utf8(&headers).unwrap();
+            assert_eq!(
+                unique_header_value(request, PLUGIN_AUTHENTICATION_HEADER),
+                Some(expected_token.as_str())
+            );
+            stream
+                .write_all(
+                    b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: chatos-test\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            stream.flush().await.unwrap();
+            let mut ping = [0_u8; 4];
+            stream.read_exact(&mut ping).await.unwrap();
+            assert_eq!(&ping, b"PING");
+            stream.write_all(b"PONG").await.unwrap();
+            stream.flush().await.unwrap();
+        });
+
+        let proxy_port = available_loopback_port().unwrap();
+        let proxy = start_loopback_proxy(
+            proxy_port,
+            target_port,
+            "/api/health".into(),
+            authentication_token.clone(),
+        )
+        .await
+        .unwrap();
+        let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, proxy_port))
+            .await
+            .unwrap();
+        let mut stream = BufStream::new(stream);
+        stream
+            .write_all(
+                format!(
+                    "GET /socket HTTP/1.1\r\nHost: 127.0.0.1:{proxy_port}\r\nCookie: {PLUGIN_SESSION_COOKIE}={authentication_token}\r\nConnection: Upgrade\r\nUpgrade: chatos-test\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        stream.flush().await.unwrap();
+        let response = read_proxy_headers(&mut stream).await.unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 101 Switching Protocols\r\n"));
+        stream.write_all(b"PING").await.unwrap();
+        stream.flush().await.unwrap();
+        let mut pong = [0_u8; 4];
+        stream.read_exact(&mut pong).await.unwrap();
+        assert_eq!(&pong, b"PONG");
+
+        target.await.unwrap();
+        proxy.request();
     }
 
     #[tokio::test]
@@ -2656,6 +3101,13 @@ mod tests {
             }
         );
         assert_eq!(prepared.environment["CHATOS_PLUGIN_APP_HOST"], "127.0.0.1");
+        assert_eq!(
+            prepared.environment["CHATOS_PLUGIN_APP_HEALTH_PATH"],
+            "/api/health"
+        );
+        assert!(valid_authentication_value(
+            &prepared.environment["CHATOS_PLUGIN_APP_TOKEN"]
+        ));
     }
 
     #[test]
@@ -2751,5 +3203,89 @@ mod tests {
         ));
         assert!(valid_proxy_response(b"HTTP/1.1 200 OK\r\n\r\n"));
         assert!(!valid_proxy_response(b"not-http\r\n\r\n"));
+
+        let token = "a".repeat(43);
+        let bootstrap = format!(
+            "GET {PLUGIN_SESSION_BOOTSTRAP_PATH}?token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+        );
+        assert!(matches!(
+            authorize_loopback_request(
+                &bootstrap,
+                &format!("{PLUGIN_SESSION_BOOTSTRAP_PATH}?token={token}"),
+                &token,
+                "/api/health",
+            ),
+            Some(LoopbackRequestAuthorization::Bootstrap)
+        ));
+        let wrong_bootstrap = format!(
+            "GET {PLUGIN_SESSION_BOOTSTRAP_PATH}?token={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "z".repeat(43)
+        );
+        assert!(authorize_loopback_request(
+            &wrong_bootstrap,
+            &format!("{PLUGIN_SESSION_BOOTSTRAP_PATH}?token={}", "z".repeat(43)),
+            &token,
+            "/api/health",
+        )
+        .is_none());
+        let session = format!("GET / HTTP/1.1\r\nCookie: {PLUGIN_SESSION_COOKIE}={token}\r\n\r\n");
+        assert!(matches!(
+            authorize_loopback_request(&session, "/", &token, "/api/health"),
+            Some(LoopbackRequestAuthorization::Session)
+        ));
+        let duplicate_session = format!(
+            "GET / HTTP/1.1\r\nCookie: {PLUGIN_SESSION_COOKIE}={token}; {PLUGIN_SESSION_COOKIE}={token}\r\n\r\n"
+        );
+        assert!(
+            authorize_loopback_request(&duplicate_session, "/", &token, "/api/health").is_none()
+        );
+        let duplicate_cookie_headers = format!(
+            "GET / HTTP/1.1\r\nCookie: {PLUGIN_SESSION_COOKIE}={token}\r\nCookie: unrelated=value\r\n\r\n"
+        );
+        assert!(
+            authorize_loopback_request(&duplicate_cookie_headers, "/", &token, "/api/health")
+                .is_none()
+        );
+        assert!(authorize_loopback_request(
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "/",
+            &token,
+            "/api/health",
+        )
+        .is_none());
+        let health = format!(
+            "GET /api/health HTTP/1.1\r\n{PLUGIN_HEALTH_CHALLENGE_HEADER}: {}\r\n\r\n",
+            "b".repeat(43)
+        );
+        assert!(matches!(
+            authorize_loopback_request(&health, "/api/health", &token, "/api/health"),
+            Some(LoopbackRequestAuthorization::Health(_))
+        ));
+        let challenge = "b".repeat(43);
+        let proof = URL_SAFE_NO_PAD
+            .decode(health_proof(&token, &challenge))
+            .unwrap();
+        assert!(hmac::verify(
+            &hmac::Key::new(hmac::HMAC_SHA256, token.as_bytes()),
+            challenge.as_bytes(),
+            &proof,
+        )
+        .is_ok());
+        assert!(hmac::verify(
+            &hmac::Key::new(hmac::HMAC_SHA256, token.as_bytes()),
+            "c".repeat(43).as_bytes(),
+            &proof,
+        )
+        .is_err());
+        let injected = inject_authentication_header(session.as_bytes(), &token).unwrap();
+        assert!(std::str::from_utf8(&injected)
+            .unwrap()
+            .contains(&format!("{PLUGIN_AUTHENTICATION_HEADER}: {token}\r\n")));
+        assert!(inject_authentication_header(
+            format!("GET / HTTP/1.1\r\n{PLUGIN_AUTHENTICATION_HEADER}: attacker\r\n\r\n")
+                .as_bytes(),
+            &token,
+        )
+        .is_none());
     }
 }
