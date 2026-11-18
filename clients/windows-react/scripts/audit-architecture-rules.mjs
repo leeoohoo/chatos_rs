@@ -11,6 +11,14 @@ export function auditIconOnlyButtonAccessibleNames(source, path, violations) {
   }
 }
 
+export function auditAccentBackgroundToken(source, path, violations) {
+  const matches = source.matchAll(/background(?:-color)?\s*:\s*var\(--accent\)(?![-\w])/g);
+  for (const match of matches) {
+    const line = source.slice(0, match.index ?? 0).split("\n").length;
+    violations.push(path + ":" + line + ": backgrounds must use --accent-action so dark foreground contrast stays independent");
+  }
+}
+
 export function auditSecondaryTextContrast(source, path, violations) {
   const match = source.match(/--secondary\s*:\s*rgba\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d*\.?\d+)\s*\)\s*;/);
   if (!match) {
@@ -38,6 +46,50 @@ export function auditSecondaryTextContrast(source, path, violations) {
   if (minimumRatio < 4.5) {
     violations.push(path + ": --secondary text contrast must be at least 4.5:1 on core light surfaces (found " + minimumRatio.toFixed(3) + ":1)");
   }
+}
+
+export function auditAccentTextContrast(source, path, violations) {
+  const accent = readHexToken(source, "accent");
+  const action = readHexToken(source, "accent-action");
+  const darkAccent = readHexToken(source, "accent-dark");
+  if (!accent || !action || !darkAccent) {
+    violations.push(path + ": --accent, --accent-action, and --accent-dark must use auditable six-digit hex colors");
+    return;
+  }
+  if (!/@media\s*\(prefers-color-scheme:\s*dark\)[\s\S]*?:root\s*\{[^}]*--accent\s*:\s*var\(--accent-dark\)\s*;/i.test(source)) {
+    violations.push(path + ": dark mode must map --accent to --accent-dark");
+  }
+
+  const lightSurfaces = [
+    [255, 255, 255],
+    [248, 248, 250],
+    [241, 241, 246],
+  ];
+  const lightForegroundRatio = Math.min(...lightSurfaces.map((background) => contrastRatio(accent, background)));
+  if (lightForegroundRatio < 4.5) {
+    violations.push(path + ": --accent text contrast must be at least 4.5:1 on core light surfaces (found " + lightForegroundRatio.toFixed(3) + ":1)");
+  }
+
+  const whiteActionRatio = contrastRatio([255, 255, 255], action);
+  if (whiteActionRatio < 4.5) {
+    violations.push(path + ": white action text contrast on --accent-action must be at least 4.5:1 (found " + whiteActionRatio.toFixed(3) + ":1)");
+  }
+
+  const darkSurfaces = [
+    [42, 42, 46],
+    [35, 35, 39],
+    [28, 28, 31],
+  ];
+  const darkForegroundRatio = Math.min(...darkSurfaces.map((background) => contrastRatio(darkAccent, background)));
+  if (darkForegroundRatio < 4.5) {
+    violations.push(path + ": --accent-dark text contrast must be at least 4.5:1 on core dark surfaces (found " + darkForegroundRatio.toFixed(3) + ":1)");
+  }
+}
+
+function readHexToken(source, name) {
+  const match = source.match(new RegExp("--" + name + "\\s*:\\s*#([0-9a-f]{6})\\s*;", "i"));
+  if (!match) return null;
+  return [0, 2, 4].map((offset) => Number.parseInt(match[1].slice(offset, offset + 2), 16));
 }
 
 function contrastRatio(first, second) {

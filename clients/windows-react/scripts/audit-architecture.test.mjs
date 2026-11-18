@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import {
+  auditAccentBackgroundToken,
+  auditAccentTextContrast,
   auditIconOnlyButtonAccessibleNames,
   auditSecondaryTextContrast,
 } from "./audit-architecture-rules.mjs";
@@ -61,6 +63,66 @@ describe("audit-architecture secondary text contrast", () => {
     auditSecondaryTextContrast(
       ":root { --secondary: rgba(60, 60, 67, 0.76); }",
       "src/design-system/theme.css",
+      violations,
+    );
+
+    expect(violations).toEqual([]);
+  });
+});
+
+describe("audit-architecture accent text contrast", () => {
+  it("rejects the previous accent in light, action, and dark contexts", () => {
+    const violations = [];
+
+    auditAccentTextContrast(
+      ":root { --accent: #0a84ff; --accent-action: #0a84ff; --accent-dark: #0a84ff; }\n"
+        + "@media (prefers-color-scheme: dark) { :root { --accent: var(--accent-dark); } }",
+      "src/design-system/theme.css",
+      violations,
+    );
+
+    expect(violations).toEqual([
+      "src/design-system/theme.css: --accent text contrast must be at least 4.5:1 on core light surfaces (found 3.240:1)",
+      "src/design-system/theme.css: white action text contrast on --accent-action must be at least 4.5:1 (found 3.647:1)",
+      "src/design-system/theme.css: --accent-dark text contrast must be at least 4.5:1 on core dark surfaces (found 3.919:1)",
+    ]);
+  });
+
+  it("accepts separate foreground and action colors across themes", () => {
+    const violations = [];
+
+    auditAccentTextContrast(
+      ":root { --accent: #0066cc; --accent-action: #0066cc; --accent-dark: #64b5ff; }\n"
+        + "@media (prefers-color-scheme: dark) { :root { --accent: var(--accent-dark); } }",
+      "src/design-system/theme.css",
+      violations,
+    );
+
+    expect(violations).toEqual([]);
+  });
+});
+
+describe("audit-architecture accent background token", () => {
+  it("rejects a background that reuses the theme-dependent foreground", () => {
+    const violations = [];
+
+    auditAccentBackgroundToken(
+      ".button { color: white; background: var(--accent); }",
+      "src/example.css",
+      violations,
+    );
+
+    expect(violations).toEqual([
+      "src/example.css:1: backgrounds must use --accent-action so dark foreground contrast stays independent",
+    ]);
+  });
+
+  it("accepts the action background token", () => {
+    const violations = [];
+
+    auditAccentBackgroundToken(
+      ".button { color: white; background: var(--accent-action); }",
+      "src/example.css",
       violations,
     );
 

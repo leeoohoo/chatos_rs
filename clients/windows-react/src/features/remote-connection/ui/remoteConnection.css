@@ -38,7 +38,7 @@
 .remote-feedback--error { color: #a84d00; background: rgba(255,159,10,.1); }
 .remote-editor__footer { display: grid; grid-template-columns: auto 1fr auto auto; gap: 9px; border-top: 1px solid var(--separator); padding: 13px 18px; }
 .remote-editor__footer button, .remote-dialog footer button { display: flex; min-width: 74px; min-height: 31px; align-items: center; justify-content: center; gap: 7px; border: 0; border-radius: 8px; padding: 6px 13px; color: var(--accent); background: rgba(10,132,255,.09); font-size: 10.5px; font-weight: 620; }
-.remote-editor__footer .primary-button, .remote-dialog footer .primary-button { color: white; background: var(--accent); box-shadow: 0 5px 14px rgba(10,132,255,.2); }
+.remote-editor__footer .primary-button, .remote-dialog footer .primary-button { color: white; background: var(--accent-action); box-shadow: 0 5px 14px rgba(10,132,255,.2); }
 .remote-dialog-backdrop { z-index: 130; inset: 0; }
 .remote-dialog { display: grid; width: min(430px,100%); justify-items: stretch; border: 1px solid rgba(255,255,255,.82); border-radius: 18px; padding: 24px; color: var(--text,#1d1d1f); background: rgba(250,250,252,.97); box-shadow: 0 28px 80px rgba(0,0,0,.28); text-align: center; }
 .remote-dialog__icon { display: grid; width: 45px; height: 45px; place-items: center; justify-self: center; border-radius: 14px; color: white; background: linear-gradient(145deg,#69b6ff,#0878e8); box-shadow: 0 8px 20px rgba(10,132,255,.22); font-size: 22px; }
@@ -72,7 +72,7 @@
 .remote-workspace-embedded-loading { display: flex; min-height: 300px; align-items: center; justify-content: center; gap: 8px; color: var(--secondary); font-size: 10px; }
 .remote-detail-card { width: min(720px,100%); margin: 0 auto; border: 1px solid var(--separator); border-radius: 14px; padding: 18px; background: rgba(255,255,255,.72); }
 .remote-detail-card__buttons { display: flex; gap: 9px; margin-bottom: 16px; }
-.remote-detail-card__buttons .primary-button { color: white; background: var(--accent); box-shadow: 0 5px 14px rgba(10,132,255,.18); }
+.remote-detail-card__buttons .primary-button { color: white; background: var(--accent-action); box-shadow: 0 5px 14px rgba(10,132,255,.18); }
 .remote-detail-card dl { display: grid; margin: 0; border-top: 1px solid var(--separator); }
 .remote-detail-card dl > div { display: grid; grid-template-columns: 160px minmax(0,1fr); gap: 18px; border-bottom: 1px solid var(--separator); padding: 11px 2px; }
 .remote-detail-card dt { color: var(--secondary); font-size: 10.5px; font-weight: 620; }

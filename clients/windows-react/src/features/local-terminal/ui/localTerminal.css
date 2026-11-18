@@ -27,7 +27,7 @@
 .local-terminal-tab__status--running { background: #30d158; }
 .local-terminal-tab__status--failed { background: #ff453a; }
 .local-terminal-tab__status--exited, .local-terminal-tab__status--closed { background: #ff9f0a; }
-.local-terminal-tab__status--starting { background: #0a84ff; box-shadow: 0 0 0 3px rgba(10,132,255,.11); }
+.local-terminal-tab__status--starting { background: var(--accent-action); box-shadow: 0 0 0 3px rgba(10,132,255,.11); }
 .local-terminal-tab__close { width: 25px; height: 28px; flex: none; border: 0; padding: 0; color: var(--secondary); background: transparent; font-size: 15px; }
 .local-terminal-tabs__add { width: 29px; height: 29px; flex: none; border: 0; border-radius: 8px; color: var(--accent); background: rgba(10,132,255,.09); font-size: 17px; }
 .local-terminal__toolbar { display: flex; min-width: 0; min-height: 42px; align-items: center; gap: 5px; border-bottom: 1px solid var(--separator); padding: 6px 9px; background: rgba(250,250,252,.9); }

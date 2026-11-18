@@ -32,7 +32,7 @@
 .device-gateway-value strong.is-mono { font-family: ui-monospace,SFMono-Regular,Consolas,monospace; font-size: 9.5px; }
 .device-gateway-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 2px 0; }
 .device-gateway-actions button,.device-gateway-status button { min-height: 29px; border: 1px solid rgba(60,60,67,.12); border-radius: 8px; padding: 0 11px; color: var(--primary); background: rgba(118,118,128,.08); font-size: 10px; font-weight: 590; }
-.device-gateway-actions .is-primary { border-color: transparent; color: white; background: var(--accent); box-shadow: 0 3px 9px rgba(10,132,255,.2); }
+.device-gateway-actions .is-primary { border-color: transparent; color: white; background: var(--accent-action); box-shadow: 0 3px 9px rgba(10,132,255,.2); }
 .device-gateway-actions .is-danger { color: #d70015; }
 
 .device-gateway-boundary { display: grid; min-height: 38px; grid-template-columns: 24px 140px minmax(0,1fr); align-items: center; gap: 8px; border-bottom: 1px solid rgba(60,60,67,.07); padding: 0 2px; }

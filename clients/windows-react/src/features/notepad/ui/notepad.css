@@ -37,11 +37,11 @@
 .notepad-editor-toolbar > button { display: flex; min-height: 27px; align-items: center; gap: 4px; border: 0; border-radius: 7px; padding: 5px 8px; color: var(--secondary); background: rgba(118,118,128,.08); font-size: 9.5px; cursor: pointer; }
 .notepad-editor-toolbar > button:hover:not(:disabled) { color: inherit; background: rgba(118,118,128,.14); }
 .notepad-editor-toolbar > button:disabled { cursor: default; opacity: .34; }
-.notepad-editor-toolbar > .notepad-save { color: white; background: var(--accent); }
+.notepad-editor-toolbar > .notepad-save { color: white; background: var(--accent-action); }
 .notepad-editor-toolbar > .notepad-delete { color: #c7352b; background: rgba(255,59,48,.07); }
 .notepad-mode-picker { display: flex; border-radius: 7px; padding: 2px; background: rgba(118,118,128,.10); }
 .notepad-mode-picker button { min-width: 39px; border: 0; border-radius: 5px; padding: 4px 7px; color: var(--secondary); background: transparent; font-size: 9px; cursor: pointer; }
-.notepad-mode-picker button.is-active { color: white; background: var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+.notepad-mode-picker button.is-active { color: white; background: var(--accent-action); box-shadow: 0 1px 3px rgba(0,0,0,.14); }
 .notepad-mode-picker button:disabled { cursor: default; opacity: .45; }
 .notepad-error { display: flex; align-items: flex-start; gap: 8px; border-bottom: 1px solid rgba(255,159,10,.18); padding: 8px 11px; color: #915000; background: rgba(255,159,10,.1); font-size: 9.5px; line-height: 1.45; }
 .notepad-error > span { display: grid; width: 17px; height: 17px; flex: none; place-items: center; border-radius: 50%; color: white; background: #ff9500; font-weight: 700; }
