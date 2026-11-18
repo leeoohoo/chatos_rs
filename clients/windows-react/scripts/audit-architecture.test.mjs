@@ -50,4 +50,11 @@ describe("agent management responsive layout", () => {
     expect(agentManagementStylesheet).toContain(".agent-team-run-detail__event { display: grid;");
     expect(agentManagementStylesheet).not.toContain(".agent-team-run-detail__body > section article {");
   });
+
+  it("keeps document Markdown typography inside team message bounds", () => {
+    expect(agentManagementStylesheet).toContain(".agent-team-message .notepad-markdown { min-width: 0; overflow: visible; padding: 0;");
+    expect(agentManagementStylesheet).toContain(".agent-team-message--system.is-rich { max-width: min(86%,820px);");
+    expect(agentManagementStylesheet).toContain(".agent-team-message .notepad-markdown h1,.agent-team-message .notepad-markdown h2,.agent-team-message .notepad-markdown h3,.agent-team-message .notepad-markdown h4 { margin: .7em 0 .35em; font-size: inherit;");
+    expect(agentManagementStylesheet).toContain(".agent-team-message .notepad-markdown p,.agent-team-message .notepad-markdown li,.agent-team-message .notepad-markdown blockquote { font-size: inherit; line-height: inherit; }");
+  });
 });

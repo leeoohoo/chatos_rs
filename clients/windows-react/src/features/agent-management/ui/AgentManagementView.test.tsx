@@ -19,6 +19,7 @@ import {
   AgentManagementView,
   isCancellableTeamRunDetailStatus,
   shouldPollTeamRunDetail,
+  TeamSystemMessage,
   teamRunDetailStatusLabel,
 } from "./AgentManagementView";
 
@@ -54,6 +55,18 @@ describe("AgentManagementView", () => {
     expect(isCancellableTeamRunDetailStatus("needs_review")).toBe(true);
     expect(isCancellableTeamRunDetailStatus("cancelled")).toBe(false);
     expect(isCancellableTeamRunDetailStatus("succeeded")).toBe(false);
+  });
+
+  it("renders multiline system work contracts as bounded Markdown", () => {
+    const { container } = render(
+      <TeamSystemMessage content={"独立 Todo 工作契约\n\n# 验证共享资产\n\n## 范围\n\n- 只做真实回归"} />,
+    );
+
+    expect(screen.getByRole("heading", { name: "验证共享资产", level: 1 })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "范围", level: 2 })).toBeVisible();
+    expect(screen.getByText("只做真实回归")).toBeVisible();
+    expect(container.querySelector(".agent-team-message--system")).toHaveClass("is-rich");
+    expect(screen.queryByText("# 验证共享资产")).not.toBeInTheDocument();
   });
 
   it("renders macOS profile card facts and enables profile editing", async () => {

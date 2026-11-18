@@ -142,10 +142,16 @@
 .agent-team-message { max-width: 100%; border: 1px solid rgba(60,60,67,.09); border-radius: 13px; padding: 9px 12px; background: rgba(255,255,255,.94); box-shadow: 0 2px 8px rgba(0,0,0,.025); }
 .agent-team-message--human { border-color: rgba(10,132,255,.14); background: rgba(10,132,255,.10); }
 .agent-team-message--system { align-self: center; max-width: 86%; border: 0; border-radius: 999px; padding: 6px 11px; color: var(--secondary); background: rgba(120,120,128,.09); box-shadow: none; text-align: center; }
+.agent-team-message--system.is-rich { max-width: min(86%,820px); border: 1px solid rgba(60,60,67,.08); border-radius: 13px; padding: 10px 12px; background: rgba(120,120,128,.07); text-align: left; }
 .agent-team-message__meta { display: flex; align-items: center; gap: 7px; padding: 0 2px; }
 .agent-team-message__meta strong { font-size: 9.5px; }
 .agent-team-message__meta time { color: var(--tertiary); font-size: 8px; }
-.agent-team-message .notepad-markdown { min-width: 0; color: var(--primary); font-size: 10.5px; line-height: 1.48; overflow-wrap: anywhere; }
+.agent-team-message .notepad-markdown { min-width: 0; overflow: visible; padding: 0; color: var(--primary); font-size: 10.5px; line-height: 1.48; overflow-wrap: anywhere; }
+.agent-team-message .notepad-markdown h1,.agent-team-message .notepad-markdown h2,.agent-team-message .notepad-markdown h3,.agent-team-message .notepad-markdown h4 { margin: .7em 0 .35em; font-size: inherit; line-height: inherit; letter-spacing: 0; }
+.agent-team-message .notepad-markdown p,.agent-team-message .notepad-markdown li,.agent-team-message .notepad-markdown blockquote { font-size: inherit; line-height: inherit; }
+.agent-team-message .notepad-markdown p { margin: 0 0 .65em; }
+.agent-team-message .notepad-markdown ul,.agent-team-message .notepad-markdown ol { gap: 2px; margin: 0 0 .65em; padding-left: 18px; }
+.agent-team-message .notepad-markdown blockquote,.agent-team-message .notepad-markdown pre { margin: 0 0 .65em; }
 .agent-team-message .notepad-markdown > :first-child { margin-top: 0; }
 .agent-team-message .notepad-markdown > :last-child { margin-bottom: 0; }
 .agent-team-message__mentions,.agent-team-message__deliveries { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }

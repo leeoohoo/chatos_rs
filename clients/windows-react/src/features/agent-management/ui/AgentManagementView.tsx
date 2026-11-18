@@ -2844,7 +2844,7 @@ function AgentTeamConversationView({
           const deliveries = deliveriesByMessage.get(message.id) ?? [];
           const senderProfile = message.senderKind === "agent" ? profilesById.get(message.senderId) : null;
           if (message.senderKind === "system") {
-            return <div className="agent-team-message agent-team-message--system" key={message.id}>{message.content}</div>;
+            return <TeamSystemMessage content={message.content} key={message.id} />;
           }
           return (
             <div className={`agent-team-message-row agent-team-message-row--${message.senderKind}`} key={message.id}>
@@ -3053,6 +3053,15 @@ function AgentTeamConversationView({
         </div>
         {!canRoute && <small>当前团队没有默认 Agent，请先选择一个接收者。</small>}
       </div>
+    </div>
+  );
+}
+
+export function TeamSystemMessage({ content }: { content: string }) {
+  const isRich = content.includes("\n\n") || /^#{1,6}\s/u.test(content);
+  return (
+    <div className={`agent-team-message agent-team-message--system${isRich ? " is-rich" : ""}`}>
+      <SafeMarkdownPreview markdown={content} />
     </div>
   );
 }
