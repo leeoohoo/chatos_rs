@@ -548,6 +548,57 @@ describe("AgentManagementView", () => {
     expect(loadTeamDashboard).toHaveBeenCalledWith("owner-1", team.id);
   });
 
+  it("collapses manager briefs longer than the macOS threshold and keeps next steps inside the disclosure", async () => {
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",
+      name: "Alpha Agent 团队", goal: "交付 Alpha", defaultAgentId: "agent-1",
+      projectManagerAgentId: "agent-1", memberCount: 1, createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    };
+    const detail = {
+      team,
+      members: [{ agentId: "agent-1", role: "项目经理", responsibility: "负责交付", joinedAtUnixMs: 20 }],
+    };
+    const longSummary = "历史技术记录".repeat(161);
+    const port = stubPort({
+      listProfiles: vi.fn(async () => [{ ...profile(), name: "项目经理", professionKey: "project_manager" as const }]),
+      listTeams: vi.fn(async () => [team]),
+      loadTeam: vi.fn(async () => detail),
+      loadTeamDashboard: vi.fn(async () => ({
+        dashboard: {
+          teamId: team.id, phase: "实现与联调", health: "on_track" as const,
+          summary: longSummary, nextSteps: ["完成真实回归"], milestones: [], issues: [],
+          revision: 4, updatedByAgentId: "agent-1", updatedAtUnixMs: 40,
+        },
+        pendingApprovalCount: 0,
+      })),
+      listTeamTodos: vi.fn(async () => []),
+      loadTeamRuns: vi.fn(async () => ({
+        teamId: team.id, messageCount: 0, pendingDeliveryCount: 0, runningDeliveryCount: 0,
+        completedDeliveryCount: 0, failedDeliveryCount: 0, cancelledDeliveryCount: 0, runs: [],
+      })),
+    });
+    renderView(port);
+    await screen.findByRole("heading", { name: "项目经理", level: 3 });
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
+    const overview = await screen.findByRole("region", { name: "Agent 团队总览" });
+
+    expect(await within(overview).findByText("历史简报包含较多技术记录，已默认收起。最新状态请看当前阶段、里程碑和执行情况。")).toBeVisible();
+    const expand = within(overview).getByRole("button", { name: "查看历史完整记录" });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    expect(within(overview).queryByText(longSummary)).not.toBeInTheDocument();
+    expect(within(overview).queryByText("1. 完成真实回归")).not.toBeInTheDocument();
+
+    fireEvent.click(expand);
+    expect(within(overview).getByText(longSummary)).toBeVisible();
+    expect(within(overview).getByText("1. 完成真实回归")).toBeVisible();
+    const collapse = within(overview).getByRole("button", { name: "收起历史完整记录" });
+    expect(collapse).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(collapse);
+    expect(within(overview).queryByText(longSummary)).not.toBeInTheDocument();
+    expect(within(overview).getByRole("button", { name: "查看历史完整记录" })).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("shows native team Run history and filters it by Agent", async () => {
     const team = {
       id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",

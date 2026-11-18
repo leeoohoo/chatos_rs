@@ -41,6 +41,7 @@ import {
   type AgentTeamTodoProgress,
   type AgentProjectDashboardSnapshot,
   type CreateAgentTeamInput,
+  isLegacyAgentProjectManagerBrief,
   type PreparedAgentConversation,
   type AgentStaffingProposal,
 } from "../domain/agentManagement";
@@ -1034,6 +1035,7 @@ function AgentTeamOverviewView({
   const [dashboardSnapshot, setDashboardSnapshot] = useState<AgentProjectDashboardSnapshot | null>(null);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(false);
+  const [isLegacyBriefExpanded, setIsLegacyBriefExpanded] = useState(false);
   const snapshot = useAgentTeamRunStore((state) => state.snapshot);
   const runError = useAgentTeamRunStore((state) => state.error);
   const activateRuns = useAgentTeamRunStore((state) => state.activate);
@@ -1057,6 +1059,8 @@ function AgentTeamOverviewView({
   const dashboard = dashboardSnapshot?.dashboard?.teamId === detail.team.id
     ? dashboardSnapshot.dashboard
     : null;
+  const isLegacyBrief = dashboard ? isLegacyAgentProjectManagerBrief(dashboard.summary) : false;
+  const legacyBriefRegionId = `agent-team-manager-brief-${detail.team.id}`;
   const failedRuns = visibleSnapshot?.runs.filter((run) => (
     run.deliveryStatus === "failed" || run.runStatus === "failed"
   )) ?? [];
@@ -1111,6 +1115,10 @@ function AgentTeamOverviewView({
     return () => window.clearInterval(timer);
   }, [activeCount, detail.team.id, ownerUserId, port, refreshRuns, refreshTodos]);
 
+  useEffect(() => {
+    setIsLegacyBriefExpanded(false);
+  }, [dashboard?.revision, detail.team.id]);
+
   const retryDashboard = () => {
     if (!port.loadTeamDashboard) return;
     setIsDashboardLoading(true);
@@ -1159,8 +1167,34 @@ function AgentTeamOverviewView({
         </section>
         <section>
           <header><div><h4>项目经理简报</h4><p>{dashboard ? `第 ${dashboard.revision} 版` : "尚未维护"}</p></div></header>
-          <p>{dashboard?.summary ?? "项目经理会在收到任务状态、调研和审批变化后维护阶段判断、风险与下一步。"}</p>
-          {!!dashboard?.nextSteps.length && <div className="agent-team-dashboard-next"><strong>下一步</strong>{dashboard.nextSteps.slice(0, 5).map((step, index) => <span key={`${index}-${step}`}>{index + 1}. {step}</span>)}</div>}
+          {isLegacyBrief && dashboard ? (
+            <>
+              <div className="agent-team-dashboard-legacy-note">
+                <span aria-hidden="true">▤</span>
+                <p>历史简报包含较多技术记录，已默认收起。最新状态请看当前阶段、里程碑和执行情况。</p>
+              </div>
+              <button
+                aria-controls={legacyBriefRegionId}
+                aria-expanded={isLegacyBriefExpanded}
+                className="agent-team-dashboard-legacy-toggle"
+                onClick={() => setIsLegacyBriefExpanded((expanded) => !expanded)}
+                type="button"
+              >
+                {isLegacyBriefExpanded ? "收起历史完整记录" : "查看历史完整记录"}
+              </button>
+              {isLegacyBriefExpanded && (
+                <div className="agent-team-dashboard-legacy-content" id={legacyBriefRegionId}>
+                  <p>{dashboard.summary}</p>
+                  {!!dashboard.nextSteps.length && <div className="agent-team-dashboard-next"><strong>下一步</strong>{dashboard.nextSteps.slice(0, 5).map((step, index) => <span key={`${index}-${step}`}>{index + 1}. {step}</span>)}</div>}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="agent-team-dashboard-brief">{dashboard?.summary ?? "项目经理会在收到任务状态、调研和审批变化后维护阶段判断、风险与下一步。"}</p>
+              {!!dashboard?.nextSteps.length && <div className="agent-team-dashboard-next"><strong>下一步</strong>{dashboard.nextSteps.slice(0, 5).map((step, index) => <span key={`${index}-${step}`}>{index + 1}. {step}</span>)}</div>}
+            </>
+          )}
           <button onClick={() => onOpen("runs")} type="button">查看运行依据</button>
         </section>
       </div>

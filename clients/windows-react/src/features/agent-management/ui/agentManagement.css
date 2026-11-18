@@ -277,6 +277,13 @@
 .agent-team-dashboard-status i { min-width: 0; background: #30d158; }.agent-team-dashboard-status i:nth-child(2) { background: var(--accent); }.agent-team-dashboard-status i:nth-child(3) { background: #ff9500; }.agent-team-dashboard-status i:nth-child(4) { background: rgba(120,120,128,.28); }
 .agent-team-overview__body article > span.is-in_progress { background: var(--accent); }.agent-team-overview__body article > span.is-blocked { background: #ff9500; }.agent-team-overview__body article > span.is-pending { background: rgba(120,120,128,.35); }
 .agent-team-overview__body > section > p { margin: 0; color: var(--secondary); font-size: 9px; line-height: 1.5; }
+.agent-team-dashboard-brief { color: var(--primary) !important; user-select: text; }
+.agent-team-dashboard-legacy-note { display: grid; grid-template-columns: 22px minmax(0,1fr); align-items: start; gap: 7px; color: var(--secondary); }
+.agent-team-dashboard-legacy-note > span { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 6px; color: #5e5ce6; background: rgba(94,92,230,.1); font-size: 9px; }
+.agent-team-dashboard-legacy-note > p { margin: 0; font-size: 9px; line-height: 1.5; }
+.agent-team-overview__body > section > button.agent-team-dashboard-legacy-toggle { justify-self: start; padding: 3px 0; background: transparent; font-size: 8.5px; }
+.agent-team-dashboard-legacy-content { display: grid; max-height: 220px; overflow: auto; gap: 8px; padding: 2px 6px 2px 0; }
+.agent-team-dashboard-legacy-content > p { margin: 0; color: var(--secondary); font-size: 9px; line-height: 1.5; white-space: pre-wrap; user-select: text; }
 .agent-team-dashboard-next { display: grid; gap: 4px; border-top: 1px solid var(--separator); padding-top: 8px; }
 .agent-team-dashboard-next strong { font-size: 8px; }.agent-team-dashboard-next span { color: var(--secondary); font-size: 8px; line-height: 1.35; }
 .agent-team-overview__body > section > button { justify-self: end; border: 0; border-radius: 6px; padding: 4px 7px; color: var(--accent); background: rgba(10,132,255,.08); font-size: 8px; font-weight: 620; cursor: pointer; }

@@ -12,10 +12,18 @@ import {
   agentTeamMemberActivitySnapshotSchema,
   agentTeamTodoExecutionPlanSchema,
   heartbeatIntervalLabel,
+  isLegacyAgentProjectManagerBrief,
   preparedAgentConversationSchema,
 } from "./agentManagement";
 
 describe("agent management domain", () => {
+  it("matches the macOS 800-character legacy manager brief boundary", () => {
+    expect(isLegacyAgentProjectManagerBrief("简".repeat(800))).toBe(false);
+    expect(isLegacyAgentProjectManagerBrief("简".repeat(801))).toBe(true);
+    expect(isLegacyAgentProjectManagerBrief("👩🏽‍💻".repeat(800))).toBe(false);
+    expect(isLegacyAgentProjectManagerBrief("👩🏽‍💻".repeat(801))).toBe(true);
+  });
+
   it("accepts the exact safe native projection", () => {
     const parsed = agentProfileListSchema.parse([fixture()]);
     expect(parsed[0]?.professionKey).toBe("general_member");

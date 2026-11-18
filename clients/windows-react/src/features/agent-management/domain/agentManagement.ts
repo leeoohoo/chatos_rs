@@ -961,6 +961,22 @@ export const agentProjectDashboardSnapshotSchema = z.object({
   pendingApprovalCount: z.number().int().nonnegative(),
 }).strict();
 
+export const agentProjectManagerBriefMaximumLength = 800;
+
+const agentProjectManagerBriefSegmenter = typeof Intl.Segmenter === "function"
+  ? new Intl.Segmenter("zh-Hans", { granularity: "grapheme" })
+  : null;
+
+export function isLegacyAgentProjectManagerBrief(summary: string): boolean {
+  let characterCount = 0;
+  const characters = agentProjectManagerBriefSegmenter?.segment(summary) ?? Array.from(summary);
+  for (const _character of characters) {
+    characterCount += 1;
+    if (characterCount > agentProjectManagerBriefMaximumLength) return true;
+  }
+  return false;
+}
+
 export interface CreateAgentTeamInput {
   projectId: string;
   name: string;
