@@ -811,6 +811,7 @@ export function AppShell({
               pluginId: application.pluginId,
               componentKey: application.componentKey,
             })}
+            onOpenPluginManagement={() => setActiveSurface("plugin-settings")}
           />
         ) : selectedPluginApplication ? (
           <PluginApplicationHostView

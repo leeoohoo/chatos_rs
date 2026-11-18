@@ -12,11 +12,36 @@ describe("PluginApplicationsView", () => {
   it("renders the macOS catalog hierarchy and opens an application", async () => {
     const adapter = port({ list: vi.fn(async () => [pluginApplicationFixture()]) });
     const onOpen = vi.fn();
-    render(<PluginApplicationsView hostReady ownerUserId="alice" port={adapter} onOpen={onOpen} />);
+    render(
+      <PluginApplicationsView
+        hostReady
+        ownerUserId="alice"
+        port={adapter}
+        onOpen={onOpen}
+        onOpenPluginManagement={() => undefined}
+      />,
+    );
     expect(await screen.findByRole("button", { name: /Canvas/ })).toBeVisible();
     expect(screen.getByText("本地服务")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
     expect(onOpen).toHaveBeenCalledWith(pluginApplicationFixture());
+  });
+
+  it("opens plugin management from the empty state like macOS", async () => {
+    const onOpenPluginManagement = vi.fn();
+    render(
+      <PluginApplicationsView
+        hostReady
+        ownerUserId="alice"
+        port={port()}
+        onOpen={() => undefined}
+        onOpenPluginManagement={onOpenPluginManagement}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "还没有插件应用" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "打开插件管理" }));
+    expect(onOpenPluginManagement).toHaveBeenCalledTimes(1);
   });
 
   it("offers shared and project contexts before launching", async () => {
