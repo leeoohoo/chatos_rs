@@ -57,6 +57,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-19 复核 macOS `perf(history): move persistence off connector actor` 后确认 Windows 没有在 Tauri async runtime 上直接执行审批历史文件 I/O：设置读取、模式/模型更新、审批模式和 reviewer 读取、历史读取与 `record_decision` 均通过 `tauri::async_runtime::spawn_blocking` 进入阻塞线程池；`ApprovalSettingsStore` 以共享互斥锁串行化完整 load-modify-atomic-replace，继续保留 owner 隔离、1,000 条/16 MiB 上限、损坏失败关闭与决定 journal 顺序。Windows 命令执行历史由 Host durable SQLite 事件链持久化，不复用该 JSON actor 路径。因此无需复制 Swift actor/continuation 合并写实现，也不存在 macOS 本次修复的 Connector actor 阻塞。当前 HEAD 的 Windows Tauri 全量仍为 `631 passed, 0 failed, 7 ignored`，其中审批历史持久化/幂等、损坏失败关闭和审计保存失败 continuation 回归均通过；Clippy `-D warnings`、Rustfmt 与 `git diff --check` 通过。该项仅记录生产调用图审计，不把代码检索替代为新的 UI 行为或性能基准。
 
+- 2026-11-19 复核 macOS `test(workers): await process start event` 确认其只消除 Swift 测试中用固定轮询等待 shell marker 的竞态，没有生产行为变更。Windows 资源准入回归不使用该 marker/轮询形态：等待任务在 permit 释放后直接 await JoinHandle，队列状态通过 Governor 同步快照断言；实际 Windows AppContainer/终端进程测试使用进程句柄和运行时完成信号。当前全量回归中的资源 Governor、真实 AppContainer Git/stdio/进程树用例均通过，没有对应的 Windows 测试修复需要移植；本条不计作新功能，也不虚增生产实现。
+
 - 2026-11-17 在当前 HEAD 重跑 Windows React 前端门禁：Vitest `145` 个测试文件、`536 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture` 和 `npm run audit:bundle` 均通过，入口 Bundle 为 `456.97 KiB raw / 137.71 KiB gzip`。本轮未修改前端运行逻辑，结果只证明合并后的前端契约、类型、架构边界和 Bundle 预算无回归，不替代原生逐页视觉和发布环境验收。
 
 - 2026-11-17 运行中复核 8 小时隔离 Release：Worker 仍存活约 `1.05` 小时，正式 EXE 进程路径为 `target-shared/release/chatos-windows-react.exe`，工作集约 `37.82 MB`、私有内存约 `9.97 MB`、`33` 个线程、`436` 个 handles；仅观察到其 `WebView2`/`conhost` 子进程，未见异常进程树。旧版长稳脚本仍只在最终阶段写报告，因此本条运行中资源样本不能替代最终 `8 小时`报告。
