@@ -647,28 +647,8 @@ export function AppShell({
     ? remoteConnections.find((connection) => connection.id === remoteEditorTarget) ?? null
     : null;
   const defaultContactReady = workspaceSnapshot.contacts.some((contact) => contact.id === "jiguli");
-  const title = activeSurface === "general-settings"
-    ? text("generalAccount")
-    : activeSurface === "wechat-companion"
-    ? text("wechatCompanion")
-    : activeSurface === "pet-settings"
-    ? text("petSettings")
-    : activeSurface === "global-utilities"
-    ? text("globalUtilities")
-    : activeSurface === "ai-models"
-      ? text("aiModels")
-    : activeSurface === "device-gateway"
-      ? text("deviceGateway")
-    : activeSurface === "plugin-settings"
-      ? text("pluginSettings")
-    : activeSurface === "tool-approval"
-    ? text("commandApproval")
-    : activeSurface === "runtime-permissions"
-      ? text("runtimePermissions")
-      : activeSurface === "access-control"
-        ? text("accessControl")
-      : selection.kind === "terminal"
-        ? text("localTerminal")
+  const workspaceTitle = selection.kind === "terminal"
+    ? text("localTerminal")
       : selection.kind === "agentManagement"
         ? text("agentManagement")
       : selection.kind === "requirementSurveys"
@@ -680,6 +660,15 @@ export function AppShell({
       : selection.kind === "application"
         ? selectedPluginApplication?.displayName ?? text("applications")
       : selectedProject?.title ?? selectedContact?.title ?? selectedRemoteConnection?.name ?? text("workbench");
+  const workspaceEyebrow = selection.kind === "mediaStudio"
+    ? "MEDIA STUDIO"
+    : selection.kind === "agentManagement"
+      ? "AGENT MANAGEMENT"
+      : selection.kind === "requirementSurveys"
+        ? "REQUIREMENT SURVEYS"
+        : selection.kind === "applications" || selection.kind === "application"
+          ? "PLUGIN APPLICATIONS"
+          : "LOCAL WORKSPACE";
   const selectWorkspace = (nextSelection: WorkspaceSelection) => {
     setSelection(nextSelection);
     setActiveSurface("workspace");
@@ -755,119 +744,18 @@ export function AppShell({
         </div>
       </aside>
       <section
-        ref={settingsSurfaceRef}
-        aria-labelledby={settingsOpen ? "settings-overlay-title" : undefined}
-        aria-modal={settingsOpen ? "true" : undefined}
-        className={`content-surface ${activeSurface === "workspace" ? "content-surface--resource-workspace" : "content-surface--settings"}`}
-        role={settingsOpen ? "dialog" : undefined}
-        tabIndex={settingsOpen ? -1 : undefined}
+        aria-hidden={settingsOpen}
+        className="content-surface content-surface--resource-workspace"
       >
         <header className="workspace-header">
           <div>
-            <p className="eyebrow">{
-              activeSurface === "general-settings"
-                ? "SETTINGS"
-                : activeSurface === "wechat-companion"
-                ? "WECHAT COMPANION"
-                : activeSurface === "pet-settings"
-                ? "DESKTOP PET"
-                : activeSurface === "global-utilities"
-                ? "GLOBAL UTILITIES"
-                : activeSurface === "ai-models"
-                ? "AI MODELS"
-                : activeSurface === "device-gateway"
-                ? "DEVICE & GATEWAY"
-                : activeSurface === "plugin-settings"
-                ? "PLUGINS & SKILLS"
-                : activeSurface === "tool-approval"
-                ? "LOCAL SECURITY"
-                : activeSurface === "runtime-permissions"
-                  ? "RUNTIME & PERMISSIONS"
-                  : activeSurface === "access-control"
-                    ? "ACCESS CONTROL"
-                  : selection.kind === "mediaStudio"
-                    ? "MEDIA STUDIO"
-                  : selection.kind === "agentManagement"
-                    ? "AGENT MANAGEMENT"
-                  : selection.kind === "requirementSurveys"
-                    ? "REQUIREMENT SURVEYS"
-                  : selection.kind === "applications" || selection.kind === "application"
-                    ? "PLUGIN APPLICATIONS"
-                  : "LOCAL WORKSPACE"
-            }</p>
-            <h1>{title}</h1>
+            <p className="eyebrow">{workspaceEyebrow}</p>
+            <h1>{workspaceTitle}</h1>
           </div>
           <span className="protocol-badge">Host v{snapshot.protocolVersion}</span>
         </header>
-        {activeSurface !== "workspace" && (
-          <aside className="settings-overlay-navigation" aria-label={text("settings")}>
-            <header>
-              <div><strong id="settings-overlay-title">{text("settings")}</strong><small>ChatOS</small></div>
-              <button aria-label={interfaceLanguage === "en-US" ? "Close settings" : "关闭设置"} onClick={() => setActiveSurface("workspace")} type="button">×</button>
-            </header>
-            <nav>
-              <p className="settings-overlay-navigation__section-title">ChatOS</p>
-              <SettingsNavigationButton active={activeSurface === "general-settings"} detail={text("generalAccountDetail")} icon="⚙" label={text("generalAccount")} onClick={() => setActiveSurface("general-settings")} />
-              <SettingsNavigationButton active={activeSurface === "wechat-companion"} detail={text("wechatCompanionDetail")} icon="⌗" label={text("wechatCompanion")} onClick={() => setActiveSurface("wechat-companion")} />
-              <SettingsNavigationButton active={activeSurface === "pet-settings"} detail={text("petSettingsDetail")} icon="🐾" label={text("petSettings")} onClick={() => setActiveSurface("pet-settings")} />
-              <SettingsNavigationButton active={activeSurface === "global-utilities"} detail={text("globalUtilitiesDetail")} icon="⌘" label={text("globalUtilities")} onClick={() => setActiveSurface("global-utilities")} />
-              <SettingsNavigationButton active={activeSurface === "ai-models"} detail={text("aiModelsDetail")} icon="✦" label={text("aiModels")} onClick={() => setActiveSurface("ai-models")} />
-              <p className="settings-overlay-navigation__section-title">{interfaceLanguage === "en-US" ? "Native Connector" : "本机连接器"}</p>
-              <SettingsNavigationButton active={activeSurface === "device-gateway"} detail={text("deviceGatewayDetail")} icon="⌁" label={text("deviceGateway")} onClick={() => setActiveSurface("device-gateway")} />
-              <SettingsNavigationButton active={activeSurface === "plugin-settings"} detail={text("pluginSettingsDetail")} icon="◇" label={text("pluginSettings")} onClick={() => setActiveSurface("plugin-settings")} />
-              <SettingsNavigationButton active={activeSurface === "tool-approval"} detail={text("commandApprovalDetail")} icon="✓" label={text("commandApproval")} onClick={() => setActiveSurface("tool-approval")} />
-              <SettingsNavigationButton active={activeSurface === "runtime-permissions"} detail={text("runtimePermissionsDetail")} icon="⌁" label={text("runtimePermissions")} onClick={() => setActiveSurface("runtime-permissions")} />
-              <SettingsNavigationButton active={activeSurface === "access-control"} detail={text("accessControlDetail")} icon="▣" label={text("accessControl")} onClick={() => setActiveSurface("access-control")} />
-            </nav>
-          </aside>
-        )}
         <Suspense fallback={<div className="workspace-loading"><span className="mini-spinner" />{text("loadingWorkspace")}</div>}>
-          {activeSurface === "general-settings" ? (
-          <GeneralSettingsWorkspace
-            displayName={session.user.displayName}
-            onLogout={handleLogout}
-            ownerUserId={session.user.id}
-            port={generalSettings}
-            role={session.user.role}
-            username={session.user.username}
-          />
-        ) : activeSurface === "wechat-companion" ? (
-          <WeChatCompanionWorkspace ownerUserId={session.user.id} />
-        ) : activeSurface === "pet-settings" ? (
-          <PetSettingsWorkspace ownerUserId={session.user.id} port={petPreferences} />
-        ) : activeSurface === "global-utilities" ? (
-          <GlobalUtilitiesSettingsWorkspace ownerUserId={session.user.id} port={globalUtilities} />
-        ) : activeSurface === "ai-models" ? (
-          <AiModelSettingsWorkspace ownerUserId={session.user.id} />
-        ) : activeSurface === "device-gateway" ? (
-          <DeviceGatewayWorkspace
-            hostPort={hostLifecycle}
-            ownerUserId={session.user.id}
-            username={session.user.username}
-          />
-        ) : activeSurface === "plugin-settings" ? (
-          <PluginSettingsWorkspace
-            ownerUserId={session.user.id}
-            onOpenInstallationAssistant={() => selectWorkspace({ kind: "contact", id: "plugin-installer" })}
-          />
-        ) : activeSurface === "tool-approval" ? (
-          <ToolApprovalSettingsView
-            approvalPort={toolApproval}
-            hostReady={snapshot.ready}
-            ownerUserId={session.user.id}
-            settingsPort={toolApproval}
-          />
-        ) : activeSurface === "runtime-permissions" ? (
-          <SystemPermissionsWorkspace
-            hostReady={snapshot.ready}
-            ownerUserId={session.user.id}
-          />
-        ) : activeSurface === "access-control" ? (
-          <AccessControlWorkspace
-            hostReady={snapshot.ready}
-            ownerUserId={session.user.id}
-          />
-        ) : selection.kind === "terminal" ? (
+          {selection.kind === "terminal" ? (
           <LocalTerminalWorkspace
             hostReady={snapshot.ready}
             ownerUserId={session.user.id}
@@ -995,6 +883,79 @@ export function AppShell({
           )}
         </Suspense>
       </section>
+      {settingsOpen && (
+        <section
+          ref={settingsSurfaceRef}
+          aria-labelledby="settings-overlay-title"
+          aria-modal="true"
+          className="content-surface content-surface--settings"
+          role="dialog"
+          tabIndex={-1}
+        >
+          <aside className="settings-overlay-navigation" aria-label={text("settings")}>
+            <header>
+              <div><strong id="settings-overlay-title">{text("settings")}</strong><small>ChatOS</small></div>
+              <button aria-label={interfaceLanguage === "en-US" ? "Close settings" : "关闭设置"} onClick={() => setActiveSurface("workspace")} type="button">×</button>
+            </header>
+            <nav>
+              <p className="settings-overlay-navigation__section-title">ChatOS</p>
+              <SettingsNavigationButton active={activeSurface === "general-settings"} detail={text("generalAccountDetail")} icon="⚙" label={text("generalAccount")} onClick={() => setActiveSurface("general-settings")} />
+              <SettingsNavigationButton active={activeSurface === "wechat-companion"} detail={text("wechatCompanionDetail")} icon="⌗" label={text("wechatCompanion")} onClick={() => setActiveSurface("wechat-companion")} />
+              <SettingsNavigationButton active={activeSurface === "pet-settings"} detail={text("petSettingsDetail")} icon="🐾" label={text("petSettings")} onClick={() => setActiveSurface("pet-settings")} />
+              <SettingsNavigationButton active={activeSurface === "global-utilities"} detail={text("globalUtilitiesDetail")} icon="⌘" label={text("globalUtilities")} onClick={() => setActiveSurface("global-utilities")} />
+              <SettingsNavigationButton active={activeSurface === "ai-models"} detail={text("aiModelsDetail")} icon="✦" label={text("aiModels")} onClick={() => setActiveSurface("ai-models")} />
+              <p className="settings-overlay-navigation__section-title">{interfaceLanguage === "en-US" ? "Native Connector" : "本机连接器"}</p>
+              <SettingsNavigationButton active={activeSurface === "device-gateway"} detail={text("deviceGatewayDetail")} icon="⌁" label={text("deviceGateway")} onClick={() => setActiveSurface("device-gateway")} />
+              <SettingsNavigationButton active={activeSurface === "plugin-settings"} detail={text("pluginSettingsDetail")} icon="◇" label={text("pluginSettings")} onClick={() => setActiveSurface("plugin-settings")} />
+              <SettingsNavigationButton active={activeSurface === "tool-approval"} detail={text("commandApprovalDetail")} icon="✓" label={text("commandApproval")} onClick={() => setActiveSurface("tool-approval")} />
+              <SettingsNavigationButton active={activeSurface === "runtime-permissions"} detail={text("runtimePermissionsDetail")} icon="⌁" label={text("runtimePermissions")} onClick={() => setActiveSurface("runtime-permissions")} />
+              <SettingsNavigationButton active={activeSurface === "access-control"} detail={text("accessControlDetail")} icon="▣" label={text("accessControl")} onClick={() => setActiveSurface("access-control")} />
+            </nav>
+          </aside>
+          <Suspense fallback={<div className="workspace-loading"><span className="mini-spinner" />{text("loadingWorkspace")}</div>}>
+            {activeSurface === "general-settings" ? (
+              <GeneralSettingsWorkspace
+                displayName={session.user.displayName}
+                onLogout={handleLogout}
+                ownerUserId={session.user.id}
+                port={generalSettings}
+                role={session.user.role}
+                username={session.user.username}
+              />
+            ) : activeSurface === "wechat-companion" ? (
+              <WeChatCompanionWorkspace ownerUserId={session.user.id} />
+            ) : activeSurface === "pet-settings" ? (
+              <PetSettingsWorkspace ownerUserId={session.user.id} port={petPreferences} />
+            ) : activeSurface === "global-utilities" ? (
+              <GlobalUtilitiesSettingsWorkspace ownerUserId={session.user.id} port={globalUtilities} />
+            ) : activeSurface === "ai-models" ? (
+              <AiModelSettingsWorkspace ownerUserId={session.user.id} />
+            ) : activeSurface === "device-gateway" ? (
+              <DeviceGatewayWorkspace
+                hostPort={hostLifecycle}
+                ownerUserId={session.user.id}
+                username={session.user.username}
+              />
+            ) : activeSurface === "plugin-settings" ? (
+              <PluginSettingsWorkspace
+                ownerUserId={session.user.id}
+                onOpenInstallationAssistant={() => selectWorkspace({ kind: "contact", id: "plugin-installer" })}
+              />
+            ) : activeSurface === "tool-approval" ? (
+              <ToolApprovalSettingsView
+                approvalPort={toolApproval}
+                hostReady={snapshot.ready}
+                ownerUserId={session.user.id}
+                settingsPort={toolApproval}
+              />
+            ) : activeSurface === "runtime-permissions" ? (
+              <SystemPermissionsWorkspace hostReady={snapshot.ready} ownerUserId={session.user.id} />
+            ) : activeSurface === "access-control" ? (
+              <AccessControlWorkspace hostReady={snapshot.ready} ownerUserId={session.user.id} />
+            ) : null}
+          </Suspense>
+        </section>
+      )}
       {notepadOpen && (
         <Suspense fallback={<div className="notepad-sheet-backdrop"><div className="workspace-loading"><span className="mini-spinner" />{text("loadingWorkspace")}</div></div>}>
           <NotepadWorkspace

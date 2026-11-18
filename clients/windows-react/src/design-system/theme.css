@@ -173,6 +173,7 @@ body {
 
 .content-surface { display: flex; flex-direction: column; grid-row: 2; min-width: 0; min-height: 0; overflow: auto; padding: 28px 34px 24px; background: rgba(248,248,250,.72); }
 .content-surface--resource-workspace { overflow: hidden; padding: 8px 12px 12px; }
+.content-surface--resource-workspace[aria-hidden="true"] { pointer-events: none; }
 .content-surface--resource-workspace:has(.agent-management) { padding: 0; }
 .content-surface--resource-workspace > .workspace-header { display: none; }
 .app-window:has(.content-surface--settings)::after { position: fixed; z-index: 20; inset: 46px 0 0; background: rgba(20,20,24,.16); backdrop-filter: blur(1.5px); content: ""; pointer-events: none; }

@@ -13,6 +13,14 @@ const agentManagementStylesheet = readFileSync(
   resolve(process.cwd(), "src/features/agent-management/ui/agentManagement.css"),
   "utf8",
 );
+const appShellSource = readFileSync(
+  resolve(process.cwd(), "src/app/AppShell.tsx"),
+  "utf8",
+);
+const themeStylesheet = readFileSync(
+  resolve(process.cwd(), "src/design-system/theme.css"),
+  "utf8",
+);
 
 describe("audit-architecture icon-only buttons", () => {
   it("reports an icon-only dismiss button without an accessible name", () => {
@@ -149,5 +157,21 @@ describe("agent management responsive layout", () => {
     expect(agentManagementStylesheet).toContain(".agent-team-message--system.is-rich { max-width: min(86%,820px);");
     expect(agentManagementStylesheet).toContain(".agent-team-message .notepad-markdown h1,.agent-team-message .notepad-markdown h2,.agent-team-message .notepad-markdown h3,.agent-team-message .notepad-markdown h4 { margin: .7em 0 .35em; font-size: inherit;");
     expect(agentManagementStylesheet).toContain(".agent-team-message .notepad-markdown p,.agent-team-message .notepad-markdown li,.agent-team-message .notepad-markdown blockquote { font-size: inherit; line-height: inherit; }");
+  });
+});
+
+describe("settings overlay workspace preservation", () => {
+  it("keeps the selected workspace mounted and non-interactive behind settings", () => {
+    const workspaceSurface = 'className="content-surface content-surface--resource-workspace"';
+    const settingsSurface = 'className="content-surface content-surface--settings"';
+
+    expect(appShellSource).toContain("aria-hidden={settingsOpen}");
+    expect(appShellSource).toContain(workspaceSurface);
+    expect(appShellSource).toContain("{settingsOpen && (");
+    expect(appShellSource).toContain(settingsSurface);
+    expect(appShellSource.indexOf(workspaceSurface)).toBeLessThan(appShellSource.indexOf(settingsSurface));
+    expect(themeStylesheet).toContain(
+      '.content-surface--resource-workspace[aria-hidden="true"] { pointer-events: none; }',
+    );
   });
 });
