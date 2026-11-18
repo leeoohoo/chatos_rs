@@ -6,37 +6,7 @@ enum AppBoundedFileReader {
     private static let chunkSize = 256 * 1_024
 
     static func read(_ url: URL, maximumBytes: Int) throws -> Data {
-        guard maximumBytes > 0 else { throw AppBoundedFileReadError.invalidLimit }
-        try Task.checkCancellation()
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        guard values.isRegularFile == true,
-              let fileSize = values.fileSize,
-              fileSize >= 0 else {
-            throw AppBoundedFileReadError.notRegularFile
-        }
-        guard fileSize <= maximumBytes else {
-            throw AppBoundedFileReadError.fileTooLarge(maximumBytes: maximumBytes)
-        }
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-
-        let readLimit = maximumBytes == Int.max ? Int.max : maximumBytes + 1
-        var data = Data()
-        data.reserveCapacity(min(fileSize, maximumBytes))
-        while data.count < readLimit {
-            try Task.checkCancellation()
-            let requestedBytes = min(Self.chunkSize, readLimit - data.count)
-            guard let chunk = try handle.read(upToCount: requestedBytes),
-                  !chunk.isEmpty else {
-                break
-            }
-            data.append(chunk)
-            guard data.count <= maximumBytes else {
-                throw AppBoundedFileReadError.fileTooLarge(maximumBytes: maximumBytes)
-            }
-        }
-        try Task.checkCancellation()
-        return data
+        try BoundedFileReader.read(url, maximumBytes: maximumBytes)
     }
 
     static func copy(
@@ -47,7 +17,7 @@ enum AppBoundedFileReader {
         availableCapacityOverride: Int64? = nil
     ) throws {
         guard maximumBytes > 0, expectedBytes > 0, expectedBytes <= maximumBytes else {
-            throw AppBoundedFileReadError.fileTooLarge(maximumBytes: maximumBytes)
+            throw BoundedFileReadError.fileTooLarge(maximumBytes: maximumBytes)
         }
         try Task.checkCancellation()
         let sourceDescriptor = sourceURL.withUnsafeFileSystemRepresentation { path -> Int32 in
@@ -55,7 +25,7 @@ enum AppBoundedFileReader {
             return Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
         }
         guard sourceDescriptor >= 0 else {
-            throw AppBoundedFileReadError.notRegularFile
+            throw BoundedFileReadError.notRegularFile
         }
         let source = FileHandle(fileDescriptor: sourceDescriptor, closeOnDealloc: true)
         defer { try? source.close() }
@@ -63,7 +33,7 @@ enum AppBoundedFileReader {
         guard fstat(sourceDescriptor, &status) == 0,
               (status.st_mode & S_IFMT) == S_IFREG,
               status.st_size == expectedBytes else {
-            throw AppBoundedFileReadError.notRegularFile
+            throw BoundedFileReadError.notRegularFile
         }
 
         let destinationDirectory = destinationURL.deletingLastPathComponent()
@@ -99,7 +69,7 @@ enum AppBoundedFileReader {
         while remaining > 0 {
             try Task.checkCancellation()
             let chunk = try source.read(upToCount: min(chunkSize, remaining)) ?? Data()
-            guard !chunk.isEmpty else { throw AppBoundedFileReadError.notRegularFile }
+            guard !chunk.isEmpty else { throw BoundedFileReadError.notRegularFile }
             try destination.write(contentsOf: chunk)
             remaining -= chunk.count
         }
@@ -109,22 +79,7 @@ enum AppBoundedFileReader {
     }
 }
 
-enum AppBoundedFileReadError: LocalizedError {
-    case invalidLimit
-    case notRegularFile
-    case fileTooLarge(maximumBytes: Int)
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidLimit:
-            "文件读取上限无效。"
-        case .notRegularFile:
-            "目标不是可读取的普通文件。"
-        case let .fileTooLarge(maximumBytes):
-            "文件超过允许的读取上限（\(maximumBytes) 字节）。"
-        }
-    }
-}
+typealias AppBoundedFileReadError = BoundedFileReadError
 
 enum AppCancellableDetachedWork {
     static func run<Value: Sendable>(

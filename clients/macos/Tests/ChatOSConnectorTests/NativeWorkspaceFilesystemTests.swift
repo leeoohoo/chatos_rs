@@ -4,7 +4,7 @@ import Foundation
 import XCTest
 
 final class NativeWorkspaceFilesystemTests: XCTestCase {
-    func testDirectFilesystemOperationsStayInsideWorkspace() throws {
+    func testDirectFilesystemReadsStayInsideWorkspace() throws {
         let root = try temporaryDirectory(named: "filesystem")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root.appendingPathComponent("Sources"), withIntermediateDirectories: true)
@@ -25,19 +25,7 @@ final class NativeWorkspaceFilesystemTests: XCTestCase {
         }
         XCTAssertEqual(content, "hello Swift\n")
 
-        _ = try filesystem.write(path: "Sources/New.swift", content: "new", createOnly: true)
-        _ = try filesystem.move(
-            sourcePath: "Sources/New.swift",
-            targetPath: "New.swift",
-            replaceExisting: false
-        )
-        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("New.swift").path))
-        _ = try filesystem.delete(path: "New.swift", recursive: false)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("New.swift").path))
-
         XCTAssertThrowsError(try filesystem.read(path: "../outside.txt"))
-        XCTAssertThrowsError(try filesystem.write(path: "../outside.txt", content: "no", createOnly: false))
-        XCTAssertThrowsError(try filesystem.delete(path: ".", recursive: true))
     }
 
     func testSearchSkipsSymlinkThatEscapesWorkspace() throws {

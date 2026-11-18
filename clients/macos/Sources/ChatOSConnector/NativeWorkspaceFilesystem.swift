@@ -300,123 +300,6 @@ struct NativeWorkspaceFilesystem: Sendable {
         "node_modules", "DerivedData", "Pods", "target", "dist", "build", "vendor",
     ]
 
-    func createDirectory(path: String) throws -> NativeJSONValue {
-        try Task.checkCancellation()
-        let root = try workspaceRoot()
-        let components = try normalizedComponents(path, permitsRoot: false)
-        var current = root
-        for component in components {
-            try Task.checkCancellation()
-            current.appendPathComponent(component, isDirectory: true)
-            do {
-                let values = try current.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-                guard values.isSymbolicLink != true else { throw NativeWorkspaceFilesystemError.symbolicLink }
-                guard values.isDirectory == true else { throw NativeWorkspaceFilesystemError.notDirectory }
-            } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-                try fileManager.createDirectory(at: current, withIntermediateDirectories: false)
-            }
-        }
-        return .object(["path": .string(components.joined(separator: "/")), "created": .bool(true)])
-    }
-
-    func write(path: String, content: String, createOnly: Bool) throws -> NativeJSONValue {
-        try Task.checkCancellation()
-        let root = try workspaceRoot()
-        let target = try writableURL(path, root: root)
-        let existed = fileManager.fileExists(atPath: target.path)
-        if existed {
-            let values = try resourceValues(target)
-            guard values.isSymbolicLink != true, values.isRegularFile == true else {
-                throw NativeWorkspaceFilesystemError.notFile
-            }
-            guard !createOnly else { throw NativeWorkspaceFilesystemError.alreadyExists }
-        }
-        let data = Data(content.utf8)
-        try Task.checkCancellation()
-        if createOnly {
-            do {
-                try data.write(to: target, options: [.withoutOverwriting])
-            } catch let error as CocoaError where error.code == .fileWriteFileExists {
-                throw NativeWorkspaceFilesystemError.alreadyExists
-            }
-        } else {
-            try data.write(to: target, options: [.atomic])
-        }
-        let values = try resourceValues(target)
-        return .object([
-            "path": .string(relativePath(target, root: root)),
-            "size": .number(Double(values.fileSize ?? data.count)),
-            "modified_at": values.contentModificationDate.map { .number(Double(milliseconds($0))) } ?? .null,
-            "created": .bool(!existed),
-        ])
-    }
-
-    func delete(path: String, recursive: Bool) throws -> NativeJSONValue {
-        try Task.checkCancellation()
-        let root = try workspaceRoot()
-        let target = try entryURLWithoutFollowingLeaf(path, root: root)
-        let values = try target.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-        let isDirectory = values.isDirectory == true && values.isSymbolicLink != true
-        do {
-            if isDirectory && !recursive {
-                try fileManager.removeItem(at: target)
-            } else {
-                try fileManager.removeItem(at: target)
-            }
-        } catch let error as CocoaError where error.code == .fileWriteFileExists || error.code == .fileWriteUnknown {
-            if isDirectory && !recursive { throw NativeWorkspaceFilesystemError.directoryNotEmpty }
-            throw error
-        }
-        return .object([
-            "path": .string(relativePath(target, root: root)),
-            "is_dir": .bool(isDirectory),
-            "recursive": .bool(recursive),
-            "deleted": .bool(true),
-        ])
-    }
-
-    func move(sourcePath: String, targetPath: String, replaceExisting: Bool) throws -> NativeJSONValue {
-        try Task.checkCancellation()
-        let root = try workspaceRoot()
-        let source = try entryURLWithoutFollowingLeaf(sourcePath, root: root)
-        let target = try writableURL(targetPath, root: root)
-        let sourceValues = try source.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-        let isDirectory = sourceValues.isDirectory == true && sourceValues.isSymbolicLink != true
-        if source == target {
-            return moveValue(source: source, target: target, root: root, isDirectory: isDirectory, replaced: false, moved: false)
-        }
-        if isDirectory {
-            let sourcePrefix = source.path.hasSuffix("/") ? source.path : source.path + "/"
-            guard !target.path.hasPrefix(sourcePrefix) else { throw NativeWorkspaceFilesystemError.unsafePath }
-        }
-        var replaced = false
-        if fileManager.fileExists(atPath: target.path) {
-            guard replaceExisting else { throw NativeWorkspaceFilesystemError.alreadyExists }
-            try fileManager.removeItem(at: target)
-            replaced = true
-        }
-        try fileManager.moveItem(at: source, to: target)
-        return moveValue(source: source, target: target, root: root, isDirectory: isDirectory, replaced: replaced, moved: true)
-    }
-
-    private func moveValue(
-        source: URL,
-        target: URL,
-        root: URL,
-        isDirectory: Bool,
-        replaced: Bool,
-        moved: Bool
-    ) -> NativeJSONValue {
-        .object([
-            "from_path": .string(relativePath(source, root: root)),
-            "to_path": .string(relativePath(target, root: root)),
-            "name": .string(target.lastPathComponent),
-            "is_dir": .bool(isDirectory),
-            "replaced": .bool(replaced),
-            "moved": .bool(moved),
-        ])
-    }
-
     private func workspaceRoot() throws -> URL {
         let raw = URL(fileURLWithPath: workspace.absoluteRoot, isDirectory: true).standardizedFileURL
         let root = raw.resolvingSymlinksInPath().standardizedFileURL
@@ -426,7 +309,7 @@ struct NativeWorkspaceFilesystem: Sendable {
     }
 
     private func existingURL(_ path: String, root: URL) throws -> URL {
-        let components = try normalizedComponents(path, permitsRoot: true)
+        let components = try normalizedComponents(path)
         let candidate = components.reduce(root) { $0.appendingPathComponent($1) }
         guard fileManager.fileExists(atPath: candidate.path) else { throw NativeWorkspaceFilesystemError.notFound }
         let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
@@ -434,39 +317,7 @@ struct NativeWorkspaceFilesystem: Sendable {
         return resolved
     }
 
-    private func writableURL(_ path: String, root: URL) throws -> URL {
-        let components = try normalizedComponents(path, permitsRoot: false)
-        let target = components.reduce(root) { $0.appendingPathComponent($1) }
-        try validateParent(target.deletingLastPathComponent(), root: root)
-        if fileManager.fileExists(atPath: target.path) {
-            let resolved = target.resolvingSymlinksInPath().standardizedFileURL
-            guard resolved == target.standardizedFileURL, contains(resolved, root: root) else {
-                throw NativeWorkspaceFilesystemError.symbolicLink
-            }
-        }
-        return target.standardizedFileURL
-    }
-
-    private func entryURLWithoutFollowingLeaf(_ path: String, root: URL) throws -> URL {
-        let components = try normalizedComponents(path, permitsRoot: false)
-        let target = components.reduce(root) { $0.appendingPathComponent($1) }.standardizedFileURL
-        try validateParent(target.deletingLastPathComponent(), root: root)
-        guard fileManager.fileExists(atPath: target.path) else { throw NativeWorkspaceFilesystemError.notFound }
-        return target
-    }
-
-    private func validateParent(_ parent: URL, root: URL) throws {
-        guard fileManager.fileExists(atPath: parent.path) else { throw NativeWorkspaceFilesystemError.notFound }
-        let resolved = parent.resolvingSymlinksInPath().standardizedFileURL
-        guard resolved == parent.standardizedFileURL, contains(resolved, root: root) else {
-            throw NativeWorkspaceFilesystemError.symbolicLink
-        }
-        guard try resourceValues(resolved).isDirectory == true else {
-            throw NativeWorkspaceFilesystemError.notDirectory
-        }
-    }
-
-    private func normalizedComponents(_ path: String, permitsRoot: Bool) throws -> [String] {
+    private func normalizedComponents(_ path: String) throws -> [String] {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.hasPrefix("/"), !trimmed.contains("\0") else {
             throw NativeWorkspaceFilesystemError.unsafePath
@@ -478,7 +329,6 @@ struct NativeWorkspaceFilesystem: Sendable {
             guard value != ".." else { throw NativeWorkspaceFilesystemError.unsafePath }
             result.append(value)
         }
-        guard permitsRoot || !result.isEmpty else { throw NativeWorkspaceFilesystemError.rootMutation }
         return result
     }
 

@@ -6,17 +6,6 @@ import ChatOSCore
 
 @Suite("App Bounded File Reader")
 struct AppBoundedFileReaderTests {
-    @Test("reads a regular file below the configured limit")
-    func readsBoundedFile() throws {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("app-bounded-file-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: url) }
-        let expected = Data("bounded".utf8)
-        try expected.write(to: url)
-
-        #expect(try AppBoundedFileReader.read(url, maximumBytes: 64) == expected)
-    }
-
     @Test("copies a regular file without materializing the whole source")
     func copiesBoundedFile() throws {
         let root = FileManager.default.temporaryDirectory
@@ -81,38 +70,6 @@ struct AppBoundedFileReaderTests {
             )
         }
         #expect(!FileManager.default.fileExists(atPath: destination.path))
-    }
-
-    @Test("rejects an oversized sparse file before loading contents")
-    func rejectsOversizedFile() throws {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("app-bounded-file-large-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: url) }
-        #expect(FileManager.default.createFile(atPath: url.path, contents: nil))
-        let handle = try FileHandle(forWritingTo: url)
-        try handle.truncate(atOffset: 1_025)
-        try handle.close()
-
-        #expect(throws: AppBoundedFileReadError.self) {
-            _ = try AppBoundedFileReader.read(url, maximumBytes: 1_024)
-        }
-    }
-
-    @Test("stops a bounded read when the calling task is already cancelled")
-    func respectsCancellation() async throws {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("app-bounded-file-cancelled-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: url) }
-        try Data(repeating: 7, count: 512 * 1_024).write(to: url)
-
-        let task = Task.detached { () throws -> Data in
-            withUnsafeCurrentTask { $0?.cancel() }
-            return try AppBoundedFileReader.read(url, maximumBytes: 1_024 * 1_024)
-        }
-
-        await #expect(throws: CancellationError.self) {
-            _ = try await task.value
-        }
     }
 
     @Test("cancelling a detached work waiter cancels its background operation")
