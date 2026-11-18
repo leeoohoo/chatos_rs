@@ -262,9 +262,16 @@ impl Session {
         // Live credentials stay transient. The durable model is intentionally incapable of network execution.
         command(&runtime, json!({"type": "put_model_config_snapshot", "snapshot": {
             "owner_user_id": OWNER, "model_config_ref": "eval-model",
-            "model_config_revision": "eval-model-v1", "credential_ref": "env:UNUSED_EVAL_CREDENTIAL",
+            "model_config_revision": "eval-model-v1", "model_capability_revision": "eval-capability-v1",
+            "credential_ref": "env:UNUSED_EVAL_CREDENTIAL",
             "base_url": "https://example.invalid", "model": "eval-placeholder", "provider": "gpt",
-            "supports_responses": true, "include_prompt_cache_retention": false
+            "supports_responses": true, "supports_images": false, "instructions": null,
+            "temperature": null, "max_output_tokens": 4096,
+            "context_window_tokens": 32768, "output_reserve_tokens": 4096,
+            "protocol_overhead_estimator_id": "responses-v1", "tokenizer_id": null,
+            "thinking_level": null, "include_prompt_cache_retention": false,
+            "request_body_limit_bytes": 2097152, "max_transient_retries": 0,
+            "responses_compaction_threshold": null, "output_format": null
         }})).await?;
         control.publish_model_runtime(
             OWNER,
@@ -286,6 +293,7 @@ impl Session {
         command(&runtime, json!({"type": "start_conversation_turn", "owner_user_id": OWNER,
             "conversation_id": CONVERSATION, "expected_conversation_version": 1,
             "turn_id": "eval-turn", "message_id": "eval-message", "run_id": MAIN, "message": prompt,
+            "message_metadata": {"agent_id": "jiguli", "agent_name": "叽咕狸", "project_name": "Evaluation"},
             "model_config_ref": "eval-model", "model_config_revision": "eval-model-v1",
             "capability_policy_revision": revision, "max_iterations": 32
         })).await?;
@@ -400,6 +408,9 @@ impl Session {
     }
 
     pub async fn seed_followup(&mut self, seed: &Value, prompt: &str) -> Result<(), String> {
+        let mut seed = seed.clone();
+        seed["context_summary"] =
+            json!("Isolated task-orchestration evaluation using only the supplied seed scenario.");
         let steps = vec![
             ReplayStep {
                 calls: vec![ReplayCall {
@@ -411,7 +422,7 @@ impl Session {
             ReplayStep {
                 calls: vec![ReplayCall {
                     name: "create_task".into(),
-                    arguments: seed.clone(),
+                    arguments: seed,
                 }],
                 final_text: None,
             },
@@ -422,7 +433,16 @@ impl Session {
         }
         let tasks = self.tasks().await?;
         if tasks.len() != 1 {
-            return Err("invalid_followup_seed".into());
+            let detail = self
+                .traces
+                .last()
+                .map(|trace| format!("{}_{:?}_{:?}", trace.tool_name, trace.status, trace.error))
+                .unwrap_or_else(|| "no_trace".into());
+            return Err(format!(
+                "invalid_followup_seed_count_{}_{}",
+                tasks.len(),
+                detail
+            ));
         }
         self.seed_ids = tasks.iter().map(|task| task.task_id.clone()).collect();
         let HostResult::Conversation { conversation } = command(
@@ -437,7 +457,8 @@ impl Session {
         };
         command(&self.runtime, json!({"type": "guide_conversation_turn", "owner_user_id": OWNER,
             "conversation_id": CONVERSATION, "expected_conversation_version": conversation.conversation.version,
-            "turn_id": "eval-turn", "message_id": "eval-followup", "message": prompt
+            "turn_id": "eval-turn", "message_id": "eval-followup", "message": prompt,
+            "message_metadata": {"agent_id": "jiguli", "agent_name": "叽咕狸", "project_name": "Evaluation"}
         })).await?;
         self.requests = 0;
         self.traces.clear();

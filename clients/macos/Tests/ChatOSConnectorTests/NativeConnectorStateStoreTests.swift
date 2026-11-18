@@ -4,6 +4,30 @@ import Testing
 @testable import ChatOSConnector
 
 struct NativeConnectorStateStoreTests {
+    @Test("corrupt connector state aborts startup before plugin cleanup")
+    func corruptStateDoesNotBecomeEmptyState() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateURL = directory.appendingPathComponent("state.json")
+        let corruptState = Data("{not-json".utf8)
+        let orphan = directory.appendingPathComponent("Plugins/orphan", isDirectory: true)
+        try FileManager.default.createDirectory(at: orphan, withIntermediateDirectories: true)
+        try corruptState.write(to: stateURL)
+
+        #expect(throws: DecodingError.self) {
+            try NativeLocalConnectorService(
+                configuration: .init(
+                    gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                    stateURL: stateURL
+                ),
+                ticketProvider: RejectingTicketProvider()
+            )
+        }
+        #expect(try Data(contentsOf: stateURL) == corruptState)
+        #expect(FileManager.default.fileExists(atPath: orphan.path))
+    }
+
     @Test("offline Plugin catalog keeps installed Marketplace records visible")
     func offlinePluginCatalogRetainsMarketplaceInstallations() async throws {
         let directory = FileManager.default.temporaryDirectory
@@ -35,7 +59,7 @@ struct NativeConnectorStateStoreTests {
         state.installedPluginIDs = [record.pluginID]
         state.installedPluginRecords = [record.pluginID: record]
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -72,6 +96,12 @@ struct NativeConnectorStateStoreTests {
                 .appendingPathComponent("Secrets", isDirectory: true)
                 .appendingPathComponent("LocalAgentModels", isDirectory: true)
         )
+        defer {
+            try? credentialStore.delete(
+                ownerUserID: "owner-1",
+                modelConfigRef: "approval-model"
+            )
+        }
         try credentialStore.saveWithoutUserInteraction(
             "local-api-key",
             ownerUserID: "owner-1",
@@ -106,7 +136,7 @@ struct NativeConnectorStateStoreTests {
             capabilitySnapshotsByModelConfigRef: [snapshot.modelConfigRef: capability],
             pluginInstallerCapabilitySnapshotsByModelConfigRef: [:]
         )
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -139,7 +169,7 @@ struct NativeConnectorStateStoreTests {
         state.approvalMode = .autoApproval
         state.commandApprovalModelConfigID = "approval-model"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -176,6 +206,96 @@ struct NativeConnectorStateStoreTests {
         #expect(decision == .deny(reason: "用户已在本机拒绝。"))
     }
 
+    @Test("approval storage failure still resumes the waiting operation")
+    func approvalStorageFailureDoesNotStrandContinuation() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let service = try NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: directory.appendingPathComponent("state.json")
+            ),
+            ticketProvider: RejectingTicketProvider()
+        )
+        let project = directory.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let recorder = ApprovalDecisionRecorder()
+        let decisionTask = Task {
+            let decision = await service.approvalDecision(
+                requestID: "request-storage-failure",
+                command: "/bin/zsh",
+                arguments: ["-lc", "pwd"],
+                cwd: project,
+                projectRoot: project,
+                source: "Task",
+                risk: .init(level: "low", reason: nil)
+            )
+            await recorder.record(decision)
+        }
+        defer { decisionTask.cancel() }
+
+        var pending: [LocalConnectorPendingApproval] = []
+        for _ in 0..<100 {
+            pending = try await service.fetchPendingApprovals()
+            if !pending.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let approval = try #require(pending.first)
+        try FileManager.default.createDirectory(
+            at: directory.appendingPathComponent("activity-history.json"),
+            withIntermediateDirectories: true
+        )
+
+        await #expect(throws: (any Error).self) {
+            try await service.resolveApproval(id: approval.id, decision: .decline)
+        }
+        for _ in 0..<100 where await recorder.decision == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await recorder.decision == .deny(reason: "用户已在本机拒绝。"))
+    }
+
+    @Test("cancelling a task removes its pending approval")
+    func cancellingTaskRemovesPendingApproval() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let service = try NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: directory.appendingPathComponent("state.json")
+            ),
+            ticketProvider: RejectingTicketProvider()
+        )
+        let project = directory.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let decisionTask = Task {
+            await service.approvalDecision(
+                requestID: "request-cancelled",
+                command: "/bin/zsh",
+                arguments: ["-lc", "pwd"],
+                cwd: project,
+                projectRoot: project,
+                source: "Task",
+                risk: .init(level: "low", reason: nil)
+            )
+        }
+
+        var pending: [LocalConnectorPendingApproval] = []
+        for _ in 0..<100 {
+            pending = try await service.fetchPendingApprovals()
+            if !pending.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(pending.count == 1)
+
+        decisionTask.cancel()
+
+        #expect(await decisionTask.value == .deny(reason: "等待审批的任务已取消。"))
+        #expect(try await service.fetchPendingApprovals().isEmpty)
+    }
+
     @Test
     func incompleteHostEvidenceBypassesAIAndTransfersDirectlyToHuman() async throws {
         let directory = FileManager.default.temporaryDirectory
@@ -186,7 +306,7 @@ struct NativeConnectorStateStoreTests {
         state.approvalMode = .autoApproval
         state.commandApprovalModelConfigID = "approval-model"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -238,7 +358,7 @@ struct NativeConnectorStateStoreTests {
         state.user = .init(id: "owner-1", username: "owner", displayName: "Owner", role: "user")
         state.deviceID = "device-1"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -461,7 +581,7 @@ struct NativeConnectorStateStoreTests {
         state.deviceID = "device-local"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
 
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.jgoool.com")!,
                 stateURL: stateURL,
@@ -487,7 +607,7 @@ struct NativeConnectorStateStoreTests {
         state.user = .init(id: "alice", username: "alice", displayName: "Alice", role: "user")
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
 
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.jgoool.com")!,
                 stateURL: stateURL,
@@ -704,7 +824,7 @@ struct NativeConnectorStateStoreTests {
     }
 
     @Test
-    func activityHistoryRoundTripsIndependentlyFromConnectorState() throws {
+    func activityHistoryRoundTripsIndependentlyFromConnectorState() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -724,7 +844,7 @@ struct NativeConnectorStateStoreTests {
             )]
         )
 
-        try store.save(history)
+        try await store.save(history)
 
         #expect(try store.load() == history)
     }
@@ -733,5 +853,13 @@ struct NativeConnectorStateStoreTests {
 private struct RejectingTicketProvider: LocalConnectorPairingTicketProviding {
     func issueLocalConnectorPairingTicket() async throws -> String {
         throw URLError(.notConnectedToInternet)
+    }
+}
+
+private actor ApprovalDecisionRecorder {
+    var decision: NativeApprovalDecision?
+
+    func record(_ decision: NativeApprovalDecision) {
+        self.decision = decision
     }
 }

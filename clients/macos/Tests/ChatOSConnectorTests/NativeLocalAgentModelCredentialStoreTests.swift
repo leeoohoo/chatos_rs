@@ -4,11 +4,12 @@ import Testing
 
 struct NativeLocalAgentModelCredentialStoreTests {
     @Test
-    func credentialsRoundTripWithoutUsingKeychain() throws {
+    func credentialsRoundTripThroughKeychain() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = NativeLocalAgentModelCredentialStore(rootURL: root)
+        defer { try? store.delete(ownerUserID: "user-1", modelConfigRef: "model-1") }
 
         #expect(try store.loadWithoutUserInteraction(
             ownerUserID: "user-1",
@@ -32,29 +33,27 @@ struct NativeLocalAgentModelCredentialStoreTests {
     }
 
     @Test
-    func credentialFilesArePrivateAndDoNotExposeAccountIdentifiers() throws {
+    func legacyCredentialFilesMigrateToKeychainAndAreDeleted() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = NativeLocalAgentModelCredentialStore(rootURL: root)
-
-        try store.saveWithoutUserInteraction(
-            "secret-value",
-            ownerUserID: "sensitive-user",
-            modelConfigRef: "sensitive-model"
-        )
+        defer { try? store.delete(ownerUserID: "sensitive-user", modelConfigRef: "sensitive-model") }
         let url = store.credentialURL(
             ownerUserID: "sensitive-user",
             modelConfigRef: "sensitive-model"
         )
-        let rootAttributes = try FileManager.default.attributesOfItem(atPath: root.path)
-        let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("secret-value".utf8).write(to: url)
 
         #expect(url.lastPathComponent.hasPrefix("model-"))
         #expect(!url.lastPathComponent.contains("sensitive-user"))
         #expect(!url.lastPathComponent.contains("sensitive-model"))
-        #expect((rootAttributes[.posixPermissions] as? NSNumber)?.intValue == 0o700)
-        #expect((fileAttributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        #expect(try store.loadWithoutUserInteraction(
+            ownerUserID: "sensitive-user",
+            modelConfigRef: "sensitive-model"
+        ) == "secret-value")
+        #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
     @Test
@@ -63,6 +62,7 @@ struct NativeLocalAgentModelCredentialStoreTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = NativeLocalAgentModelCredentialStore(rootURL: root)
+        defer { try? store.delete(ownerUserID: "user-1", modelConfigRef: "model-1") }
 
         try store.saveWithoutUserInteraction(
             "first",

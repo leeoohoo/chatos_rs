@@ -1,8 +1,6 @@
 import ChatOSCore
 import CryptoKit
 import Foundation
-import LocalAuthentication
-import Security
 
 struct NativeConnectorPersistentState: Codable, Sendable {
     var deploymentIdentifier: String?
@@ -45,11 +43,18 @@ struct NativeConnectorActivityHistory: Codable, Sendable, Equatable {
     static let empty = NativeConnectorActivityHistory()
 }
 
-struct NativeConnectorActivityHistoryStore: Sendable {
+actor NativeConnectorActivityHistoryStore {
     static let maximumHistoryBytes = 16 * 1_024 * 1_024
-    let historyURL: URL
+    nonisolated let historyURL: URL
+    private var writeInFlight = false
+    private var pendingHistory: NativeConnectorActivityHistory?
+    private var pendingContinuations: [CheckedContinuation<Void, any Error>] = []
 
-    func load() throws -> NativeConnectorActivityHistory {
+    init(historyURL: URL) {
+        self.historyURL = historyURL
+    }
+
+    nonisolated func load() throws -> NativeConnectorActivityHistory {
         guard FileManager.default.fileExists(atPath: historyURL.path) else { return .empty }
         return try JSONDecoder().decode(
             NativeConnectorActivityHistory.self,
@@ -60,7 +65,39 @@ struct NativeConnectorActivityHistoryStore: Sendable {
         )
     }
 
-    func save(_ history: NativeConnectorActivityHistory) throws {
+    func save(_ history: NativeConnectorActivityHistory) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            if writeInFlight {
+                pendingHistory = history
+                pendingContinuations.append(continuation)
+            } else {
+                writeInFlight = true
+                Task { await flush(history, continuations: [continuation]) }
+            }
+        }
+    }
+
+    private func flush(
+        _ history: NativeConnectorActivityHistory,
+        continuations: [CheckedContinuation<Void, any Error>]
+    ) async {
+        do {
+            try await Task.detached { try self.write(history) }.value
+            continuations.forEach { $0.resume() }
+        } catch {
+            continuations.forEach { $0.resume(throwing: error) }
+        }
+        if let pendingHistory {
+            let pendingContinuations = self.pendingContinuations
+            self.pendingHistory = nil
+            self.pendingContinuations = []
+            await flush(pendingHistory, continuations: pendingContinuations)
+        } else {
+            writeInFlight = false
+        }
+    }
+
+    private nonisolated func write(_ history: NativeConnectorActivityHistory) throws {
         try FileManager.default.createDirectory(
             at: historyURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -127,31 +164,50 @@ struct NativeConnectorStateStore: Sendable {
 struct NativeConnectorSecretStore: Sendable {
     private static let maximumSecretBytes = 64 * 1_024
     private let rootURL: URL
+    private let keychain: KeychainSecretStore
+    private let legacyKeychain: KeychainSecretStore?
 
-    init(rootURL: URL? = nil) {
+    init(
+        rootURL: URL? = nil,
+        migrateLegacyKeychain: Bool? = nil,
+        legacyKeychainService: String = "com.chatos.swift.native-connector"
+    ) {
+        let resolvedRootURL: URL
         if let rootURL {
-            self.rootURL = rootURL
-            return
+            resolvedRootURL = rootURL
+        } else {
+            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                ?? FileManager.default.homeDirectoryForCurrentUser
+            resolvedRootURL = support
+                .appendingPathComponent("ChatOSSwift", isDirectory: true)
+                .appendingPathComponent("NativeConnector", isDirectory: true)
+                .appendingPathComponent("Secrets", isDirectory: true)
         }
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser
-        self.rootURL = support
-            .appendingPathComponent("ChatOSSwift", isDirectory: true)
-            .appendingPathComponent("NativeConnector", isDirectory: true)
-            .appendingPathComponent("Secrets", isDirectory: true)
+        self.rootURL = resolvedRootURL
+        self.keychain = KeychainSecretStore(service: Self.keychainService(rootURL: resolvedRootURL))
+        self.legacyKeychain = (migrateLegacyKeychain ?? (rootURL == nil))
+            ? KeychainSecretStore(service: legacyKeychainService)
+            : nil
     }
 
     func load(account: String) throws -> Data? {
         let url = secretURL(account: account)
-        if !FileManager.default.fileExists(atPath: url.path),
-           let legacy = loadLegacyKeychainWithoutUI(account: account) {
-            try save(legacy, account: account)
+        if let stored = try keychain.load(account: account) {
+            try legacyKeychain?.delete(account: account)
+            try deleteLegacyFile(url)
+            return stored
+        }
+        if let legacyKeychain, let stored = try legacyKeychain.load(account: account) {
+            try keychain.save(stored, account: account)
+            try legacyKeychain.delete(account: account)
+            try deleteLegacyFile(url)
+            return stored
         }
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return try NativeBoundedFileReader.read(
-            url,
-            maximumBytes: Self.maximumSecretBytes
-        )
+        let stored = try NativeBoundedFileReader.read(url, maximumBytes: Self.maximumSecretBytes)
+        try keychain.save(stored, account: account)
+        try deleteLegacyFile(url)
+        return stored
     }
 
     func save(_ value: Data, account: String) throws {
@@ -160,21 +216,17 @@ struct NativeConnectorSecretStore: Sendable {
                 maximumBytes: Self.maximumSecretBytes
             )
         }
-        try FileManager.default.createDirectory(
-            at: rootURL,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
         let url = secretURL(account: account)
-        try value.write(to: url, options: [.atomic])
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try keychain.save(value, account: account)
+        try legacyKeychain?.delete(account: account)
+        try deleteLegacyFile(url)
     }
 
     func delete(account: String) throws {
         let url = secretURL(account: account)
-        if FileManager.default.fileExists(atPath: url.path) {
-            try FileManager.default.removeItem(at: url)
-        }
+        try deleteLegacyFile(url)
+        try legacyKeychain?.delete(account: account)
+        try keychain.delete(account: account)
     }
 
     private func secretURL(account: String) -> URL {
@@ -184,20 +236,18 @@ struct NativeConnectorSecretStore: Sendable {
         return rootURL.appendingPathComponent(safeName, isDirectory: false)
     }
 
-    private func loadLegacyKeychainWithoutUI(account: String) -> Data? {
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "com.chatos.swift.native-connector",
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationContext as String: context,
-        ]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
-        return result as? Data
+    private func deleteLegacyFile(_ url: URL) throws {
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private static func keychainService(rootURL: URL) -> String {
+        let digest = SHA256.hash(data: Data(rootURL.standardizedFileURL.path.utf8))
+            .prefix(16)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return "com.chatos.swift.native-connector.\(digest)"
     }
 }
 

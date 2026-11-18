@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  pluginLocalHttpAuthentication,
   pluginDirectoryWatchMode,
   readPluginLocalHttpEndpoint,
   startPluginDirectoryMonitor
@@ -27,7 +29,48 @@ test('the shared runtime resolves the host-owned local_http endpoint', () => {
       LEGACY_HOST: '0.0.0.0',
       LEGACY_PORT: '1234'
     }
-  }), { host: '127.0.0.1', port: 54321 });
+  }), { host: '127.0.0.1', port: 54321, healthPath: '/api/health' });
+});
+
+test('the shared runtime authenticates API requests and proves health identity', () => {
+  const token = 'host-owned-token';
+  const endpoint = readPluginLocalHttpEndpoint({
+    defaultPort: 4178,
+    environment: {
+      CHATOS_PLUGIN_APP_PORT: '54321',
+      CHATOS_PLUGIN_APP_TOKEN: token,
+      CHATOS_PLUGIN_APP_HEALTH_PATH: '/ready'
+    }
+  });
+  const authenticate = pluginLocalHttpAuthentication(endpoint);
+  const run = (path, headers = {}) => {
+    const responseHeaders = {};
+    let status;
+    let accepted = false;
+    authenticate(
+      { path, headers },
+      {
+        setHeader(name, value) { responseHeaders[name] = value; },
+        sendStatus(value) { status = value; }
+      },
+      () => { accepted = true; }
+    );
+    return { accepted, status, responseHeaders };
+  };
+
+  assert.equal(run('/api/documents').status, 401);
+  const headerAccess = run('/api/documents', { 'x-chatos-plugin-token': token });
+  assert.equal(headerAccess.accepted, true);
+  assert.match(headerAccess.responseHeaders['Set-Cookie'], /HttpOnly; SameSite=Strict/);
+  assert.equal(run('/api/documents', { cookie: `CHATOS_PLUGIN_APP_SESSION=${token}` }).accepted, true);
+
+  const challenge = 'abcdefghijklmnopqrstuvwxyzABCDEF';
+  const health = run('/ready', { 'x-chatos-plugin-challenge': challenge });
+  assert.equal(health.accepted, true);
+  assert.equal(
+    health.responseHeaders['X-ChatOS-Plugin-Proof'],
+    createHmac('sha256', token).update(challenge).digest('base64url')
+  );
 });
 
 test('the shared runtime rejects an invalid local_http port', () => {

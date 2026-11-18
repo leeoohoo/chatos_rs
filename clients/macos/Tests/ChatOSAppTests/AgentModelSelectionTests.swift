@@ -75,7 +75,7 @@ final class AgentModelSelectionTests: XCTestCase {
             .success(.init(models: [Self.removed], plugins: [])),
             .success(.init(models: [Self.current], plugins: [])),
         ])
-        let fixture = makeFixture(probe: probe)
+        let fixture = try makeFixture(probe: probe)
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let first = await fixture.viewModel.prepareAgentEditor()
         XCTAssertTrue(first)
@@ -91,7 +91,7 @@ final class AgentModelSelectionTests: XCTestCase {
         let probe = ModelSelectionCatalogProbe(results: [
             .success(.init(models: [Self.current], plugins: [])),
         ])
-        let fixture = makeFixture(probe: probe)
+        let fixture = try makeFixture(probe: probe)
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         async let first = fixture.viewModel.prepareAgentEditor()
         async let second = fixture.viewModel.prepareAgentEditor()
@@ -105,7 +105,7 @@ final class AgentModelSelectionTests: XCTestCase {
     func testPassiveCatalogLoadRunsOnceWhileExplicitEditorRefreshStillRevalidates() async throws {
         let resources = LocalAgentBuilderResources(models: [Self.current], plugins: [])
         let probe = ModelSelectionCatalogProbe(results: [.success(resources), .success(resources)])
-        let fixture = makeFixture(probe: probe)
+        let fixture = try makeFixture(probe: probe)
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
 
         await fixture.viewModel.loadModelCatalogIfNeeded()
@@ -123,7 +123,7 @@ final class AgentModelSelectionTests: XCTestCase {
         let resources = LocalAgentBuilderResources(models: [Self.current], plugins: [])
         let probe = ModelSelectionCatalogProbe(results: [.success(resources), .success(resources)],
                                                 delay: .milliseconds(100))
-        let fixture = makeFixture(probe: probe)
+        let fixture = try makeFixture(probe: probe)
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         _ = await fixture.viewModel.prepareAgentEditor()
         var publications = 0
@@ -150,7 +150,7 @@ final class AgentModelSelectionTests: XCTestCase {
             .success(.init(models: [Self.removed], plugins: [])),
             .success(.init(models: [Self.current], plugins: [])),
         ], delay: .milliseconds(100))
-        let fixture = makeFixture(probe: probe)
+        let fixture = try makeFixture(probe: probe)
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         _ = await fixture.viewModel.prepareAgentEditor()
         let opening = Task { await fixture.viewModel.prepareAgentEditor() }
@@ -171,7 +171,7 @@ final class AgentModelSelectionTests: XCTestCase {
             .success(.init(models: [Self.current], plugins: [])),
             .failure(ModelSelectionFixtureError.unexpectedRequest),
         ])
-        let fixture = makeFixture(probe: probe)
+        let fixture = try makeFixture(probe: probe)
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         _ = await fixture.viewModel.prepareAgentEditor()
         fixture.viewModel.errorMessage = "Keep an existing run error visible"
@@ -190,7 +190,7 @@ final class AgentModelSelectionTests: XCTestCase {
             .success(.init(models: [Self.removed], plugins: [])),
             .success(.init(models: [Self.current], plugins: [])),
         ])
-        let fixture = makeFixture(probe: probe)
+        let fixture = try makeFixture(probe: probe)
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let store = try await fixture.service.store()
         let agent = try await store.createAgent(ownerUserID: "alice", draft: .init(
@@ -210,7 +210,7 @@ final class AgentModelSelectionTests: XCTestCase {
         let probe = ModelSelectionCatalogProbe(results: [
             .success(.init(models: [Self.current], plugins: [])),
         ])
-        let fixture = makeFixture(probe: probe)
+        let fixture = try makeFixture(probe: probe)
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let store = try await fixture.service.store()
         let agent = try await store.createAgent(ownerUserID: "alice", draft: .init(
@@ -251,11 +251,11 @@ final class AgentModelSelectionTests: XCTestCase {
         let viewModel: AgentGroupChatWorkspaceViewModel
     }
 
-    private func makeFixture(probe: ModelSelectionCatalogProbe) -> Fixture {
+    private func makeFixture(probe: ModelSelectionCatalogProbe) throws -> Fixture {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("agent-model-selection-\(UUID().uuidString)")
         let service = NativeAgentGroupChatService(databaseURL: root.appendingPathComponent("chat.db"))
-        let connector = NativeLocalConnectorService(configuration: .init(
+        let connector = try NativeLocalConnectorService(configuration: .init(
             gatewayBaseURL: URL(string: "https://model-selection.invalid")!,
             stateURL: root.appendingPathComponent("state.json")
         ), ticketProvider: ModelSelectionTicketProvider())

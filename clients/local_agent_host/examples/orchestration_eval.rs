@@ -149,7 +149,7 @@ async fn run() -> Result<bool, String> {
         .transpose()?;
     let snapshots: Vec<LocalCapabilityPolicySnapshot> =
         read_json(&options.fixture.ok_or("missing_frozen_fixture")?)?;
-    let config = if options.live {
+    let mut config = if options.live {
         live_config(options.loopback_http)?
     } else {
         ModelRuntimeConfig::openai_compatible(
@@ -159,6 +159,11 @@ async fn run() -> Result<bool, String> {
             "gpt",
         )
     };
+    config.model_capability_revision = "eval-capability-v1".into();
+    config.context_window_tokens = 32_768;
+    config.output_reserve_tokens = 4_096;
+    config.protocol_overhead_estimator_id = "responses-v1".into();
+    config.validate_model_capability()?;
     let (reports, negatives) = if options.live {
         let cases = data
             .scenarios

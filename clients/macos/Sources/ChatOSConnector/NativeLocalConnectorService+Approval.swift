@@ -328,9 +328,28 @@ extension NativeLocalConnectorService {
         if allowsSessionApproval, let approvalScopeKey {
             pendingApprovalScopeKeys[id] = approvalScopeKey
         }
-        return await withCheckedContinuation { continuation in
-            pendingApprovalContinuations[id] = continuation
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                pendingApprovalContinuations[id] = continuation
+                if Task.isCancelled {
+                    cancelPendingApproval(id: id)
+                }
+            }
+        } onCancel: {
+            Task { [weak self] in
+                await self?.cancelPendingApproval(id: id)
+            }
         }
+    }
+
+    private func cancelPendingApproval(id: String) {
+        pendingApprovals.removeAll { $0.id == id }
+        pendingApprovalScopeKeys.removeValue(forKey: id)
+        guard let continuation = pendingApprovalContinuations.removeValue(forKey: id) else {
+            return
+        }
+        publishApprovalSnapshot()
+        continuation.resume(returning: .deny(reason: "等待审批的任务已取消。"))
     }
 
     func resolveDirectory(
@@ -362,53 +381,6 @@ extension NativeLocalConnectorService {
         guard url.path != root.path else { return "." }
         let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
         return url.path.hasPrefix(prefix) ? String(url.path.dropFirst(prefix.count)) : url.path
-    }
-
-    func appendApprovalHistory(
-        command: String,
-        arguments: [String],
-        cwd: String,
-        source: String,
-        decision: String,
-        risk: NativeApprovalRisk,
-        reason: String
-    ) {
-        activityHistory.approvals.insert(.init(
-            id: UUID().uuidString,
-            command: ([command] + arguments).joined(separator: " "),
-            cwd: cwd,
-            source: source,
-            mode: state.approvalMode,
-            decision: decision,
-            risk: risk.level,
-            reason: reason,
-            createdAt: ISO8601DateFormatter().string(from: Date())
-        ), at: 0)
-        activityHistory.approvals = Array(activityHistory.approvals.prefix(1_000))
-        try? activityHistoryStore.save(activityHistory)
-    }
-
-    func appendCommandHistory(
-        result: LocalConnectorTerminalResult,
-        display: String,
-        workspace: LocalConnectorWorkspace,
-        source: String
-    ) {
-        activityHistory.commands.insert(.init(
-            id: UUID().uuidString,
-            source: source,
-            workspaceAlias: workspace.alias,
-            cwd: result.cwd,
-            display: display,
-            status: result.success ? "completed" : "failed",
-            exitCode: result.exitCode,
-            stdoutPreview: String(result.stdout.prefix(2_000)),
-            stderrPreview: String(result.stderr.prefix(2_000)),
-            error: result.error,
-            startedAt: ISO8601DateFormatter().string(from: Date())
-        ), at: 0)
-        activityHistory.commands = Array(activityHistory.commands.prefix(1_000))
-        try? activityHistoryStore.save(activityHistory)
     }
 
     func sendRelayResponse(

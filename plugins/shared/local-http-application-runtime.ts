@@ -1,4 +1,11 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { promises as fs, watch, type FSWatcher } from 'node:fs';
+import type { IncomingHttpHeaders } from 'node:http';
+
+const authenticationHeaderName = 'x-chatos-plugin-token';
+const healthChallengeHeaderName = 'x-chatos-plugin-challenge';
+const healthProofHeaderName = 'X-ChatOS-Plugin-Proof';
+const sessionCookieName = 'CHATOS_PLUGIN_APP_SESSION';
 
 export type PluginDirectoryWatchMode = 'native' | 'polling';
 
@@ -12,6 +19,19 @@ export interface PluginLocalHttpEndpointOptions {
 export interface PluginLocalHttpEndpoint {
   host: string;
   port: number;
+  healthPath: string;
+  authenticationToken?: string;
+}
+
+interface PluginLocalHttpRequest {
+  headers: IncomingHttpHeaders;
+  path?: string;
+  url?: string;
+}
+
+interface PluginLocalHttpResponse {
+  setHeader(name: string, value: string): unknown;
+  sendStatus(status: number): unknown;
 }
 
 export interface PluginDirectoryMonitorOptions {
@@ -42,7 +62,68 @@ export function readPluginLocalHttpEndpoint(
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new Error(`Invalid local_http application port: ${rawPort}`);
   }
-  return { host, port };
+  return {
+    host,
+    port,
+    healthPath: environment.CHATOS_PLUGIN_APP_HEALTH_PATH?.trim() || '/api/health',
+    ...(environment.CHATOS_PLUGIN_APP_TOKEN
+      ? { authenticationToken: environment.CHATOS_PLUGIN_APP_TOKEN }
+      : {})
+  };
+}
+
+export function pluginLocalHttpAuthentication(endpoint: PluginLocalHttpEndpoint) {
+  return (
+    request: PluginLocalHttpRequest,
+    response: PluginLocalHttpResponse,
+    next: () => void
+  ): void => {
+    const token = endpoint.authenticationToken;
+    if (!token) {
+      next();
+      return;
+    }
+    const requestPath = request.path ?? new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+    const challenge = singleHeader(request.headers[healthChallengeHeaderName]);
+    if (requestPath === endpoint.healthPath && challenge && /^[A-Za-z0-9_-]{32,128}$/.test(challenge)) {
+      response.setHeader(
+        healthProofHeaderName,
+        createHmac('sha256', token).update(challenge).digest('base64url')
+      );
+      next();
+      return;
+    }
+    const headerToken = singleHeader(request.headers[authenticationHeaderName]);
+    const cookieToken = cookieValue(singleHeader(request.headers.cookie), sessionCookieName);
+    if (!safeEqual(headerToken, token) && !safeEqual(cookieToken, token)) {
+      response.sendStatus(401);
+      return;
+    }
+    if (safeEqual(headerToken, token)) {
+      response.setHeader(
+        'Set-Cookie',
+        `${sessionCookieName}=${token}; HttpOnly; SameSite=Strict; Path=/`
+      );
+    }
+    next();
+  };
+}
+
+function singleHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function cookieValue(header: string | undefined, name: string): string | undefined {
+  return header?.split(';')
+    .map((part) => part.trim().split('='))
+    .find(([key]) => key === name)?.slice(1).join('=');
+}
+
+function safeEqual(value: string | undefined, expected: string): boolean {
+  if (value === undefined) return false;
+  const left = Buffer.from(value);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
 }
 
 export function pluginDirectoryWatchMode(

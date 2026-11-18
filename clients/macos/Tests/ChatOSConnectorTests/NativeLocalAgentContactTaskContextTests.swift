@@ -16,7 +16,7 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
         state.user = .init(id: "user-1", username: "user", displayName: nil, role: "user")
         state.deviceID = "device-1"
         try JSONEncoder().encode(state).write(to: stateURL)
-        let connector = NativeLocalConnectorService(
+        let connector = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: stateURL

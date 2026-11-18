@@ -9,7 +9,9 @@ enum NativePluginApplicationHostContract {
         installationURL: URL,
         dataURL: URL,
         cacheURL: URL,
-        port: UInt16
+        port: UInt16,
+        healthPath: String,
+        authenticationToken: String
     ) -> [String: String] {
         [
             "CHATOS_PLUGIN_ROOT": installationURL.path,
@@ -17,6 +19,8 @@ enum NativePluginApplicationHostContract {
             "CHATOS_PLUGIN_CACHE_DIR": cacheURL.path,
             "CHATOS_PLUGIN_APP_HOST": "127.0.0.1",
             "CHATOS_PLUGIN_APP_PORT": String(port),
+            "CHATOS_PLUGIN_APP_HEALTH_PATH": healthPath,
+            "CHATOS_PLUGIN_APP_TOKEN": authenticationToken,
             "CHATOS_PLUGIN_ID": record.pluginID,
             "CHATOS_PLUGIN_COMPONENT_KEY": componentKey,
             "CHATOS_PLUGIN_RELEASE_ID": record.releaseID,

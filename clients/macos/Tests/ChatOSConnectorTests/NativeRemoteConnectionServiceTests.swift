@@ -57,6 +57,7 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         let testedDraft = try XCTUnwrap(capturedTestDraft)
         XCTAssertEqual(testedDraft.password, "local-secret")
         XCTAssertEqual(testedDraft.host, "server.example.com")
+        try await service.deleteConnection(id: created.id)
     }
 
     func testSSHConfigUsesNativeOpenSSHAndProxyJump() throws {
@@ -738,6 +739,7 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
 
         let requestCount = await tester.requestCount()
         XCTAssertEqual(requestCount, 0)
+        try await service.deleteConnection(id: connection.id)
     }
 
     func testExplicitSSHFixturePreservesPermissionsAndReclaimsStaleStaging() async throws {
@@ -1014,6 +1016,7 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         session.close()
         let requestCount = await tester.requestCount()
         XCTAssertEqual(requestCount, 0)
+        try await service.deleteConnection(id: connection.id)
     }
 
     private static let passwordDraft = RemoteConnectionDraft(

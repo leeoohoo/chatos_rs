@@ -269,7 +269,7 @@ struct NativeProgramMCPInstallationTests {
         state.user = .init(id: "program-owner", username: "program", displayName: "Program", role: "user")
         state.deviceID = "program-device"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        return NativeLocalConnectorService(
+        return try NativeLocalConnectorService(
             configuration: .init(gatewayBaseURL: URL(string: "https://connector.example.test")!, stateURL: stateURL),
             ticketProvider: ProgramRejectingTicketProvider(),
             pluginInstallerFactory: { NativePluginInstaller(rootURL: $0, npmInstall: { _ in }, repositoryClient: client) }

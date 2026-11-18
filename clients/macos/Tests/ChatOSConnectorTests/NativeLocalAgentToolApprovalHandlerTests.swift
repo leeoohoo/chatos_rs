@@ -209,6 +209,35 @@ struct NativeLocalAgentToolApprovalHandlerTests {
     }
 
     @Test
+    func corruptJournalStopsApprovalWithoutRepromptingOrOverwriting() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let journalURL = root.appendingPathComponent("approval-writebacks.json")
+        let corruptData = Data("{truncated".utf8)
+        try corruptData.write(to: journalURL)
+        let durable = DurableApprovalStub(pending: [Self.invocation(root: root)])
+        let human = HumanApprovalStub(
+            decision: .approve(reason: "不应被调用", rememberAllow: false)
+        )
+        let handler = NativeLocalAgentToolApprovalHandler(
+            durableApprovals: durable,
+            contextResolver: ContextResolverStub(root: root),
+            humanApprovals: human,
+            decisionJournal: .init(fileURL: journalURL)
+        )
+
+        await #expect(throws: NativeLocalAgentApprovalDecisionJournalError.self) {
+            try await handler.resolveNextPending(ownerUserID: "owner-1")
+        }
+
+        #expect(await human.requests.isEmpty)
+        #expect(await durable.commits.isEmpty)
+        #expect(try Data(contentsOf: journalURL) == corruptData)
+    }
+
+    @Test
     func journalStorageFailureStillKeepsDecisionForInProcessRetry() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

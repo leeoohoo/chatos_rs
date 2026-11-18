@@ -1,6 +1,17 @@
 import ChatOSCore
 import Foundation
 
+enum NativeLocalAgentApprovalDecisionJournalError: LocalizedError {
+    case unavailable(path: String, reason: String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .unavailable(path, reason):
+            "本机审批决定日志损坏或不可读，已停止自动审批恢复：\(path)（\(reason)）"
+        }
+    }
+}
+
 struct NativeLocalAgentApprovalWritebackDecision: Codable, Sendable, Equatable {
     let ownerUserID: String
     let invocationID: String
@@ -41,10 +52,17 @@ private struct NativeLocalAgentApprovalDecisionJournalStore: Sendable {
             fileURL,
             maximumBytes: Self.maximumBytes
         )
-        return try JSONDecoder().decode(
+        let decisions = try JSONDecoder().decode(
             [NativeLocalAgentApprovalWritebackDecision].self,
             from: data
-        ).filter(\.isValid)
+        )
+        guard decisions.allSatisfy(\.isValid) else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: [],
+                debugDescription: "approval decision journal contains invalid entries"
+            ))
+        }
+        return decisions
     }
 
     func save(_ decisions: [NativeLocalAgentApprovalWritebackDecision]) throws {
@@ -71,24 +89,36 @@ private struct NativeLocalAgentApprovalDecisionJournalStore: Sendable {
 
 actor NativeLocalAgentApprovalDecisionJournal {
     private let store: NativeLocalAgentApprovalDecisionJournalStore?
+    private let loadError: NativeLocalAgentApprovalDecisionJournalError?
     private var decisions: [NativeLocalAgentApprovalWritebackDecision]
 
     init(fileURL: URL? = nil) {
         let store = fileURL.map(NativeLocalAgentApprovalDecisionJournalStore.init(fileURL:))
         self.store = store
-        decisions = (try? store?.load()) ?? []
+        do {
+            decisions = try store?.load() ?? []
+            loadError = nil
+        } catch {
+            decisions = []
+            loadError = .unavailable(
+                path: fileURL?.path ?? "",
+                reason: error.localizedDescription
+            )
+        }
     }
 
     func decision(
         ownerUserID: String,
         invocation: LocalAgentToolInvocationRecord
-    ) -> NativeLocalAgentApprovalWritebackDecision? {
-        decisions.first {
+    ) throws -> NativeLocalAgentApprovalWritebackDecision? {
+        try requireAvailable()
+        return decisions.first {
             $0.matches(ownerUserID: ownerUserID, invocation: invocation)
         }
     }
 
     func record(_ decision: NativeLocalAgentApprovalWritebackDecision) throws {
+        try requireAvailable()
         guard decision.isValid else { return }
         decisions.removeAll {
             $0.ownerUserID == decision.ownerUserID
@@ -103,6 +133,7 @@ actor NativeLocalAgentApprovalDecisionJournal {
     }
 
     func remove(_ decision: NativeLocalAgentApprovalWritebackDecision) throws {
+        try requireAvailable()
         decisions.removeAll {
             $0.ownerUserID == decision.ownerUserID
                 && $0.invocationID == decision.invocationID
@@ -113,5 +144,9 @@ actor NativeLocalAgentApprovalDecisionJournal {
 
     func snapshot() -> [NativeLocalAgentApprovalWritebackDecision] {
         decisions
+    }
+
+    private func requireAvailable() throws {
+        if let loadError { throw loadError }
     }
 }

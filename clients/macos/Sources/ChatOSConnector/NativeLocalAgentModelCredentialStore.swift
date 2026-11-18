@@ -1,24 +1,29 @@
+import ChatOSCore
 import CryptoKit
 import Foundation
 
 struct NativeLocalAgentModelCredentialStore: Sendable {
     static let maximumCredentialBytes = 64 * 1_024
     private let rootURL: URL
+    private let keychain: KeychainSecretStore
 
     init(rootURL: URL? = nil) {
+        let resolvedRootURL: URL
         if let rootURL {
-            self.rootURL = rootURL
-            return
+            resolvedRootURL = rootURL
+        } else {
+            let support = FileManager.default.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            ).first ?? FileManager.default.homeDirectoryForCurrentUser
+            resolvedRootURL = support
+                .appendingPathComponent("ChatOSSwift", isDirectory: true)
+                .appendingPathComponent("NativeConnector", isDirectory: true)
+                .appendingPathComponent("Secrets", isDirectory: true)
+                .appendingPathComponent("LocalAgentModels", isDirectory: true)
         }
-        let support = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first ?? FileManager.default.homeDirectoryForCurrentUser
-        self.rootURL = support
-            .appendingPathComponent("ChatOSSwift", isDirectory: true)
-            .appendingPathComponent("NativeConnector", isDirectory: true)
-            .appendingPathComponent("Secrets", isDirectory: true)
-            .appendingPathComponent("LocalAgentModels", isDirectory: true)
+        self.rootURL = resolvedRootURL
+        self.keychain = KeychainSecretStore(service: Self.keychainService(rootURL: resolvedRootURL))
     }
 
     func loadWithoutUserInteraction(
@@ -26,11 +31,18 @@ struct NativeLocalAgentModelCredentialStore: Sendable {
         modelConfigRef: String
     ) throws -> String? {
         let url = credentialURL(ownerUserID: ownerUserID, modelConfigRef: modelConfigRef)
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        let data = try NativeBoundedFileReader.read(
-            url,
-            maximumBytes: Self.maximumCredentialBytes
-        )
+        let account = url.lastPathComponent
+        let data: Data
+        if let stored = try keychain.load(account: account) {
+            data = stored
+            try deleteLegacyFile(url)
+        } else if FileManager.default.fileExists(atPath: url.path) {
+            data = try NativeBoundedFileReader.read(url, maximumBytes: Self.maximumCredentialBytes)
+            try keychain.save(data, account: account)
+            try deleteLegacyFile(url)
+        } else {
+            return nil
+        }
         guard let value = String(data: data, encoding: .utf8) else {
             throw NativeLocalAgentModelCredentialError.invalidCredential
         }
@@ -48,28 +60,16 @@ struct NativeLocalAgentModelCredentialStore: Sendable {
               !credential.contains("\0") else {
             throw NativeLocalAgentModelCredentialError.invalidCredential
         }
-        try FileManager.default.createDirectory(
-            at: rootURL,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: rootURL.path
-        )
         let url = credentialURL(ownerUserID: ownerUserID, modelConfigRef: modelConfigRef)
-        try Data(credential.utf8).write(to: url, options: .atomic)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: url.path
-        )
+        try keychain.save(Data(credential.utf8), account: url.lastPathComponent)
+        try deleteLegacyFile(url)
         return true
     }
 
     func delete(ownerUserID: String, modelConfigRef: String) throws {
         let url = credentialURL(ownerUserID: ownerUserID, modelConfigRef: modelConfigRef)
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
-        try FileManager.default.removeItem(at: url)
+        try deleteLegacyFile(url)
+        try keychain.delete(account: url.lastPathComponent)
     }
 
     func environmentVariable(modelConfigRef: String) -> String {
@@ -86,6 +86,20 @@ struct NativeLocalAgentModelCredentialStore: Sendable {
             .map { String(format: "%02x", $0) }
             .joined()
         return rootURL.appendingPathComponent("model-\(digest)", isDirectory: false)
+    }
+
+    private func deleteLegacyFile(_ url: URL) throws {
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private static func keychainService(rootURL: URL) -> String {
+        let digest = SHA256.hash(data: Data(rootURL.standardizedFileURL.path.utf8))
+            .prefix(16)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return "com.chatos.swift.native-connector.local-agent-models.\(digest)"
     }
 }
 

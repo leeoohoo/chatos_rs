@@ -21,6 +21,23 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
             [.posixPermissions: NSNumber(value: Int16(0o700))],
             ofItemAtPath: script.path
         )
+        let workerStarted = expectation(description: "admitted worker process started")
+        let directoryDescriptor = open(fixture.root.path, O_EVTONLY)
+        guard directoryDescriptor >= 0 else { throw POSIXError(.EIO) }
+        let markerSource = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: directoryDescriptor,
+            eventMask: .write,
+            queue: .global(qos: .userInitiated)
+        )
+        markerSource.setEventHandler {
+            if FileManager.default.fileExists(atPath: marker.path) {
+                workerStarted.fulfill()
+                markerSource.cancel()
+            }
+        }
+        markerSource.setCancelHandler { close(directoryDescriptor) }
+        markerSource.resume()
+        defer { markerSource.cancel() }
         let machineGovernor = ClientMachineResourceGovernor(budget: .init(
             availableResourceUnits: 2,
             reservedHostResourceUnits: 2,
@@ -65,10 +82,7 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
 
         await agent.releaseAndWait()
-        for _ in 0..<200 {
-            if FileManager.default.fileExists(atPath: marker.path) { break }
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        await fulfillment(of: [workerStarted], timeout: 5)
         XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
         request.cancel()
         _ = try? await request.value

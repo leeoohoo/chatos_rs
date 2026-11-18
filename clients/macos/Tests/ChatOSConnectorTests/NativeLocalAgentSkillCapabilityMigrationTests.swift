@@ -244,7 +244,7 @@ final class NativeLocalAgentSkillCapabilityMigrationTests: XCTestCase {
         state.localAgentPromptBundleVersion = 42
         let url = root.appendingPathComponent("state.json")
         try NativeConnectorStateStore(stateURL: url).save(state)
-        let connector = NativeLocalConnectorService(
+        let connector = try NativeLocalConnectorService(
             configuration: .init(gatewayBaseURL: URL(string: "http://127.0.0.1:1")!, stateURL: url),
             ticketProvider: SkillMigrationTicketStub()
         )

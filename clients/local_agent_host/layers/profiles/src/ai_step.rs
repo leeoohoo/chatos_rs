@@ -418,7 +418,7 @@ fn task_followup_review_required_message() -> Value {
     message_item(
         "system",
         Value::String(
-            "[Task Follow-up Review Required]\nThe previous response cannot finish this Main Chat turn because the current task_followup_review is still pending. Do not repeat or defend that response. Call `resolve_task_followup` now with the authoritative current review_message_id and exactly one decision for every pending candidate. Use the user's latest message and current Task facts to choose continue, cancel, or clarify; do not create replacement work until the review succeeds."
+            "[Task Follow-up Review Required]\nThe previous response cannot finish this Main Chat turn because the current task_followup_review is still pending. Do not repeat or defend that response. Call `resolve_task_followup` now with the authoritative current review_message_id and exactly one decision for every pending candidate. Use the user's latest message and current Task facts to choose continue, cancel, replace, or clarify; choose replace when changed work is still wanted, and do not create replacement work until the review succeeds."
                 .to_string(),
         ),
     )
@@ -1194,6 +1194,7 @@ mod tests {
             .expect("corrective guidance");
         assert!(guidance.contains("resolve_task_followup"));
         assert!(guidance.contains("every pending candidate"));
+        assert!(guidance.contains("choose replace"));
 
         claim.run.input["task_followup_review"]["pending"] = json!(false);
         assert!(matches!(

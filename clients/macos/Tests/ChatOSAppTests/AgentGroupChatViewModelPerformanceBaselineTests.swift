@@ -48,7 +48,7 @@ final class AgentGroupChatViewModelPerformanceBaselineTests: XCTestCase {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let store = try await fixture.service.store()
-        let viewModel = makeViewModel(fixture: fixture)
+        let viewModel = try makeViewModel(fixture: fixture)
         var publicationCount = 0
         let cancellable = viewModel.objectWillChange.sink {
             publicationCount += 1
@@ -195,8 +195,8 @@ final class AgentGroupChatViewModelPerformanceBaselineTests: XCTestCase {
         return Fixture(rootURL: rootURL, service: service, projectID: rooms[0].projectID)
     }
 
-    private func makeViewModel(fixture: Fixture) -> AgentGroupChatViewModel {
-        let connector = NativeLocalConnectorService(
+    private func makeViewModel(fixture: Fixture) throws -> AgentGroupChatViewModel {
+        let connector = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://baseline.invalid")!,
                 stateURL: fixture.rootURL.appendingPathComponent("connector-state.json")

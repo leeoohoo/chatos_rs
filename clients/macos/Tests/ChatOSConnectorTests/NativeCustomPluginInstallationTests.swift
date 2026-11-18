@@ -11,7 +11,7 @@ struct NativeCustomPluginInstallationTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let stateURL = root.appendingPathComponent("state.json")
         try Self.writeInitialState(to: stateURL, ownerUserID: "missing-target-owner")
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(gatewayBaseURL: URL(string: "https://connector.example.test")!, stateURL: stateURL),
             ticketProvider: CustomPluginRejectingTicketProvider(),
             pluginInstallerFactory: {
@@ -61,7 +61,7 @@ struct NativeCustomPluginInstallationTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let stateURL = root.appendingPathComponent("state.json")
         try Self.writeInitialState(to: stateURL, ownerUserID: "update-owner")
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(gatewayBaseURL: URL(string: "https://connector.example.test")!, stateURL: stateURL),
             ticketProvider: CustomPluginRejectingTicketProvider(),
             pluginInstallerFactory: { NativePluginInstaller(rootURL: $0, npmInstall: Self.installOfflineREAFixture(in:)) }
@@ -273,7 +273,7 @@ struct NativeCustomPluginInstallationTests {
             gatewayBaseURL: URL(string: "https://connector.example.test")!,
             stateURL: stateURL
         )
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: configuration,
             ticketProvider: CustomPluginRejectingTicketProvider(),
             pluginInstallerFactory: { installationRoot in
@@ -307,7 +307,7 @@ struct NativeCustomPluginInstallationTests {
             expectedFingerprint: inspection.fingerprint
         )
 
-        let restoredService = NativeLocalConnectorService(
+        let restoredService = try NativeLocalConnectorService(
             configuration: configuration,
             ticketProvider: CustomPluginRejectingTicketProvider()
         )
@@ -430,7 +430,7 @@ struct NativeCustomPluginInstallationTests {
         state.user = .init(id: "owner-local", username: "local", displayName: "Local", role: "user")
         state.deviceID = "device-local"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -501,7 +501,7 @@ struct NativeCustomPluginInstallationTests {
         state.user = .init(id: "owner-portable", username: "portable", displayName: "Portable", role: "user")
         state.deviceID = "device-portable"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -569,7 +569,7 @@ struct NativeCustomPluginInstallationTests {
         state.user = .init(id: "owner-codex", username: "codex", displayName: "Codex", role: "user")
         state.deviceID = "device-codex"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -630,7 +630,7 @@ struct NativeCustomPluginInstallationTests {
         state.user = .init(id: "owner-hook", username: "hook", displayName: "Hook", role: "user")
         state.deviceID = "device-hook"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -712,7 +712,7 @@ struct NativeCustomPluginInstallationTests {
             gatewayBaseURL: URL(string: "https://connector.example.test")!,
             stateURL: stateURL
         )
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: configuration,
             ticketProvider: CustomPluginRejectingTicketProvider()
         )
@@ -776,7 +776,7 @@ struct NativeCustomPluginInstallationTests {
         policyDriftTrust.runnerPolicyVersion &+= 1
         policyDriftState.pluginHookTrustRecords = [policyDriftTrust.bundleID: policyDriftTrust]
         try NativeConnectorStateStore(stateURL: stateURL).save(policyDriftState)
-        let policyDriftService = NativeLocalConnectorService(
+        let policyDriftService = try NativeLocalConnectorService(
             configuration: configuration,
             ticketProvider: CustomPluginRejectingTicketProvider()
         )
@@ -791,7 +791,7 @@ struct NativeCustomPluginInstallationTests {
         #expect(await policyDriftHost.activeBundleIDs().isEmpty)
 
         try NativeConnectorStateStore(stateURL: stateURL).save(secondState)
-        let uninstallService = NativeLocalConnectorService(
+        let uninstallService = try NativeLocalConnectorService(
             configuration: configuration,
             ticketProvider: CustomPluginRejectingTicketProvider()
         )
@@ -823,7 +823,7 @@ struct NativeCustomPluginInstallationTests {
             gatewayBaseURL: URL(string: "https://connector.example.test")!,
             stateURL: stateURL
         )
-        let initialService = NativeLocalConnectorService(
+        let initialService = try NativeLocalConnectorService(
             configuration: configuration,
             ticketProvider: CustomPluginRejectingTicketProvider()
         )
@@ -852,7 +852,7 @@ struct NativeCustomPluginInstallationTests {
             command: "node hooks/broken-upgrade.js",
             permissions: ["workspace.read", "network.client"]
         )
-        let failingService = NativeLocalConnectorService(
+        let failingService = try NativeLocalConnectorService(
             configuration: configuration,
             ticketProvider: CustomPluginRejectingTicketProvider(),
             pluginInstallerFactory: { NativePluginInstaller(rootURL: $0) },
@@ -984,7 +984,7 @@ struct NativeCustomPluginInstallationTests {
         )
         state.deviceID = "device-ponytail"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -1103,7 +1103,7 @@ struct NativeCustomPluginInstallationTests {
         state.user = .init(id: "owner-skill", username: "skill", displayName: "Skill", role: "user")
         state.deviceID = "device-skill"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -1163,7 +1163,7 @@ struct NativeCustomPluginInstallationTests {
         state.user = .init(id: "owner-vscode", username: "vscode", displayName: "VS Code", role: "user")
         state.deviceID = "device-vscode"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -1181,7 +1181,7 @@ struct NativeCustomPluginInstallationTests {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("GitPluginValidation-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: root.appendingPathComponent("state.json")
@@ -1215,7 +1215,7 @@ struct NativeCustomPluginInstallationTests {
         state.user = .init(id: "owner-rea", username: "rea", displayName: "REA", role: "user")
         state.deviceID = "device-rea"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL

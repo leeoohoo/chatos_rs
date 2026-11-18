@@ -25,7 +25,7 @@ final class NativeProjectRunServiceTests: XCTestCase {
             ),
         ]
         try NativeConnectorStateStore(stateURL: stateURL).save(connectorState)
-        let connector = NativeLocalConnectorService(
+        let connector = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: stateURL
@@ -190,7 +190,7 @@ final class NativeProjectRunServiceTests: XCTestCase {
             ),
         ]
         try NativeConnectorStateStore(stateURL: stateURL).save(connectorState)
-        let connector = NativeLocalConnectorService(
+        let connector = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: stateURL

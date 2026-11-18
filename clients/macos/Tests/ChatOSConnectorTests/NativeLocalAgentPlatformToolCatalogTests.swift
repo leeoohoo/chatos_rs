@@ -49,6 +49,24 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
         XCTAssertTrue(snapshot.instructions.contains("screenshot interpretation"))
         XCTAssertTrue(snapshot.instructions.contains("delivery=model"))
     }
+    func testFollowupReplacementIsPublishedInMainChatToolSchema() throws {
+        let tool = try XCTUnwrap(NativeLocalAgentPlatformToolCatalog.capabilityTools.first { value in
+            guard case let .object(object) = value else { return false }
+            return object["name"] == .string("resolve_task_followup")
+        })
+        guard case let .object(definition) = tool,
+              case let .object(parameters)? = definition["parameters"],
+              case let .object(properties)? = parameters["properties"],
+              case let .object(decisions)? = properties["decisions"],
+              case let .object(items)? = decisions["items"],
+              case let .object(decisionProperties)? = items["properties"],
+              case let .object(action)? = decisionProperties["action"] else {
+            return XCTFail("missing follow-up action schema")
+        }
+        XCTAssertEqual(action["enum"], .array([
+            .string("continue"), .string("cancel"), .string("replace"), .string("clarify"),
+        ]))
+    }
     func testAcceptanceSchemaUpgradePreservesExistingCapabilityChoicesAndIsIdempotent() throws {
         for name in ["create_task", "create_tasks_with_prerequisites"] {
             let tool = try XCTUnwrap(NativeLocalAgentPlatformToolCatalog.capabilityTools.first { value in

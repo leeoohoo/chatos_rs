@@ -10,6 +10,14 @@ struct NativeLocalAgentCredentialEnvironmentTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = NativeLocalAgentModelCredentialStore(rootURL: root)
+        defer {
+            for (owner, model) in [
+                ("user-1", "active"), ("user-2", "foreign"),
+                ("user-1", "blank"), ("user-1", "invalid"),
+            ] {
+                try? store.delete(ownerUserID: owner, modelConfigRef: model)
+            }
+        }
         try store.saveWithoutUserInteraction("value", ownerUserID: "user-1", modelConfigRef: "active")
         try store.saveWithoutUserInteraction("other", ownerUserID: "user-2", modelConfigRef: "foreign")
         try store.saveWithoutUserInteraction(" \n ", ownerUserID: "user-1", modelConfigRef: "blank")
@@ -30,6 +38,11 @@ struct NativeLocalAgentCredentialEnvironmentTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = NativeLocalAgentModelCredentialStore(rootURL: root)
+        defer {
+            for model in ["active", "historical"] {
+                try? store.delete(ownerUserID: "user-1", modelConfigRef: model)
+            }
+        }
         try store.saveWithoutUserInteraction("active-value", ownerUserID: "user-1", modelConfigRef: "active")
         try store.saveWithoutUserInteraction("historical-value", ownerUserID: "user-1", modelConfigRef: "historical")
         let snapshots = [snapshot("active"), snapshot("historical")]
@@ -49,6 +62,11 @@ struct NativeLocalAgentCredentialEnvironmentTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = NativeLocalAgentModelCredentialStore(rootURL: root)
+        defer {
+            for model in ["a-b", "a_b"] {
+                try? store.delete(ownerUserID: "user-1", modelConfigRef: model)
+            }
+        }
         for model in ["a-b", "a_b"] {
             try store.saveWithoutUserInteraction("test", ownerUserID: "user-1", modelConfigRef: model)
         }

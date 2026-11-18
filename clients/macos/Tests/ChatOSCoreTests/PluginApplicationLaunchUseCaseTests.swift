@@ -116,6 +116,22 @@ struct PluginApplicationLaunchUseCaseTests {
             applicationID: "plugin:main"
         ))
     }
+
+    @Test("ephemeral application credentials are not persisted")
+    func applicationCredentialsAreNotPersisted() throws {
+        let launch = LocalConnectorPluginApplicationLaunch(
+            application: application(),
+            url: URL(string: "http://127.0.0.1:1234")!,
+            authenticationToken: "secret-token"
+        )
+
+        let data = try JSONEncoder().encode(launch)
+        #expect(!String(decoding: data, as: UTF8.self).contains("secret-token"))
+        #expect(try JSONDecoder().decode(
+            LocalConnectorPluginApplicationLaunch.self,
+            from: data
+        ).authenticationToken == nil)
+    }
 }
 
 private struct PluginApplicationContextRequest: Sendable, Equatable {

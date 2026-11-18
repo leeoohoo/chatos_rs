@@ -78,7 +78,7 @@ impl Dataset {
                 .expect
                 .followup_action
                 .as_deref()
-                .is_some_and(|s| !["continue", "cancel", "clarify"].contains(&s))
+                .is_some_and(|s| !["continue", "cancel", "replace", "clarify"].contains(&s))
             {
                 return Err("invalid_eval_followup_action".into());
             }
@@ -506,6 +506,7 @@ pub async fn report(
     if let Some(action) = &case.expect.followup_action {
         let expected_state = match action.as_str() {
             "cancel" => "cancelled",
+            "replace" => "held",
             "clarify" => "held",
             _ => "released",
         };
@@ -540,7 +541,7 @@ pub async fn report(
         check(&mut checks, "followup_durable_state", tasks.iter().filter(|t| session.seed_ids.contains(&t.task_id)).all(|t|
             if action == "clarify" { t.input["followup_review_state"] == "held" && t.status != LocalTaskStatus::Cancelled }
             else { t.input.get("followup_review_state").is_none()
-                && if action == "cancel" { t.status == LocalTaskStatus::Cancelled } else { t.status != LocalTaskStatus::Cancelled } }), "Held reviews stay visible; released/cancelled reviews are removed from Task input; cancellation status is durable");
+                && if matches!(action.as_str(), "cancel" | "replace") { t.status == LocalTaskStatus::Cancelled } else { t.status != LocalTaskStatus::Cancelled } }), "Held clarifications stay visible; released/cancelled/replaced reviews are removed after resolution; stop and replacement cancellation are durable");
     }
     if case.expect.supersedes {
         check(

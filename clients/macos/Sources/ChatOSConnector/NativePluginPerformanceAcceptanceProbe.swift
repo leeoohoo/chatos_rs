@@ -54,9 +54,13 @@ public actor NativePluginPerformanceAcceptanceProbe {
         let script = #"""
         #!/bin/sh
         exec /usr/local/bin/node -e '
+        const crypto = require("node:crypto");
         const http = require("node:http");
         const body = "chatos-performance-acceptance-plugin";
         http.createServer((request, response) => {
+          const challenge = request.headers["x-chatos-plugin-challenge"];
+          if (challenge) response.setHeader("x-chatos-plugin-proof", crypto.createHmac("sha256", process.env.CHATOS_PLUGIN_APP_TOKEN).update(challenge).digest("base64url"));
+          if (!challenge && request.headers["x-chatos-plugin-token"] !== process.env.CHATOS_PLUGIN_APP_TOKEN) { response.writeHead(401); response.end(); return; }
           response.writeHead(200, {
             "content-type": "text/plain",
             "content-length": Buffer.byteLength(body)
@@ -144,6 +148,10 @@ public actor NativePluginPerformanceAcceptanceProbe {
         var request = URLRequest(url: launch.url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 2
+        request.setValue(
+            launch.authenticationToken,
+            forHTTPHeaderField: LocalConnectorPluginApplicationLaunch.authenticationHeaderName
+        )
         let (data, response) = try await BoundedURLSessionDataLoader.load(
             request: request,
             maximumBytes: 4 * 1_024

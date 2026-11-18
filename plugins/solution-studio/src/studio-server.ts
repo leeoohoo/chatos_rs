@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import {
+  pluginLocalHttpAuthentication,
   readPluginLocalHttpEndpoint,
   startPluginDirectoryMonitor
 } from '../../shared/local-http-application-runtime.js';
@@ -13,9 +14,10 @@ import { assertSolutionWorkspace, validateWorkspace, workspaceToMarkdown, type S
 import { RevisionConflictError, SolutionWorkspaceStore } from './store.js';
 import { readHostRuntimeContext } from './runtime-context.js';
 
-const { host, port } = readPluginLocalHttpEndpoint({
+const endpoint = readPluginLocalHttpEndpoint({
   defaultPort: 4198
 });
+const { host, port } = endpoint;
 const store = new SolutionWorkspaceStore();
 const runtimeContext = readHostRuntimeContext();
 const execFileAsync = promisify(execFile);
@@ -23,6 +25,7 @@ await store.initialize();
 
 const app = express();
 app.disable('x-powered-by');
+app.use(pluginLocalHttpAuthentication(endpoint));
 app.use(express.json({ limit: '12mb' }));
 
 const subscribers = new Set<express.Response>();
