@@ -12,6 +12,7 @@ use chatos_local_agent_protocol::{
     LocalAgentToolApprovalDecision, LocalAgentToolApprovalStatus, LocalAgentToolInvocationRecord,
     LocalAgentToolStatus,
 };
+use std::future::Future;
 use tauri::{AppHandle, State};
 
 use crate::authentication::AuthenticationManager;
@@ -135,7 +136,7 @@ pub async fn decide_tool_approval(
         ToolApprovalDecision::Decline => "用户已在 Windows 客户端拒绝这次操作。",
     };
     let mode = load_approval_mode(&settings, &owner_user_id).await?;
-    let resolved = submit_decision(
+    let submitted = submit_decision(
         &manager,
         &journal,
         &settings,
@@ -155,6 +156,7 @@ pub async fn decide_tool_approval(
             .approval_sessions()
             .insert_if_current(session_generation, scope);
     }
+    let resolved = submitted.finish()?;
     Ok(ToolApprovalResolution {
         invocation_id,
         invocation_version: resolved.version,
@@ -327,7 +329,8 @@ async fn reconcile_session_decisions(
             SESSION_REVIEWER_ID,
             SESSION_APPROVAL_REASON,
         )
-        .await?;
+        .await?
+        .finish()?;
         changed = true;
     }
     if changed {
@@ -403,7 +406,8 @@ async fn reconcile_policy_decisions(
                     AUTOMATIC_REVIEWER_ID,
                     &reason,
                 )
-                .await?;
+                .await?
+                .finish()?;
                 invocations = load_pending(manager, owner_user_id).await?;
                 Ok((invocations, None))
             }
@@ -431,7 +435,8 @@ async fn reconcile_policy_decisions(
             POLICY_REVIEWER_ID,
             POLICY_APPROVAL_REASON,
         )
-        .await?;
+        .await?
+        .finish()?;
         changed = true;
     }
     if changed {
@@ -450,7 +455,7 @@ async fn submit_decision(
     decision: ToolApprovalDecision,
     decided_by: &str,
     reason: &str,
-) -> Result<LocalAgentToolInvocationRecord, String> {
+) -> Result<AuditedDecision<LocalAgentToolInvocationRecord>, String> {
     let record = RecordedToolApprovalDecision {
         owner_user_id: owner_user_id.to_owned(),
         invocation_id: invocation.invocation_id.clone(),
@@ -464,7 +469,7 @@ async fn submit_decision(
     let approval =
         pending_approval(invocation).ok_or_else(|| "该审批已经处理或不再存在。".to_owned())?;
     let record = journal.record(record)?;
-    record_approval_history(
+    let audit_result = record_approval_history(
         settings,
         owner_user_id,
         approval,
@@ -472,30 +477,60 @@ async fn submit_decision(
         decision,
         record.recorded_at_unix_ms,
     )
+    .await;
+    let submitted = continue_decision_after_audit(audit_result, async {
+        let result = manager
+            .execute(HostCommand::DecideToolApproval(DecideToolApprovalCommand {
+                owner_user_id: owner_user_id.to_owned(),
+                invocation_id: invocation.invocation_id.clone(),
+                expected_version: invocation.version,
+                decision: host_decision(decision),
+                decided_by: decided_by.to_owned(),
+                reason: reason.to_owned(),
+            }))
+            .await?;
+        let HostResult::ToolApproval { result } = result else {
+            return Err("Local Agent Host 返回了错误的审批响应。".into());
+        };
+        if result.invocation.invocation_id != invocation.invocation_id
+            || result.invocation.run_id != invocation.run_id
+            || !result.invocation.requires_approval
+            || result.invocation.version <= invocation.version
+            || result.invocation.approval_status != expected_status(decision)
+        {
+            return Err("Local Agent Host 返回了不匹配的审批结果。".into());
+        }
+        Ok(result.invocation)
+    })
     .await?;
-    let result = manager
-        .execute(HostCommand::DecideToolApproval(DecideToolApprovalCommand {
-            owner_user_id: owner_user_id.to_owned(),
-            invocation_id: invocation.invocation_id.clone(),
-            expected_version: invocation.version,
-            decision: host_decision(decision),
-            decided_by: decided_by.to_owned(),
-            reason: reason.to_owned(),
-        }))
-        .await?;
-    let HostResult::ToolApproval { result } = result else {
-        return Err("Local Agent Host 返回了错误的审批响应。".into());
-    };
-    if result.invocation.invocation_id != invocation.invocation_id
-        || result.invocation.run_id != invocation.run_id
-        || !result.invocation.requires_approval
-        || result.invocation.version <= invocation.version
-        || result.invocation.approval_status != expected_status(decision)
-    {
-        return Err("Local Agent Host 返回了不匹配的审批结果。".into());
-    }
     let _ = journal.remove(&record);
-    Ok(result.invocation)
+    Ok(submitted)
+}
+
+struct AuditedDecision<T> {
+    value: T,
+    audit_error: Option<String>,
+}
+
+impl<T> AuditedDecision<T> {
+    fn finish(self) -> Result<T, String> {
+        if let Some(error) = self.audit_error {
+            Err(error)
+        } else {
+            Ok(self.value)
+        }
+    }
+}
+
+async fn continue_decision_after_audit<T>(
+    audit_result: Result<(), String>,
+    decision: impl Future<Output = Result<T, String>>,
+) -> Result<AuditedDecision<T>, String> {
+    let value = decision.await?;
+    Ok(AuditedDecision {
+        value,
+        audit_error: audit_result.err(),
+    })
 }
 
 async fn approval_settings_snapshot(
@@ -612,7 +647,7 @@ async fn reconcile_recorded_decisions(
         };
         let approval =
             pending_approval(invocation).ok_or_else(|| "该审批已经处理或不再存在。".to_owned())?;
-        record_approval_history(
+        let audit_result = record_approval_history(
             settings,
             owner_user_id,
             approval,
@@ -620,29 +655,34 @@ async fn reconcile_recorded_decisions(
             record.decision,
             record.recorded_at_unix_ms,
         )
+        .await;
+        let submitted = continue_decision_after_audit(audit_result, async {
+            let result = manager
+                .execute(HostCommand::DecideToolApproval(DecideToolApprovalCommand {
+                    owner_user_id: owner_user_id.to_owned(),
+                    invocation_id: invocation.invocation_id.clone(),
+                    expected_version: invocation.version,
+                    decision: host_decision(record.decision),
+                    decided_by: record.decided_by.clone(),
+                    reason: record.reason.clone(),
+                }))
+                .await?;
+            let HostResult::ToolApproval { result } = result else {
+                return Err("Local Agent Host 返回了错误的审批恢复响应。".into());
+            };
+            if result.invocation.invocation_id != record.invocation_id
+                || result.invocation.run_id != invocation.run_id
+                || !result.invocation.requires_approval
+                || result.invocation.version <= record.invocation_version
+                || result.invocation.approval_status != expected_status(record.decision)
+            {
+                return Err("Local Agent Host 返回了不匹配的审批恢复结果。".into());
+            }
+            Ok(result.invocation)
+        })
         .await?;
-        let result = manager
-            .execute(HostCommand::DecideToolApproval(DecideToolApprovalCommand {
-                owner_user_id: owner_user_id.to_owned(),
-                invocation_id: invocation.invocation_id.clone(),
-                expected_version: invocation.version,
-                decision: host_decision(record.decision),
-                decided_by: record.decided_by.clone(),
-                reason: record.reason.clone(),
-            }))
-            .await?;
-        let HostResult::ToolApproval { result } = result else {
-            return Err("Local Agent Host 返回了错误的审批恢复响应。".into());
-        };
-        if result.invocation.invocation_id != record.invocation_id
-            || result.invocation.run_id != invocation.run_id
-            || !result.invocation.requires_approval
-            || result.invocation.version <= record.invocation_version
-            || result.invocation.approval_status != expected_status(record.decision)
-        {
-            return Err("Local Agent Host 返回了不匹配的审批恢复结果。".into());
-        }
         let _ = journal.remove(&record);
+        submitted.finish()?;
         changed = true;
     }
     if changed {

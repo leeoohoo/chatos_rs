@@ -3,13 +3,16 @@ use chatos_local_agent_protocol::{
     LocalAgentToolStatus,
 };
 use serde_json::json;
+use std::{cell::Cell, fs};
 
 use super::{
-    exact_pending_invocation, gateway_model_options,
+    continue_decision_after_audit, exact_pending_invocation, gateway_model_options,
     models::{ToolApprovalDecision, ToolApprovalMode},
     policy_auto_approval_candidate, project_pending,
+    projection::pending_approval,
+    settings::ApprovalSettingsStore,
 };
-use crate::authentication::GatewayModelConfig;
+use crate::{authentication::GatewayModelConfig, connector_state};
 
 #[test]
 fn gateway_fallback_model_catalog_is_scoped_to_enabled_credentialed_owner_models() {
@@ -229,6 +232,43 @@ fn automatic_review_verdict_is_bound_to_the_exact_pending_version() {
     let mut resolved = original;
     resolved.approval_status = LocalAgentToolApprovalStatus::Approved;
     assert!(exact_pending_invocation(&[resolved], "terminal", 2).is_none());
+}
+
+#[tokio::test]
+async fn audit_failure_does_not_strand_a_recorded_decision() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = connector_state::ensure_owner_state(directory.path(), "owner-1").unwrap();
+    fs::create_dir(state.parent().unwrap().join("approval-activity.json")).unwrap();
+    let settings = ApprovalSettingsStore::new(directory.path().into());
+    let continued = Cell::new(false);
+    let expected = invocation("approval-audit", "execute_command", json!({}));
+    let audit_result = settings.record_decision(
+        "owner-1",
+        &pending_approval(&expected).unwrap(),
+        ToolApprovalMode::RequestApproval,
+        ToolApprovalDecision::Decline,
+        1,
+    );
+    assert!(audit_result.is_err());
+    let audit_error = audit_result.as_ref().unwrap_err().clone();
+    let submitted = continue_decision_after_audit(audit_result, async {
+        continued.set(true);
+        Ok(expected.clone())
+    })
+    .await
+    .unwrap();
+
+    assert!(continued.get());
+    assert_eq!(submitted.value.invocation_id, expected.invocation_id);
+    assert_eq!(submitted.finish().unwrap_err(), audit_error);
+
+    let decision_error = continue_decision_after_audit::<LocalAgentToolInvocationRecord>(
+        Err("audit save failed".into()),
+        async { Err("host decision failed".into()) },
+    )
+    .await
+    .err();
+    assert_eq!(decision_error.as_deref(), Some("host decision failed"));
 }
 
 fn invocation(
