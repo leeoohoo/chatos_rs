@@ -41,6 +41,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-18 原生 Run 检查器走查发现并关闭 Markdown 结果竖排：事件时间线的通用后代 `article` 网格选择器会误中嵌套的安全 Markdown 预览，把结果首段挤进 8px 列并逐字竖排，同时覆盖工具调用卡片布局。Windows 现只为显式 `agent-team-run-detail__event` 元素应用时间线网格，Markdown 文章和工具调用保持各自布局；持续门禁禁止恢复宽泛后代选择器。重新构建正式 Release 后复测真实 `Windows 团队需求调研回归` Run（25 条事件、4 次模型调用）：结果首段与 4 条列表均正常横排，`todo complete` / `todo progress append` 工具摘要和事件时间线同时可读。对应门禁为 React/Vitest `146` 个文件、`558 passed`，TypeScript、production build、architecture audit、bundle audit（入口 `459.96 KiB raw / 138.99 KiB gzip`）与 `git diff --check` 全部通过。
 
+- 2026-11-18 原生 Run 检查器键盘回归发现并关闭模态焦点缺口：旧实现没有自身的初始焦点、`Escape` 关闭或触发控件恢复合同，导致键盘进入后无法可靠完成检查并返回原 Run。Windows 现在打开检查器即聚焦“完成”，正反向 `Tab` 均限制在当前弹窗；`Escape`、标题按钮或背景关闭后会把焦点恢复到实际打开它的 Run 行，列表行与通讯/任务执行摘要入口均保留精确触发控件。焦点元素筛选提升为共享无障碍 helper，继续排除 disabled、hidden 与祖先隐藏的控件。正式 Release 在真实 25 事件/4 次模型调用的任务 Run 上复测：`Tab` / `Shift+Tab` 均保持“完成”按钮可见焦点，`Escape` 关闭后第三条任务 Run 行获得可见焦点。门禁为 React/Vitest `146` 个文件、`558 passed`，TypeScript、production build、architecture audit、bundle audit（入口 `459.97 KiB raw / 138.99 KiB gzip`）与 `git diff --check` 全部通过；Tauri `--no-bundle` 正式 Release 重建成功。
+
 - 2026-11-17 在当前 HEAD 重跑 Windows React 前端门禁：Vitest `145` 个测试文件、`536 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture` 和 `npm run audit:bundle` 均通过，入口 Bundle 为 `456.97 KiB raw / 137.71 KiB gzip`。本轮未修改前端运行逻辑，结果只证明合并后的前端契约、类型、架构边界和 Bundle 预算无回归，不替代原生逐页视觉和发布环境验收。
 
 - 2026-11-17 运行中复核 8 小时隔离 Release：Worker 仍存活约 `1.05` 小时，正式 EXE 进程路径为 `target-shared/release/chatos-windows-react.exe`，工作集约 `37.82 MB`、私有内存约 `9.97 MB`、`33` 个线程、`436` 个 handles；仅观察到其 `WebView2`/`conhost` 子进程，未见异常进程树。旧版长稳脚本仍只在最终阶段写报告，因此本条运行中资源样本不能替代最终 `8 小时`报告。

@@ -56,6 +56,7 @@ import {
   trailingAgentTeamMentionQuery,
   visibleAgentTeamMentionCandidates,
 } from "../domain/agentTeamMention";
+import { getFocusableModalElements } from "../../../shared/modalAccessibility";
 import "./agentManagement.css";
 
 export function AgentManagementView({
@@ -2108,6 +2109,7 @@ function AgentTeamRunsView({
   const refresh = useAgentTeamRunStore((state) => state.refresh);
   const reset = useAgentTeamRunStore((state) => state.reset);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const selectedRunTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(20);
   const [runMetrics, setRunMetrics] = useState<Record<string, { eventCount: number; hasMoreEvents: boolean; modelCalls: number }>>({});
@@ -2126,6 +2128,18 @@ function AgentTeamRunsView({
   );
   const selectedAgentName = selectedAgentId ? profileNames.get(selectedAgentId) ?? "Agent" : null;
   const selectedRun = visibleSnapshot?.runs.find((run) => run.runId === selectedRunId) ?? null;
+  const openRunDetail = useCallback((runId: string, trigger: HTMLButtonElement) => {
+    selectedRunTriggerRef.current = trigger;
+    setSelectedRunId(runId);
+  }, []);
+  const closeRunDetail = useCallback(() => {
+    const trigger = selectedRunTriggerRef.current;
+    selectedRunTriggerRef.current = null;
+    setSelectedRunId(null);
+    window.requestAnimationFrame(() => {
+      if (trigger?.isConnected && !trigger.disabled) trigger.focus({ preventScroll: true });
+    });
+  }, []);
 
   useEffect(() => {
     if (port.loadTeamRuns) void activate(port, ownerUserId, detail.team.id);
@@ -2192,8 +2206,8 @@ function AgentTeamRunsView({
       </header>
       {selectedAgentId != null && (
         <div className="agent-team-runs__lanes">
-          <AgentTeamRunLaneSummary lane="manager" run={visibleRuns.find((run) => run.lane === "manager") ?? null} onInspect={setSelectedRunId} />
-          <AgentTeamRunLaneSummary lane="executor" run={visibleRuns.find((run) => run.lane === "executor") ?? null} onInspect={setSelectedRunId} />
+          <AgentTeamRunLaneSummary lane="manager" run={visibleRuns.find((run) => run.lane === "manager") ?? null} onInspect={openRunDetail} />
+          <AgentTeamRunLaneSummary lane="executor" run={visibleRuns.find((run) => run.lane === "executor") ?? null} onInspect={openRunDetail} />
         </div>
       )}
       {error && (
@@ -2218,7 +2232,7 @@ function AgentTeamRunsView({
               <button
                 aria-label={`查看${profileNames.get(run.agentId) ?? run.agentId}的运行详情`}
                 disabled={!runInspectorPort}
-                onClick={() => setSelectedRunId(run.runId)}
+                onClick={(event) => openRunDetail(run.runId, event.currentTarget)}
                 type="button"
               >
                 <header>
@@ -2258,7 +2272,7 @@ function AgentTeamRunsView({
           port={runInspectorPort}
           run={selectedRun}
           teamId={detail.team.id}
-          onClose={() => setSelectedRunId(null)}
+          onClose={closeRunDetail}
           onRetried={() => refresh(port)}
         />
       )}
@@ -2273,10 +2287,10 @@ function AgentTeamRunLaneSummary({
 }: {
   lane: "manager" | "executor";
   run: AgentTeamRunSummary | null;
-  onInspect(runId: string): void;
+  onInspect(runId: string, trigger: HTMLButtonElement): void;
 }) {
   return (
-    <button disabled={!run} onClick={() => { if (run) onInspect(run.runId); }} type="button">
+    <button disabled={!run} onClick={(event) => { if (run) onInspect(run.runId, event.currentTarget); }} type="button">
       <header>
         <span className={`agent-team-runs__lane is-${lane}`}>{lane === "manager" ? "通讯" : "任务执行"}</span>
         {run ? <em className={`is-${teamRunStatusClass(run.runStatus)}`}>{teamRunCheckpointStatusLabel(run.runStatus)}</em> : <em>暂无记录</em>}
@@ -2314,6 +2328,8 @@ function AgentTeamRunDetailSheet({
   const [isRetrying, setIsRetrying] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const canRetry = detail?.run.status.toLowerCase() === "needs_review" && Boolean(agentPort.retryTeamRun);
   const canCancel = Boolean(detail && agentPort.cancelTeamRun
     && isCancellableTeamRunDetailStatus(detail.run.status));
@@ -2349,6 +2365,44 @@ function AgentTeamRunDetailSheet({
     };
   }, [detail, ownerUserId, port, runId]);
 
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return undefined;
+    closeButtonRef.current?.focus({ preventScroll: true });
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = getFocusableModalElements(dialog);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus({ preventScroll: true });
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const activeElement = document.activeElement;
+      if (!dialog.contains(activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus({ preventScroll: true });
+      } else if (event.shiftKey && activeElement === first) {
+        event.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!event.shiftKey && activeElement === last) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [onClose]);
+
   return (
     <div className="agent-editor-backdrop" role="presentation" onMouseDown={onClose}>
       <section
@@ -2356,11 +2410,13 @@ function AgentTeamRunDetailSheet({
         aria-modal="true"
         className="agent-team-run-detail"
         onMouseDown={(event) => event.stopPropagation()}
+        ref={dialogRef}
         role="dialog"
+        tabIndex={-1}
       >
         <header>
           <div><h2>Run 检查器</h2><p>{agentName} · {run.lane === "manager" ? "通讯" : "任务执行"}</p></div>
-          <button onClick={onClose} type="button">完成</button>
+          <button onClick={onClose} ref={closeButtonRef} type="button">完成</button>
         </header>
         <div className="agent-team-run-detail__body">
           {isLoading ? (

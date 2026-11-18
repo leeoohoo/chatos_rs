@@ -676,8 +676,15 @@ describe("AgentManagementView", () => {
     expect(screen.getByText("界面设计师 的运行")).toBeVisible();
     expect(screen.getByText("通讯与任务执行彼此独立，可同时运行")).toBeVisible();
     expect(screen.getByRole("button", { name: "查看全部" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "查看界面设计师的运行详情" }));
+    const runDetailTrigger = screen.getByRole("button", { name: "查看界面设计师的运行详情" });
+    fireEvent.click(runDetailTrigger);
     expect(await screen.findByRole("dialog", { name: "团队 Run 检查器" })).toBeVisible();
+    const closeRunDetail = screen.getByRole("button", { name: "完成" });
+    await waitFor(() => expect(closeRunDetail).toHaveFocus());
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(closeRunDetail).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(closeRunDetail).toHaveFocus();
     await waitFor(() => expect(loadRun).toHaveBeenCalledWith("owner-1", "run-team-1", 0));
     expect(await screen.findByText("Run 已完成")).toBeVisible();
     expect(screen.getByText("已完成团队回复")).toBeVisible();
@@ -685,6 +692,9 @@ describe("AgentManagementView", () => {
     expect(screen.getByText("调用 Plugin 工具")).toBeVisible();
     expect(screen.getByText("路由 · plugin")).toBeVisible();
     expect(screen.getByText("succeeded · 结果 128 B")).toBeVisible();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "团队 Run 检查器" })).toBeNull();
+    await waitFor(() => expect(runDetailTrigger).toHaveFocus());
   });
 
   it("confirms and cancels an active manager Run through the owner-scoped port", async () => {
@@ -749,7 +759,15 @@ describe("AgentManagementView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "运行" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看界面设计师的运行状态" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看界面设计师的运行详情" }));
-    fireEvent.click(await screen.findByRole("button", { name: "结束运行" }));
+    const closeRunDetail = screen.getByRole("button", { name: "完成" });
+    const cancelRun = await screen.findByRole("button", { name: "结束运行" });
+    cancelRun.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(closeRunDetail).toHaveFocus();
+    closeRunDetail.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(cancelRun).toHaveFocus();
+    fireEvent.click(cancelRun);
 
     expect(confirm).toHaveBeenCalledWith("结束这个未完成的 Agent Run？已完成的消息和审计记录会保留。");
     await waitFor(() => expect(cancelTeamRun).toHaveBeenCalledWith("owner-1", team.id, "run-active"));
