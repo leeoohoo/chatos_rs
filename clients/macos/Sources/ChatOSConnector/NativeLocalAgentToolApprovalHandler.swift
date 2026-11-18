@@ -159,7 +159,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
                     "remote_connection_controller_upload_project_file",
                 ].contains($0.toolName)
         }) else { return false }
-        if let recorded = await decisionJournal.decision(
+        if let recorded = try await decisionJournal.decision(
             ownerUserID: ownerUserID,
             invocation: invocation
         ) {

@@ -228,6 +228,9 @@ public actor NativeLocalAgentPlatformToolWorker {
         }
       } catch is CancellationError {
         return
+      } catch let error as NativeLocalAgentApprovalDecisionJournalError {
+        Self.logger.error("\(error.localizedDescription, privacy: .public)")
+        return
       } catch {}
       guard maximumIdleDuration != .zero, clock.now < deadline else { return }
       do {
