@@ -52,6 +52,7 @@ export function ContactConversationView({
         </div>
       )}
       <ConversationHistoryView
+        assistantName={contact.title}
         askUserPort={askUserPort}
         attachmentPort={attachmentPort}
         composerPort={composerPort}

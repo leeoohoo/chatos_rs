@@ -670,9 +670,23 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .history-more { justify-self: center; border: 0; padding: 5px 10px; color: var(--accent); background: transparent; font-size: 12px; font-weight: 600; cursor: pointer; }
 .history-more:disabled { color: var(--tertiary); cursor: default; }
 .history-error { margin: 0; color: #ff3b30; text-align: center; font-size: 12px; }
-.message-list { display: flex; flex-direction: column; gap: 12px; }
-.message-row { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.message-row--user { align-items: flex-start; }
+.message-list { display: flex; flex-direction: column; gap: 14px; }
+.message-row { display: flex; width: 100%; align-items: flex-start; gap: 10px; }
+.message-avatar { display: grid; flex: 0 0 20px; width: 20px; height: 20px; margin-top: 1px; place-items: center; color: var(--secondary); font-size: 13px; line-height: 1; }
+.message-avatar--assistant { color: var(--accent); font-size: 16px; }
+.message-column { display: flex; min-width: 0; max-width: min(760px, calc(100% - 30px)); flex: 1 1 auto; flex-direction: column; align-items: flex-start; gap: 4px; }
+.message-meta { display: flex; align-items: baseline; gap: 7px; }
+.message-meta strong { font-size: 11px; font-weight: 650; }
+.message-meta time, .message-meta > span { color: var(--tertiary); font-size: 10px; font-weight: 430; }
+.message-content { min-width: 0; overflow-wrap: anywhere; }
+.message-markdown, .message-markdown .notepad-markdown { min-width: 0; width: 100%; overflow: visible; padding: 0; color: inherit; font-size: inherit; line-height: inherit; overflow-wrap: anywhere; white-space: normal; }
+.message-markdown .notepad-markdown h1, .message-markdown .notepad-markdown h2, .message-markdown .notepad-markdown h3, .message-markdown .notepad-markdown h4 { margin: .8em 0 .35em; font-size: inherit; line-height: 1.45; letter-spacing: 0; }
+.message-markdown .notepad-markdown p, .message-markdown .notepad-markdown li, .message-markdown .notepad-markdown blockquote { font-size: inherit; line-height: inherit; }
+.message-markdown .notepad-markdown p { margin: 0 0 .7em; }
+.message-markdown .notepad-markdown ul, .message-markdown .notepad-markdown ol { gap: 2px; margin: 0 0 .7em; padding-left: 20px; }
+.message-markdown .notepad-markdown blockquote, .message-markdown .notepad-markdown pre { margin: 0 0 .7em; }
+.message-markdown .notepad-markdown > :first-child { margin-top: 0; }
+.message-markdown .notepad-markdown > :last-child { margin-bottom: 0; }
 .message-attachments { display: flex; max-width: min(680px,86%); flex-wrap: wrap; align-items: center; gap: 5px; }
 .message-attachment { display: grid; grid-template-columns: 18px minmax(0,1fr) auto; align-items: center; gap: 6px; max-width: 260px; border: 1px solid var(--separator); border-radius: 8px; padding: 5px 7px; color: inherit; background: var(--surface); box-shadow: 0 3px 10px rgba(0,0,0,.035); text-align: left; cursor: pointer; }
 .message-row--user .message-attachment { border-color: rgba(10,132,255,.18); background: rgba(10,132,255,.07); }
@@ -680,9 +694,9 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .message-attachment strong { overflow: hidden; font-size: 10px; font-weight: 610; text-overflow: ellipsis; white-space: nowrap; }
 .message-attachment small { color: var(--tertiary); font-size: 9px; white-space: nowrap; }
 .message-attachments__error { color: #ff3b30; font-size: 9px; }
-.message-bubble { width: fit-content; max-width: min(760px, 86%); border: 1px solid rgba(118,118,128,.14); border-radius: 10px; padding: 9px 12px; background: rgba(255,255,255,.68); box-shadow: none; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
-.message-bubble--user { align-self: flex-start; border-color: rgba(175,145,255,.16); color: inherit; background: rgba(241,237,255,.92); }
-.message-bubble--assistant { align-self: flex-start; border-color: transparent; background: transparent; }
+.message-bubble { display: grid; width: fit-content; max-width: 100%; gap: 6px; border: 1px solid rgba(118,118,128,.14); border-radius: 10px; padding: 9px 12px; background: rgba(255,255,255,.68); box-shadow: none; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+.message-bubble--user { border-color: rgba(175,145,255,.16); color: inherit; background: rgba(241,237,255,.92); }
+.message-bubble--assistant { width: 100%; border-color: transparent; padding: 0; background: transparent; }
 .ask-user-prompt-list { display: grid; width: min(760px, 96%); gap: 9px; margin-top: 7px; }
 .ask-user-card { display: grid; width: 100%; gap: 14px; overflow: hidden; border: 1px solid rgba(10,132,255,.2); border-radius: 15px; padding: 15px; background: linear-gradient(145deg, rgba(255,255,255,.88), rgba(246,250,255,.8)); box-shadow: 0 8px 24px rgba(0,0,0,.055); backdrop-filter: blur(20px) saturate(1.2); }
 .ask-user-card__header { display: grid; grid-template-columns: 34px minmax(0,1fr) auto; align-items: center; gap: 10px; }

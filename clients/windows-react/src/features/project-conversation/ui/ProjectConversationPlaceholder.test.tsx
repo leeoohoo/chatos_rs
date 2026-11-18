@@ -4,8 +4,8 @@ import { useProjectConversationStore } from "../application/projectConversationS
 import { ProjectConversationPlaceholder } from "./ProjectConversationPlaceholder";
 
 vi.mock("../../conversation-history/ui/ConversationHistoryView", () => ({
-  ConversationHistoryView: ({ title }: { title?: string }) => (
-    <div data-testid="project-conversation-history-title">{title}</div>
+  ConversationHistoryView: ({ title, assistantName }: { title?: string; assistantName: string }) => (
+    <div data-assistant-name={assistantName} data-testid="project-conversation-history-title">{title}</div>
   ),
 }));
 
@@ -40,6 +40,7 @@ describe("ProjectConversationPlaceholder", () => {
     );
 
     expect(screen.getByTestId("project-conversation-history-title")).toHaveTextContent("chatos · 叽咕狸");
+    expect(screen.getByTestId("project-conversation-history-title")).toHaveAttribute("data-assistant-name", "叽咕狸");
     useProjectConversationStore.getState().reset();
   });
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useAskUserStore } from "../../ask-user/application/askUserStore";
 import {
   promptsForTurn,
@@ -24,6 +24,7 @@ import type { ConversationRuntimeSettingsPort } from "../../conversation-runtime
 import { useRunInspectorStore } from "../../run-inspector/application/runInspectorStore";
 import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
 import { RunInspectorLauncher, RunInspectorSheet } from "../../run-inspector/ui/RunInspector";
+import { SafeMarkdownPreview } from "../../notepad/ui/SafeMarkdownPreview";
 import { useConversationHistoryStore } from "../application/conversationHistoryStore";
 import type { ConversationHistorySnapshot } from "../domain/conversationHistory";
 import type { ConversationHistoryPort } from "../ports/ConversationHistoryPort";
@@ -32,6 +33,7 @@ export function ConversationHistoryView({
   ownerUserId,
   conversationId,
   title,
+  assistantName,
   port,
   composerPort,
   attachmentPort,
@@ -44,6 +46,7 @@ export function ConversationHistoryView({
   ownerUserId: string;
   conversationId: string;
   title?: string;
+  assistantName: string;
   port: ConversationHistoryPort;
   composerPort: ConversationComposerPort;
   attachmentPort: ConversationAttachmentPort;
@@ -143,10 +146,20 @@ export function ConversationHistoryView({
         {phase.refreshError && <p className="history-error">{phase.refreshError}</p>}
         <div className="message-list">
           {phase.snapshot.messages.map((message) => (
-            <div className={`message-row message-row--${message.role}`} key={message.message_id}>
-              <article className={`message-bubble message-bubble--${message.role}`}>
-                <span>{displayText(message.content)}</span>
-              </article>
+            <ConversationMessage
+              after={lastMessageByTurn.get(message.turn_id) === message.message_id ? (
+                <AskUserPromptList
+                  prompts={promptsForTurn(scopedPrompts, message.turn_id)}
+                  port={askUserPort}
+                  onResolved={reconcile}
+                />
+              ) : null}
+              assistantName={assistantName}
+              content={message.content}
+              createdAtUnixMs={message.created_at_unix_ms}
+              key={message.message_id}
+              role={message.role}
+            >
               <MessageAttachments
                 attachmentPort={attachmentPort}
                 attachments={phase.snapshot.attachments.filter(
@@ -166,14 +179,7 @@ export function ConversationHistoryView({
                   port={runInspectorPort}
                 />
               )}
-              {lastMessageByTurn.get(message.turn_id) === message.message_id && (
-                <AskUserPromptList
-                  prompts={promptsForTurn(scopedPrompts, message.turn_id)}
-                  port={askUserPort}
-                  onResolved={reconcile}
-                />
-              )}
-            </div>
+            </ConversationMessage>
           ))}
         </div>
         {unattached.length > 0 && (
@@ -200,6 +206,74 @@ export function ConversationHistoryView({
       <RunInspectorSheet port={runInspectorPort} />
     </section>
   );
+}
+
+export function ConversationMessage({
+  after,
+  assistantName,
+  content,
+  createdAtUnixMs,
+  role,
+  children,
+}: {
+  after?: ReactNode;
+  assistantName: string;
+  content: unknown;
+  createdAtUnixMs: number;
+  role: "user" | "assistant";
+  children?: ReactNode;
+}) {
+  const timestamp = conversationMessageTimestamp(createdAtUnixMs);
+  const senderName = role === "user" ? "你" : assistantName.trim() || "叽咕狸";
+  const messageText = displayText(content);
+  return (
+    <div className={`message-row message-row--${role}`}>
+      <span className={`message-avatar message-avatar--${role}`} aria-hidden="true">
+        {role === "user" ? "●" : "✦"}
+      </span>
+      <div className="message-column">
+        <article className={`message-bubble message-bubble--${role}`}>
+          <header className="message-meta">
+            <strong>{senderName}</strong>
+            {timestamp.dateTime ? (
+              <time dateTime={timestamp.dateTime}>{timestamp.label}</time>
+            ) : (
+              <span>{timestamp.label}</span>
+            )}
+          </header>
+          {role === "assistant" && messageText.trim() ? (
+            <div className="message-markdown">
+              <SafeMarkdownPreview markdown={messageText} />
+            </div>
+          ) : (
+            <span className="message-content">{messageText}</span>
+          )}
+          {children}
+        </article>
+        {after}
+      </div>
+    </div>
+  );
+}
+
+export function formatConversationMessageTime(unixMs: number, locale?: string): string {
+  const date = new Date(unixMs);
+  if (!Number.isFinite(unixMs) || Number.isNaN(date.getTime())) return "时间未知";
+  return new Intl.DateTimeFormat(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function conversationMessageTimestamp(unixMs: number): { label: string; dateTime: string | null } {
+  const date = new Date(unixMs);
+  if (!Number.isFinite(unixMs) || Number.isNaN(date.getTime())) {
+    return { label: "时间未知", dateTime: null };
+  }
+  return {
+    label: formatConversationMessageTime(unixMs),
+    dateTime: date.toISOString(),
+  };
 }
 
 function AskUserPromptList({

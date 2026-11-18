@@ -324,6 +324,7 @@ export function AgentManagementView({
           />
           <ConversationHistoryView
             agentBound
+            assistantName={directConversation.title}
             askUserPort={askUserPort}
             attachmentPort={attachmentPort}
             composerPort={directComposerPort}

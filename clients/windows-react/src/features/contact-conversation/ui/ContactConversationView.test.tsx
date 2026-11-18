@@ -11,8 +11,8 @@ import type { WorkspaceResourceItem } from "../../workspace-index/domain/workspa
 import { ContactConversationView } from "./ContactConversationView";
 
 vi.mock("../../conversation-history/ui/ConversationHistoryView", () => ({
-  ConversationHistoryView: ({ ownerUserId, conversationId, title }: { ownerUserId: string; conversationId: string; title?: string }) => (
-    <div data-testid="conversation-surface">{ownerUserId}:{conversationId}:{title}</div>
+  ConversationHistoryView: ({ ownerUserId, conversationId, title, assistantName }: { ownerUserId: string; conversationId: string; title?: string; assistantName: string }) => (
+    <div data-testid="conversation-surface">{ownerUserId}:{conversationId}:{title}:{assistantName}</div>
   ),
 }));
 
@@ -23,7 +23,7 @@ describe("ContactConversationView", () => {
     renderView({ id: "jiguli", title: "叽咕狸", subtitle: null, conversationId: "conversation-1" });
 
     expect(screen.getByLabelText("叽咕狸 联系人会话")).toBeInTheDocument();
-    expect(screen.getByTestId("conversation-surface")).toHaveTextContent("owner-1:conversation-1:叽咕狸");
+    expect(screen.getByTestId("conversation-surface")).toHaveTextContent("owner-1:conversation-1:叽咕狸:叽咕狸");
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 
@@ -31,7 +31,7 @@ describe("ContactConversationView", () => {
     renderView({ id: "plugin-installer", title: "插件安装助手", subtitle: null, conversationId: "conversation-2" });
 
     expect(screen.getByRole("note")).toHaveTextContent("安装能力只在此对话可用");
-    expect(screen.getByTestId("conversation-surface")).toHaveTextContent("owner-1:conversation-2:插件安装助手");
+    expect(screen.getByTestId("conversation-surface")).toHaveTextContent("owner-1:conversation-2:插件安装助手:插件安装助手");
   });
 
   it("shows the macOS empty state when no public conversation exists", () => {

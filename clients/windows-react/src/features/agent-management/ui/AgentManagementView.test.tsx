@@ -24,8 +24,8 @@ import {
 } from "./AgentManagementView";
 
 vi.mock("../../conversation-history/ui/ConversationHistoryView", () => ({
-  ConversationHistoryView: ({ agentBound }: { agentBound?: boolean }) => (
-    <div data-testid="agent-conversation-history" data-agent-bound={String(agentBound)} />
+  ConversationHistoryView: ({ agentBound, assistantName }: { agentBound?: boolean; assistantName: string }) => (
+    <div data-testid="agent-conversation-history" data-agent-bound={String(agentBound)} data-assistant-name={assistantName} />
   ),
 }));
 
@@ -1142,6 +1142,7 @@ describe("AgentManagementView", () => {
     await waitFor(() => expect(prepareConversation).toHaveBeenCalledWith("owner-1", "agent-1"));
     expect(await screen.findByLabelText("界面设计师 Agent 私聊")).toBeVisible();
     expect(screen.getByTestId("agent-conversation-history")).toHaveAttribute("data-agent-bound", "true");
+    expect(screen.getByTestId("agent-conversation-history")).toHaveAttribute("data-assistant-name", "界面设计师");
     expect(screen.getByRole("button", { name: "返回 Agent 管理" })).toBeEnabled();
     expect(await screen.findByText("最近 1 次运行")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "查看动态" }));

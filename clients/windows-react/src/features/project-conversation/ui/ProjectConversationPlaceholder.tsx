@@ -96,6 +96,7 @@ export function ProjectConversationPlaceholder({
   if (phase.kind === "available") {
     return (
       <ConversationHistoryView
+        assistantName="叽咕狸"
         ownerUserId={ownerUserId}
         conversationId={phase.conversationId}
         title={`${project.title} · 叽咕狸`}
