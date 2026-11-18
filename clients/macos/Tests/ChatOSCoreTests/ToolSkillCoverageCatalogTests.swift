@@ -97,7 +97,7 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             "Complementary capabilities are additive"
         ))
         XCTAssertTrue(taskOrchestration.instructions.contains(
-            "Never call `cancel_task` for a `failed`, `succeeded`, or `cancelled` Task"
+            "A `failed`, `succeeded`, or `cancelled` Task is already terminal"
         ))
         XCTAssertTrue(taskOrchestration.instructions.contains(
             "Choose Task boundaries by ownership and handoff value"
@@ -129,7 +129,7 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             "A `failed`, `succeeded`, or `cancelled` Task is already terminal"
         ))
         XCTAssertTrue(recovery.content.contains(
-            "create the replacement directly"
+            "create any wanted replacement directly"
         ))
         let decomposition = try BundledAgentSkillLoader.readResource(
             skillName: taskOrchestration.descriptor.name,
