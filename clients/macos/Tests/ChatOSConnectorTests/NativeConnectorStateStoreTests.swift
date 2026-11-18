@@ -824,7 +824,7 @@ struct NativeConnectorStateStoreTests {
     }
 
     @Test
-    func activityHistoryRoundTripsIndependentlyFromConnectorState() throws {
+    func activityHistoryRoundTripsIndependentlyFromConnectorState() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -844,7 +844,7 @@ struct NativeConnectorStateStoreTests {
             )]
         )
 
-        try store.save(history)
+        try await store.save(history)
 
         #expect(try store.load() == history)
     }

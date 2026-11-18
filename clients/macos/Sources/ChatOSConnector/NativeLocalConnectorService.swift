@@ -496,7 +496,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             at: 0
         )
         activityHistory.commands = Array(activityHistory.commands.prefix(1_000))
-        try activityHistoryStore.save(activityHistory)
+        try await activityHistoryStore.save(activityHistory)
         return result
     }
 
@@ -506,7 +506,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     public func clearCommandHistory() async throws {
         activityHistory.commands = []
-        try activityHistoryStore.save(activityHistory)
+        try await activityHistoryStore.save(activityHistory)
     }
 
     public func fetchApprovalSettings() async throws -> LocalConnectorApprovalSettings {
@@ -620,7 +620,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                 mode: state.approvalMode,
                 reviewer: .user
             ))
-            try activityHistoryStore.save(activityHistory)
+            try await activityHistoryStore.save(activityHistory)
         }
     }
 

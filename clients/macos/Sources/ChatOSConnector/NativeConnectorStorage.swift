@@ -43,11 +43,18 @@ struct NativeConnectorActivityHistory: Codable, Sendable, Equatable {
     static let empty = NativeConnectorActivityHistory()
 }
 
-struct NativeConnectorActivityHistoryStore: Sendable {
+actor NativeConnectorActivityHistoryStore {
     static let maximumHistoryBytes = 16 * 1_024 * 1_024
-    let historyURL: URL
+    nonisolated let historyURL: URL
+    private var writeInFlight = false
+    private var pendingHistory: NativeConnectorActivityHistory?
+    private var pendingContinuations: [CheckedContinuation<Void, any Error>] = []
 
-    func load() throws -> NativeConnectorActivityHistory {
+    init(historyURL: URL) {
+        self.historyURL = historyURL
+    }
+
+    nonisolated func load() throws -> NativeConnectorActivityHistory {
         guard FileManager.default.fileExists(atPath: historyURL.path) else { return .empty }
         return try JSONDecoder().decode(
             NativeConnectorActivityHistory.self,
@@ -58,7 +65,39 @@ struct NativeConnectorActivityHistoryStore: Sendable {
         )
     }
 
-    func save(_ history: NativeConnectorActivityHistory) throws {
+    func save(_ history: NativeConnectorActivityHistory) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            if writeInFlight {
+                pendingHistory = history
+                pendingContinuations.append(continuation)
+            } else {
+                writeInFlight = true
+                Task { await flush(history, continuations: [continuation]) }
+            }
+        }
+    }
+
+    private func flush(
+        _ history: NativeConnectorActivityHistory,
+        continuations: [CheckedContinuation<Void, any Error>]
+    ) async {
+        do {
+            try await Task.detached { try self.write(history) }.value
+            continuations.forEach { $0.resume() }
+        } catch {
+            continuations.forEach { $0.resume(throwing: error) }
+        }
+        if let pendingHistory {
+            let pendingContinuations = self.pendingContinuations
+            self.pendingHistory = nil
+            self.pendingContinuations = []
+            await flush(pendingHistory, continuations: pendingContinuations)
+        } else {
+            writeInFlight = false
+        }
+    }
+
+    private nonisolated func write(_ history: NativeConnectorActivityHistory) throws {
         try FileManager.default.createDirectory(
             at: historyURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
