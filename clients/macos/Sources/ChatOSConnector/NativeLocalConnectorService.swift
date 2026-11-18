@@ -575,6 +575,20 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         publishApprovalSnapshot()
         let continuation = pendingApprovalContinuations.removeValue(forKey: id)
         let approvalScopeKey = pendingApprovalScopeKeys.removeValue(forKey: id)
+        let resolvedDecision: NativeApprovalDecision
+        switch decision {
+        case .accept, .acceptForSession:
+            if decision == .acceptForSession, let approvalScopeKey {
+                sessionApprovalAllowlist.insert(approvalScopeKey)
+            }
+            resolvedDecision = .approve(
+                reason: "用户已在本机批准。",
+                rememberAllow: decision == .acceptForSession
+            )
+        case .decline:
+            resolvedDecision = .deny(reason: "用户已在本机拒绝。")
+        }
+        defer { continuation?.resume(returning: resolvedDecision) }
         if let pending {
             activityHistory.approvals.insert(
                 .init(
@@ -592,7 +606,6 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                 at: 0
             )
             activityHistory.approvals = Array(activityHistory.approvals.prefix(1_000))
-            try activityHistoryStore.save(activityHistory)
             publishApprovalEvent(.init(
                 requestID: pending.requestID,
                 command: pending.command,
@@ -607,18 +620,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                 mode: state.approvalMode,
                 reviewer: .user
             ))
-        }
-        switch decision {
-        case .accept, .acceptForSession:
-            if decision == .acceptForSession, let approvalScopeKey {
-                sessionApprovalAllowlist.insert(approvalScopeKey)
-            }
-            continuation?.resume(returning: .approve(
-                reason: "用户已在本机批准。",
-                rememberAllow: decision == .acceptForSession
-            ))
-        case .decline:
-            continuation?.resume(returning: .deny(reason: "用户已在本机拒绝。"))
+            try activityHistoryStore.save(activityHistory)
         }
     }
 

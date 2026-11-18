@@ -206,6 +206,56 @@ struct NativeConnectorStateStoreTests {
         #expect(decision == .deny(reason: "用户已在本机拒绝。"))
     }
 
+    @Test("approval storage failure still resumes the waiting operation")
+    func approvalStorageFailureDoesNotStrandContinuation() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let service = try NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: directory.appendingPathComponent("state.json")
+            ),
+            ticketProvider: RejectingTicketProvider()
+        )
+        let project = directory.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let recorder = ApprovalDecisionRecorder()
+        let decisionTask = Task {
+            let decision = await service.approvalDecision(
+                requestID: "request-storage-failure",
+                command: "/bin/zsh",
+                arguments: ["-lc", "pwd"],
+                cwd: project,
+                projectRoot: project,
+                source: "Task",
+                risk: .init(level: "low", reason: nil)
+            )
+            await recorder.record(decision)
+        }
+        defer { decisionTask.cancel() }
+
+        var pending: [LocalConnectorPendingApproval] = []
+        for _ in 0..<100 {
+            pending = try await service.fetchPendingApprovals()
+            if !pending.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let approval = try #require(pending.first)
+        try FileManager.default.createDirectory(
+            at: directory.appendingPathComponent("activity-history.json"),
+            withIntermediateDirectories: true
+        )
+
+        await #expect(throws: (any Error).self) {
+            try await service.resolveApproval(id: approval.id, decision: .decline)
+        }
+        for _ in 0..<100 where await recorder.decision == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await recorder.decision == .deny(reason: "用户已在本机拒绝。"))
+    }
+
     @Test
     func incompleteHostEvidenceBypassesAIAndTransfersDirectlyToHuman() async throws {
         let directory = FileManager.default.temporaryDirectory
@@ -763,5 +813,13 @@ struct NativeConnectorStateStoreTests {
 private struct RejectingTicketProvider: LocalConnectorPairingTicketProviding {
     func issueLocalConnectorPairingTicket() async throws -> String {
         throw URLError(.notConnectedToInternet)
+    }
+}
+
+private actor ApprovalDecisionRecorder {
+    var decision: NativeApprovalDecision?
+
+    func record(_ decision: NativeApprovalDecision) {
+        self.decision = decision
     }
 }
