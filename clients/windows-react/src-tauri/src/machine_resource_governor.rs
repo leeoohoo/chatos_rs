@@ -45,11 +45,16 @@ pub(crate) struct MachineResourceDomainSnapshot {
 pub(crate) struct MachineResourceSnapshot {
     pool_id: &'static str,
     configured_resource_units: usize,
+    baseline_resource_units: usize,
+    target_resource_units: usize,
     available_resource_units: usize,
     maximum_background_resource_units: usize,
     used_resource_units: usize,
     queued_count: usize,
     pressure_level: LocalAgentResourcePressureLevel,
+    total_logical_jobs: usize,
+    base_host_work_items: usize,
+    dynamic_borrowing_enabled: bool,
     domains: Vec<MachineResourceDomainSnapshot>,
     host: Option<MachineResourceHostSnapshot>,
 }
@@ -58,6 +63,7 @@ pub(crate) struct MachineResourceSnapshot {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MachineResourceHostSnapshot {
     maximum_concurrent_work_items: usize,
+    target_concurrent_work_items: usize,
     effective_maximum_concurrent_work_items: usize,
     pressure_level: LocalAgentResourcePressureLevel,
     active_work_items: usize,
@@ -71,6 +77,10 @@ pub(crate) struct MachineResourceHostSnapshot {
 #[derive(Debug, Clone, Copy)]
 struct MachineResourceBudget {
     available_units: usize,
+    maximum_available_units: usize,
+    total_logical_jobs: usize,
+    base_host_work_items: usize,
+    allows_dynamic_borrowing: bool,
     maximum_media_workers: usize,
     maximum_code_read_workers: usize,
 }
@@ -86,14 +96,24 @@ impl MachineResourceBudget {
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|value| (1..=16).contains(value));
+        let allows_dynamic_borrowing = configured_host.is_none();
         let host_workers = configured_host
-            .unwrap_or_else(|| (logical_jobs / 4).max(1))
+            .unwrap_or_else(|| logical_jobs.div_ceil(2))
             .min(logical_jobs - 1);
+        let maximum_app_jobs = if allows_dynamic_borrowing {
+            logical_jobs - 1
+        } else {
+            logical_jobs - host_workers
+        };
         let file_workers = recommended_file_workers(logical_processors, physical_memory_bytes);
         Self {
-            // Match macOS: the Host owns a hard reservation and the App pool receives the
-            // remaining logical jobs at two units per Agent-sized job.
+            // Match macOS: the baseline is split between Host and App, while either side may
+            // borrow otherwise idle jobs when no explicit Host override disables borrowing.
             available_units: (logical_jobs - host_workers) * 2,
+            maximum_available_units: maximum_app_jobs * 2,
+            total_logical_jobs: logical_jobs,
+            base_host_work_items: host_workers,
+            allows_dynamic_borrowing,
             maximum_media_workers: 4.min(file_workers - 1),
             maximum_code_read_workers: 8.min(file_workers - 1),
         }
@@ -164,6 +184,7 @@ struct GovernorState {
     active: HashMap<u64, (MachineResourceKind, MachineResourcePriority)>,
     waiters: Vec<Waiter>,
     pressure_level: LocalAgentResourcePressureLevel,
+    target_resource_units: usize,
     effective_units: usize,
     maximum_background_units: usize,
     consecutive_interactive_admissions: usize,
@@ -179,6 +200,22 @@ struct GovernorInner {
 #[derive(Clone)]
 pub(crate) struct MachineResourceGovernor {
     inner: Arc<GovernorInner>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MachineConcurrencyBudget {
+    pub(crate) total_logical_jobs: usize,
+    pub(crate) base_host_work_items: usize,
+    pub(crate) base_app_jobs: usize,
+    pub(crate) maximum_host_work_items: usize,
+    pub(crate) allows_dynamic_borrowing: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MachineConcurrencyAppSnapshot {
+    pub(crate) target_resource_units: usize,
+    pub(crate) used_resource_units: usize,
+    pub(crate) queued_resource_units: usize,
 }
 
 impl Default for MachineResourceGovernor {
@@ -202,6 +239,7 @@ impl MachineResourceGovernor {
                     active: HashMap::new(),
                     waiters: Vec::new(),
                     pressure_level: LocalAgentResourcePressureLevel::Normal,
+                    target_resource_units: budget.available_units,
                     effective_units,
                     maximum_background_units,
                     consecutive_interactive_admissions: 0,
@@ -260,8 +298,47 @@ impl MachineResourceGovernor {
         let mut state = self.lock_state();
         state.pressure_level = level;
         (state.effective_units, state.maximum_background_units) =
-            capacity(self.inner.budget.available_units, level);
+            capacity(state.target_resource_units, level);
         self.drain_waiters(&mut state);
+    }
+
+    pub(crate) fn update_target_resource_units(&self, target: usize) -> bool {
+        if target < 2
+            || !target.is_multiple_of(2)
+            || target > self.inner.budget.maximum_available_units
+        {
+            return false;
+        }
+        let mut state = self.lock_state();
+        state.target_resource_units = target;
+        (state.effective_units, state.maximum_background_units) =
+            capacity(target, state.pressure_level);
+        self.drain_waiters(&mut state);
+        true
+    }
+
+    pub(crate) fn concurrency_budget(&self) -> MachineConcurrencyBudget {
+        let budget = self.inner.budget;
+        MachineConcurrencyBudget {
+            total_logical_jobs: budget.total_logical_jobs,
+            base_host_work_items: budget.base_host_work_items,
+            base_app_jobs: budget.total_logical_jobs - budget.base_host_work_items,
+            maximum_host_work_items: if budget.allows_dynamic_borrowing {
+                budget.total_logical_jobs - 1
+            } else {
+                budget.base_host_work_items
+            },
+            allows_dynamic_borrowing: budget.allows_dynamic_borrowing,
+        }
+    }
+
+    pub(crate) fn concurrency_snapshot(&self) -> MachineConcurrencyAppSnapshot {
+        let state = self.lock_state();
+        MachineConcurrencyAppSnapshot {
+            target_resource_units: state.target_resource_units,
+            used_resource_units: state.active.len(),
+            queued_resource_units: state.waiters.len(),
+        }
     }
 
     fn release_or_cancel(&self, id: u64) {
@@ -382,12 +459,17 @@ impl MachineResourceGovernor {
         };
         MachineResourceSnapshot {
             pool_id: "windows-machine-resource-units",
-            configured_resource_units: self.inner.budget.available_units,
+            configured_resource_units: self.inner.budget.maximum_available_units,
+            baseline_resource_units: self.inner.budget.available_units,
+            target_resource_units: state.target_resource_units,
             available_resource_units: state.effective_units,
             maximum_background_resource_units: state.maximum_background_units,
             used_resource_units: state.active.len(),
             queued_count: state.waiters.len(),
             pressure_level: state.pressure_level,
+            total_logical_jobs: self.inner.budget.total_logical_jobs,
+            base_host_work_items: self.inner.budget.base_host_work_items,
+            dynamic_borrowing_enabled: self.inner.budget.allows_dynamic_borrowing,
             domains: vec![
                 MachineResourceDomainSnapshot {
                     domain: "mediaWorker",
@@ -410,6 +492,27 @@ impl MachineResourceGovernor {
     pub(crate) fn used_resource_units(&self) -> usize {
         self.lock_state().active.len()
     }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_concurrency_tests(
+        available_units: usize,
+        maximum_available_units: usize,
+        total_logical_jobs: usize,
+        base_host_work_items: usize,
+    ) -> Self {
+        Self::new(
+            MachineResourceBudget {
+                available_units,
+                maximum_available_units,
+                total_logical_jobs,
+                base_host_work_items,
+                allows_dynamic_borrowing: true,
+                maximum_media_workers: maximum_available_units,
+                maximum_code_read_workers: maximum_available_units,
+            },
+            MAXIMUM_QUEUED_WORK,
+        )
+    }
 }
 
 #[tauri::command]
@@ -423,6 +526,7 @@ pub(crate) async fn machine_resource_snapshot(
         .await
         .map(|host| MachineResourceHostSnapshot {
             maximum_concurrent_work_items: host.maximum_concurrent_work_items,
+            target_concurrent_work_items: host.target_concurrent_work_items,
             effective_maximum_concurrent_work_items: host.effective_maximum_concurrent_work_items,
             pressure_level: host.pressure_level,
             active_work_items: host.active_work_items,
@@ -484,6 +588,10 @@ mod tests {
         MachineResourceGovernor::new(
             MachineResourceBudget {
                 available_units: units,
+                maximum_available_units: units,
+                total_logical_jobs: units.saturating_add(1).max(2),
+                base_host_work_items: 1,
+                allows_dynamic_borrowing: false,
                 maximum_media_workers: units,
                 maximum_code_read_workers: units,
             },
@@ -499,8 +607,38 @@ mod tests {
         assert_eq!(recommended_file_workers(16, 32 * GIBIBYTE), 10);
         let budget = MachineResourceBudget::adaptive();
         assert!(budget.available_units >= 2);
+        assert!(budget.maximum_available_units >= budget.available_units);
+        assert!(budget.base_host_work_items < budget.total_logical_jobs);
         assert!((2..=4).contains(&budget.maximum_media_workers));
         assert!((2..=8).contains(&budget.maximum_code_read_workers));
+    }
+
+    #[test]
+    fn target_updates_are_bounded_even_resource_units_and_preserve_pressure() {
+        let governor = MachineResourceGovernor::new(
+            MachineResourceBudget {
+                available_units: 4,
+                maximum_available_units: 10,
+                total_logical_jobs: 6,
+                base_host_work_items: 4,
+                allows_dynamic_borrowing: true,
+                maximum_media_workers: 4,
+                maximum_code_read_workers: 8,
+            },
+            8,
+        );
+        assert!(!governor.update_target_resource_units(1));
+        assert!(!governor.update_target_resource_units(5));
+        assert!(!governor.update_target_resource_units(12));
+        assert!(governor.update_target_resource_units(10));
+        assert_eq!(governor.snapshot().target_resource_units, 10);
+        assert_eq!(governor.snapshot().available_resource_units, 10);
+
+        governor.update_pressure(LocalAgentResourcePressureLevel::Serious);
+        assert_eq!(governor.snapshot().target_resource_units, 10);
+        assert_eq!(governor.snapshot().available_resource_units, 5);
+        assert!(governor.update_target_resource_units(6));
+        assert_eq!(governor.snapshot().available_resource_units, 3);
     }
 
     #[tokio::test]

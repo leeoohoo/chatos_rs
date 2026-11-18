@@ -86,7 +86,11 @@ pub(super) async fn health_check(host: &mut ManagedHost) -> Result<(), String> {
         } if service == "chatos-local-agent-host"
             && (1..=16).contains(&scheduler.maximum_concurrent_work_items)
             && (1..=scheduler.maximum_concurrent_work_items)
+                .contains(&scheduler.target_concurrent_work_items)
+            && (1..=scheduler.maximum_concurrent_work_items)
                 .contains(&scheduler.effective_maximum_concurrent_work_items)
+            && scheduler.effective_maximum_concurrent_work_items
+                <= scheduler.target_concurrent_work_items
             && scheduler.active_work_items <= scheduler.maximum_concurrent_work_items
             && scheduler.idle_workers <= scheduler.maximum_concurrent_work_items
             && scheduler.active_work_items + scheduler.idle_workers
@@ -95,7 +99,9 @@ pub(super) async fn health_check(host: &mut ManagedHost) -> Result<(), String> {
             host.scheduler = Some(scheduler);
             Ok(())
         }
-        _ => Err("Host health response does not match protocol v52.".to_string()),
+        _ => Err(format!(
+            "Host health response does not match protocol v{LOCAL_AGENT_PROTOCOL_VERSION}."
+        )),
     }
 }
 

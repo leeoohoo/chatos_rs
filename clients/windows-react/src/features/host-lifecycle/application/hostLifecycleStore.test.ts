@@ -21,11 +21,16 @@ function port(
     resourceSnapshot: async () => ({
       poolId: "windows-machine-resource-units",
       configuredResourceUnits: 2,
+      baselineResourceUnits: 2,
+      targetResourceUnits: 2,
       availableResourceUnits: 2,
       maximumBackgroundResourceUnits: 2,
       usedResourceUnits: 0,
       queuedCount: 0,
       pressureLevel: "normal",
+      totalLogicalJobs: 2,
+      baseHostWorkItems: 1,
+      dynamicBorrowingEnabled: true,
       domains: [
         { domain: "mediaWorker", configuredLimit: 2, activeCount: 0, queuedCount: 0 },
         { domain: "codeReadWorker", configuredLimit: 2, activeCount: 0, queuedCount: 0 },

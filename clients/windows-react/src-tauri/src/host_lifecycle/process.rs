@@ -60,6 +60,7 @@ pub(super) async fn spawn(
     owner_user_id: String,
     credential_environment: &BTreeMap<String, String>,
     workers_enabled: bool,
+    concurrency: HostConcurrencyConfiguration,
 ) -> Result<ManagedHost, String> {
     spawn_with_memory(
         executable,
@@ -67,6 +68,7 @@ pub(super) async fn spawn(
         owner_user_id,
         credential_environment,
         workers_enabled,
+        concurrency,
         None,
     )
     .await
@@ -78,12 +80,19 @@ pub(super) struct MemoryLaunchConfig<'a> {
     pub(super) access_token: &'a str,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct HostConcurrencyConfiguration {
+    pub(super) maximum: usize,
+    pub(super) initial: usize,
+}
+
 pub(super) async fn spawn_with_memory(
     executable: &Path,
     database: &Path,
     owner_user_id: String,
     credential_environment: &BTreeMap<String, String>,
     workers_enabled: bool,
+    concurrency: HostConcurrencyConfiguration,
     memory: Option<MemoryLaunchConfig<'_>>,
 ) -> Result<ManagedHost, String> {
     let mut command = Command::new(executable);
@@ -103,6 +112,7 @@ pub(super) async fn spawn_with_memory(
             .arg("--memory-source-id")
             .arg(memory.source_id);
     }
+    configure_concurrency(&mut command, concurrency);
     command
         .arg("--stdio")
         .stdin(Stdio::piped())
@@ -133,6 +143,14 @@ fn configure_tool_policy(command: &mut Command) {
     for tool_name in APPROVAL_EXEMPT_TOOL_NAMES {
         command.arg("--approval-exempt-tool").arg(tool_name);
     }
+}
+
+fn configure_concurrency(command: &mut Command, concurrency: HostConcurrencyConfiguration) {
+    command
+        .arg("--max-concurrent-work-items")
+        .arg(concurrency.maximum.to_string())
+        .arg("--initial-concurrent-work-items")
+        .arg(concurrency.initial.to_string());
 }
 
 fn safe_environment(
@@ -190,6 +208,39 @@ mod tests {
         HostCommand, HostResult, ListConversationsCommand, LocalAgentResourcePressureLevel,
     };
 
+    fn test_concurrency() -> HostConcurrencyConfiguration {
+        HostConcurrencyConfiguration {
+            maximum: 2,
+            initial: 2,
+        }
+    }
+
+    #[test]
+    fn host_launch_receives_distinct_maximum_and_initial_concurrency() {
+        let mut command = Command::new("host-test");
+        configure_concurrency(
+            &mut command,
+            HostConcurrencyConfiguration {
+                maximum: 9,
+                initial: 5,
+            },
+        );
+        let arguments = command
+            .as_std()
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            arguments,
+            vec![
+                "--max-concurrent-work-items",
+                "9",
+                "--initial-concurrent-work-items",
+                "5",
+            ]
+        );
+    }
+
     #[tokio::test]
     #[ignore = "requires CHATOS_LOCAL_AGENT_HOST_TEST_PATH"]
     async fn prepared_sidecar_completes_real_health_handshake() {
@@ -204,6 +255,7 @@ mod tests {
             "windows-integration-owner".to_string(),
             &BTreeMap::new(),
             true,
+            test_concurrency(),
             Some(MemoryLaunchConfig {
                 base_url: "http://127.0.0.1:1/api/memory",
                 source_id: "chatos",
@@ -242,6 +294,68 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires CHATOS_LOCAL_AGENT_HOST_TEST_PATH"]
+    async fn prepared_sidecar_applies_distinct_initial_and_dynamic_targets() {
+        let executable = std::env::var_os("CHATOS_LOCAL_AGENT_HOST_TEST_PATH")
+            .map(std::path::PathBuf::from)
+            .expect("CHATOS_LOCAL_AGENT_HOST_TEST_PATH");
+        let directory = tempfile::tempdir().expect("temporary database directory");
+        let database = directory.path().join("agent.sqlite3");
+        let mut host = spawn_with_memory(
+            &executable,
+            &database,
+            "windows-concurrency-owner".to_string(),
+            &BTreeMap::new(),
+            true,
+            HostConcurrencyConfiguration {
+                maximum: 9,
+                initial: 5,
+            },
+            Some(MemoryLaunchConfig {
+                base_url: "http://127.0.0.1:1/api/memory",
+                source_id: "chatos",
+                access_token: "test-memory-token",
+            }),
+        )
+        .await
+        .expect("spawn prepared Host");
+
+        health_check(&mut host).await.expect("v53 health handshake");
+        let initial = host.scheduler.clone().expect("initial scheduler snapshot");
+        assert_eq!(initial.maximum_concurrent_work_items, 9);
+        assert_eq!(initial.target_concurrent_work_items, 5);
+
+        let updated = request(
+            &mut host,
+            HostCommand::SetSchedulerPressure(
+                chatos_local_agent_protocol::SetSchedulerPressureCommand {
+                    pressure_level: LocalAgentResourcePressureLevel::Normal,
+                    target_concurrent_work_items: 7,
+                },
+            ),
+        )
+        .await
+        .expect("dynamic target update");
+        assert!(matches!(
+            updated,
+            HostResult::SchedulerPressureUpdated {
+                pressure_level: LocalAgentResourcePressureLevel::Normal,
+                target_concurrent_work_items: 7,
+                effective_maximum_concurrent_work_items: 7,
+            }
+        ));
+        health_check(&mut host)
+            .await
+            .expect("health after target update");
+        let refreshed = host.scheduler.clone().expect("refreshed scheduler snapshot");
+        assert_eq!(refreshed.maximum_concurrent_work_items, 9);
+        assert_eq!(refreshed.target_concurrent_work_items, 7);
+
+        terminate(&mut host).await;
+        assert!(host.child.try_wait().expect("child status").is_some());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHATOS_LOCAL_AGENT_HOST_TEST_PATH"]
     async fn prepared_sidecar_accepts_account_scoped_business_requests() {
         let executable = std::env::var_os("CHATOS_LOCAL_AGENT_HOST_TEST_PATH")
             .map(std::path::PathBuf::from)
@@ -255,6 +369,7 @@ mod tests {
             owner.to_string(),
             &BTreeMap::new(),
             true,
+            test_concurrency(),
             Some(MemoryLaunchConfig {
                 base_url: "http://127.0.0.1:1/api/memory",
                 source_id: "chatos",

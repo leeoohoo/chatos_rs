@@ -58,11 +58,16 @@ function hostPort(): HostLifecyclePort {
     resourceSnapshot: vi.fn(async () => ({
       poolId: "windows-machine-resource-units",
       configuredResourceUnits: 2,
+      baselineResourceUnits: 2,
+      targetResourceUnits: 2,
       availableResourceUnits: 2,
       maximumBackgroundResourceUnits: 2,
       usedResourceUnits: 0,
       queuedCount: 0,
       pressureLevel: "normal" as const,
+      totalLogicalJobs: 2,
+      baseHostWorkItems: 1,
+      dynamicBorrowingEnabled: true,
       domains: [
         { domain: "mediaWorker" as const, configuredLimit: 2, activeCount: 0, queuedCount: 0 },
         { domain: "codeReadWorker" as const, configuredLimit: 2, activeCount: 0, queuedCount: 0 },

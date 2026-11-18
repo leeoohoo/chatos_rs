@@ -26,6 +26,7 @@ mod general_settings;
 mod global_utilities;
 mod host_lifecycle;
 mod local_terminal;
+mod machine_concurrency_allocator;
 mod machine_resource_governor;
 mod media_studio;
 mod notepad;
@@ -368,6 +369,7 @@ pub fn run() {
                         .await;
             });
             resource_pressure::start_monitor(app.handle().clone());
+            machine_concurrency_allocator::start_allocator(app.handle().clone());
             #[cfg(target_os = "windows")]
             if std::env::var_os("CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP").as_deref()
                 == Some(std::ffi::OsStr::new("1"))
