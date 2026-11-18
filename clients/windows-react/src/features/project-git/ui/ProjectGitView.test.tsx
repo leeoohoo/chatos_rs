@@ -62,6 +62,29 @@ describe("ProjectGitView", () => {
     expect(onOpenFile).toHaveBeenCalledWith("README.md");
   });
 
+  it("virtualizes the macOS 8000-line Git diff boundary", async () => {
+    const port = stubProjectGitPort();
+    port.loadDiff = vi.fn(async (request) => ({
+      projectId: request.projectId,
+      path: request.path,
+      isStaged: request.staged,
+      content: Array.from({ length: 8_100 }, (_, index) => `+performance line ${index}`).join("\n"),
+    }));
+    renderView(port);
+
+    fireEvent.click(await screen.findByRole("button", { name: "README.md 暂存区差异" }));
+    const viewport = await screen.findByLabelText("README.md Git 差异");
+    expect(viewport.querySelectorAll(".project-git-diff-line").length).toBeLessThan(100);
+    expect(screen.queryByText("performance line 7999")).not.toBeInTheDocument();
+
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 280 });
+    fireEvent.scroll(viewport, { target: { scrollTop: 7_970 * 14 } });
+
+    expect(await screen.findByText("performance line 7999")).toBeInTheDocument();
+    expect(screen.queryByText("performance line 8000")).not.toBeInTheDocument();
+    expect(viewport.querySelectorAll(".project-git-diff-line").length).toBeLessThan(100);
+  });
+
   it("commits the frozen message through the native port", async () => {
     const port = stubProjectGitPort();
     port.commit = vi.fn(async () => gitMutationResult(gitSnapshot({ changes: [] })));

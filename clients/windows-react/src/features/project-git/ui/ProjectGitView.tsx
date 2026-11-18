@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { useProjectGitStore } from "../application/projectGitStore";
 import {
   parseProjectGitDiff,
@@ -11,6 +11,7 @@ import {
   type ProjectGitChange,
   type ProjectGitCommit,
   type ProjectGitDiff,
+  type ProjectGitDiffLine,
   type ProjectGitRemote,
 } from "../domain/projectGit";
 import type { ProjectGitPort } from "../ports/ProjectGitPort";
@@ -407,15 +408,62 @@ function GitDiffView({ diff, onClose, onOpenFile }: { diff: ProjectGitDiff; onCl
       {lines.length === 0 ? (
         <GitEmpty icon="▧" title="没有可显示的文本差异" description="文件可能只有元数据变化，或者内容差异已经不存在。" />
       ) : (
-        <div className="project-git-diff__lines" aria-label={`${projectGitFileName(diff.path)} Git 差异`}>
-          {lines.map((line) => (
-            <div className={`project-git-diff-line project-git-diff-line--${line.kind}`} key={line.id}>
-              <span>{line.oldLine ?? ""}</span><span>{line.newLine ?? ""}</span><b>{line.marker}</b><code>{line.content || " "}</code>
-            </div>
-          ))}
-        </div>
+        <VirtualizedGitDiffLines label={`${projectGitFileName(diff.path)} Git 差异`} lines={lines} />
       )}
     </article>
+  );
+}
+
+const GIT_DIFF_ROW_HEIGHT = 14;
+const GIT_DIFF_OVERSCAN_ROWS = 24;
+const GIT_DIFF_FALLBACK_VIEWPORT_HEIGHT = 480;
+
+function VirtualizedGitDiffLines({ label, lines }: { label: string; lines: ProjectGitDiffLine[] }) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState({ scrollTop: 0, height: GIT_DIFF_FALLBACK_VIEWPORT_HEIGHT });
+
+  useEffect(() => {
+    const element = viewportRef.current;
+    if (!element) return;
+    element.scrollTop = 0;
+    const measure = () => setViewport({
+      scrollTop: element.scrollTop,
+      height: element.clientHeight || GIT_DIFF_FALLBACK_VIEWPORT_HEIGHT,
+    });
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [label, lines]);
+
+  const firstVisible = Math.floor(viewport.scrollTop / GIT_DIFF_ROW_HEIGHT);
+  const start = Math.max(0, firstVisible - GIT_DIFF_OVERSCAN_ROWS);
+  const visibleRows = Math.ceil(viewport.height / GIT_DIFF_ROW_HEIGHT);
+  const end = Math.min(lines.length, firstVisible + visibleRows + GIT_DIFF_OVERSCAN_ROWS);
+  const visibleLines = lines.slice(start, end);
+
+  const onScroll = (event: UIEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+    setViewport({
+      scrollTop: element.scrollTop,
+      height: element.clientHeight || GIT_DIFF_FALLBACK_VIEWPORT_HEIGHT,
+    });
+  };
+
+  return (
+    <div className="project-git-diff__lines" aria-label={label} onScroll={onScroll} ref={viewportRef}>
+      <div aria-hidden="true" className="project-git-diff__spacer" style={{ height: start * GIT_DIFF_ROW_HEIGHT }} />
+      {visibleLines.map((line) => (
+        <div className={`project-git-diff-line project-git-diff-line--${line.kind}`} key={line.id}>
+          <span>{line.oldLine ?? ""}</span><span>{line.newLine ?? ""}</span><b>{line.marker}</b><code>{line.content || " "}</code>
+        </div>
+      ))}
+      <div aria-hidden="true" className="project-git-diff__spacer" style={{ height: (lines.length - end) * GIT_DIFF_ROW_HEIGHT }} />
+    </div>
   );
 }
 
