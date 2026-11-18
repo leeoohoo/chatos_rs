@@ -204,7 +204,7 @@ export type AgentAvatarDraft = z.infer<typeof agentAvatarDraftSchema>;
 export const preparedAgentConversationSchema = z.object({
   roomId: z.string().uuid(),
   agentId: z.string().trim().min(1).max(512),
-  conversationId: z.string().regex(/^agent-direct-[0-9a-f-]{36}$/u),
+  conversationId: z.string().regex(/^agent-direct-v2-[0-9a-f-]{36}$/u),
   title: z.string().trim().min(1).max(120),
   createdAtUnixMs: z.number().int().nonnegative(),
   updatedAtUnixMs: z.number().int().nonnegative(),
@@ -216,7 +216,7 @@ export const preparedAgentConversationSchema = z.object({
       path: ["updatedAtUnixMs"],
     });
   }
-  if (conversation.conversationId !== `agent-direct-${conversation.roomId}`) {
+  if (conversation.conversationId !== `agent-direct-v2-${conversation.roomId}`) {
     context.addIssue({
       code: "custom",
       message: "Agent 私聊身份不一致。",
@@ -265,12 +265,12 @@ export const agentConversationActivityItemSchema = z.object({
 export const agentConversationActivitySnapshotSchema = z.object({
   roomId: z.string().uuid(),
   agentId: z.string().trim().min(1).max(512),
-  conversationId: z.string().regex(/^agent-direct-[0-9a-f-]{36}$/u),
+  conversationId: z.string().regex(/^agent-direct-v2-[0-9a-f-]{36}$/u),
   conversationVersion: z.number().int().positive(),
   hasActiveDelivery: z.boolean(),
   items: z.array(agentConversationActivityItemSchema).max(100),
 }).strict().superRefine((snapshot, context) => {
-  if (snapshot.conversationId !== `agent-direct-${snapshot.roomId}`) {
+  if (snapshot.conversationId !== `agent-direct-v2-${snapshot.roomId}`) {
     context.addIssue({
       code: "custom",
       message: "Agent 运行动态会话身份不一致。",

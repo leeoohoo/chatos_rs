@@ -71,7 +71,7 @@ describe("agent management domain", () => {
     expect(() => preparedAgentConversationSchema.parse({
       roomId: "11111111-1111-4111-8111-111111111111",
       agentId: "agent-1",
-      conversationId: "agent-direct-22222222-2222-4222-8222-222222222222",
+      conversationId: "agent-direct-v2-22222222-2222-4222-8222-222222222222",
       title: "界面设计师",
       createdAtUnixMs: 10,
       updatedAtUnixMs: 20,
@@ -83,7 +83,7 @@ describe("agent management domain", () => {
     const snapshot = {
       roomId,
       agentId: "agent-1",
-      conversationId: `agent-direct-${roomId}`,
+      conversationId: `agent-direct-v2-${roomId}`,
       conversationVersion: 2,
       hasActiveDelivery: false,
       items: [{

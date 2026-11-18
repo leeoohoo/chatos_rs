@@ -162,7 +162,7 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     vi.mocked(invoke).mockResolvedValueOnce({
       roomId,
       agentId: "agent-1",
-      conversationId: `agent-direct-${roomId}`,
+      conversationId: `agent-direct-v2-${roomId}`,
       title: "界面设计师",
       createdAtUnixMs: 10,
       updatedAtUnixMs: 20,
@@ -177,7 +177,7 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     vi.mocked(invoke).mockResolvedValueOnce({
       roomId,
       agentId: "agent-1",
-      conversationId: `agent-direct-${roomId}`,
+      conversationId: `agent-direct-v2-${roomId}`,
       conversationVersion: 1,
       hasActiveDelivery: false,
       items: [],

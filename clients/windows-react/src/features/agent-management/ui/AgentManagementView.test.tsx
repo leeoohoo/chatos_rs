@@ -1093,7 +1093,7 @@ describe("AgentManagementView", () => {
     const prepareConversation = vi.fn(async () => ({
       roomId,
       agentId: "agent-1",
-      conversationId: `agent-direct-${roomId}`,
+      conversationId: `agent-direct-v2-${roomId}`,
       title: "界面设计师",
       createdAtUnixMs: 10,
       updatedAtUnixMs: 20,
@@ -1104,7 +1104,7 @@ describe("AgentManagementView", () => {
       loadConversationActivity: vi.fn(async () => ({
         roomId,
         agentId: "agent-1",
-        conversationId: `agent-direct-${roomId}`,
+        conversationId: `agent-direct-v2-${roomId}`,
         conversationVersion: 2,
         hasActiveDelivery: false,
         items: [{
@@ -1181,11 +1181,11 @@ describe("AgentManagementView", () => {
     }));
     const port = stubPort({
       prepareConversation: vi.fn(async () => ({
-        roomId, agentId: "agent-1", conversationId: `agent-direct-${roomId}`,
+        roomId, agentId: "agent-1", conversationId: `agent-direct-v2-${roomId}`,
         title: "界面设计师", createdAtUnixMs: 10, updatedAtUnixMs: 20,
       })),
       loadConversationActivity: vi.fn(async () => ({
-        roomId, agentId: "agent-1", conversationId: `agent-direct-${roomId}`,
+        roomId, agentId: "agent-1", conversationId: `agent-direct-v2-${roomId}`,
         conversationVersion: 1, hasActiveDelivery: false, items: [],
       })),
       listStaffingProposals: vi.fn(async () => [proposal]),
