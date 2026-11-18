@@ -360,4 +360,54 @@ pub(super) mod tests_support {
             Arc::new(MemoryRemoteSecretStore::default()),
         )
     }
+
+    #[cfg(target_os = "windows")]
+    struct TestCredentialCleanup(keyring::Entry);
+
+    #[cfg(target_os = "windows")]
+    impl Drop for TestCredentialCleanup {
+        fn drop(&mut self) {
+            let _ = self.0.delete_credential();
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn production_vault_round_trips_only_secret_data_through_credential_manager() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let owner = format!("test-owner-{}", uuid::Uuid::new_v4());
+        let connection = format!("test-connection-{}", uuid::Uuid::new_v4());
+        let account = secret_account(&owner, &connection);
+        let credential = TestCredentialCleanup(
+            keyring::Entry::new(SECRET_SERVICE, &account)
+                .expect("remote connection credential entry"),
+        );
+        let vault = PlatformRemoteCredentialVault::new(directory.path().to_path_buf());
+        let secret = format!("remote-password-{}", uuid::Uuid::new_v4());
+        let bundle = RemoteCredentialBundle {
+            password: Some(secret.clone()),
+            ..RemoteCredentialBundle::default()
+        };
+
+        assert!(vault.load(&owner, &connection).unwrap().is_none());
+        vault
+            .save(&owner, &connection, &bundle)
+            .expect("save production remote credential");
+        assert!(vault.load(&owner, &connection).unwrap() == Some(bundle));
+
+        let index = fs::read_to_string(
+            directory
+                .path()
+                .join("remote-connections")
+                .join("credential-index.json"),
+        )
+        .expect("read non-secret credential index");
+        assert!(!index.contains(&secret));
+
+        vault
+            .delete(&owner, &connection)
+            .expect("delete production remote credential");
+        assert!(vault.load(&owner, &connection).unwrap().is_none());
+        drop(credential);
+    }
 }
