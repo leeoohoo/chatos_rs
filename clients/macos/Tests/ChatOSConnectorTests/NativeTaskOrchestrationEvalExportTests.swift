@@ -45,11 +45,13 @@ final class NativeTaskOrchestrationEvalExportTests: XCTestCase {
         let policy: LocalAgentJSONValue = .object([
             "allowed_model_config_ids": .array([.string("eval-model")]),
             "enabled_builtin_kinds": .array([]), "external_mcp_config_ids": .array([]),
-            "plugin_keys": .array([]), "max_iterations": .number(32),
+            "plugin_components": .array([]), "max_iterations": .number(32),
             "plugin_release_snapshots": .array(plugins.map {
-                .object(["plugin_key": .string($0.pluginKey), "plugin_id": .string($0.id),
+                .object(["plugin_key": .string($0.pluginKey), "component_key": .string($0.componentKey),
+                         "plugin_id": .string($0.id),
                          "release_id": .string("eval-release"), "version": .string("1.0.0"),
-                         "artifact_sha256": .string(String(repeating: "0", count: 64))])
+                         "artifact_sha256": .string(String(repeating: "0", count: 64)),
+                         "allows_parallel_task_execution": .bool(false)])
             }),
         ])
         let checksum = try NativeLocalConnectorService.combinedSkillChecksum(main: main, task: task)
@@ -73,10 +75,18 @@ final class NativeTaskOrchestrationEvalExportTests: XCTestCase {
             snapshot("task_execution", instructions: task.instructions, items: [task.prefixedInputItem], tools: taskTools),
             snapshot("main_chat", instructions: main.instructions, items: [main.prefixedInputItem], tools: mainTools),
         ]
-        XCTAssertEqual(Set(mainTools.compactMap { tool -> String? in
+        let mainToolNames = Set(mainTools.compactMap { tool -> String? in
             guard case let .object(object) = tool, case let .string(name)? = object["name"] else { return nil }
             return name
-        }), Set(NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames))
+        })
+        let companionToolNames = NativeLocalAgentPlatformToolCatalog.mainChatCompanionTools.compactMap { tool -> String? in
+            guard case let .object(object) = tool, case let .string(name)? = object["name"] else { return nil }
+            return name
+        }
+        XCTAssertEqual(
+            mainToolNames,
+            Set(NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames + companionToolNames)
+        )
         try encoder.encode(snapshots).write(to: URL(fileURLWithPath: path), options: .withoutOverwriting)
     }
 }

@@ -216,7 +216,8 @@ extension NativeLocalAgentPlatformToolCatalog {
     ),
     taskTool(
       name: resolveTaskFollowupToolName,
-      description: "Commit one decision for every current task_followup_review candidate.",
+      description:
+        "Commit one decision for every current task_followup_review candidate. Use replace when changed work is still wanted; it holds old work until the replacement graph commits atomically.",
       properties: [
         "review_message_id": .object(["type": .string("string"), "minLength": .number(1)]),
         "decisions": .object([
@@ -227,7 +228,9 @@ extension NativeLocalAgentPlatformToolCatalog {
               "task_id": .object(["type": .string("string"), "minLength": .number(1)]),
               "action": .object([
                 "type": .string("string"),
-                "enum": .array(["continue", "cancel", "clarify"].map(LocalAgentJSONValue.string)),
+                "enum": .array(
+                  ["continue", "cancel", "replace", "clarify"].map(LocalAgentJSONValue.string)
+                ),
               ]),
               "reason": .object([
                 "type": .string("string"), "minLength": .number(1), "maxLength": .number(1000),

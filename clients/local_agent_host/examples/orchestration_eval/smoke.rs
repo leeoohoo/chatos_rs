@@ -33,6 +33,7 @@ fn read(path: &str) -> ReplayStep {
 }
 fn task(title: &str, objective: &str, output: &str, allowed: &Capabilities) -> Value {
     json!({"title": title, "objective": objective, "expected_outputs": [output],
+        "context_summary": "Isolated task-orchestration evaluation using only the supplied scenario.",
         "acceptance_criteria": [format!("{output}以实际项目证据核验，保留请求的范围与原始资料")],
         "requires_execution": allowed.builtins.iter().any(|s| s == "CodeMaintainerWrite"),
         "enabled_builtin_kinds": allowed.builtins,
