@@ -1409,4 +1409,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 118. [已完成] Windows 设置中心已恢复 macOS 的非破坏性覆盖层语义：打开设置不再卸载当前项目、联系人、Agent 或媒体工作区，而是保留原工作区实例，在独立 `aria-modal` 对话层后标记 `aria-hidden` 并禁止指针交互；关闭设置后继续使用原页面状态并恢复焦点。架构回归锁定工作区先挂载、设置层条件挂载与背景交互门禁；React/Vitest `147` 个文件 / `574 passed`，TypeScript、production build、architecture audit、bundle audit 和 Skill 示例审计均通过。正式 Windows Release SHA-256 为 `0E773EE5344DBC34FA15B5F69FB12792A1C17AF1F46B06832DC5889E15B2ACCA`；测试账号在 `chatos` 项目“项目目录”中打开设置、切换到“全局工具”并按 `Escape` 关闭后，原“项目目录”选中态、目录树和搜索焦点均保留，未回退到默认“用户消息”。本条只关闭设置覆盖层导致的工作区重建回归，不替代剩余页面和缩放/屏幕阅读器矩阵。
 
+119. [已完成] Windows 本机终端的 ConPTY 自然退出、大输出背压和资源释放门禁已重新确认关闭。生产实现保留 slave 句柄直至 wait 路径观察到退出，以独立 reader 持续排空输出，并在退出/关闭时释放 master、writer、slave、进程树和共享资源 permit；PowerShell 固定 `-NoLogo -NoProfile`，原生探针会响应启动时的 `ESC[6n` 光标查询。Debug 定向测试 `8 passed, 0 failed`，优化后的 Windows `--release` 原生测试二进制又以串行方式完成自然退出、至少 1 MiB 输出后退出及连续 3 次握手/退出/permit 归零（`3 passed, 0 failed, 0 ignored`，13.08 秒），全部受 15 秒门限约束。Windows Computer Use 安全规则禁止自动化终端命令，因此本项以真实发布优化级 PowerShell/ConPTY 进程测试作为业务证据，不虚报 UI 命令输入；更大规模性能基线仍与功能正确性分开跟踪。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

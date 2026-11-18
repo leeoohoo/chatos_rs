@@ -6,6 +6,8 @@
 
 Windows 产品版本：`3.0.9`
 
+- 2026-11-19 重新核验 Windows 本机终端的 ConPTY 自然退出、大输出背压与资源释放门禁，确认 2026-11-16 的后续握手修正仍有效。Debug 定向回归真实启动系统 PowerShell/ConPTY，`8 passed, 0 failed`；其中自然 `exit`、连续输出至少 1 MiB 后退出、连续 3 次 `ESC[6n`/`ESC[1;1R` 光标握手与退出、输出 ring/poll 有界截断，以及每次退出后共享资源 permit 归零均通过。相同三个 Windows 原生进程用例又在优化后的 `--release` 测试二进制中串行通过（`3 passed, 0 failed, 0 ignored`，13.08 秒），每项都在 15 秒失败关闭门限内结束；这证明真实进程、PTY I/O、wait 路径和资源回收，不是“编译成功”。由于 Windows Computer Use 安全规则禁止自动化终端输入，本项使用发布优化级原生进程测试取代 UI 命令注入，不虚报为键盘视觉回归。
+
 - 2026-11-19 Windows 设置中心已关闭“打开设置会卸载当前工作区”的状态丢失回归。设置中心现在作为独立 `aria-modal` 对话层挂载；项目、联系人、Agent、媒体等当前工作区继续保留在背景，只在设置打开期间标记 `aria-hidden` 并禁止指针交互，关闭后恢复原工作区及焦点，不再重新创建页面 Store/组件。新增架构回归锁定工作区先于设置层、背景不可交互和设置层条件挂载；React/Vitest 为 `147` 个文件 / `574 passed`，TypeScript、production build、architecture audit、bundle audit（入口 `459.38 KiB raw / 138.73 KiB gzip`）、Skill 示例审计和 `git diff --check` 均通过。正式 Windows Release EXE SHA-256 为 `0E773EE5344DBC34FA15B5F69FB12792A1C17AF1F46B06832DC5889E15B2ACCA`；使用测试账号真实进入 `chatos` 项目的“项目目录”，打开设置、切换到“全局工具”并以 `Escape` 关闭后，仍保留“项目目录”选中态、完整目录树和项目搜索焦点，没有回退到默认“用户消息”。本轮没有修改账号、快捷键、文件或项目数据。
 
 本清单区分“页面已出现”“业务闭环已完成”“平台能力真实可用”和“发布环境已验证”。只有四项同时满足，才算完成；不再把只读占位、失败关闭或测试未运行写成已拉齐。
@@ -146,15 +148,15 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-16 本轮工作流与 PTY 回归生成的 `target-shared/debug`（约 `3.08 GiB`）已在确认无 cargo/rustc/ChatOS/Local Agent Host 进程后删除；`target-shared/release` 当前 3.0.9 EXE、Host sidecar、PDB 和资源未改动。
 
-- 2026-11-16 尝试用 Windows 原生 ConPTY/PowerShell 直接产生 1 MiB 输出并验证终止、轮询上限和资源释放；进程在 15 秒门限内没有进入终止态。临时压力测试已撤回，未把失败结果提交为产品代码；该结果反向确认终端大输出与长稳仍未完成，后续需要修复 PTY 生命周期/背压后再建立门禁。
+- 2026-11-16 首次尝试用 Windows 原生 ConPTY/PowerShell 直接产生 1 MiB 输出并验证终止、轮询上限和资源释放时，进程在 15 秒门限内没有进入终止态。临时压力测试已撤回，未把失败结果提交为产品代码；后续确认根因是原始 PTY 探针没有响应 PowerShell 的光标位置查询，修正后的真实门禁见下方 `d34ff709c` 记录及 2026-11-19 复核。
 
-- 2026-11-16 收紧 Windows ConPTY 会话生命周期：本机终端现在按 `portable-pty` 约束保留 slave 句柄到 wait 路径确认退出，并在 spawn 后再接管 reader/writer，避免短命子进程因过早关闭 slave 收到伪 `CTRL+C`；`local_terminal` 定向回归 `5 passed, 0 failed`，Rustfmt 和 Clippy `-D warnings` 通过。当前机器的原生 ConPTY 探针即使在该修复后启动 `cmd.exe`/PowerShell 仍未在门限内进入退出态，因此大输出/自然退出门禁继续保持未完成，不把环境失败写成产品通过。
+- 2026-11-16 收紧 Windows ConPTY 会话生命周期：本机终端现在按 `portable-pty` 约束保留 slave 句柄到 wait 路径确认退出，并在 spawn 后再接管 reader/writer，避免短命子进程因过早关闭 slave 收到伪 `CTRL+C`；`local_terminal` 定向回归 `5 passed, 0 failed`，Rustfmt 和 Clippy `-D warnings` 通过。当时原始探针仍未在门限内退出，因此该阶段没有提前记为产品通过；紧随其后的光标握手修正和真实 1 MiB/自然退出门禁才关闭该项。
 - 2026-11-16 修正 ConPTY 压力探针：PowerShell 启动时会先发出 `ESC[6n` 光标位置查询，原始 PTY 测试已按真实终端回复 `ESC[1;1R`，不再把未实现终端仿真误判为产品失败。新增真实 Windows `local_terminal` 回归：PowerShell `exit` 在 15 秒内自然终止，并连续产生至少 1 MiB 输出后在同一门限内终止；两项均 `1 passed, 0 failed`。这关闭了本机自然退出/1 MiB 背压门禁，但不替代 8 小时长稳与更大规模性能基线。
 - 2026-11-16 在提交 `d34ff709c` 后完成全量门禁复核：Windows Tauri Rust `597 passed, 0 failed, 6 ignored`（603 项）；React/Vitest `145` 个测试文件、`536 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture` 和 `npm run audit:bundle` 均通过，入口 Bundle `456.97 KiB raw / 137.71 KiB gzip`。确认无构建或 ChatOS 进程后，清理本轮生成的 `target-shared/debug`（约 4.2 GiB）和历史 `target-shared/x86_64-pc-windows-msvc`（约 0.77 GiB），当前 `target-shared/release` 保持不变。
 - 2026-11-16 为万级消息性能基线补充真实 Host SQLite 回归（提交 `ccdfca086`）：写入 10,000 条账号隔离会话消息，按协议上限每页 100 条读取 100 页；每页严格有界、消息顺序稳定、游标单调递减且最终完整覆盖 10,000 条，单测耗时约 1.4 秒。数据库 crate 全量回归 `222 passed, 0 failed`，Clippy `-D warnings` 和 Rustfmt 均通过。这关闭了万级消息分页/游标的代码基线缺口，但不替代真实 Release 窗口渲染和 8 小时长稳验收。
 - 2026-11-16 将项目目录边界回归扩大到 11,000 个真实文件：目录列表仍严格截断到 5,000 项并标记 `is_truncated`，文件名搜索在调用方上限内返回并标记截断；定向 `project_filesystem` 测试通过（约 2.9 秒），Windows Tauri Clippy `-D warnings` 和 Rustfmt 通过。该证据加强大目录短时性能/边界基线，但不替代 8 小时长稳与真实窗口滚动验收。
 
-- 2026-11-16 收紧 Windows 本机终端启动环境：PowerShell 现在固定使用 `-NoLogo -NoProfile`，避免用户 profile 改写受控环境、输出和退出语义；Windows 启动参数与 allowlisted environment 回归 `5 passed, 0 failed`。这改善了确定性，但不替代尚未通过的 ConPTY 大输出压力测试。
+- 2026-11-16 收紧 Windows 本机终端启动环境：PowerShell 现在固定使用 `-NoLogo -NoProfile`，避免用户 profile 改写受控环境、输出和退出语义；Windows 启动参数与 allowlisted environment 回归 `5 passed, 0 failed`。该项只改善启动确定性；ConPTY 大输出压力由后续光标握手、1 MiB 输出和自然退出原生门禁独立证明。
 
 - 2026-11-16 完成当前 HEAD 的完整 Tauri bundle 与安装包回归：`npm run tauri -- build` 成功生成 NSIS `ChatOS_3.0.9_x64-setup.exe`（SHA-256 `9f500a8aa7252eef084d35b3cdebebc3ae0939872e1a3a3aa6386a543b50c0`）和 MSI `ChatOS_3.0.9_x64_en-US.msi`（SHA-256 `35fd95bd85f805670cbabfc99d6b0bc6f896a788394158c3d003817092c126ea`）。`smoke-installed-app.ps1` 在隔离目录执行安装、2 次真实 `ChatOS` 原生窗口启动、资源与 sidecar hash 校验、自动退出、卸载和用户数据清理，全部通过（安装/卸载退出码 `0`，启动退出码 `0`，`p50=2,599 ms`、`p95=3,004 ms`）；报告为 `%TEMP%\\chatos-windows-install-smoke-latest.json`。`smoke-installed-hook.ps1` 同包通过已安装 Host health、Hook Bundle 存储/激活、`continue=false` 阻断、Host 重启恢复和卸载（全部退出码 `0`），报告为 `%TEMP%\\chatos-windows-installed-hook-smoke-latest.json`。
 
