@@ -256,6 +256,46 @@ struct NativeConnectorStateStoreTests {
         #expect(await recorder.decision == .deny(reason: "用户已在本机拒绝。"))
     }
 
+    @Test("cancelling a task removes its pending approval")
+    func cancellingTaskRemovesPendingApproval() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let service = try NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: directory.appendingPathComponent("state.json")
+            ),
+            ticketProvider: RejectingTicketProvider()
+        )
+        let project = directory.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let decisionTask = Task {
+            await service.approvalDecision(
+                requestID: "request-cancelled",
+                command: "/bin/zsh",
+                arguments: ["-lc", "pwd"],
+                cwd: project,
+                projectRoot: project,
+                source: "Task",
+                risk: .init(level: "low", reason: nil)
+            )
+        }
+
+        var pending: [LocalConnectorPendingApproval] = []
+        for _ in 0..<100 {
+            pending = try await service.fetchPendingApprovals()
+            if !pending.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(pending.count == 1)
+
+        decisionTask.cancel()
+
+        #expect(await decisionTask.value == .deny(reason: "等待审批的任务已取消。"))
+        #expect(try await service.fetchPendingApprovals().isEmpty)
+    }
+
     @Test
     func incompleteHostEvidenceBypassesAIAndTransfersDirectlyToHuman() async throws {
         let directory = FileManager.default.temporaryDirectory

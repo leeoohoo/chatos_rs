@@ -328,9 +328,28 @@ extension NativeLocalConnectorService {
         if allowsSessionApproval, let approvalScopeKey {
             pendingApprovalScopeKeys[id] = approvalScopeKey
         }
-        return await withCheckedContinuation { continuation in
-            pendingApprovalContinuations[id] = continuation
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                pendingApprovalContinuations[id] = continuation
+                if Task.isCancelled {
+                    cancelPendingApproval(id: id)
+                }
+            }
+        } onCancel: {
+            Task { [weak self] in
+                await self?.cancelPendingApproval(id: id)
+            }
         }
+    }
+
+    private func cancelPendingApproval(id: String) {
+        pendingApprovals.removeAll { $0.id == id }
+        pendingApprovalScopeKeys.removeValue(forKey: id)
+        guard let continuation = pendingApprovalContinuations.removeValue(forKey: id) else {
+            return
+        }
+        publishApprovalSnapshot()
+        continuation.resume(returning: .deny(reason: "等待审批的任务已取消。"))
     }
 
     func resolveDirectory(
