@@ -17,6 +17,7 @@ import type {
   AgentTeamTodo,
   AgentTeamTodoProgress,
   AgentTeamAsset,
+  AgentTeamAssetReview,
   AgentTeamAssetRevision,
   AgentProjectDashboardSnapshot,
   SaveAgentTeamAssetInput,
@@ -122,6 +123,7 @@ export interface AgentManagementPort {
     agentId: string,
   ): Promise<AgentTeamMemberActivitySnapshot>;
   loadTeamRuns?(ownerUserId: string, teamId: string): Promise<AgentTeamRunHistorySnapshot>;
+  cancelTeamRun?(ownerUserId: string, teamId: string, runId: string): Promise<void>;
   loadTeamDashboard?(ownerUserId: string, teamId: string): Promise<AgentProjectDashboardSnapshot>;
   retryTeamRun?(
     ownerUserId: string,
@@ -153,6 +155,7 @@ export interface AgentManagementPort {
     expectedUpdatedAtUnixMs: number,
   ): Promise<AgentTeamTodo>;
   listTeamAssets?(ownerUserId: string, teamId: string): Promise<AgentTeamAsset[]>;
+  listTeamAssetReviews?(ownerUserId: string, teamId: string): Promise<AgentTeamAssetReview[]>;
   saveTeamAsset?(
     ownerUserId: string,
     teamId: string,

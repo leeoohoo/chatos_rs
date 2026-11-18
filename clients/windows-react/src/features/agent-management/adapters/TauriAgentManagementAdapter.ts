@@ -19,6 +19,7 @@ import {
   agentTeamTodoProgressListSchema,
   agentTeamTodoSchema,
   agentTeamAssetListSchema,
+  agentTeamAssetReviewListSchema,
   agentTeamAssetRevisionListSchema,
   agentTeamAssetSchema,
   agentTeamSummarySchema,
@@ -287,6 +288,10 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
     );
   }
 
+  async cancelTeamRun(ownerUserId: string, teamId: string, runId: string) {
+    await invoke("cancel_agent_team_run", { input: { ownerUserId, teamId, runId } });
+  }
+
   async loadTeamDashboard(ownerUserId: string, teamId: string) {
     return agentProjectDashboardSnapshotSchema.parse(
       await invoke("load_agent_team_dashboard", { ownerUserId, teamId }),
@@ -361,6 +366,12 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async listTeamAssets(ownerUserId: string, teamId: string) {
     return agentTeamAssetListSchema.parse(
       await invoke("list_agent_team_assets", { ownerUserId, teamId }),
+    );
+  }
+
+  async listTeamAssetReviews(ownerUserId: string, teamId: string) {
+    return agentTeamAssetReviewListSchema.parse(
+      await invoke("list_agent_team_asset_reviews", { ownerUserId, teamId }),
     );
   }
 

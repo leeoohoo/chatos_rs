@@ -940,6 +940,81 @@ fn compose_response_to_input_items_reads_tool_calls_from_structured_payload() {
     }));
 }
 
+#[test]
+fn compose_response_to_input_items_expires_run_scoped_references_from_memory() {
+    let team_ref = format!("team_ref_{}", "a".repeat(64));
+    let asset_ref = format!("asset_ref_{}", "b".repeat(64));
+    let todo_ref = format!("todo_ref_{}", "c".repeat(64));
+    let response = ComposeContextResponse {
+        thread_id: "thread-1".to_string(),
+        blocks: vec![ComposeContextBlock {
+            block_type: "thread_summary".to_string(),
+            text: format!("Previous Todo used {todo_ref}"),
+            ..Default::default()
+        }],
+        recent_records: vec![
+            EngineRecord {
+                id: "rec-1".to_string(),
+                thread_id: "thread-1".to_string(),
+                tenant_id: "tenant-1".to_string(),
+                source_id: "task".to_string(),
+                external_record_id: None,
+                role: "assistant".to_string(),
+                record_type: "message".to_string(),
+                content: format!("Inspecting the historical team {team_ref}"),
+                structured_payload: None,
+                metadata: Some(json!({
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "team_asset_list",
+                            "arguments": json!({"team_ref": team_ref}).to_string()
+                        }
+                    }]
+                })),
+                summary_status: "pending".to_string(),
+                summary_id: None,
+                summarized_at: None,
+                created_at: "2026-11-18T00:00:00Z".to_string(),
+            },
+            EngineRecord {
+                id: "rec-2".to_string(),
+                thread_id: "thread-1".to_string(),
+                tenant_id: "tenant-1".to_string(),
+                source_id: "task".to_string(),
+                external_record_id: None,
+                role: "tool".to_string(),
+                record_type: "message".to_string(),
+                content: json!({"asset_ref": asset_ref, "title": "Decision"}).to_string(),
+                structured_payload: None,
+                metadata: Some(json!({
+                    "tool_call_id": "call_1",
+                    "name": "team_asset_list"
+                })),
+                summary_status: "pending".to_string(),
+                summary_id: None,
+                summarized_at: None,
+                created_at: "2026-11-18T00:00:01Z".to_string(),
+            },
+        ],
+        meta: ComposeContextMeta {
+            summary_count: 1,
+            recent_record_count: 2,
+            ..Default::default()
+        },
+    };
+
+    let encoded = Value::Array(compose_response_to_input_items(&response)).to_string();
+
+    assert!(!encoded.contains(&team_ref));
+    assert!(!encoded.contains(&asset_ref));
+    assert!(!encoded.contains(&todo_ref));
+    assert!(encoded.matches("[expired_run_scoped_reference]").count() >= 4);
+    assert!(encoded.contains("\"call_id\":\"call_1\""));
+    assert!(encoded.contains("Decision"));
+}
+
 fn summary_status(
     running: bool,
     failed: bool,

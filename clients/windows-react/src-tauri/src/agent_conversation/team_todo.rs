@@ -1734,6 +1734,7 @@ impl AgentConversationStore {
                 "cancelled",
                 "cancelled",
                 "项目经理已停止该任务。",
+                &[],
                 updated_at_unix_ms,
             )?;
             transaction
@@ -1916,6 +1917,7 @@ impl AgentConversationStore {
             "progress",
             stage,
             detail,
+            &[],
             now_unix_ms,
         )?;
         transaction.commit().map_err(|_| team_todo_store_error())?;
@@ -1928,6 +1930,7 @@ impl AgentConversationStore {
         run_id: &str,
         completed: bool,
         detail: &str,
+        asset_update_suggestions: &[AgentTeamAssetUpdateSuggestion],
         project_write_evidence_verified: bool,
         now_unix_ms: i64,
     ) -> Result<(AgentAssetToolBinding, Value), String> {
@@ -1936,6 +1939,10 @@ impl AgentConversationStore {
             .map_err(|_| invalid_team_todo_input())?;
         if now_unix_ms < 0 {
             return Err(invalid_team_todo_input());
+        }
+        validate_asset_update_suggestions(asset_update_suggestions)?;
+        if !completed && !asset_update_suggestions.is_empty() {
+            return Err(invalid_team_asset_review_input());
         }
         reject_link_or_non_file(&self.database)?;
         let mut connection = open_database(&self.database, false)?;
@@ -1991,6 +1998,7 @@ impl AgentConversationStore {
             target_status,
             target_status,
             detail,
+            asset_update_suggestions,
             now_unix_ms,
         )?;
         let changed = transaction
@@ -4157,8 +4165,13 @@ pub(super) fn insert_todo_progress(
     kind: &str,
     stage: &str,
     detail: &str,
+    asset_update_suggestions: &[AgentTeamAssetUpdateSuggestion],
     now_unix_ms: i64,
 ) -> Result<Value, String> {
+    validate_asset_update_suggestions(asset_update_suggestions)?;
+    if !asset_update_suggestions.is_empty() && kind != "completed" {
+        return Err(invalid_team_asset_review_input());
+    }
     let sequence: i64 = connection
         .query_row(
             "SELECT COALESCE(MAX(sequence), 0) + 1 FROM local_agent_todo_events \
@@ -4168,13 +4181,15 @@ pub(super) fn insert_todo_progress(
         )
         .map_err(|_| team_todo_store_error())?;
     let event_id = identifier("todo_event");
+    let suggestions_json =
+        serde_json::to_string(asset_update_suggestions).map_err(|_| team_todo_store_error())?;
     connection
         .execute(
             r#"
             INSERT INTO local_agent_todo_events (
                 owner_user_id, id, todo_id, sequence, run_id, kind, stage, detail,
                 asset_update_suggestions_json, created_at_unix_ms
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '[]', ?9)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             "#,
             params![
                 owner_user_id,
@@ -4185,10 +4200,51 @@ pub(super) fn insert_todo_progress(
                 kind,
                 stage,
                 detail,
+                suggestions_json,
                 now_unix_ms,
             ],
         )
         .map_err(|_| team_todo_store_error())?;
+    if !asset_update_suggestions.is_empty() {
+        let (team_id, source_agent_id): (String, String) = connection
+            .query_row(
+                "SELECT team_room_id, agent_id FROM local_agent_todos \
+                 WHERE owner_user_id = ?1 AND id = ?2",
+                params![owner_user_id, todo_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| team_todo_store_error())?;
+        for (index, suggestion) in asset_update_suggestions.iter().enumerate() {
+            connection
+                .execute(
+                    r#"
+                    INSERT INTO local_agent_team_asset_reviews (
+                        owner_user_id, id, team_room_id, todo_id, todo_event_id,
+                        suggestion_index, source_agent_id, category, title, markdown,
+                        rationale, status, resolved_asset_id, resolved_asset_revision,
+                        reviewed_by_agent_id, review_reason,
+                        created_at_unix_ms, updated_at_unix_ms
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                              ?11, 'pending', NULL, NULL, NULL, '', ?12, ?12)
+                    "#,
+                    params![
+                        owner_user_id,
+                        identifier("asset_review"),
+                        team_id,
+                        todo_id,
+                        event_id,
+                        index as i64,
+                        source_agent_id,
+                        suggestion.category,
+                        suggestion.title,
+                        suggestion.markdown,
+                        suggestion.rationale,
+                        now_unix_ms,
+                    ],
+                )
+                .map_err(|_| team_todo_store_error())?;
+        }
+    }
     Ok(json!({
         "sequence": sequence,
         "run_id": run_id,
@@ -4197,6 +4253,27 @@ pub(super) fn insert_todo_progress(
         "detail": detail,
         "created_at_unix_ms": now_unix_ms,
     }))
+}
+
+fn validate_asset_update_suggestions(
+    suggestions: &[AgentTeamAssetUpdateSuggestion],
+) -> Result<(), String> {
+    if suggestions.len() > 8 {
+        return Err(invalid_team_asset_review_input());
+    }
+    let mut identities = HashSet::new();
+    let mut total_markdown_bytes = 0usize;
+    for suggestion in suggestions {
+        validate_team_asset_suggestion(suggestion)?;
+        if !identities.insert((suggestion.category.as_str(), suggestion.title.as_str())) {
+            return Err(invalid_team_asset_review_input());
+        }
+        total_markdown_bytes = total_markdown_bytes.saturating_add(suggestion.markdown.len());
+        if total_markdown_bytes > 256_000 {
+            return Err(invalid_team_asset_review_input());
+        }
+    }
+    Ok(())
 }
 
 fn load_todo_progress(
@@ -4972,15 +5049,19 @@ pub(crate) async fn reorder_agent_team_todos(
     Ok(todos)
 }
 
-async fn execute_team_run_cancel_intent(
+pub(super) async fn cancel_active_team_run(
     manager: &HostManager,
-    intent: &TeamRunControlIntent,
+    owner_user_id: &str,
+    conversation_id: &str,
+    turn_id: &str,
+    run_id: &str,
+    reason: &str,
 ) -> Result<LocalConversationTurnRecord, String> {
     let load_conversation = || {
         manager.execute(HostCommand::GetConversationContext(
             GetConversationCommand {
-                owner_user_id: intent.owner_user_id.clone(),
-                conversation_id: intent.conversation_id.clone(),
+                owner_user_id: owner_user_id.to_owned(),
+                conversation_id: conversation_id.to_owned(),
             },
         ))
     };
@@ -4988,15 +5069,15 @@ async fn execute_team_run_cancel_intent(
     let HostResult::Conversation { conversation } = result else {
         return Err("Local Agent Host 返回了错误的团队运行响应。".into());
     };
-    if conversation.conversation.owner_user_id != intent.owner_user_id
-        || conversation.conversation.conversation_id != intent.conversation_id
+    if conversation.conversation.owner_user_id != owner_user_id
+        || conversation.conversation.conversation_id != conversation_id
     {
         return Err("Local Agent Host 返回了不匹配的团队运行。".into());
     }
     let turn = conversation
         .turns
         .iter()
-        .find(|turn| turn.turn_id == intent.turn_id && turn.run_id == intent.run_id)
+        .find(|turn| turn.turn_id == turn_id && turn.run_id == run_id)
         .cloned()
         .ok_or_else(|| "Local Agent Host 中找不到待停止的团队运行。".to_owned())?;
     if turn.status != LocalConversationTurnStatus::Running {
@@ -5004,34 +5085,34 @@ async fn execute_team_run_cancel_intent(
     }
     let run_result = manager
         .execute(HostCommand::GetRun(GetRunCommand {
-            owner_user_id: intent.owner_user_id.clone(),
-            run_id: intent.run_id.clone(),
+            owner_user_id: owner_user_id.to_owned(),
+            run_id: run_id.to_owned(),
         }))
         .await?;
     let HostResult::Run { run } = run_result else {
         return Err("Local Agent Host 返回了错误的 Run 响应。".into());
     };
-    if run.owner_user_id != intent.owner_user_id || run.run_id != intent.run_id {
+    if run.owner_user_id != owner_user_id || run.run_id != run_id {
         return Err("Local Agent Host 返回了不匹配的 Run。".into());
     }
     let cancelled = manager
         .execute_detailed(HostCommand::CancelConversationTurn(
             CancelConversationTurnCommand {
-                owner_user_id: intent.owner_user_id.clone(),
-                conversation_id: intent.conversation_id.clone(),
+                owner_user_id: owner_user_id.to_owned(),
+                conversation_id: conversation_id.to_owned(),
                 expected_conversation_version: conversation.conversation.version,
-                turn_id: intent.turn_id.clone(),
+                turn_id: turn_id.to_owned(),
                 expected_run_version: Some(run.version),
-                reason: "用户已停止这个团队 Todo。".into(),
+                reason: reason.to_owned(),
             },
         ))
         .await;
     match cancelled {
         Ok(HostResult::ConversationTurnUpdated { result }) => {
-            if result.conversation.owner_user_id != intent.owner_user_id
-                || result.conversation.conversation_id != intent.conversation_id
-                || result.turn.turn_id != intent.turn_id
-                || result.turn.run_id != intent.run_id
+            if result.conversation.owner_user_id != owner_user_id
+                || result.conversation.conversation_id != conversation_id
+                || result.turn.turn_id != turn_id
+                || result.turn.run_id != run_id
                 || result.turn.status == LocalConversationTurnStatus::Running
             {
                 return Err("Local Agent Host 返回了不匹配的停止结果。".into());
@@ -5053,13 +5134,28 @@ async fn execute_team_run_cancel_intent(
                 .turns
                 .into_iter()
                 .find(|turn| {
-                    turn.turn_id == intent.turn_id
-                        && turn.run_id == intent.run_id
+                    turn.turn_id == turn_id
+                        && turn.run_id == run_id
                         && turn.status != LocalConversationTurnStatus::Running
                 })
                 .ok_or(original.message)
         }
     }
+}
+
+async fn execute_team_run_cancel_intent(
+    manager: &HostManager,
+    intent: &TeamRunControlIntent,
+) -> Result<LocalConversationTurnRecord, String> {
+    cancel_active_team_run(
+        manager,
+        &intent.owner_user_id,
+        &intent.conversation_id,
+        &intent.turn_id,
+        &intent.run_id,
+        "用户已停止这个团队 Todo。",
+    )
+    .await
 }
 
 async fn finish_team_run_cancel_intent(

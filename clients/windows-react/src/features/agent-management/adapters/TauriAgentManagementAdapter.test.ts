@@ -318,7 +318,7 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     vi.mocked(invoke).mockResolvedValueOnce({
       roomId: team.id,
       agentId: "agent-1",
-      conversationId: `agent-team-${team.id}-agent-1`,
+      conversationId: `agent-team-v2-${team.id}-agent-1`,
       conversationVersion: 0,
       hasActiveDelivery: false,
       items: [],
@@ -348,6 +348,12 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       ownerUserId: "owner-1", teamId: team.id,
     });
 
+    vi.mocked(invoke).mockResolvedValueOnce(null);
+    await adapter.cancelTeamRun("owner-1", team.id, "run-1");
+    expect(invoke).toHaveBeenLastCalledWith("cancel_agent_team_run", {
+      input: { ownerUserId: "owner-1", teamId: team.id, runId: "run-1" },
+    });
+
     vi.mocked(invoke).mockResolvedValueOnce({ dashboard: null, pendingApprovalCount: 0 });
     await expect(adapter.loadTeamDashboard("owner-1", team.id)).resolves.toEqual({
       dashboard: null, pendingApprovalCount: 0,
@@ -365,6 +371,21 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     vi.mocked(invoke).mockResolvedValueOnce([asset]);
     await adapter.listTeamAssets("owner-1", team.id);
     expect(invoke).toHaveBeenLastCalledWith("list_agent_team_assets", {
+      ownerUserId: "owner-1", teamId: team.id,
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce([{
+      id: "asset-review-1", teamId: team.id, todoId: "todo-1", todoTitle: "完成架构验证",
+      sourceAgentId: "agent-1", sourceAgentName: "架构师",
+      suggestion: {
+        category: "architecture", title: "事件驱动架构",
+        markdown: "采用事件驱动。", rationale: "集成测试已经验证。",
+      },
+      status: "pending", resolvedAssetId: null, resolvedAssetRevision: null,
+      reviewedByAgentId: null, reviewReason: "", createdAtUnixMs: 41, updatedAtUnixMs: 41,
+    }]);
+    await adapter.listTeamAssetReviews("owner-1", team.id);
+    expect(invoke).toHaveBeenLastCalledWith("list_agent_team_asset_reviews", {
       ownerUserId: "owner-1", teamId: team.id,
     });
 

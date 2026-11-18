@@ -1629,6 +1629,7 @@ function AgentTeamAssetsView({
   profiles: AgentProfileSummary[];
 }) {
   const assets = useAgentTeamAssetStore((state) => state.assets);
+  const reviews = useAgentTeamAssetStore((state) => state.reviews);
   const revisions = useAgentTeamAssetStore((state) => state.revisions);
   const isLoading = useAgentTeamAssetStore((state) => state.isLoading);
   const mutationAssetId = useAgentTeamAssetStore((state) => state.mutationAssetId);
@@ -1688,6 +1689,30 @@ function AgentTeamAssetsView({
         <div className="agent-team-conversation__error" role="alert">
           <span>{error}</span><button onClick={() => void refresh(port)} type="button">刷新</button>
         </div>
+      )}
+      {reviews.length > 0 && (
+        <section aria-label="待审核共享资产建议" className="agent-team-asset-reviews">
+          <header>
+            <div><strong>待审核共享资产建议</strong><span>{reviews.length}</span></div>
+            <p>项目经理 Agent 写入团队资产或给出事实理由明确拒绝后，建议才算处理完成。</p>
+          </header>
+          <div>
+            {reviews.map((review) => (
+              <article key={review.id}>
+                <div className="agent-team-asset-reviews__title">
+                  <strong>{review.suggestion.title}</strong>
+                  <em>{teamAssetCategoryLabels[review.suggestion.category]}</em>
+                </div>
+                <p>{review.suggestion.rationale}</p>
+                <small>来源任务：{review.todoTitle} · 提交 Agent：{review.sourceAgentName}</small>
+                <details>
+                  <summary>查看建议正文</summary>
+                  <SafeMarkdownPreview markdown={review.suggestion.markdown} />
+                </details>
+              </article>
+            ))}
+          </div>
+        </section>
       )}
       <div className="agent-team-assets__list">
         {isLoading && assets.length === 0 ? (
@@ -2131,7 +2156,11 @@ function AgentTeamRunDetailSheet({
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const canRetry = detail?.run.status.toLowerCase() === "needs_review" && Boolean(agentPort.retryTeamRun);
+  const canCancel = Boolean(detail && agentPort.cancelTeamRun
+    && isCancellableTeamRunDetailStatus(detail.run.status));
 
   useEffect(() => {
     let active = true;
@@ -2251,11 +2280,11 @@ function AgentTeamRunDetailSheet({
             </>
           ) : null}
         </div>
-        {detail?.run.status.toLowerCase() === "needs_review" && <footer>
-          {detail?.run.status.toLowerCase() === "needs_review" && agentPort.retryTeamRun && (
+        {(canRetry || canCancel) && <footer>
+          {canRetry && (
             <button
               className="is-danger"
-              disabled={isRetrying}
+              disabled={isRetrying || isCancelling}
               onClick={() => {
                 setIsRetrying(true);
                 setError(null);
@@ -2269,6 +2298,25 @@ function AgentTeamRunDetailSheet({
               }}
               type="button"
             >{isRetrying ? "正在重试…" : "重试中断步骤"}</button>
+          )}
+          {canCancel && (
+            <button
+              className="is-danger"
+              disabled={isCancelling || isRetrying}
+              onClick={() => {
+                if (!window.confirm("结束这个未完成的 Agent Run？已完成的消息和审计记录会保留。")) return;
+                setIsCancelling(true);
+                setError(null);
+                void agentPort.cancelTeamRun!(ownerUserId, teamId, runId).then(async () => {
+                  const snapshot = await port.loadRun(ownerUserId, runId, 0);
+                  setDetail(snapshot);
+                  await onRetried();
+                }).catch((failure: unknown) => {
+                  setError(failure instanceof Error ? failure.message : "团队 Run 结束失败。请刷新后重试。");
+                }).finally(() => setIsCancelling(false));
+              }}
+              type="button"
+            >{isCancelling ? "正在结束…" : "结束运行"}</button>
           )}
         </footer>}
       </section>
@@ -2318,6 +2366,10 @@ export function shouldPollTeamRunDetail(status: string) {
   ]).has(status.trim().toLowerCase());
 }
 
+export function isCancellableTeamRunDetailStatus(status: string) {
+  return shouldPollTeamRunDetail(status) || status.trim().toLowerCase() === "needs_review";
+}
+
 function teamRunStatusClass(status: AgentTeamRunSummary["runStatus"]) {
   return status === "succeeded" ? "completed" : status;
 }
@@ -2325,7 +2377,7 @@ function teamRunStatusClass(status: AgentTeamRunSummary["runStatus"]) {
 function teamRunMemoryThreadId(teamId: string, run: AgentTeamRunSummary) {
   return run.lane === "executor"
     ? `agent-team-executor-${run.deliveryId}`
-    : `agent-team-${teamId}-${run.agentId}`;
+    : `agent-team-v2-${teamId}-${run.agentId}`;
 }
 
 function formatRunElapsed(createdAtUnixMs: number, updatedAtUnixMs: number) {

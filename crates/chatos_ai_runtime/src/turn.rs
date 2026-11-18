@@ -385,7 +385,7 @@ pub async fn build_contextual_input(
         current_input_items.to_vec()
     };
     let has_durable_response_history = current_items.iter().any(is_durable_history_item);
-    let memory_items = if let (Some(composer), Some(scope)) = (memory_composer, memory_scope) {
+    let mut memory_items = if let (Some(composer), Some(scope)) = (memory_composer, memory_scope) {
         composer
             .compose_input_items_excluding_turn(scope, excluded_memory_turn_id, None)
             .await?
@@ -395,6 +395,7 @@ pub async fn build_contextual_input(
 
     if has_durable_response_history {
         current_items.retain(|item| !is_memory_context_item(item));
+        remove_memory_tool_pairs_already_in_durable_history(&mut memory_items, &current_items);
         let mut items = memory_items;
         items.extend(current_items);
         return Ok(Value::Array(items));
@@ -405,6 +406,77 @@ pub async fn build_contextual_input(
     items.extend(current_items);
 
     Ok(Value::Array(items))
+}
+
+fn remove_memory_tool_pairs_already_in_durable_history(
+    memory_items: &mut Vec<Value>,
+    durable_items: &[Value],
+) {
+    let call_ids = collect_tool_call_ids(durable_items);
+    let output_ids = collect_tool_output_ids(durable_items);
+    let complete_ids = call_ids
+        .intersection(&output_ids)
+        .map(ToOwned::to_owned)
+        .collect::<std::collections::HashSet<_>>();
+    if complete_ids.is_empty() {
+        return;
+    }
+    memory_items.retain(|item| {
+        let item_type = item.get("type").and_then(Value::as_str);
+        if matches!(item_type, Some("function_call" | "function_call_output")) {
+            return item
+                .get("call_id")
+                .and_then(Value::as_str)
+                .is_none_or(|call_id| !complete_ids.contains(call_id));
+        }
+        if item.get("role").and_then(Value::as_str) == Some("tool") {
+            return item
+                .get("tool_call_id")
+                .and_then(Value::as_str)
+                .is_none_or(|call_id| !complete_ids.contains(call_id));
+        }
+        true
+    });
+}
+
+fn collect_tool_call_ids(items: &[Value]) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    for item in items {
+        if item.get("type").and_then(Value::as_str) == Some("function_call") {
+            if let Some(call_id) = item.get("call_id").and_then(Value::as_str) {
+                ids.insert(call_id.to_string());
+            }
+        }
+        if let Some(tool_calls) = item.get("tool_calls").and_then(Value::as_array) {
+            for tool_call in tool_calls {
+                if let Some(call_id) = tool_call
+                    .get("id")
+                    .or_else(|| tool_call.get("call_id"))
+                    .and_then(Value::as_str)
+                {
+                    ids.insert(call_id.to_string());
+                }
+            }
+        }
+    }
+    ids
+}
+
+fn collect_tool_output_ids(items: &[Value]) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    for item in items {
+        if item.get("type").and_then(Value::as_str) == Some("function_call_output") {
+            if let Some(call_id) = item.get("call_id").and_then(Value::as_str) {
+                ids.insert(call_id.to_string());
+            }
+        }
+        if item.get("role").and_then(Value::as_str) == Some("tool") {
+            if let Some(call_id) = item.get("tool_call_id").and_then(Value::as_str) {
+                ids.insert(call_id.to_string());
+            }
+        }
+    }
+    ids
 }
 
 fn is_memory_context_item(item: &Value) -> bool {

@@ -120,12 +120,66 @@ fn presentation(tool_name: &str, arguments: Option<&Map<String, Value>>) -> Appr
             risk: "high".into(),
             reason: Some("任务请求向已保存的远程连接写入文件。".into()),
         },
+        "team_asset_create" => ApprovalPresentation {
+            command: format!(
+                "team_asset_create · {} · {}",
+                first_string(arguments, &["category"])
+                    .map(|value| bounded(value, 64))
+                    .unwrap_or_else(|| "分类不可用".into()),
+                first_string(arguments, &["title"])
+                    .map(|value| bounded(value, 240))
+                    .unwrap_or_else(|| "标题不可用".into()),
+            ),
+            purpose: Some("创建团队共享资产".into()),
+            cwd: "团队共享资产".into(),
+            risk: "medium".into(),
+            reason: Some("项目经理 Agent 请求向目标团队写入新的共享资产。".into()),
+        },
+        "team_asset_update" => ApprovalPresentation {
+            command: format!(
+                "team_asset_update · {} · {}",
+                first_string(arguments, &["category"])
+                    .map(|value| bounded(value, 64))
+                    .unwrap_or_else(|| "分类不可用".into()),
+                first_string(arguments, &["title"])
+                    .map(|value| bounded(value, 240))
+                    .unwrap_or_else(|| "标题不可用".into()),
+            ),
+            purpose: Some("更新团队共享资产".into()),
+            cwd: "团队共享资产".into(),
+            risk: "medium".into(),
+            reason: Some("项目经理 Agent 请求修改目标团队已有的共享资产。".into()),
+        },
+        "team_asset_archive" => ApprovalPresentation {
+            command: "team_asset_archive · current Run asset reference".into(),
+            purpose: Some("归档团队共享资产".into()),
+            cwd: "团队共享资产".into(),
+            risk: "high".into(),
+            reason: Some("项目经理 Agent 请求归档目标团队已有的共享资产。".into()),
+        },
+        "team_asset_review_resolve" => {
+            let outcome = first_string(arguments, &["outcome"])
+                .map(|value| bounded(value, 32))
+                .unwrap_or_else(|| "处理结果不可用".into());
+            let purpose = match outcome.as_str() {
+                "applied" => "将待审核共享资产建议标记为已应用",
+                "rejected" => "明确拒绝待审核共享资产建议",
+                _ => "处理待审核共享资产建议",
+            };
+            ApprovalPresentation {
+                command: format!("team_asset_review_resolve · {outcome}"),
+                purpose: Some(purpose.into()),
+                cwd: "团队共享资产审核".into(),
+                risk: "high".into(),
+                reason: Some("项目经理 Agent 请求处理共享资产建议；处理后不可撤回。".into()),
+            }
+        }
         _ => ApprovalPresentation {
-            command: format!("{} · commit staged project edits", bounded(tool_name, 256)),
-            purpose: Some("修改当前项目中的已暂存文件".into()),
+            command: format!("{} · side-effecting local tool", bounded(tool_name, 256)),
+            purpose: Some("执行需要人工确认的本机写操作".into()),
             cwd: ".".into(),
             risk: "medium".into(),
-            reason: Some("任务请求提交已暂存的项目文件修改。".into()),
+            reason: Some("任务请求执行尚未提供专用审批说明的本机写操作。".into()),
         },
     }
 }
@@ -200,4 +254,64 @@ fn command_risk(command: &str) -> (String, Option<String>) {
         );
     }
     ("low".into(), None)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn team_asset_create_approval_is_truthful_and_redacts_markdown() {
+        let arguments = json!({
+            "team_ref": "team_ref_current_run",
+            "category": "decision",
+            "title": "Windows Release 共享资产审核回归",
+            "markdown": "secret body must not be projected"
+        });
+        let presentation = presentation("team_asset_create", arguments.as_object());
+
+        assert_eq!(presentation.purpose.as_deref(), Some("创建团队共享资产"));
+        assert_eq!(presentation.cwd, "团队共享资产");
+        assert_eq!(presentation.risk, "medium");
+        assert!(presentation.command.contains("decision"));
+        assert!(presentation
+            .command
+            .contains("Windows Release 共享资产审核回归"));
+        assert!(!presentation.command.contains("secret body"));
+        assert!(!presentation.command.contains("commit staged project edits"));
+    }
+
+    #[test]
+    fn team_asset_review_resolution_warns_that_the_decision_is_irreversible() {
+        let arguments = json!({
+            "review_ref": "asset_review_ref_current_run",
+            "outcome": "applied",
+            "asset_ref": "asset_ref_current_run"
+        });
+        let presentation = presentation("team_asset_review_resolve", arguments.as_object());
+
+        assert_eq!(
+            presentation.purpose.as_deref(),
+            Some("将待审核共享资产建议标记为已应用")
+        );
+        assert_eq!(presentation.risk, "high");
+        assert!(presentation.command.ends_with("applied"));
+        assert!(presentation
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("不可撤回")));
+    }
+
+    #[test]
+    fn unknown_side_effecting_tools_do_not_claim_to_commit_project_edits() {
+        let presentation = presentation("future_write_tool", None);
+
+        assert_eq!(
+            presentation.purpose.as_deref(),
+            Some("执行需要人工确认的本机写操作")
+        );
+        assert!(!presentation.command.contains("commit staged project edits"));
+    }
 }

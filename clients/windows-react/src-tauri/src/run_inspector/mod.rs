@@ -123,6 +123,8 @@ pub async fn load_run_inspector(
     if run.owner_user_id != owner_user_id || run.run_id != run_id {
         return Err("Local Agent Host 返回了不匹配的 Run。".into());
     }
+    let completed_tool_events =
+        process_events(&manager, &owner_user_id, &run_id, "tool_batch_completed").await?;
     let page_limit = if event_offset == 0 {
         LATEST_EVENT_LIMIT
     } else {
@@ -153,7 +155,7 @@ pub async fn load_run_inspector(
     Ok(RunInspectorDetail {
         run: RunInspectorRun::from_record(&run),
         events: selected,
-        tool_calls: projection::tool_calls(&events),
+        tool_calls: projection::tool_calls(&completed_tool_events),
         events_has_more: events.len() > next_offset,
         next_offset,
     })

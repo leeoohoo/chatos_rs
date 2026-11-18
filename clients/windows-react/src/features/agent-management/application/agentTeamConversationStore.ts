@@ -199,14 +199,20 @@ async function cycleTeamConversation(
   ownerUserId: string,
   teamId: string,
 ) {
-  let snapshot = await port.loadTeamConversation(ownerUserId, teamId, null, 50);
+  let snapshot = await runConversationCycleStage(
+    "读取团队消息",
+    () => port.loadTeamConversation(ownerUserId, teamId, null, 50),
+  );
   if (snapshot.teamId !== teamId) throw new Error("Agent 团队消息身份不一致，请刷新后重试。");
   const runningAgentIds = [...new Set(snapshot.deliveries
     .filter((delivery) => delivery.status === "running")
     .map((delivery) => delivery.targetAgentId))];
   if (runningAgentIds.length > 0) {
     await Promise.all(runningAgentIds.map(async (agentId) => {
-      const activity = await port.loadTeamMemberActivity(ownerUserId, teamId, agentId);
+      const activity = await runConversationCycleStage(
+        "对账团队 Agent 运行",
+        () => port.loadTeamMemberActivity(ownerUserId, teamId, agentId),
+      );
       if (activity.roomId !== teamId || activity.agentId !== agentId) {
         throw new Error("团队 Agent 运行身份不一致，请刷新后重试。");
       }
@@ -214,16 +220,30 @@ async function cycleTeamConversation(
   }
   let dispatched = false;
   for (let count = 0; count < 100; count += 1) {
-    const delivery = await port.dispatchNextTeamDelivery(ownerUserId, teamId);
+    const delivery = await runConversationCycleStage(
+      "调度团队 Delivery",
+      () => port.dispatchNextTeamDelivery(ownerUserId, teamId),
+    );
     if (!delivery) break;
     if (delivery.teamId !== teamId) throw new Error("Agent Delivery 团队身份不一致，请刷新后重试。");
     dispatched = true;
   }
   if (runningAgentIds.length > 0 || dispatched) {
-    snapshot = await port.loadTeamConversation(ownerUserId, teamId, null, 50);
+    snapshot = await runConversationCycleStage(
+      "刷新团队消息",
+      () => port.loadTeamConversation(ownerUserId, teamId, null, 50),
+    );
     if (snapshot.teamId !== teamId) throw new Error("Agent 团队消息身份不一致，请刷新后重试。");
   }
   return snapshot;
+}
+
+async function runConversationCycleStage<T>(label: string, operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (failure) {
+    throw new Error(`${label}失败：${errorMessage(failure)}`);
+  }
 }
 
 function mergeConversationSnapshots(

@@ -2,7 +2,7 @@ use super::transport::ManagedHost;
 use std::{collections::BTreeMap, path::Path, process::Stdio};
 use tokio::process::Command;
 
-const READ_ONLY_TOOL_NAMES: [&str; 27] = [
+const READ_ONLY_TOOL_NAMES: [&str; 30] = [
     "local_attachment_read",
     "read_file_raw",
     "read_file_range",
@@ -15,6 +15,9 @@ const READ_ONLY_TOOL_NAMES: [&str; 27] = [
     "todo_dependency_options",
     "todo_list",
     "todo_read_progress",
+    "team_asset_list",
+    "team_asset_get",
+    "team_asset_review_list",
     "capability_search",
     "capability_describe",
     "plugin_installer_search_npm",
@@ -350,6 +353,12 @@ mod tests {
         assert!(READ_ONLY_TOOL_NAMES.contains(&"capability_describe"));
         assert!(READ_ONLY_TOOL_NAMES.contains(&"agent_skill_activate"));
         assert!(READ_ONLY_TOOL_NAMES.contains(&"agent_skill_read_resource"));
+        assert!(READ_ONLY_TOOL_NAMES.contains(&"team_asset_list"));
+        assert!(READ_ONLY_TOOL_NAMES.contains(&"team_asset_get"));
+        assert!(READ_ONLY_TOOL_NAMES.contains(&"team_asset_review_list"));
+        assert!(!APPROVAL_EXEMPT_TOOL_NAMES.contains(&"team_asset_create"));
+        assert!(!APPROVAL_EXEMPT_TOOL_NAMES.contains(&"team_asset_update"));
+        assert!(!APPROVAL_EXEMPT_TOOL_NAMES.contains(&"team_asset_review_resolve"));
         assert!(!READ_ONLY_TOOL_NAMES.contains(&"capability_invoke"));
         assert!(!APPROVAL_EXEMPT_TOOL_NAMES.contains(&"capability_invoke"));
     }

@@ -9,6 +9,7 @@ import {
   agentTeamListSchema,
   agentTeamDetailSchema,
   agentTeamConversationSnapshotSchema,
+  agentTeamMemberActivitySnapshotSchema,
   heartbeatIntervalLabel,
   preparedAgentConversationSchema,
 } from "./agentManagement";
@@ -102,6 +103,23 @@ describe("agent management domain", () => {
       ...snapshot,
       items: [{ ...snapshot.items[0], agentId: "agent-2" }],
     })).toThrow("Agent 运行动态成员身份不一致");
+  });
+
+  it("accepts only the versioned Host conversation identity for team member activity", () => {
+    const roomId = "11111111-1111-4111-8111-111111111111";
+    const snapshot = {
+      roomId,
+      agentId: "agent-1",
+      conversationId: `agent-team-v2-${roomId}-agent-1`,
+      conversationVersion: 1,
+      hasActiveDelivery: false,
+      items: [],
+    };
+    expect(agentTeamMemberActivitySnapshotSchema.parse(snapshot)).toEqual(snapshot);
+    expect(() => agentTeamMemberActivitySnapshotSchema.parse({
+      ...snapshot,
+      conversationId: `agent-team-${roomId}-agent-1`,
+    })).toThrow("团队 Agent 运行动态会话身份不一致");
   });
 
   it("accepts only agent-bound and internally consistent profile activity", () => {

@@ -291,6 +291,22 @@
 .agent-team-assets__toolbar strong { font-size: 10.5px; }
 .agent-team-assets__toolbar span { color: var(--secondary); font-size: 8.5px; }
 .agent-team-assets__toolbar .primary-button { min-height: 27px; padding: 5px 10px; font-size: 8.5px; }
+.agent-team-asset-reviews { display: grid; flex: none; gap: 9px; border-bottom: 1px solid rgba(255,149,0,.22); padding: 12px 18px; background: rgba(255,149,0,.055); }
+.agent-team-asset-reviews > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.agent-team-asset-reviews > header > div { display: flex; align-items: center; gap: 6px; }
+.agent-team-asset-reviews > header strong { font-size: 10px; }
+.agent-team-asset-reviews > header span { min-width: 18px; border-radius: 999px; padding: 2px 5px; color: #8a4b00; background: rgba(255,149,0,.15); font-size: 8px; font-weight: 700; text-align: center; }
+.agent-team-asset-reviews > header p { max-width: 430px; margin: 0; color: var(--secondary); font-size: 8px; text-align: right; }
+.agent-team-asset-reviews > div { display: grid; max-height: 220px; gap: 7px; overflow: auto; }
+.agent-team-asset-reviews article { display: grid; gap: 5px; border: 1px solid rgba(255,149,0,.18); border-radius: 9px; padding: 9px 11px; background: rgba(255,255,255,.72); }
+.agent-team-asset-reviews__title { display: flex; align-items: center; gap: 7px; }
+.agent-team-asset-reviews__title strong { font-size: 9.5px; }
+.agent-team-asset-reviews__title em { border-radius: 999px; padding: 2px 6px; color: #8a4b00; background: rgba(255,149,0,.12); font-size: 7.5px; font-style: normal; }
+.agent-team-asset-reviews article > p { margin: 0; color: var(--primary); font-size: 8.5px; line-height: 1.45; }
+.agent-team-asset-reviews article > small { color: var(--secondary); font-size: 7.5px; }
+.agent-team-asset-reviews details { color: var(--secondary); font-size: 8px; }
+.agent-team-asset-reviews details > summary { width: fit-content; cursor: pointer; }
+.agent-team-asset-reviews details > div { margin-top: 7px; border-top: 1px solid var(--separator); padding-top: 7px; color: var(--primary); }
 .agent-team-assets__list { display: grid; min-height: 0; align-content: start; gap: 12px; overflow: auto; padding: 18px; }
 .agent-team-assets__list > article { position: relative; overflow: visible; border: 1px solid rgba(60,60,67,.09); border-radius: 11px; background: rgba(255,255,255,.78); box-shadow: 0 2px 7px rgba(0,0,0,.025); }
 .agent-team-assets__list > article > header { display: grid; grid-template-columns: minmax(0,1fr) auto 24px; align-items: center; gap: 10px; min-height: 50px; padding: 0 14px; }

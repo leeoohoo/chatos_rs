@@ -17,6 +17,7 @@ import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPor
 import type { ConversationAttachmentPort } from "../../conversation-attachments/ports/ConversationAttachmentPort";
 import {
   AgentManagementView,
+  isCancellableTeamRunDetailStatus,
   shouldPollTeamRunDetail,
   teamRunDetailStatusLabel,
 } from "./AgentManagementView";
@@ -46,6 +47,13 @@ describe("AgentManagementView", () => {
     expect(shouldPollTeamRunDetail("reviewing_followup")).toBe(true);
     expect(shouldPollTeamRunDetail(" waiting_confirmation ")).toBe(true);
     expect(shouldPollTeamRunDetail("succeeded")).toBe(false);
+  });
+
+  it("offers cancellation for every non-terminal Host Run state", () => {
+    expect(isCancellableTeamRunDetailStatus("waiting_tool_result")).toBe(true);
+    expect(isCancellableTeamRunDetailStatus("needs_review")).toBe(true);
+    expect(isCancellableTeamRunDetailStatus("cancelled")).toBe(false);
+    expect(isCancellableTeamRunDetailStatus("succeeded")).toBe(false);
   });
 
   it("renders macOS profile card facts and enables profile editing", async () => {
@@ -448,7 +456,7 @@ describe("AgentManagementView", () => {
       queueTeamMessage,
       dispatchNextTeamDelivery,
       loadTeamMemberActivity: vi.fn(async () => ({
-        roomId: team.id, agentId: "agent-1", conversationId: `agent-team-${team.id}-agent-1`,
+        roomId: team.id, agentId: "agent-1", conversationId: `agent-team-v2-${team.id}-agent-1`,
         conversationVersion: 1, hasActiveDelivery: false, items: [],
       })),
     });
@@ -628,6 +636,77 @@ describe("AgentManagementView", () => {
     expect(screen.getByText("succeeded · 结果 128 B")).toBeVisible();
   });
 
+  it("confirms and cancels an active manager Run through the owner-scoped port", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",
+      name: "Alpha Agent 团队", goal: "交付 Alpha", defaultAgentId: "agent-1",
+      projectManagerAgentId: null, memberCount: 1, createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    };
+    const detail = {
+      team,
+      members: [{ agentId: "agent-1", role: "界面设计师", responsibility: "负责产品界面", joinedAtUnixMs: 20 }],
+    };
+    const activeRun = {
+      deliveryId: "delivery-active", messageId: "message-active", agentId: "agent-1",
+      lane: "manager" as const, triggerKind: "default_agent" as const,
+      deliveryStatus: "running" as const, runStatus: "running" as const,
+      turnId: "turn-active", runId: "run-active", responseMessageId: null, lastError: null,
+      createdAtUnixMs: 30, updatedAtUnixMs: 40,
+    };
+    const loadTeamRuns = vi.fn(async () => ({
+      teamId: team.id, messageCount: 1, pendingDeliveryCount: 0, runningDeliveryCount: 1,
+      completedDeliveryCount: 0, failedDeliveryCount: 0, cancelledDeliveryCount: 0,
+      runs: [activeRun],
+    }));
+    let cancelled = false;
+    const cancelTeamRun = vi.fn(async () => { cancelled = true; });
+    const port = stubPort({
+      listTeams: vi.fn(async () => [team]), loadTeam: vi.fn(async () => detail),
+      loadTeamRuns, cancelTeamRun,
+    });
+    const loadRun = vi.fn(async () => cancelled ? ({
+      run: {
+        runId: "run-active", taskId: "task-1", status: "cancelled", iteration: 1,
+        maxIterations: 32, resultSummary: null, reportContent: null,
+        errorMessage: "用户已结束这个未完成的 Agent Run。",
+        createdAtUnixMs: 30, updatedAtUnixMs: 50, finishedAtUnixMs: 50,
+      },
+      events: [], toolCalls: [], eventsHasMore: false, nextOffset: 0,
+    }) : ({
+        run: {
+          runId: "run-active", taskId: "task-1", status: "waiting_tool_result", iteration: 1,
+          maxIterations: 32, resultSummary: null, reportContent: null, errorMessage: null,
+          createdAtUnixMs: 30, updatedAtUnixMs: 40, finishedAtUnixMs: null,
+        },
+        events: [], toolCalls: [], eventsHasMore: false, nextOffset: 0,
+      }));
+    const runInspectorPort: RunInspectorPort = {
+      loadGraph: vi.fn(), loadTask: vi.fn(), loadRun,
+      retryTask: vi.fn(), cancelTask: vi.fn(), restartTask: vi.fn(),
+    };
+    render(
+      <AgentManagementView
+        ownerUserId="owner-1"
+        port={port}
+        projects={[{ id: "project-1", title: "Alpha" }]}
+        runInspectorPort={runInspectorPort}
+      />,
+    );
+    await screen.findByText("界面设计师");
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
+    fireEvent.click(await screen.findByRole("button", { name: "运行" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看界面设计师的运行状态" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看界面设计师的运行详情" }));
+    fireEvent.click(await screen.findByRole("button", { name: "结束运行" }));
+
+    expect(confirm).toHaveBeenCalledWith("结束这个未完成的 Agent Run？已完成的消息和审计记录会保留。");
+    await waitFor(() => expect(cancelTeamRun).toHaveBeenCalledWith("owner-1", team.id, "run-active"));
+    await waitFor(() => expect(loadRun.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "结束运行" })).toBeNull());
+    confirm.mockRestore();
+  });
+
   it("shows the newest persisted Todo execution record before older history", async () => {
     const team = {
       id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",
@@ -709,6 +788,16 @@ describe("AgentManagementView", () => {
       listTeams: vi.fn(async () => [team]),
       loadTeam: vi.fn(async () => detail),
       listTeamAssets: vi.fn(async () => [asset]),
+      listTeamAssetReviews: vi.fn(async () => [{
+        id: "asset-review-1", teamId: team.id, todoId: "todo-1", todoTitle: "完成架构验证",
+        sourceAgentId: "agent-1", sourceAgentName: "界面设计师",
+        suggestion: {
+          category: "architecture" as const, title: "事件驱动架构",
+          markdown: "采用事件驱动并保持幂等。", rationale: "集成测试已经验证。",
+        },
+        status: "pending" as const, resolvedAssetId: null, resolvedAssetRevision: null,
+        reviewedByAgentId: null, reviewReason: "", createdAtUnixMs: 31, updatedAtUnixMs: 31,
+      }]),
       saveTeamAsset,
       archiveTeamAsset: vi.fn(async () => ({ ...asset, revision: 2, status: "archived" as const })),
       listTeamAssetRevisions: vi.fn(async () => [{
@@ -727,6 +816,10 @@ describe("AgentManagementView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
     fireEvent.click(await screen.findByRole("button", { name: "共享资产" }));
     const workspace = await screen.findByRole("region", { name: "Agent 团队共享资产" });
+    expect(within(workspace).getByRole("region", { name: "待审核共享资产建议" })).toBeVisible();
+    expect(within(workspace).getByText("事件驱动架构")).toBeVisible();
+    expect(within(workspace).getByText("来源任务：完成架构验证 · 提交 Agent：界面设计师")).toBeVisible();
+    expect(within(workspace).getByText(/写入团队资产或给出事实理由明确拒绝/)).toBeVisible();
     expect(within(workspace).getAllByText("项目概览")[0]).toBeVisible();
     expect(within(workspace).getByText("1–1 / 1")).toBeVisible();
     fireEvent.click(within(workspace).getByRole("button", { name: "项目概览" }));

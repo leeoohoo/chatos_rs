@@ -319,7 +319,7 @@ export const agentTeamMemberActivitySnapshotSchema = z.object({
   hasActiveDelivery: z.boolean(),
   items: z.array(agentConversationActivityItemSchema).max(100),
 }).strict().superRefine((snapshot, context) => {
-  if (snapshot.conversationId !== `agent-team-${snapshot.roomId}-${snapshot.agentId}`) {
+  if (snapshot.conversationId !== `agent-team-v2-${snapshot.roomId}-${snapshot.agentId}`) {
     context.addIssue({
       code: "custom",
       message: "团队 Agent 运行动态会话身份不一致。",
@@ -813,6 +813,65 @@ export const agentTeamAssetListSchema = z.array(agentTeamAssetSchema).max(1_000)
     });
   });
 
+export const agentTeamAssetUpdateSuggestionSchema = z.object({
+  category: agentTeamAssetCategorySchema,
+  title: z.string().trim().min(1).max(240),
+  markdown: z.string().min(1).max(128_000),
+  rationale: z.string().trim().min(1).max(4_000),
+}).strict();
+
+export const agentTeamAssetReviewSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  teamId: z.string().uuid(),
+  todoId: z.string().trim().min(1).max(512),
+  todoTitle: z.string().trim().min(1).max(500),
+  sourceAgentId: z.string().trim().min(1).max(512),
+  sourceAgentName: z.string().trim().min(1).max(120),
+  suggestion: agentTeamAssetUpdateSuggestionSchema,
+  status: z.enum(["pending", "applied", "rejected"]),
+  resolvedAssetId: z.string().trim().min(1).max(512).nullable(),
+  resolvedAssetRevision: z.number().int().positive().nullable(),
+  reviewedByAgentId: z.string().trim().min(1).max(512).nullable(),
+  reviewReason: z.string().max(4_000),
+  createdAtUnixMs: z.number().int().nonnegative(),
+  updatedAtUnixMs: z.number().int().nonnegative(),
+}).strict().superRefine((review, context) => {
+  if (review.updatedAtUnixMs < review.createdAtUnixMs) {
+    context.addIssue({ code: "custom", message: "团队资产审核更新时间无效。", path: ["updatedAtUnixMs"] });
+  }
+  const pending = review.status === "pending"
+    && review.resolvedAssetId == null
+    && review.resolvedAssetRevision == null
+    && review.reviewedByAgentId == null
+    && review.reviewReason === "";
+  const applied = review.status === "applied"
+    && review.resolvedAssetId != null
+    && review.resolvedAssetRevision != null
+    && review.reviewedByAgentId != null;
+  const rejected = review.status === "rejected"
+    && review.resolvedAssetId == null
+    && review.resolvedAssetRevision == null
+    && review.reviewedByAgentId != null
+    && review.reviewReason.trim().length > 0;
+  if (!pending && !applied && !rejected) {
+    context.addIssue({ code: "custom", message: "团队资产审核状态不一致。", path: ["status"] });
+  }
+});
+
+export const agentTeamAssetReviewListSchema = z.array(agentTeamAssetReviewSchema).max(500)
+  .superRefine((reviews, context) => {
+    const identities = new Set<string>();
+    reviews.forEach((review, index) => {
+      if (review.status !== "pending") {
+        context.addIssue({ code: "custom", message: "待审核列表不能包含已处理记录。", path: [index, "status"] });
+      }
+      if (identities.has(review.id)) {
+        context.addIssue({ code: "custom", message: "团队资产审核不能重复。", path: [index, "id"] });
+      }
+      identities.add(review.id);
+    });
+  });
+
 export const agentTeamAssetRevisionSchema = z.object({
   assetId: z.string().trim().min(1).max(512),
   revision: z.number().int().positive(),
@@ -928,6 +987,8 @@ export type AgentTeamTodo = z.infer<typeof agentTeamTodoSchema>;
 export type AgentTeamTodoProgress = z.infer<typeof agentTeamTodoProgressSchema>;
 export type AgentTeamAssetCategory = z.infer<typeof agentTeamAssetCategorySchema>;
 export type AgentTeamAsset = z.infer<typeof agentTeamAssetSchema>;
+export type AgentTeamAssetUpdateSuggestion = z.infer<typeof agentTeamAssetUpdateSuggestionSchema>;
+export type AgentTeamAssetReview = z.infer<typeof agentTeamAssetReviewSchema>;
 export type AgentTeamAssetRevision = z.infer<typeof agentTeamAssetRevisionSchema>;
 export type AgentProjectMilestone = z.infer<typeof agentProjectMilestoneSchema>;
 export type AgentProjectIssue = z.infer<typeof agentProjectIssueSchema>;

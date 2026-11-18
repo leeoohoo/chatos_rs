@@ -311,6 +311,153 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn durable_history_owns_complete_tool_pair_already_present_in_memory() {
+        let (composer, scope, server) = memory_composer_mock(json!({
+            "thread_id": "thread-1",
+            "blocks": [],
+            "recent_records": [
+                {
+                    "id": "record-old-call",
+                    "thread_id": "thread-1",
+                    "tenant_id": "tenant-1",
+                    "source_id": "task_execution",
+                    "external_record_id": null,
+                    "role": "assistant",
+                    "record_type": "message",
+                    "content": "historical inspection",
+                    "structured_payload": null,
+                    "metadata": {
+                        "conversation_turn_id": "run-old",
+                        "tool_calls": [{
+                            "id": "call-shared",
+                            "type": "function",
+                            "function": {"name": "read_file", "arguments": "{}"}
+                        }]
+                    },
+                    "summary_status": "pending",
+                    "summary_id": null,
+                    "summarized_at": null,
+                    "created_at": "2026-11-18T00:00:00Z"
+                },
+                {
+                    "id": "record-old-output",
+                    "thread_id": "thread-1",
+                    "tenant_id": "tenant-1",
+                    "source_id": "task_execution",
+                    "external_record_id": null,
+                    "role": "tool",
+                    "record_type": "message",
+                    "content": "historical output",
+                    "structured_payload": null,
+                    "metadata": {
+                        "conversation_turn_id": "run-old",
+                        "tool_call_id": "call-shared",
+                        "name": "read_file"
+                    },
+                    "summary_status": "pending",
+                    "summary_id": null,
+                    "summarized_at": null,
+                    "created_at": "2026-11-18T00:00:01Z"
+                },
+                {
+                    "id": "record-memory-only-call",
+                    "thread_id": "thread-1",
+                    "tenant_id": "tenant-1",
+                    "source_id": "task_execution",
+                    "external_record_id": null,
+                    "role": "assistant",
+                    "record_type": "message",
+                    "content": "other inspection",
+                    "structured_payload": null,
+                    "metadata": {
+                        "conversation_turn_id": "run-older",
+                        "tool_calls": [{
+                            "id": "call-memory-only",
+                            "type": "function",
+                            "function": {"name": "list_dir", "arguments": "{}"}
+                        }]
+                    },
+                    "summary_status": "pending",
+                    "summary_id": null,
+                    "summarized_at": null,
+                    "created_at": "2026-11-18T00:00:02Z"
+                },
+                {
+                    "id": "record-memory-only-output",
+                    "thread_id": "thread-1",
+                    "tenant_id": "tenant-1",
+                    "source_id": "task_execution",
+                    "external_record_id": null,
+                    "role": "tool",
+                    "record_type": "message",
+                    "content": "memory-only output",
+                    "structured_payload": null,
+                    "metadata": {
+                        "conversation_turn_id": "run-older",
+                        "tool_call_id": "call-memory-only",
+                        "name": "list_dir"
+                    },
+                    "summary_status": "pending",
+                    "summary_id": null,
+                    "summarized_at": null,
+                    "created_at": "2026-11-18T00:00:03Z"
+                }
+            ],
+            "meta": {"summary_count": 0, "recent_record_count": 4}
+        }))
+        .await;
+        let durable = vec![
+            json!({"role":"user","content":"continue"}),
+            json!({"type":"function_call","id":"fc-shared","call_id":"call-shared","name":"read_file","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"call-shared","output":"durable output"}),
+        ];
+
+        let input = build_contextual_input(
+            Some(&composer),
+            Some(&scope),
+            &[],
+            durable.as_slice(),
+            Value::Null,
+            Some("run-current"),
+        )
+        .await
+        .expect("contextual input");
+        server.abort();
+        let items = input.as_array().expect("input items");
+
+        assert_eq!(
+            items
+                .iter()
+                .filter(|item| {
+                    item.get("type").and_then(Value::as_str) == Some("function_call")
+                        && item.get("call_id").and_then(Value::as_str) == Some("call-shared")
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            items
+                .iter()
+                .filter(|item| {
+                    item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                        && item.get("call_id").and_then(Value::as_str) == Some("call-shared")
+                })
+                .count(),
+            1
+        );
+        assert!(items.iter().any(|item| {
+            item.get("type").and_then(Value::as_str) == Some("function_call")
+                && item.get("call_id").and_then(Value::as_str) == Some("call-memory-only")
+        }));
+        assert!(items.iter().any(|item| {
+            item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                && item.get("call_id").and_then(Value::as_str) == Some("call-memory-only")
+        }));
+        assert!(input.to_string().contains("durable output"));
+        assert!(!input.to_string().contains("historical output"));
+    }
+
+    #[tokio::test]
     async fn chat_style_durable_history_does_not_duplicate_memory_records() {
         let (composer, scope, server) = memory_composer_mock(json!({
             "thread_id": "thread-1",

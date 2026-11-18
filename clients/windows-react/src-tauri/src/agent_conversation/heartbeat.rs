@@ -248,6 +248,24 @@ impl AgentConversationStore {
         if heartbeat_only && trigger_kind != "heartbeat" {
             return Err("chat_heartbeat_complete is only available for heartbeat runs.".into());
         }
+        if !heartbeat_only
+            && binding.conversation_kind == "project_team"
+            && binding.is_project_manager
+            && !self
+                .list_team_asset_reviews(
+                    owner_user_id,
+                    Some(&binding.room_id),
+                    Some(&binding.agent_id),
+                    "pending",
+                    1,
+                )?
+                .is_empty()
+        {
+            return Err(
+                "team_asset_reviews_pending: 仍有执行者提交的共享资产建议待审核；请先调用 team_asset_review_list，并应用或明确拒绝。"
+                    .into(),
+            );
+        }
         Ok((binding, json!({"status": "completed"})))
     }
 }

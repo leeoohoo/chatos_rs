@@ -7,6 +7,69 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 #[tokio::test]
+async fn version_forty_nine_allows_team_conversations_to_share_contact_identity() {
+    let mut connection = SqliteConnection::connect_with(
+        &SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .foreign_keys(true),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TABLE local_conversations(\
+           conversation_id TEXT PRIMARY KEY NOT NULL, owner_user_id TEXT NOT NULL,\
+           resource_kind TEXT, resource_id TEXT)",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE UNIQUE INDEX local_conversations_owner_resource ON local_conversations(\
+           owner_user_id, resource_kind, resource_id)\
+         WHERE resource_kind IS NOT NULL AND resource_id IS NOT NULL",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO local_conversations VALUES(\
+           'agent-direct-v2-room-1', 'user-1', 'contact', 'agent-1')",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+
+    for statement in schema::SCHEMA_V49 {
+        sqlx::query(sqlx::AssertSqlSafe(*statement))
+            .execute(&mut connection)
+            .await
+            .unwrap();
+    }
+
+    sqlx::query(
+        "INSERT INTO local_conversations VALUES(\
+           'agent-team-v2-team-1-agent-1', 'user-1', 'contact', 'agent-1')",
+    )
+    .execute(&mut connection)
+    .await
+    .expect("contact identity can be shared across conversations");
+    sqlx::query(
+        "INSERT INTO local_conversations VALUES(\
+           'project-conversation-1', 'user-1', 'project', 'project-1')",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    assert!(sqlx::query(
+        "INSERT INTO local_conversations VALUES(\
+               'project-conversation-2', 'user-1', 'project', 'project-1')",
+    )
+    .execute(&mut connection)
+    .await
+    .is_err());
+}
+
+#[tokio::test]
 async fn version_forty_eight_discards_runtime_settings_before_referenced_snapshots() {
     let mut connection = SqliteConnection::connect_with(
         &SqliteConnectOptions::from_str("sqlite::memory:")
@@ -717,6 +780,7 @@ async fn version_forty_two_accepts_legacy_hook_events_without_recovery_payloads(
     .expect("legacy Hook invocation");
     let mut connection = storage.pool.acquire().await.expect("connection");
     for statement in [
+        "DELETE FROM client_schema_migrations WHERE version = 49",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN tokenizer_id",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN protocol_overhead_estimator_id",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN output_reserve_tokens",
@@ -806,6 +870,7 @@ pub(super) async fn rewind_receipt_v36(connection: &mut SqliteConnection) {
 
 pub(super) async fn rewind_receipt_v37(connection: &mut SqliteConnection) {
     for statement in [
+        "DELETE FROM client_schema_migrations WHERE version = 49",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN tokenizer_id",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN protocol_overhead_estimator_id",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN output_reserve_tokens",

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentTeamAsset } from "../domain/agentManagement";
+import type { AgentTeamAsset, AgentTeamAssetReview } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import { useAgentTeamAssetStore } from "./agentTeamAssetStore";
 
@@ -10,7 +10,9 @@ describe("agent team asset store", () => {
     const port = stubPort();
     await useAgentTeamAssetStore.getState().activate(port, "owner-1", TEAM_ID);
     expect(port.listTeamAssets).toHaveBeenCalledWith("owner-1", TEAM_ID);
+    expect(port.listTeamAssetReviews).toHaveBeenCalledWith("owner-1", TEAM_ID);
     expect(useAgentTeamAssetStore.getState().assets[0]?.title).toBe("项目概览");
+    expect(useAgentTeamAssetStore.getState().reviews[0]?.suggestion.title).toBe("事件驱动架构");
 
     expect(await useAgentTeamAssetStore.getState().save(port, {
       assetId: "asset-1", category: "current_progress", title: "当前进度",
@@ -46,6 +48,7 @@ function stubPort(overrides: Partial<AgentManagementPort> = {}): AgentManagement
     saveProfile: vi.fn(), pickAvatar: vi.fn(async () => null), loadAvatarHistory: vi.fn(async () => []),
     discardAvatarReferences: vi.fn(async () => undefined), discardAvatarPresentation: vi.fn(async () => undefined),
     listTeamAssets: vi.fn(async () => [asset(TEAM_ID)]),
+    listTeamAssetReviews: vi.fn(async (_owner, teamId) => [review(teamId)]),
     saveTeamAsset: vi.fn(async (_owner, teamId, input) => ({
       ...asset(teamId), id: input.assetId ?? "asset-new", category: input.category,
       title: input.title, markdown: input.markdown, revision: (input.expectedRevision ?? 0) + 1,
@@ -63,5 +66,18 @@ function asset(teamId: string): AgentTeamAsset {
     id: "asset-1", teamId, category: "overview", title: "项目概览", markdown: "第一版",
     revision: 1, status: "active", createdByAgentId: null, updatedByAgentId: null,
     createdAtUnixMs: 10, updatedAtUnixMs: 20,
+  };
+}
+
+function review(teamId: string): AgentTeamAssetReview {
+  return {
+    id: "asset-review-1", teamId, todoId: "todo-1", todoTitle: "完成架构验证",
+    sourceAgentId: "agent-1", sourceAgentName: "架构师",
+    suggestion: {
+      category: "architecture", title: "事件驱动架构",
+      markdown: "采用事件驱动并保持幂等。", rationale: "集成测试已经验证。",
+    },
+    status: "pending", resolvedAssetId: null, resolvedAssetRevision: null,
+    reviewedByAgentId: null, reviewReason: "", createdAtUnixMs: 15, updatedAtUnixMs: 15,
   };
 }

@@ -276,6 +276,60 @@ CREATE TABLE IF NOT EXISTS local_agent_team_asset_revisions (
     FOREIGN KEY(owner_user_id, editor_agent_id)
         REFERENCES local_agent_profiles(owner_user_id, id)
 );
+CREATE TABLE IF NOT EXISTS local_agent_team_asset_reviews (
+    owner_user_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    team_room_id TEXT NOT NULL,
+    todo_id TEXT NOT NULL,
+    todo_event_id TEXT NOT NULL,
+    suggestion_index INTEGER NOT NULL CHECK(suggestion_index >= 0),
+    source_agent_id TEXT NOT NULL,
+    category TEXT NOT NULL CHECK(category IN (
+        'overview', 'current_progress', 'tech_stack', 'architecture',
+        'conventions', 'decision', 'reference'
+    )),
+    title TEXT NOT NULL,
+    markdown TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'applied', 'rejected')),
+    resolved_asset_id TEXT,
+    resolved_asset_revision INTEGER CHECK(resolved_asset_revision > 0),
+    reviewed_by_agent_id TEXT,
+    review_reason TEXT NOT NULL DEFAULT '',
+    created_at_unix_ms INTEGER NOT NULL,
+    updated_at_unix_ms INTEGER NOT NULL,
+    PRIMARY KEY(owner_user_id, id),
+    UNIQUE(owner_user_id, todo_event_id, suggestion_index),
+    CHECK(
+        (status = 'pending' AND resolved_asset_id IS NULL
+            AND resolved_asset_revision IS NULL
+            AND reviewed_by_agent_id IS NULL AND review_reason = '')
+        OR (status = 'applied' AND resolved_asset_id IS NOT NULL
+            AND resolved_asset_revision IS NOT NULL
+            AND reviewed_by_agent_id IS NOT NULL)
+        OR (status = 'rejected' AND resolved_asset_id IS NULL
+            AND resolved_asset_revision IS NULL
+            AND reviewed_by_agent_id IS NOT NULL AND length(review_reason) > 0)
+    ),
+    FOREIGN KEY(owner_user_id, team_room_id)
+        REFERENCES project_agent_rooms(owner_user_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(owner_user_id, todo_id)
+        REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(owner_user_id, todo_event_id)
+        REFERENCES local_agent_todo_events(owner_user_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(owner_user_id, source_agent_id)
+        REFERENCES local_agent_profiles(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, resolved_asset_id)
+        REFERENCES local_agent_team_assets(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, reviewed_by_agent_id)
+        REFERENCES local_agent_profiles(owner_user_id, id)
+);
+CREATE INDEX IF NOT EXISTS local_agent_team_asset_reviews_queue
+    ON local_agent_team_asset_reviews(
+        owner_user_id, team_room_id, status, created_at_unix_ms, id
+    );
+CREATE INDEX IF NOT EXISTS local_agent_team_asset_reviews_todo
+    ON local_agent_team_asset_reviews(owner_user_id, todo_id);
 CREATE TABLE IF NOT EXISTS local_agent_project_dashboards (
     owner_user_id TEXT NOT NULL,
     team_room_id TEXT NOT NULL,
@@ -722,6 +776,14 @@ pub(crate) struct QueueAgentTeamMessageInput {
     attachment_ids: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CancelAgentTeamRunInput {
+    owner_user_id: String,
+    team_id: String,
+    run_id: String,
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct QueuedAgentTeamDelivery {
@@ -829,7 +891,7 @@ pub(crate) struct AgentTeamRunHistorySnapshot {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentTeamAsset {
     pub(crate) id: String,
-    team_id: String,
+    pub(crate) team_id: String,
     pub(crate) category: String,
     pub(crate) title: String,
     pub(crate) markdown: String,
@@ -850,6 +912,34 @@ pub(crate) struct AgentTeamAssetRevision {
     markdown: String,
     editor_agent_id: Option<String>,
     created_at_unix_ms: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AgentTeamAssetUpdateSuggestion {
+    pub(crate) category: String,
+    pub(crate) title: String,
+    pub(crate) markdown: String,
+    pub(crate) rationale: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTeamAssetReview {
+    pub(crate) id: String,
+    pub(crate) team_id: String,
+    pub(crate) todo_id: String,
+    pub(crate) todo_title: String,
+    pub(crate) source_agent_id: String,
+    pub(crate) source_agent_name: String,
+    pub(crate) suggestion: AgentTeamAssetUpdateSuggestion,
+    pub(crate) status: String,
+    pub(crate) resolved_asset_id: Option<String>,
+    pub(crate) resolved_asset_revision: Option<i64>,
+    pub(crate) reviewed_by_agent_id: Option<String>,
+    pub(crate) review_reason: String,
+    pub(crate) created_at_unix_ms: i64,
+    pub(crate) updated_at_unix_ms: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -935,6 +1025,7 @@ pub(crate) struct AgentCommunicationToolBinding {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AgentAssetToolRecord {
+    pub(crate) team_id: String,
     pub(crate) asset_id: String,
     pub(crate) category: String,
     pub(crate) title: String,
@@ -2677,7 +2768,7 @@ impl AgentConversationStore {
             let mut statement = connection
                 .prepare(
                     r#"
-                    SELECT asset_id, category, title, markdown, revision
+                    SELECT team_room_id, asset_id, category, title, markdown, revision
                     FROM local_agent_todo_asset_snapshots
                     WHERE owner_user_id = ?1 AND todo_id = ?2 AND team_room_id = ?3
                     ORDER BY category, title, asset_id
@@ -2687,11 +2778,12 @@ impl AgentConversationStore {
             let rows = statement
                 .query_map(params![owner_user_id, todo_id, binding.team_id], |row| {
                     Ok(AgentAssetToolRecord {
-                        asset_id: row.get(0)?,
-                        category: row.get(1)?,
-                        title: row.get(2)?,
-                        markdown: row.get(3)?,
-                        revision: row.get(4)?,
+                        team_id: row.get(0)?,
+                        asset_id: row.get(1)?,
+                        category: row.get(2)?,
+                        title: row.get(3)?,
+                        markdown: row.get(4)?,
+                        revision: row.get(5)?,
                     })
                 })
                 .map_err(|_| team_store_error())?;
@@ -2701,21 +2793,34 @@ impl AgentConversationStore {
             let mut statement = connection
                 .prepare(
                     r#"
-                    SELECT id, category, title, markdown, revision
-                    FROM local_agent_team_assets
-                    WHERE owner_user_id = ?1 AND team_room_id = ?2 AND status = 'active'
-                    ORDER BY category, title, id
+                    SELECT asset.team_room_id, asset.id, asset.category, asset.title,
+                           asset.markdown, asset.revision
+                    FROM local_agent_team_assets asset
+                    JOIN project_agent_rooms room
+                      ON room.owner_user_id = asset.owner_user_id
+                     AND room.id = asset.team_room_id
+                    JOIN project_agent_room_members member
+                      ON member.owner_user_id = room.owner_user_id
+                     AND member.room_id = room.id AND member.agent_id = ?2
+                    JOIN local_agent_profiles profile
+                      ON profile.owner_user_id = member.owner_user_id
+                     AND profile.id = member.agent_id
+                    WHERE asset.owner_user_id = ?1 AND asset.status = 'active'
+                      AND room.status = 'active' AND room.conversation_kind = 'project_team'
+                      AND member.status = 'active' AND profile.status = 'active'
+                    ORDER BY asset.team_room_id, asset.category, asset.title, asset.id
                     "#,
                 )
                 .map_err(|_| team_store_error())?;
             let rows = statement
-                .query_map(params![owner_user_id, binding.team_id], |row| {
+                .query_map(params![owner_user_id, binding.agent_id], |row| {
                     Ok(AgentAssetToolRecord {
-                        asset_id: row.get(0)?,
-                        category: row.get(1)?,
-                        title: row.get(2)?,
-                        markdown: row.get(3)?,
-                        revision: row.get(4)?,
+                        team_id: row.get(0)?,
+                        asset_id: row.get(1)?,
+                        category: row.get(2)?,
+                        title: row.get(3)?,
+                        markdown: row.get(4)?,
+                        revision: row.get(5)?,
                     })
                 })
                 .map_err(|_| team_store_error())?;
@@ -2723,6 +2828,33 @@ impl AgentConversationStore {
                 .map_err(|_| team_store_error())?
         };
         Ok((binding, records))
+    }
+
+    pub(crate) fn resolve_agent_asset_team_reference(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        reference: &str,
+    ) -> Result<String, String> {
+        validate_identifier(run_id).map_err(|_| team_store_error())?;
+        validate_text(reference, 600, false).map_err(|_| team_store_error())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let binding = load_agent_asset_tool_binding(&connection, owner_user_id, run_id)?;
+        if binding.todo_id.is_some() {
+            let expected =
+                team_todo::todo_planning_reference(owner_user_id, run_id, "team", &binding.team_id);
+            return (reference == expected)
+                .then_some(binding.team_id)
+                .ok_or_else(|| "The team reference is unavailable for this Run.".to_owned());
+        }
+        team_todo::resolve_team_reference(
+            &connection,
+            owner_user_id,
+            run_id,
+            &binding.agent_id,
+            reference,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3101,6 +3233,194 @@ impl AgentConversationStore {
             .map_err(|_| team_store_error())
     }
 
+    pub(crate) fn list_team_asset_reviews(
+        &self,
+        owner_user_id: &str,
+        team_id: Option<&str>,
+        reviewer_agent_id: Option<&str>,
+        status: &str,
+        limit: usize,
+    ) -> Result<Vec<AgentTeamAssetReview>, String> {
+        if let Some(team_id) = team_id {
+            validate_identifier(team_id).map_err(|_| invalid_team_asset_review_input())?;
+        }
+        if let Some(agent_id) = reviewer_agent_id {
+            validate_identifier(agent_id).map_err(|_| invalid_team_asset_review_input())?;
+        }
+        if !matches!(status, "pending" | "applied" | "rejected") || !(1..=500).contains(&limit) {
+            return Err(invalid_team_asset_review_input());
+        }
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT review.id, review.team_room_id, review.todo_id, todo.title,
+                       review.source_agent_id, profile.name, review.category, review.title,
+                       review.markdown, review.rationale, review.status,
+                       review.resolved_asset_id, review.resolved_asset_revision,
+                       review.reviewed_by_agent_id, review.review_reason,
+                       review.created_at_unix_ms, review.updated_at_unix_ms
+                FROM local_agent_team_asset_reviews review
+                JOIN local_agent_todos todo
+                  ON todo.owner_user_id = review.owner_user_id AND todo.id = review.todo_id
+                JOIN local_agent_profiles profile
+                  ON profile.owner_user_id = review.owner_user_id
+                 AND profile.id = review.source_agent_id
+                JOIN project_agent_rooms room
+                  ON room.owner_user_id = review.owner_user_id
+                 AND room.id = review.team_room_id
+                WHERE review.owner_user_id = ?1 AND review.status = ?2
+                  AND (?3 IS NULL OR review.team_room_id = ?3)
+                  AND (?4 IS NULL OR room.project_manager_agent_id = ?4)
+                  AND room.status = 'active' AND room.conversation_kind = 'project_team'
+                ORDER BY review.created_at_unix_ms, review.id
+                LIMIT ?5
+                "#,
+            )
+            .map_err(|_| team_store_error())?;
+        let rows = statement
+            .query_map(
+                params![
+                    owner_user_id,
+                    status,
+                    team_id,
+                    reviewer_agent_id,
+                    limit as i64
+                ],
+                map_team_asset_review,
+            )
+            .map_err(|_| team_store_error())?;
+        let reviews = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| team_store_error())?;
+        for review in &reviews {
+            validate_team_asset_review(review)?;
+        }
+        Ok(reviews)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn resolve_team_asset_review(
+        &self,
+        owner_user_id: &str,
+        review_id: &str,
+        reviewer_agent_id: &str,
+        outcome: &str,
+        resolved_asset: Option<(&str, i64)>,
+        reason: &str,
+        now_unix_ms: i64,
+    ) -> Result<AgentTeamAssetReview, String> {
+        validate_identifier(review_id).map_err(|_| invalid_team_asset_review_input())?;
+        validate_identifier(reviewer_agent_id).map_err(|_| invalid_team_asset_review_input())?;
+        validate_text(reason, 4_000, true).map_err(|_| invalid_team_asset_review_input())?;
+        if now_unix_ms < 0
+            || !matches!(outcome, "applied" | "rejected")
+            || (outcome == "applied" && resolved_asset.is_none())
+            || (outcome == "rejected" && (resolved_asset.is_some() || reason.trim().is_empty()))
+        {
+            return Err(invalid_team_asset_review_input());
+        }
+        if let Some((asset_id, revision)) = resolved_asset {
+            validate_identifier(asset_id).map_err(|_| invalid_team_asset_review_input())?;
+            if revision <= 0 {
+                return Err(invalid_team_asset_review_input());
+            }
+        }
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_store_error())?;
+        let team_id: String = transaction
+            .query_row(
+                r#"
+                SELECT review.team_room_id
+                FROM local_agent_team_asset_reviews review
+                JOIN project_agent_rooms room
+                  ON room.owner_user_id = review.owner_user_id
+                 AND room.id = review.team_room_id
+                JOIN project_agent_room_members member
+                  ON member.owner_user_id = room.owner_user_id
+                 AND member.room_id = room.id AND member.agent_id = ?3
+                JOIN local_agent_profiles profile
+                  ON profile.owner_user_id = member.owner_user_id
+                 AND profile.id = member.agent_id
+                WHERE review.owner_user_id = ?1 AND review.id = ?2
+                  AND review.status = 'pending' AND room.status = 'active'
+                  AND room.conversation_kind = 'project_team'
+                  AND room.project_manager_agent_id = ?3
+                  AND member.status = 'active' AND profile.status = 'active'
+                "#,
+                params![owner_user_id, review_id, reviewer_agent_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| team_store_error())?
+            .ok_or_else(team_asset_review_conflict)?;
+        if let Some((asset_id, revision)) = resolved_asset {
+            let valid_asset: bool = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM local_agent_team_assets WHERE owner_user_id = ?1 \
+                     AND team_room_id = ?2 AND id = ?3 AND revision = ?4 AND status = 'active')",
+                    params![owner_user_id, team_id, asset_id, revision],
+                    |row| row.get(0),
+                )
+                .map_err(|_| team_store_error())?;
+            if !valid_asset {
+                return Err(team_asset_review_conflict());
+            }
+        }
+        let changed = transaction
+            .execute(
+                r#"
+                UPDATE local_agent_team_asset_reviews
+                SET status = ?1, resolved_asset_id = ?2, resolved_asset_revision = ?3,
+                    reviewed_by_agent_id = ?4, review_reason = ?5,
+                    updated_at_unix_ms = ?6
+                WHERE owner_user_id = ?7 AND id = ?8 AND status = 'pending'
+                "#,
+                params![
+                    outcome,
+                    resolved_asset.map(|value| value.0),
+                    resolved_asset.map(|value| value.1),
+                    reviewer_agent_id,
+                    reason,
+                    now_unix_ms,
+                    owner_user_id,
+                    review_id,
+                ],
+            )
+            .map_err(|_| team_store_error())?;
+        if changed != 1 {
+            return Err(team_asset_review_conflict());
+        }
+        let review = transaction
+            .query_row(
+                r#"
+                SELECT review.id, review.team_room_id, review.todo_id, todo.title,
+                       review.source_agent_id, profile.name, review.category, review.title,
+                       review.markdown, review.rationale, review.status,
+                       review.resolved_asset_id, review.resolved_asset_revision,
+                       review.reviewed_by_agent_id, review.review_reason,
+                       review.created_at_unix_ms, review.updated_at_unix_ms
+                FROM local_agent_team_asset_reviews review
+                JOIN local_agent_todos todo
+                  ON todo.owner_user_id = review.owner_user_id AND todo.id = review.todo_id
+                JOIN local_agent_profiles profile
+                  ON profile.owner_user_id = review.owner_user_id
+                 AND profile.id = review.source_agent_id
+                WHERE review.owner_user_id = ?1 AND review.id = ?2
+                "#,
+                params![owner_user_id, review_id],
+                map_team_asset_review,
+            )
+            .map_err(|_| team_store_error())?;
+        validate_team_asset_review(&review)?;
+        transaction.commit().map_err(|_| team_store_error())?;
+        Ok(review)
+    }
+
     fn next_project_team_delivery(
         &self,
         owner_user_id: &str,
@@ -3380,6 +3700,7 @@ impl AgentConversationStore {
                 "started",
                 "started",
                 "Todo 执行线程已启动，并完成团队、项目和能力计划绑定。",
+                &[],
                 now_unix_ms,
             )?;
         }
@@ -3738,58 +4059,17 @@ pub(crate) async fn prepare_agent_conversation(
     // remains the authority for the rest of the execution profile, while the Host resource
     // binding lets memory history resolve the same Agent thread without an unbound conversation.
     let conversation_id = agent_direct_conversation_id(&room.id);
-    let existing = manager
-        .execute_detailed(HostCommand::GetConversation(GetConversationCommand {
-            owner_user_id: owner_user_id.clone(),
-            conversation_id: conversation_id.clone(),
-        }))
-        .await;
-    match existing {
-        Ok(HostResult::Conversation { conversation }) => {
-            validate_host_conversation(&conversation, &owner_user_id, &conversation_id)?;
-        }
-        Ok(_) => return Err("Local Agent Host 返回了错误的 Agent 会话响应。".into()),
-        Err(error) if error.code.as_deref() == Some("not_found") => {
-            let created = manager
-                .execute(HostCommand::CreateConversation(CreateConversationCommand {
-                    conversation_id: conversation_id.clone(),
-                    owner_user_id: owner_user_id.clone(),
-                    title: room.name.clone(),
-                    resource: Some(LocalConversationResourceBinding {
-                        kind: LocalConversationResourceKind::Contact,
-                        resource_id: room.agent_id.clone(),
-                    }),
-                }))
-                .await;
-            match created {
-                Ok(HostResult::Conversation { conversation }) => {
-                    validate_host_conversation(&conversation, &owner_user_id, &conversation_id)?;
-                }
-                Ok(_) => return Err("Local Agent Host 返回了错误的 Agent 会话响应。".into()),
-                Err(create_error) => {
-                    // A concurrent prepare may have won after our not-found read. Re-read the
-                    // deterministic conversation identity before surfacing the conflict.
-                    let retry = manager
-                        .execute(HostCommand::GetConversation(GetConversationCommand {
-                            owner_user_id: owner_user_id.clone(),
-                            conversation_id: conversation_id.clone(),
-                        }))
-                        .await;
-                    match retry {
-                        Ok(HostResult::Conversation { conversation }) => {
-                            validate_host_conversation(
-                                &conversation,
-                                &owner_user_id,
-                                &conversation_id,
-                            )?;
-                        }
-                        _ => return Err(create_error),
-                    }
-                }
-            }
-        }
-        Err(error) => return Err(error.message),
-    }
+    ensure_agent_host_conversation(
+        &manager,
+        &owner_user_id,
+        &conversation_id,
+        &room.name,
+        LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Contact,
+            resource_id: room.agent_id.clone(),
+        },
+    )
+    .await?;
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
@@ -4225,6 +4505,94 @@ pub(crate) async fn load_agent_team_runs(
 }
 
 #[tauri::command]
+pub(crate) async fn cancel_agent_team_run(
+    input: CancelAgentTeamRunInput,
+    app: AppHandle,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+    manager: State<'_, HostManager>,
+) -> Result<(), String> {
+    validate_owner(&input.owner_user_id)?;
+    validate_identifier(&input.team_id).map_err(|_| invalid_team_input())?;
+    validate_identifier(&input.run_id).map_err(|_| invalid_team_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let binding_store = conversations.inner().clone();
+    let binding_owner = input.owner_user_id.clone();
+    let binding_team = input.team_id.clone();
+    let bindings = tauri::async_runtime::spawn_blocking(move || {
+        binding_store.active_project_team_run_bindings(&binding_owner, &binding_team)
+    })
+    .await
+    .map_err(|_| "Agent 团队运行绑定读取任务异常退出。".to_owned())??;
+    let binding = bindings
+        .into_iter()
+        .find(|binding| binding.run_id == input.run_id);
+    let Some(binding) = binding else {
+        // A poll or another client may have observed the terminal Host state between the user's
+        // click and this command. Treat that exact recorded Run as an idempotent success, but do
+        // not let an unrelated or cross-team Run ID turn into a successful cancellation.
+        let snapshot_store = conversations.inner().clone();
+        let snapshot_owner = input.owner_user_id.clone();
+        let snapshot_team = input.team_id.clone();
+        let snapshot = tauri::async_runtime::spawn_blocking(move || {
+            snapshot_store.load_project_team_runs(&snapshot_owner, &snapshot_team)
+        })
+        .await
+        .map_err(|_| "Agent 团队运行记录读取任务异常退出。".to_owned())??;
+        if snapshot.runs.iter().any(|run| {
+            run.run_id == input.run_id && !matches!(run.run_status.as_str(), "ready" | "running")
+        }) {
+            authentication
+                .require_session_generation(&input.owner_user_id, generation)
+                .await?;
+            return Ok(());
+        }
+        return Err("找不到可结束的团队 Run，请刷新后重试。".into());
+    };
+    let turn = team_todo::cancel_active_team_run(
+        manager.inner(),
+        &input.owner_user_id,
+        &binding.conversation_id,
+        &binding.turn_id,
+        &binding.run_id,
+        "用户已结束这个未完成的 Agent Run。",
+    )
+    .await?;
+    let reconciliation = team_todo::TeamRunReconciliation {
+        delivery_id: binding.delivery_id,
+        turn_id: turn.turn_id,
+        run_id: turn.run_id,
+        status: turn.status,
+        created_at_unix_ms: turn.created_at_unix_ms,
+        updated_at_unix_ms: turn.updated_at_unix_ms,
+        project_write_evidence_verified: false,
+    };
+    let reconcile_store = conversations.inner().clone();
+    let reconcile_owner = input.owner_user_id.clone();
+    let reconcile_team = input.team_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        reconcile_store.reconcile_project_team_runs(
+            &reconcile_owner,
+            &reconcile_team,
+            &[reconciliation],
+        )
+    })
+    .await
+    .map_err(|_| "Agent 团队运行停止对账任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    crate::attachment_tool_worker::schedule_team_todo_drain(
+        app,
+        input.owner_user_id,
+        input.team_id,
+    );
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) async fn load_agent_team_dashboard(
     owner_user_id: String,
     team_id: String,
@@ -4363,6 +4731,32 @@ pub(crate) async fn list_agent_team_assets(
         .require_session_generation(&owner_user_id, generation)
         .await?;
     Ok(assets)
+}
+
+#[tauri::command]
+pub(crate) async fn list_agent_team_asset_reviews(
+    owner_user_id: String,
+    team_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<Vec<AgentTeamAssetReview>, String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&team_id).map_err(|_| invalid_team_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = owner_user_id.clone();
+    let team = team_id.clone();
+    let reviews = tauri::async_runtime::spawn_blocking(move || {
+        store.list_team_asset_reviews(&owner, Some(&team), None, "pending", 500)
+    })
+    .await
+    .map_err(|_| "团队共享资产审核读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    Ok(reviews)
 }
 
 #[tauri::command]
@@ -4715,14 +5109,8 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
         pending.binding.team_name, pending.binding.agent.name
     );
     let detail = if pending.trigger_kind == "todo" {
-        ensure_team_executor_host_conversation(
-            &manager,
-            &owner_user_id,
-            &conversation_id,
-            &title,
-            &pending.binding.project_id,
-        )
-        .await?
+        ensure_team_executor_host_conversation(&manager, &owner_user_id, &conversation_id, &title)
+            .await?
     } else {
         ensure_agent_host_conversation(
             &manager,
@@ -5291,9 +5679,10 @@ async fn ensure_agent_host_conversation(
                     Ok(())
                 }
                 Ok(_) => Err("Local Agent Host 返回了错误的 Agent 会话响应。".into()),
-                Err(_) => {
-                    let retry =
-                        agent_conversation_context(manager, owner_user_id, conversation_id).await?;
+                Err(create_error) => {
+                    let retry = agent_conversation_context(manager, owner_user_id, conversation_id)
+                        .await
+                        .map_err(|_| create_error)?;
                     validate_host_conversation(&retry, owner_user_id, conversation_id)?;
                     if retry.conversation.resource.as_ref() != Some(&resource) {
                         return Err("Local Agent Host 返回了不匹配的 Agent 资源绑定。".into());
@@ -5311,9 +5700,7 @@ async fn ensure_team_executor_host_conversation(
     owner_user_id: &str,
     conversation_id: &str,
     title: &str,
-    project_id: &str,
 ) -> Result<LocalConversationDetail, String> {
-    validate_identifier(project_id).map_err(|_| invalid_team_input())?;
     let existing = manager
         .execute_detailed(HostCommand::GetConversationContext(
             GetConversationCommand {
@@ -5328,7 +5715,6 @@ async fn ensure_team_executor_host_conversation(
                 &conversation,
                 owner_user_id,
                 conversation_id,
-                project_id,
             )?;
             Ok(conversation)
         }
@@ -5339,10 +5725,7 @@ async fn ensure_team_executor_host_conversation(
                     conversation_id: conversation_id.to_owned(),
                     owner_user_id: owner_user_id.to_owned(),
                     title: title.to_owned(),
-                    resource: Some(LocalConversationResourceBinding {
-                        kind: LocalConversationResourceKind::Project,
-                        resource_id: project_id.to_owned(),
-                    }),
+                    resource: None,
                 }))
                 .await;
             match created {
@@ -5351,12 +5734,11 @@ async fn ensure_team_executor_host_conversation(
                         &conversation,
                         owner_user_id,
                         conversation_id,
-                        project_id,
                     )?;
                     Ok(conversation)
                 }
                 Ok(_) => Err("Local Agent Host 返回了错误的 executor 会话响应。".into()),
-                Err(_) => {
+                Err(create_error) => {
                     let retry = manager
                         .execute(HostCommand::GetConversationContext(
                             GetConversationCommand {
@@ -5364,7 +5746,8 @@ async fn ensure_team_executor_host_conversation(
                                 conversation_id: conversation_id.to_owned(),
                             },
                         ))
-                        .await?;
+                        .await
+                        .map_err(|_| create_error)?;
                     let HostResult::Conversation { conversation } = retry else {
                         return Err("Local Agent Host 返回了错误的 executor 会话响应。".into());
                     };
@@ -5372,7 +5755,6 @@ async fn ensure_team_executor_host_conversation(
                         &conversation,
                         owner_user_id,
                         conversation_id,
-                        project_id,
                     )?;
                     Ok(conversation)
                 }
@@ -5663,7 +6045,6 @@ fn validate_host_conversation(
 ) -> Result<(), String> {
     if conversation.conversation.owner_user_id != owner_user_id
         || conversation.conversation.conversation_id != conversation_id
-        || conversation.conversation.resource.is_some()
     {
         return Err("Local Agent Host 返回了不匹配的 Agent 会话。".into());
     }
@@ -5674,19 +6055,12 @@ fn validate_team_executor_host_conversation(
     conversation: &LocalConversationDetail,
     owner_user_id: &str,
     conversation_id: &str,
-    project_id: &str,
 ) -> Result<(), String> {
     if conversation.conversation.owner_user_id != owner_user_id
         || conversation.conversation.conversation_id != conversation_id
-        || !matches!(
-            conversation.conversation.resource.as_ref(),
-            Some(LocalConversationResourceBinding {
-                kind: LocalConversationResourceKind::Project,
-                resource_id,
-            }) if resource_id == project_id
-        )
+        || conversation.conversation.resource.is_some()
     {
-        return Err("Local Agent Host 返回了不匹配的 executor 项目会话。".into());
+        return Err("Local Agent Host 返回了不匹配的隔离 executor 会话。".into());
     }
     Ok(())
 }
@@ -6015,6 +6389,30 @@ fn map_team_asset(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentTeamAsset> {
     })
 }
 
+fn map_team_asset_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentTeamAssetReview> {
+    Ok(AgentTeamAssetReview {
+        id: row.get(0)?,
+        team_id: row.get(1)?,
+        todo_id: row.get(2)?,
+        todo_title: row.get(3)?,
+        source_agent_id: row.get(4)?,
+        source_agent_name: row.get(5)?,
+        suggestion: AgentTeamAssetUpdateSuggestion {
+            category: row.get(6)?,
+            title: row.get(7)?,
+            markdown: row.get(8)?,
+            rationale: row.get(9)?,
+        },
+        status: row.get(10)?,
+        resolved_asset_id: row.get(11)?,
+        resolved_asset_revision: row.get(12)?,
+        reviewed_by_agent_id: row.get(13)?,
+        review_reason: row.get(14)?,
+        created_at_unix_ms: row.get(15)?,
+        updated_at_unix_ms: row.get(16)?,
+    })
+}
+
 fn load_agent_asset_tool_binding(
     connection: &Connection,
     owner_user_id: &str,
@@ -6221,6 +6619,62 @@ fn validate_team_asset(asset: &AgentTeamAsset) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_team_asset_suggestion(
+    suggestion: &AgentTeamAssetUpdateSuggestion,
+) -> Result<(), String> {
+    validate_team_asset_category(&suggestion.category)
+        .map_err(|_| invalid_team_asset_review_input())?;
+    validate_text(&suggestion.title, 240, false).map_err(|_| invalid_team_asset_review_input())?;
+    validate_text(&suggestion.markdown, 128_000, false)
+        .map_err(|_| invalid_team_asset_review_input())?;
+    validate_text(&suggestion.rationale, 4_000, false)
+        .map_err(|_| invalid_team_asset_review_input())
+}
+
+fn validate_team_asset_review(review: &AgentTeamAssetReview) -> Result<(), String> {
+    for value in [
+        review.id.as_str(),
+        review.team_id.as_str(),
+        review.todo_id.as_str(),
+        review.source_agent_id.as_str(),
+    ] {
+        validate_identifier(value).map_err(|_| team_store_error())?;
+    }
+    validate_text(&review.todo_title, 500, false).map_err(|_| team_store_error())?;
+    validate_text(&review.source_agent_name, 120, false).map_err(|_| team_store_error())?;
+    validate_team_asset_suggestion(&review.suggestion).map_err(|_| team_store_error())?;
+    if review.created_at_unix_ms < 0 || review.updated_at_unix_ms < review.created_at_unix_ms {
+        return Err(team_store_error());
+    }
+    if let Some(asset_id) = review.resolved_asset_id.as_deref() {
+        validate_identifier(asset_id).map_err(|_| team_store_error())?;
+    }
+    if let Some(agent_id) = review.reviewed_by_agent_id.as_deref() {
+        validate_identifier(agent_id).map_err(|_| team_store_error())?;
+    }
+    validate_text(&review.review_reason, 4_000, true).map_err(|_| team_store_error())?;
+    match review.status.as_str() {
+        "pending"
+            if review.resolved_asset_id.is_none()
+                && review.resolved_asset_revision.is_none()
+                && review.reviewed_by_agent_id.is_none()
+                && review.review_reason.is_empty() => {}
+        "applied"
+            if review.resolved_asset_id.is_some()
+                && review
+                    .resolved_asset_revision
+                    .is_some_and(|revision| revision > 0)
+                && review.reviewed_by_agent_id.is_some() => {}
+        "rejected"
+            if review.resolved_asset_id.is_none()
+                && review.resolved_asset_revision.is_none()
+                && review.reviewed_by_agent_id.is_some()
+                && !review.review_reason.trim().is_empty() => {}
+        _ => return Err(team_store_error()),
+    }
+    Ok(())
+}
+
 fn validate_team_execution_binding(binding: &TeamExecutionBinding) -> Result<(), String> {
     let agent = &binding.agent;
     validate_agent_execution_binding(agent)?;
@@ -6329,6 +6783,10 @@ fn invalid_team_asset_input() -> String {
     "团队共享资产内容无效。".into()
 }
 
+fn invalid_team_asset_review_input() -> String {
+    "团队共享资产审核内容无效。".into()
+}
+
 fn invalid_project_dashboard_input() -> String {
     "项目总览内容无效。".into()
 }
@@ -6339,6 +6797,10 @@ fn project_dashboard_conflict() -> String {
 
 fn team_asset_conflict() -> String {
     "团队共享资产已被更新，请刷新后重试。".into()
+}
+
+fn team_asset_review_conflict() -> String {
+    "团队共享资产审核已处理或身份不匹配，请重新读取后重试。".into()
 }
 
 #[cfg(test)]
@@ -6393,6 +6855,42 @@ mod tests {
                 params![owner, id, status],
             )
             .unwrap();
+    }
+
+    #[test]
+    fn team_executor_conversation_is_isolated_from_the_unique_project_resource() {
+        let detail = LocalConversationDetail {
+            conversation: chatos_local_agent_protocol::LocalConversationRecord {
+                conversation_id: "agent-team-executor-delivery-1".into(),
+                owner_user_id: "alice".into(),
+                title: "Team · Todo".into(),
+                resource: None,
+                version: 1,
+                created_at_unix_ms: 100,
+                updated_at_unix_ms: 100,
+            },
+            turns: vec![],
+            messages: vec![],
+            attachments: vec![],
+        };
+        validate_team_executor_host_conversation(
+            &detail,
+            "alice",
+            "agent-team-executor-delivery-1",
+        )
+        .unwrap();
+
+        let mut project_bound = detail;
+        project_bound.conversation.resource = Some(LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Project,
+            resource_id: "project-1".into(),
+        });
+        assert!(validate_team_executor_host_conversation(
+            &project_bound,
+            "alice",
+            "agent-team-executor-delivery-1",
+        )
+        .is_err());
     }
 
     #[test]
@@ -6842,6 +7340,400 @@ mod tests {
         assert!(revisions
             .iter()
             .all(|revision| revision.editor_agent_id.as_deref() == Some("manager")));
+    }
+
+    #[test]
+    fn manager_asset_run_resolves_and_loads_every_active_member_team() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "manager", "active");
+        Connection::open(store.database())
+            .unwrap()
+            .execute(
+                "UPDATE local_agent_profiles SET profession_key = 'project_manager' \
+                 WHERE owner_user_id = 'alice' AND id = 'manager'",
+                [],
+            )
+            .unwrap();
+        let first = store
+            .create_project_team("alice", "project-one", "第一团队", "维护第一组知识")
+            .unwrap();
+        let second = store
+            .create_project_team("alice", "project-two", "第二团队", "维护第二组知识")
+            .unwrap();
+        for team_id in [&first.id, &second.id] {
+            store
+                .invite_agent_to_project_team("alice", team_id, "manager")
+                .unwrap();
+            store
+                .set_project_team_manager("alice", team_id, "manager")
+                .unwrap();
+        }
+        let queued = store
+            .queue_project_team_message(
+                "alice",
+                &first.id,
+                "跨团队维护共享资产",
+                &["manager".into()],
+            )
+            .unwrap();
+        let delivery = store
+            .next_project_team_delivery("alice", &first.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(delivery.message_id, queued.message_id);
+        store
+            .claim_project_team_delivery(
+                "alice",
+                &delivery,
+                "turn-assets-multi-team",
+                "run-assets-multi-team",
+                10,
+            )
+            .unwrap();
+        let first_asset = store
+            .save_project_team_asset_as_manager(
+                "alice",
+                &first.id,
+                "manager",
+                None,
+                "overview",
+                "第一团队概览",
+                "第一团队事实。",
+                None,
+                11,
+            )
+            .unwrap();
+        let second_asset = store
+            .save_project_team_asset_as_manager(
+                "alice",
+                &second.id,
+                "manager",
+                None,
+                "overview",
+                "第二团队概览",
+                "第二团队事实。",
+                None,
+                12,
+            )
+            .unwrap();
+
+        let (binding, records) = store
+            .load_agent_asset_tool_records("alice", "run-assets-multi-team")
+            .unwrap();
+        assert_eq!(binding.team_id, first.id);
+        assert!(binding.is_project_manager);
+        assert_eq!(records.len(), 2);
+        assert!(records
+            .iter()
+            .any(|record| record.team_id == first.id && record.asset_id == first_asset.id));
+        assert!(records
+            .iter()
+            .any(|record| record.team_id == second.id && record.asset_id == second_asset.id));
+
+        let second_reference = team_todo::todo_planning_reference(
+            "alice",
+            "run-assets-multi-team",
+            "team",
+            &second.id,
+        );
+        assert_eq!(
+            store
+                .resolve_agent_asset_team_reference(
+                    "alice",
+                    "run-assets-multi-team",
+                    &second_reference,
+                )
+                .unwrap(),
+            second.id
+        );
+        assert!(
+            store
+                .resolve_agent_asset_team_reference(
+                    "alice",
+                    "run-assets-multi-team",
+                    "team_ref_forged",
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn team_asset_suggestions_require_durable_manager_review_before_cycle_completion() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "manager", "active");
+        insert_agent(&store, "alice", "member", "active");
+        let connection = Connection::open(store.database()).unwrap();
+        connection
+            .execute(
+                "UPDATE local_agent_profiles SET profession_key = 'project_manager' \
+                 WHERE owner_user_id = 'alice' AND id = 'manager'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        let team = store
+            .create_project_team("alice", "project-review", "审核团队", "维护共享知识")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "manager")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "member")
+            .unwrap();
+        store
+            .set_project_team_manager("alice", &team.id, "manager")
+            .unwrap();
+
+        let connection = Connection::open(store.database()).unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON")
+            .unwrap();
+        connection
+            .execute(
+                r#"
+                INSERT INTO local_agent_todos (
+                    owner_user_id, id, agent_id, team_room_id, request_key,
+                    title, detail, priority, sort_order, status, blocked_reason, result,
+                    created_at_unix_ms, updated_at_unix_ms,
+                    execution_plan_json, execution_contract_json
+                ) VALUES ('alice', 'todo-review', 'member', ?1, 'request-review',
+                          '完成架构验证', '', 80, 0, 'completed', '', '已完成',
+                          100, 100, '{}', '{}')
+                "#,
+                params![team.id],
+            )
+            .unwrap();
+        let architecture = AgentTeamAssetUpdateSuggestion {
+            category: "architecture".into(),
+            title: "事件驱动架构".into(),
+            markdown: "采用事件驱动并保持幂等。".into(),
+            rationale: "集成测试已经验证。".into(),
+        };
+        let convention = AgentTeamAssetUpdateSuggestion {
+            category: "conventions".into(),
+            title: "幂等约定".into(),
+            markdown: "所有消费端必须支持重复投递。".into(),
+            rationale: "故障恢复演练已经验证。".into(),
+        };
+        assert!(team_todo::insert_todo_progress(
+            &connection,
+            "alice",
+            "todo-review",
+            "run-invalid-duplicate",
+            "completed",
+            "completed",
+            "不得保存重复建议。",
+            &[architecture.clone(), architecture.clone()],
+            101,
+        )
+        .is_err());
+        assert!(team_todo::insert_todo_progress(
+            &connection,
+            "alice",
+            "todo-review",
+            "run-invalid-blocked",
+            "blocked",
+            "blocked",
+            "阻塞事件不得携带建议。",
+            std::slice::from_ref(&architecture),
+            101,
+        )
+        .is_err());
+        let oversized = AgentTeamAssetUpdateSuggestion {
+            category: "reference".into(),
+            title: "超大正文".into(),
+            markdown: "架".repeat(100_000),
+            rationale: "不得超过总字节门禁。".into(),
+        };
+        assert!(team_todo::insert_todo_progress(
+            &connection,
+            "alice",
+            "todo-review",
+            "run-invalid-bytes",
+            "completed",
+            "completed",
+            "不得保存超大建议。",
+            &[oversized],
+            101,
+        )
+        .is_err());
+        let too_many = vec![architecture.clone(); 9];
+        assert!(team_todo::insert_todo_progress(
+            &connection,
+            "alice",
+            "todo-review",
+            "run-invalid-count",
+            "completed",
+            "completed",
+            "不得保存过多建议。",
+            &too_many,
+            101,
+        )
+        .is_err());
+        let invalid_event_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM local_agent_todo_events \
+                 WHERE owner_user_id = 'alice' AND todo_id = 'todo-review'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(invalid_event_count, 0);
+        team_todo::insert_todo_progress(
+            &connection,
+            "alice",
+            "todo-review",
+            "run-executor-review",
+            "completed",
+            "completed",
+            "已完成并核验。",
+            &[architecture, convention],
+            102,
+        )
+        .unwrap();
+        drop(connection);
+
+        let pending = store
+            .list_team_asset_reviews("alice", Some(&team.id), Some("manager"), "pending", 500)
+            .unwrap();
+        assert_eq!(pending.len(), 2);
+        assert!(pending.iter().all(|review| review.todo_id == "todo-review"));
+        assert!(store
+            .list_team_asset_reviews("alice", Some(&team.id), Some("member"), "pending", 500)
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .list_team_asset_reviews("bob", Some(&team.id), None, "pending", 500)
+            .unwrap()
+            .is_empty());
+
+        let queued = store
+            .queue_project_team_message(
+                "alice",
+                &team.id,
+                "请审核共享资产建议",
+                &["manager".into()],
+            )
+            .unwrap();
+        let delivery = store
+            .next_project_team_delivery("alice", &team.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(delivery.message_id, queued.message_id);
+        assert_eq!(delivery.binding.agent.agent_id, "manager");
+        store
+            .claim_project_team_delivery(
+                "alice",
+                &delivery,
+                "turn-review-manager",
+                "run-review-manager",
+                103,
+            )
+            .unwrap();
+        let completion_error = store
+            .validate_agent_communication_cycle_completion("alice", "run-review-manager", false)
+            .unwrap_err();
+        assert!(completion_error.contains("team_asset_reviews_pending"));
+        assert!(completion_error.contains("team_asset_review_list"));
+
+        let asset = store
+            .save_project_team_asset_as_manager(
+                "alice",
+                &team.id,
+                "manager",
+                None,
+                "architecture",
+                "事件驱动架构",
+                "采用事件驱动并保持幂等。",
+                None,
+                104,
+            )
+            .unwrap();
+        let applied_review = pending
+            .iter()
+            .find(|review| review.suggestion.category == "architecture")
+            .unwrap();
+        assert!(store
+            .resolve_team_asset_review(
+                "alice",
+                &applied_review.id,
+                "member",
+                "applied",
+                Some((&asset.id, asset.revision)),
+                "",
+                105,
+            )
+            .is_err());
+        let applied = store
+            .resolve_team_asset_review(
+                "alice",
+                &applied_review.id,
+                "manager",
+                "applied",
+                Some((&asset.id, asset.revision)),
+                "",
+                105,
+            )
+            .unwrap();
+        assert_eq!(applied.status, "applied");
+        assert_eq!(
+            applied.resolved_asset_id.as_deref(),
+            Some(asset.id.as_str())
+        );
+        assert!(store
+            .resolve_team_asset_review(
+                "alice",
+                &applied_review.id,
+                "manager",
+                "applied",
+                Some((&asset.id, asset.revision)),
+                "",
+                106,
+            )
+            .is_err());
+
+        let rejected_review = pending
+            .iter()
+            .find(|review| review.suggestion.category == "conventions")
+            .unwrap();
+        assert!(store
+            .resolve_team_asset_review(
+                "alice",
+                &rejected_review.id,
+                "manager",
+                "rejected",
+                None,
+                "",
+                106,
+            )
+            .is_err());
+        let rejected = store
+            .resolve_team_asset_review(
+                "alice",
+                &rejected_review.id,
+                "manager",
+                "rejected",
+                None,
+                "该约定尚未覆盖所有消费者。",
+                106,
+            )
+            .unwrap();
+        assert_eq!(rejected.status, "rejected");
+        assert!(store
+            .list_team_asset_reviews("alice", Some(&team.id), Some("manager"), "pending", 500)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .validate_agent_communication_cycle_completion(
+                    "alice",
+                    "run-review-manager",
+                    false,
+                )
+                .unwrap()
+                .1["status"],
+            "completed"
+        );
     }
 
     #[test]
@@ -7512,6 +8404,17 @@ mod tests {
         store
             .claim_project_team_delivery("alice", &pending, "turn-1", "run-1", 100)
             .unwrap();
+        let active = store
+            .active_project_team_run_bindings("alice", &created.id)
+            .unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].delivery_id, pending.delivery_id);
+        assert_eq!(
+            active[0].conversation_id,
+            format!("agent-team-v2-{}-agent-1", created.id)
+        );
+        assert_eq!(active[0].turn_id, "turn-1");
+        assert_eq!(active[0].run_id, "run-1");
         assert!(store
             .next_project_team_delivery("alice", &created.id)
             .unwrap()
@@ -7804,12 +8707,21 @@ mod tests {
                 "run-executor-2",
                 true,
                 "已完成并核验。",
+                &[],
                 false,
                 109,
             )
             .is_err());
         let (_, completion) = store
-            .finish_todo_execution("alice", "run-executor-2", true, "已完成并核验。", true, 109)
+            .finish_todo_execution(
+                "alice",
+                "run-executor-2",
+                true,
+                "已完成并核验。",
+                &[],
+                true,
+                109,
+            )
             .unwrap();
         assert_eq!(completion["todo_status"], "completed");
         store

@@ -220,22 +220,22 @@ async fn legacy_unbound_conversation_can_be_bound_once_without_overwriting_resou
     ));
 
     let occupied_resource = LocalConversationResourceBinding {
-        kind: LocalConversationResourceKind::Contact,
-        resource_id: "occupied-agent".to_string(),
+        kind: LocalConversationResourceKind::Project,
+        resource_id: "occupied-project".to_string(),
     };
-    let mut occupied = conversation("occupied-contact");
+    let mut occupied = conversation("occupied-project");
     occupied.resource = Some(occupied_resource.clone());
     storage
-        .create_conversation(&idempotency("create-occupied-contact"), &occupied, 5_000)
+        .create_conversation(&idempotency("create-occupied-project"), &occupied, 5_000)
         .await
         .expect("create resource owner");
-    create(&storage, "legacy-contact-conflict").await;
-    let mut conflicting = conversation("legacy-contact-conflict");
+    create(&storage, "legacy-project-conflict").await;
+    let mut conflicting = conversation("legacy-project-conflict");
     conflicting.resource = Some(occupied_resource);
     assert!(matches!(
         storage
             .create_conversation(
-                &idempotency("bind-legacy-contact-conflict"),
+                &idempotency("bind-legacy-project-conflict"),
                 &conflicting,
                 6_000,
             )
@@ -244,7 +244,7 @@ async fn legacy_unbound_conversation_can_be_bound_once_without_overwriting_resou
     ));
     assert_eq!(
         storage
-            .get_conversation("user-1", "legacy-contact-conflict")
+            .get_conversation("user-1", "legacy-project-conflict")
             .await
             .expect("read legacy conflict")
             .expect("legacy conversation")
@@ -252,6 +252,40 @@ async fn legacy_unbound_conversation_can_be_bound_once_without_overwriting_resou
             .resource,
         None
     );
+}
+
+#[tokio::test]
+async fn contact_resource_can_back_direct_and_team_conversations() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    let resource = LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Contact,
+        resource_id: "agent-1".to_string(),
+    };
+
+    let mut direct = conversation("agent-direct-v2-room-1");
+    direct.resource = Some(resource.clone());
+    storage
+        .create_conversation(&idempotency("create-agent-direct"), &direct, 1_000)
+        .await
+        .expect("create direct conversation");
+
+    let mut team = conversation("agent-team-v2-team-1-agent-1");
+    team.resource = Some(resource.clone());
+    storage
+        .create_conversation(&idempotency("create-agent-team"), &team, 2_000)
+        .await
+        .expect("create team conversation");
+
+    for conversation_id in [direct.conversation_id, team.conversation_id] {
+        let stored = storage
+            .get_conversation("user-1", &conversation_id)
+            .await
+            .expect("read conversation")
+            .expect("conversation exists");
+        assert_eq!(stored.conversation.resource, Some(resource.clone()));
+    }
 }
 
 #[tokio::test]

@@ -1,5 +1,11 @@
-use super::{authorization::TaskToolAuthorization, filesystem::*, resolve_team_executor_binding};
+use super::{
+    authorization::TaskToolAuthorization, filesystem::*, resolve_execution_scope,
+    resolve_team_executor_binding, ExecutionScope, TeamExecutorBinding,
+};
 use crate::workspace_index::PROJECT_REGISTRY_SCHEMA;
+use chatos_local_agent_protocol::{
+    LocalConversationResourceBinding, LocalConversationResourceKind,
+};
 use rusqlite::Connection;
 use serde_json::json;
 use std::fs;
@@ -136,6 +142,30 @@ fn conversation_turn_tools_require_an_exact_team_executor_binding() {
     )
     .unwrap()
     .is_none());
+}
+
+#[test]
+fn team_executor_uses_its_verified_project_without_claiming_the_project_resource() {
+    let binding = TeamExecutorBinding {
+        team_id: "team-1".into(),
+        agent_id: "agent-1".into(),
+        project_id: "project-1".into(),
+    };
+    assert!(matches!(
+        resolve_execution_scope(None, Some(&binding)).unwrap(),
+        ExecutionScope::Project(project_id) if project_id == "project-1"
+    ));
+
+    let project_resource = LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Project,
+        resource_id: "project-1".into(),
+    };
+    assert!(resolve_execution_scope(Some(&project_resource), Some(&binding)).is_err());
+    assert!(matches!(
+        resolve_execution_scope(Some(&project_resource), None).unwrap(),
+        ExecutionScope::Project(project_id) if project_id == "project-1"
+    ));
+    assert!(resolve_execution_scope(None, None).is_err());
 }
 
 #[test]
