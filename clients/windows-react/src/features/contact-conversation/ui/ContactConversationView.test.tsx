@@ -30,7 +30,10 @@ describe("ContactConversationView", () => {
   it("shows the macOS capability-isolation notice only for the plugin installer", () => {
     renderView({ id: "plugin-installer", title: "插件安装助手", subtitle: null, conversationId: "conversation-2" });
 
-    expect(screen.getByRole("note")).toHaveTextContent("安装能力只在此对话可用");
+    const notice = screen.getByRole("note", { name: "插件安装能力范围" });
+    expect(notice).toHaveTextContent("安装或更新");
+    expect(notice).toHaveTextContent("平台插件市场、MCP、npm、Git 和本地 Plugin");
+    expect(notice).toHaveTextContent("安装能力只在此对话可用");
     expect(screen.getByTestId("conversation-surface")).toHaveTextContent("owner-1:conversation-2:插件安装助手:插件安装助手");
   });
 
