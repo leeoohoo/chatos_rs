@@ -287,6 +287,11 @@
 .agent-team-dashboard-next { display: grid; gap: 4px; border-top: 1px solid var(--separator); padding-top: 8px; }
 .agent-team-dashboard-next strong { font-size: 8px; }.agent-team-dashboard-next span { color: var(--secondary); font-size: 8px; line-height: 1.35; }
 .agent-team-overview__body > section > button { justify-self: end; border: 0; border-radius: 6px; padding: 4px 7px; color: var(--accent); background: rgba(10,132,255,.08); font-size: 8px; font-weight: 620; cursor: pointer; }
+@media (max-width: 1280px) {
+  .agent-team-dashboard-summary { grid-template-columns: minmax(0,1fr); align-items: start; gap: 10px; }
+  .agent-team-dashboard-metrics { flex-wrap: wrap; }
+  .agent-team-overview__body { grid-template-columns: minmax(0,1fr); }
+}
 .agent-team-surveys { display: flex; min-height: 0; flex: 1; align-items: center; justify-content: center; flex-direction: column; padding: 24px; text-align: center; }
 .agent-team-surveys__icon { width: 30px; height: 30px; margin-bottom: 9px; fill: rgba(120,120,128,.08); stroke: rgba(60,60,67,.34); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .agent-team-surveys > strong { color: var(--primary); font-size: 14px; font-weight: 650; }

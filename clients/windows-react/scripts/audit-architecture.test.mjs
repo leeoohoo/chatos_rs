@@ -1,5 +1,13 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 import { auditIconOnlyButtonAccessibleNames } from "./audit-architecture-rules.mjs";
+
+const agentManagementStylesheet = readFileSync(
+  resolve(process.cwd(), "src/features/agent-management/ui/agentManagement.css"),
+  "utf8",
+);
 
 describe("audit-architecture icon-only buttons", () => {
   it("reports an icon-only dismiss button without an accessible name", () => {
@@ -26,5 +34,15 @@ describe("audit-architecture icon-only buttons", () => {
     );
 
     expect(violations).toEqual([]);
+  });
+});
+
+describe("agent management responsive layout", () => {
+  it("stacks the team dashboard before high-DPI windows overflow horizontally", () => {
+    const compactRule = agentManagementStylesheet.match(/@media \(max-width: 1280px\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+
+    expect(compactRule).toContain(".agent-team-dashboard-summary { grid-template-columns: minmax(0,1fr)");
+    expect(compactRule).toContain(".agent-team-dashboard-metrics { flex-wrap: wrap; }");
+    expect(compactRule).toContain(".agent-team-overview__body { grid-template-columns: minmax(0,1fr); }");
   });
 });
