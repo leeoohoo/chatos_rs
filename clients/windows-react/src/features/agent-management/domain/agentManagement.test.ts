@@ -10,6 +10,7 @@ import {
   agentTeamDetailSchema,
   agentTeamConversationSnapshotSchema,
   agentTeamMemberActivitySnapshotSchema,
+  agentTeamTodoExecutionPlanSchema,
   heartbeatIntervalLabel,
   preparedAgentConversationSchema,
 } from "./agentManagement";
@@ -269,6 +270,33 @@ describe("agent management domain", () => {
       messages: [{ ...message, attachments: [{ ...message.attachments[0], path: "C:\\secret.png" }] }],
       deliveries: [],
     })).toThrow();
+  });
+
+  it("accepts requirement survey Todo capabilities only with their read dependency", () => {
+    const plan = {
+      requiresExecution: true,
+      builtinCapabilities: [
+        "project_read",
+        "project_write",
+        "terminal",
+        "requirement_survey_read",
+        "requirement_survey_write",
+      ],
+      plugins: [],
+      selectionRevision: "requirement-survey-v1",
+      selectedAtUnixMs: 20,
+    };
+    expect(agentTeamTodoExecutionPlanSchema.parse(plan).builtinCapabilities).toHaveLength(5);
+    expect(() => agentTeamTodoExecutionPlanSchema.parse({
+      ...plan, builtinCapabilities: ["requirement_survey_write"],
+    })).toThrow("需求调研写入能力必须同时包含需求调研读取能力");
+    expect(agentTeamTodoExecutionPlanSchema.parse({
+      ...plan, builtinCapabilities: ["requirement_survey_read", "requirement_survey_write"],
+    }).builtinCapabilities).toEqual(["requirement_survey_read", "requirement_survey_write"]);
+    expect(() => agentTeamTodoExecutionPlanSchema.parse({
+      ...plan, requiresExecution: false,
+      builtinCapabilities: ["requirement_survey_read", "requirement_survey_write"],
+    })).toThrow("非执行任务不能申请执行型内建能力");
   });
 });
 

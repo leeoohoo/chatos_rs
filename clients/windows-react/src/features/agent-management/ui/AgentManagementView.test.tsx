@@ -765,6 +765,63 @@ describe("AgentManagementView", () => {
     expect(screen.getByText("Windows React")).toBeVisible();
   });
 
+  it("opens the exact team Todo from a requirement-survey return route", async () => {
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",
+      name: "Alpha Agent 团队", goal: "交付 Alpha", defaultAgentId: "agent-1",
+      projectManagerAgentId: "agent-1", memberCount: 1, createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    };
+    const detail = {
+      team,
+      members: [{ agentId: "agent-1", role: "界面设计师", responsibility: "负责产品界面", joinedAtUnixMs: 20 }],
+    };
+    const todo = {
+      id: "todo-survey", agentId: "agent-1", agentName: "界面设计师", teamId: team.id,
+      sourceRoomId: team.id, sourceMessageId: "message-1", title: "完成团队需求调研", detail: "保存方案",
+      priority: 90, sortOrder: 0, status: "completed" as const, blockedReason: "", result: "方案已确认",
+      executionContract: {
+        objective: "完成团队需求调研", scope: "Windows React", expectedOutputs: ["需求方案"],
+        acceptanceCriteria: ["可返回原任务"], constraints: [],
+      },
+      executionPlan: {
+        requiresExecution: true,
+        builtinCapabilities: ["requirement_survey_read" as const, "requirement_survey_write" as const],
+        plugins: [], selectionRevision: "requirement-survey-v1", selectedAtUnixMs: 20,
+      },
+      dependencyIds: [], createdAtUnixMs: 20, updatedAtUnixMs: 40,
+    };
+    const onNavigationHandled = vi.fn();
+    const port = stubPort({
+      listTeams: vi.fn(async () => [team]),
+      loadTeam: vi.fn(async () => detail),
+      listTeamTodos: vi.fn(async () => [todo]),
+      listTeamTodoProgress: vi.fn(async () => []),
+      dispatchNextTeamDelivery: vi.fn(async () => null),
+      loadTeamRuns: vi.fn(async () => ({
+        teamId: team.id, messageCount: 0, pendingDeliveryCount: 0, runningDeliveryCount: 0,
+        completedDeliveryCount: 1, failedDeliveryCount: 0, cancelledDeliveryCount: 0, runs: [],
+      })),
+    });
+    render(
+      <AgentManagementView
+        navigationTarget={{ roomId: team.id, todoId: todo.id, requestId: 7 }}
+        onNavigationHandled={onNavigationHandled}
+        ownerUserId="owner-1"
+        port={port}
+        projects={[{ id: "project-1", title: "Alpha" }]}
+      />,
+    );
+
+    const workspace = await screen.findByRole("region", { name: "Agent 团队任务" });
+    expect(within(workspace).getAllByText("完成团队需求调研")[0]).toBeVisible();
+    expect(within(workspace).getByText("任务授权")).toBeVisible();
+    expect(within(workspace).getByText("需求调研读取")).toBeVisible();
+    expect(within(workspace).getByText("requirement_survey_write")).toBeVisible();
+    expect(onNavigationHandled).toHaveBeenCalledWith(7);
+    expect(port.loadTeam).toHaveBeenCalledWith("owner-1", team.id);
+    expect(port.listTeamTodos).toHaveBeenCalledWith("owner-1", team.id, true);
+  });
+
   it("loads and edits revisioned team shared assets", async () => {
     const team = {
       id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",

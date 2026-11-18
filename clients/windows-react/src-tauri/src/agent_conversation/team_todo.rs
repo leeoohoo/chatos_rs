@@ -6,6 +6,13 @@ use std::collections::HashSet;
 const MAXIMUM_TEAM_TODOS: usize = 1_000;
 const MAXIMUM_TEAM_CHAT_HOP_COUNT: i64 = 4;
 const MAXIMUM_TEAM_CHAT_RUNS_PER_ROOT: i64 = 12;
+const TODO_BUILTIN_CAPABILITIES: [&str; 5] = [
+    "project_read",
+    "project_write",
+    "terminal",
+    "requirement_survey_read",
+    "requirement_survey_write",
+];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1253,7 +1260,10 @@ impl AgentConversationStore {
         if !belongs_to_team {
             return Err("团队任务不存在。".into());
         }
-        load_todo_progress(&connection, owner_user_id, todo_id, limit)
+        load_todo_progress(&connection, owner_user_id, todo_id, limit)?
+            .into_iter()
+            .map(todo_progress_for_ui)
+            .collect()
     }
 
     pub(crate) fn todo_planning_tool_snapshot(
@@ -1302,7 +1312,7 @@ impl AgentConversationStore {
                 "goal": team_goal,
                 "assignees": assignees,
             },
-            "builtin_capabilities": ["project_read", "project_write", "terminal"],
+            "builtin_capabilities": TODO_BUILTIN_CAPABILITIES,
             "plugins": [],
             "todos": todo_values,
         });
@@ -3918,15 +3928,13 @@ fn normalized_planning_capabilities(
     requested: &[String],
     requires_execution: bool,
 ) -> Result<Vec<String>, String> {
-    if requested.len() > 3 {
+    if requested.len() > TODO_BUILTIN_CAPABILITIES.len() {
         return Err(invalid_team_todo_input());
     }
     let mut unique = HashSet::new();
     for capability in requested {
-        if !matches!(
-            capability.as_str(),
-            "project_read" | "project_write" | "terminal"
-        ) || !unique.insert(capability.as_str())
+        if !TODO_BUILTIN_CAPABILITIES.contains(&capability.as_str())
+            || !unique.insert(capability.as_str())
             || (!requires_execution && capability != "project_read")
         {
             return Err(invalid_team_todo_input());
@@ -3935,7 +3943,10 @@ fn normalized_planning_capabilities(
     if unique.contains("project_write") {
         unique.insert("project_read");
     }
-    Ok(["project_read", "project_write", "terminal"]
+    if unique.contains("requirement_survey_write") {
+        unique.insert("requirement_survey_read");
+    }
+    Ok(TODO_BUILTIN_CAPABILITIES
         .into_iter()
         .filter(|capability| unique.contains(capability))
         .map(str::to_owned)
@@ -4315,6 +4326,17 @@ fn load_todo_progress(
     Ok(values)
 }
 
+fn todo_progress_for_ui(mut progress: Value) -> Result<Value, String> {
+    let object = progress.as_object_mut().ok_or_else(team_todo_store_error)?;
+    let run_id = object.remove("run_id").ok_or_else(team_todo_store_error)?;
+    let created_at_unix_ms = object
+        .remove("created_at_unix_ms")
+        .ok_or_else(team_todo_store_error)?;
+    object.insert("runId".to_owned(), run_id);
+    object.insert("createdAtUnixMs".to_owned(), created_at_unix_ms);
+    Ok(progress)
+}
+
 fn load_todo_prerequisites(
     connection: &Connection,
     owner_user_id: &str,
@@ -4565,7 +4587,7 @@ fn validate_contract_list(values: &[String], allow_empty: bool) -> Result<(), St
 
 fn validate_execution_plan(plan: &AgentTodoExecutionPlan) -> Result<(), String> {
     if plan.selected_at_unix_ms < 0
-        || plan.builtin_capabilities.len() > 3
+        || plan.builtin_capabilities.len() > TODO_BUILTIN_CAPABILITIES.len()
         || plan.plugins.len() > 32
     {
         return Err(team_todo_store_error());
@@ -4573,14 +4595,18 @@ fn validate_execution_plan(plan: &AgentTodoExecutionPlan) -> Result<(), String> 
     validate_identifier(&plan.selection_revision).map_err(|_| team_todo_store_error())?;
     let mut capabilities = HashSet::new();
     for capability in &plan.builtin_capabilities {
-        if !matches!(
-            capability.as_str(),
-            "project_read" | "project_write" | "terminal"
-        ) || !capabilities.insert(capability)
+        if !TODO_BUILTIN_CAPABILITIES.contains(&capability.as_str())
+            || !capabilities.insert(capability.as_str())
             || (!plan.requires_execution && capability != "project_read")
         {
             return Err(team_todo_store_error());
         }
+    }
+    if capabilities.contains("project_write") && !capabilities.contains("project_read")
+        || capabilities.contains("requirement_survey_write")
+            && !capabilities.contains("requirement_survey_read")
+    {
+        return Err(team_todo_store_error());
     }
     let mut plugins = HashSet::new();
     for plugin in &plan.plugins {
@@ -5458,4 +5484,44 @@ pub(crate) async fn cancel_agent_team_todo(
         .await?;
     crate::attachment_tool_worker::schedule_team_todo_drain(app, session_owner, schedule_team_id);
     Ok(todo)
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    #[test]
+    fn requirement_survey_write_completes_its_read_dependency() {
+        let normalized =
+            normalized_planning_capabilities(&["requirement_survey_write".to_owned()], true)
+                .unwrap();
+        assert_eq!(
+            normalized,
+            vec![
+                "requirement_survey_read".to_owned(),
+                "requirement_survey_write".to_owned(),
+            ]
+        );
+        assert!(
+            normalized_planning_capabilities(&["requirement_survey_read".to_owned()], false,)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn persisted_requirement_survey_plan_requires_the_read_dependency() {
+        let mut plan = AgentTodoExecutionPlan {
+            requires_execution: true,
+            builtin_capabilities: vec![
+                "requirement_survey_read".into(),
+                "requirement_survey_write".into(),
+            ],
+            plugins: Vec::new(),
+            selection_revision: "requirement-survey-v1".into(),
+            selected_at_unix_ms: 1,
+        };
+        assert!(validate_execution_plan(&plan).is_ok());
+        plan.builtin_capabilities = vec!["requirement_survey_write".into()];
+        assert!(validate_execution_plan(&plan).is_err());
+    }
 }

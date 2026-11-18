@@ -384,6 +384,12 @@ export function AppShell({
   const pluginApplications = usePluginApplicationStore((state) => state.applications);
   const resetPluginApplications = usePluginApplicationStore((state) => state.reset);
   const [selection, setSelection] = useState<WorkspaceSelection>({ kind: "workbench" });
+  const [agentTeamNavigationTarget, setAgentTeamNavigationTarget] = useState<{
+    roomId: string;
+    todoId: string;
+    requestId: number;
+  } | null>(null);
+  const agentTeamNavigationSequence = useRef(0);
   const [activeSurface, setActiveSurface] = useState<"workspace" | "general-settings" | "wechat-companion" | "pet-settings" | "global-utilities" | "ai-models" | "device-gateway" | "plugin-settings" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const sessionStartedAt = useRef(Date.now());
@@ -530,6 +536,7 @@ export function AppShell({
     setShowAccountMenu(false);
     setShowCreateProject(false);
     setRemoteEditorTarget(null);
+    setAgentTeamNavigationTarget(null);
     resetProjectConversations(session.user.id);
     resetPluginApplications(pluginApplication);
   }, [pluginApplication, resetPluginApplications, resetProjectConversations, session.user.id]);
@@ -867,6 +874,7 @@ export function AppShell({
           />
         ) : selection.kind === "agentManagement" ? (
           <AgentManagementWorkspace
+            navigationTarget={agentTeamNavigationTarget}
             askUserPort={askUser}
             attachmentPort={conversationAttachments}
             historyPort={conversationHistory}
@@ -877,6 +885,11 @@ export function AppShell({
               await saveGeneralSettings(generalSettings);
             }}
             onOpenRequirementSurveys={() => selectWorkspace({ kind: "requirementSurveys" })}
+            onNavigationHandled={(requestId) => {
+              setAgentTeamNavigationTarget((current) => (
+                current?.requestId === requestId ? null : current
+              ));
+            }}
             projects={workspaceSnapshot.projects}
             realtimePort={conversationRealtime}
             runInspectorPort={runInspector}
@@ -888,6 +901,15 @@ export function AppShell({
             ownerUserId={session.user.id}
             projects={workspaceSnapshot.projects}
             onOpenConversation={(projectId) => selectWorkspace({ kind: "project", id: projectId })}
+            onOpenTeam={(roomId, todoId) => {
+              agentTeamNavigationSequence.current += 1;
+              setAgentTeamNavigationTarget({
+                roomId,
+                todoId,
+                requestId: agentTeamNavigationSequence.current,
+              });
+              selectWorkspace({ kind: "agentManagement" });
+            }}
           />
         ) : selection.kind === "mediaStudio" ? (
           <MediaStudioWorkspace ownerUserId={session.user.id} />

@@ -3065,7 +3065,7 @@ pub fn todo_planning_write_tool_schemas() -> Vec<Value> {
                     "assignee_ref": {"type": "string", "minLength": 1, "maxLength": 600},
                     "depends_on_todo_refs": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 600}, "maxItems": 64, "uniqueItems": true},
                     "requires_execution": {"type": "boolean", "default": true},
-                    "builtin_capabilities": {"type": "array", "items": {"type": "string", "enum": ["project_read", "project_write", "terminal"]}, "maxItems": 3, "uniqueItems": true},
+                    "builtin_capabilities": {"type": "array", "items": {"type": "string", "enum": ["project_read", "project_write", "terminal", "requirement_survey_read", "requirement_survey_write"]}, "maxItems": 5, "uniqueItems": true},
                     "plugin_hints": {
                         "type": "array",
                         "items": {
@@ -3367,6 +3367,8 @@ mod tests {
         let encoded = serde_json::to_string(&schemas).unwrap();
         assert!(encoded.contains("plugin_hints"));
         assert!(encoded.contains("plugin_ref"));
+        assert!(encoded.contains("requirement_survey_read"));
+        assert!(encoded.contains("requirement_survey_write"));
         assert!(!encoded.contains("todo_id"));
         assert!(!encoded.contains("team_id"));
         assert!(!encoded.contains("agent_id"));

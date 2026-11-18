@@ -8611,7 +8611,13 @@ mod tests {
         assert_eq!(planning_snapshot["todos"].as_array().unwrap().len(), 2);
         assert_eq!(
             planning_snapshot["builtin_capabilities"],
-            serde_json::json!(["project_read", "project_write", "terminal"])
+            serde_json::json!([
+                "project_read",
+                "project_write",
+                "terminal",
+                "requirement_survey_read",
+                "requirement_survey_write"
+            ])
         );
         let todo_reference = planning_snapshot["todos"]
             .as_array()
@@ -8698,6 +8704,10 @@ mod tests {
         assert_eq!(visible_progress.len(), 2);
         assert_eq!(visible_progress[0]["kind"], "started");
         assert_eq!(visible_progress[1]["detail"], "已完成事务写入，准备核对。");
+        assert_eq!(visible_progress[0]["runId"], "run-executor-2");
+        assert_eq!(visible_progress[0]["createdAtUnixMs"], 107);
+        assert!(visible_progress[0].get("run_id").is_none());
+        assert!(visible_progress[0].get("created_at_unix_ms").is_none());
         assert!(store
             .list_project_team_todo_progress("bob", &team.id, &second.id, 100)
             .is_err());

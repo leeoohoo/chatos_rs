@@ -118,7 +118,7 @@ function followUp() {
   return {
     surveyId: "survey-1", surveyVersion: 1,
     followUp: { status: "processing" as const, markdown: null },
-    plan: null, planFollowUp: null,
+    plan: null, planFollowUp: null, sourceTeamRoute: null,
   };
 }
 

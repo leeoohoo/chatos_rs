@@ -16,6 +16,7 @@ interface RequirementSurveyCenterViewProps {
   projects: Array<{ id: string; title: string }>;
   port: RequirementSurveyPort;
   onOpenConversation?(projectId: string, conversationId: string): void;
+  onOpenTeam?(roomId: string, todoId: string): void;
 }
 
 export function RequirementSurveyCenterView({
@@ -24,6 +25,7 @@ export function RequirementSurveyCenterView({
   projects,
   port,
   onOpenConversation,
+  onOpenTeam,
 }: RequirementSurveyCenterViewProps) {
   const surveys = useRequirementSurveyCenterStore((state) => state.surveys);
   const isLoading = useRequirementSurveyCenterStore((state) => state.isLoading);
@@ -107,6 +109,7 @@ export function RequirementSurveyCenterView({
         survey={selectedSurvey}
         onBack={() => setSelectedSurveyId(null)}
         onOpenConversation={onOpenConversation}
+        onOpenTeam={onOpenTeam}
         onSubmit={(answers) => submit(port, selectedSurvey, answers)}
       />
     );
@@ -331,6 +334,7 @@ function RequirementSurveyDetail({
   port,
   onBack,
   onOpenConversation,
+  onOpenTeam,
   onSubmit,
 }: {
   survey: RequirementSurvey;
@@ -339,6 +343,7 @@ function RequirementSurveyDetail({
   port: RequirementSurveyPort;
   onBack(): void;
   onOpenConversation?(projectId: string, conversationId: string): void;
+  onOpenTeam?(roomId: string, todoId: string): void;
   onSubmit(answers: RequirementSurveyAnswers): Promise<boolean>;
 }) {
   const [answers, setAnswers] = useState<RequirementSurveyAnswers>(survey.answers ?? {});
@@ -399,7 +404,7 @@ function RequirementSurveyDetail({
         ) : (
           <>
             <div className="requirement-survey-detail__resolved">✓ 你的回答已提交。下方可查看方案或后续回复。</div>
-            <RequirementSurveyFollowUpPanel ownerUserId={ownerUserId} port={port} survey={survey} onOpenConversation={onOpenConversation} />
+            <RequirementSurveyFollowUpPanel ownerUserId={ownerUserId} port={port} survey={survey} onOpenConversation={onOpenConversation} onOpenTeam={onOpenTeam} />
           </>
         )}
       </div>
@@ -412,11 +417,13 @@ function RequirementSurveyFollowUpPanel({
   port,
   survey,
   onOpenConversation,
+  onOpenTeam,
 }: {
   ownerUserId: string;
   port: RequirementSurveyPort;
   survey: RequirementSurvey;
   onOpenConversation?(projectId: string, conversationId: string): void;
+  onOpenTeam?(roomId: string, todoId: string): void;
 }) {
   const snapshot = useRequirementSurveyFollowUpStore((state) => state.snapshot);
   const isLoading = useRequirementSurveyFollowUpStore((state) => state.isLoading);
@@ -465,7 +472,19 @@ function RequirementSurveyFollowUpPanel({
             <div className="requirement-survey-plan__confirmed">
               <strong>方案已确认，本次不会自动执行任何任务</strong>
               <p>确认只表示认可当前方案版本。需要评审、生成文档或开始实施时，请返回原对话说明下一步；新任务会固定使用这个已确认版本。</p>
-              {onOpenConversation && <button className="primary-button" onClick={() => onOpenConversation(snapshot.plan!.projectId, snapshot.plan!.sourceConversationId)} type="button">返回原对话，安排下一步</button>}
+              {(snapshot.sourceTeamRoute ? onOpenTeam : onOpenConversation) && (
+                <button
+                  className="primary-button"
+                  onClick={() => {
+                    if (snapshot.sourceTeamRoute) {
+                      onOpenTeam?.(snapshot.sourceTeamRoute.roomId, snapshot.sourceTeamRoute.todoId);
+                    } else {
+                      onOpenConversation?.(snapshot.plan!.projectId, snapshot.plan!.sourceConversationId);
+                    }
+                  }}
+                  type="button"
+                >返回原对话，安排下一步</button>
+              )}
             </div>
           )}
         </div>

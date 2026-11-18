@@ -69,6 +69,8 @@ export function AgentManagementView({
   contextLanguage = "zh-CN",
   onContextLanguageChange = async () => undefined,
   onOpenRequirementSurveys = () => undefined,
+  navigationTarget = null,
+  onNavigationHandled = () => undefined,
   projects = [],
 }: {
   ownerUserId: string;
@@ -82,6 +84,8 @@ export function AgentManagementView({
   contextLanguage?: ChatOSLanguage;
   onContextLanguageChange?(language: ChatOSLanguage): Promise<void> | void;
   onOpenRequirementSurveys?(): void;
+  navigationTarget?: { roomId: string; todoId: string; requestId: number } | null;
+  onNavigationHandled?(requestId: number): void;
   projects?: Array<{ id: string; title: string }>;
 }) {
   const profiles = useAgentManagementStore((state) => state.profiles);
@@ -98,6 +102,7 @@ export function AgentManagementView({
   const saveProfile = useAgentManagementStore((state) => state.saveProfile);
   const reset = useAgentManagementStore((state) => state.reset);
   const teams = useAgentTeamStore((state) => state.teams);
+  const teamOwnerUserId = useAgentTeamStore((state) => state.ownerUserId);
   const selectedTeamId = useAgentTeamStore((state) => state.selectedTeamId);
   const teamDetail = useAgentTeamStore((state) => state.detail);
   const isLoadingTeams = useAgentTeamStore((state) => state.isLoading);
@@ -128,6 +133,8 @@ export function AgentManagementView({
   const [showsAgentInvite, setShowsAgentInvite] = useState(false);
   const [documentsRefreshSequence, setDocumentsRefreshSequence] = useState(0);
   const [editingTeamMemberId, setEditingTeamMemberId] = useState<string | null>(null);
+  const [navigationError, setNavigationError] = useState<string | null>(null);
+  const startedNavigationRequest = useRef<number | null>(null);
   const [editor, setEditor] = useState<{
     catalog: AgentProfileEditorCatalog;
     data: AgentProfileEditorData | null;
@@ -171,6 +178,44 @@ export function AgentManagementView({
       resetTeams();
     };
   }, [activate, activateTeams, loadEditorCatalog, ownerUserId, port, reset, resetTeams]);
+
+  useEffect(() => {
+    if (!navigationTarget || startedNavigationRequest.current === navigationTarget.requestId) return;
+    setSurface("teams");
+    setDirectConversation(null);
+    setNavigationError(null);
+    if (!port.listTeams || !port.loadTeam) {
+      startedNavigationRequest.current = navigationTarget.requestId;
+      setNavigationError("当前客户端未提供团队任务导航能力。");
+      onNavigationHandled(navigationTarget.requestId);
+      return;
+    }
+    if (teamOwnerUserId !== ownerUserId || isLoadingTeams) return;
+    if (!teams.some((team) => team.id === navigationTarget.roomId)) {
+      startedNavigationRequest.current = navigationTarget.requestId;
+      setNavigationError("无法定位来源团队；该团队可能已被删除或不属于当前账号。");
+      onNavigationHandled(navigationTarget.requestId);
+      return;
+    }
+    startedNavigationRequest.current = navigationTarget.requestId;
+    setEditingTeamMemberId(null);
+    void selectTeam(port, navigationTarget.roomId).then(() => {
+      const state = useAgentTeamStore.getState();
+      if (state.detail?.team.id !== navigationTarget.roomId) {
+        setNavigationError("来源团队暂时无法打开，请刷新后重试。");
+        onNavigationHandled(navigationTarget.requestId);
+      }
+    });
+  }, [
+    isLoadingTeams,
+    navigationTarget,
+    onNavigationHandled,
+    ownerUserId,
+    port,
+    selectTeam,
+    teamOwnerUserId,
+    teams,
+  ]);
 
   useEffect(() => {
     setPage((current) => Math.min(current, pageCount - 1));
@@ -327,6 +372,12 @@ export function AgentManagementView({
           </div>
         </aside>
         <section className="agent-management__panel">
+        {navigationError && (
+          <div className="agent-management__error" role="alert">
+            <span>{navigationError}</span>
+            <button onClick={() => setNavigationError(null)} type="button">关闭</button>
+          </div>
+        )}
         {!(surface === "teams" && selectedTeamId) && <header className="agent-management__toolbar">
           <div>
             <h2>{surface === "documents" ? "本地 Agent 文档" : surface === "teams" ? "项目 Agent 团队" : "Agent 管理"}</h2>
@@ -397,6 +448,8 @@ export function AgentManagementView({
             runInspectorPort={runInspectorPort}
             projects={projects}
             selectedTeamId={selectedTeamId}
+            navigationTarget={navigationTarget}
+            onNavigationHandled={onNavigationHandled}
             teams={teams}
             onCreate={() => setShowsTeamCreator(true)}
             onInvite={() => setShowsAgentInvite(true)}
@@ -707,6 +760,8 @@ function AgentTeamCatalog({
   runInspectorPort,
   projects,
   selectedTeamId,
+  navigationTarget,
+  onNavigationHandled,
   teams,
   onCreate,
   onInvite,
@@ -729,6 +784,8 @@ function AgentTeamCatalog({
   runInspectorPort?: RunInspectorPort;
   projects: Array<{ id: string; title: string }>;
   selectedTeamId: string | null;
+  navigationTarget: { roomId: string; todoId: string; requestId: number } | null;
+  onNavigationHandled(requestId: number): void;
   teams: AgentTeamSummary[];
   onCreate(): void;
   onInvite(): void;
@@ -744,6 +801,9 @@ function AgentTeamCatalog({
     setWorkspaceSection("overview");
     setSelectedRunAgentId(null);
   }, [selectedTeamId]);
+  useEffect(() => {
+    if (navigationTarget?.roomId === selectedTeamId) setWorkspaceSection("todos");
+  }, [navigationTarget, selectedTeamId]);
   const projectNames = useMemo(
     () => new Map(projects.map((project) => [project.id, project.title])),
     [projects],
@@ -861,6 +921,8 @@ function AgentTeamCatalog({
               ) : workspaceSection === "todos" && detail?.team.id === selectedTeamId ? (
                 <AgentTeamTodosView
                   detail={detail}
+                  focusTarget={navigationTarget?.roomId === detail.team.id ? navigationTarget : null}
+                  onFocusHandled={onNavigationHandled}
                   ownerUserId={ownerUserId}
                   port={port}
                 />
@@ -1124,14 +1186,20 @@ function todoStatusLabel(status: AgentTeamTodo["status"]) {
 
 function AgentTeamTodosView({
   detail,
+  focusTarget,
+  onFocusHandled,
   ownerUserId,
   port,
 }: {
   detail: AgentTeamDetail;
+  focusTarget: { roomId: string; todoId: string; requestId: number } | null;
+  onFocusHandled(requestId: number): void;
   ownerUserId: string;
   port: AgentManagementPort;
 }) {
   const todos = useAgentTeamTodoStore((state) => state.todos);
+  const todoOwnerUserId = useAgentTeamTodoStore((state) => state.ownerUserId);
+  const todoTeamId = useAgentTeamTodoStore((state) => state.teamId);
   const isLoading = useAgentTeamTodoStore((state) => state.isLoading);
   const error = useAgentTeamTodoStore((state) => state.error);
   const activate = useAgentTeamTodoStore((state) => state.activate);
@@ -1140,6 +1208,9 @@ function AgentTeamTodosView({
   const [expandedTodoId, setExpandedTodoId] = useState<string | null>(null);
   const [resultTodo, setResultTodo] = useState<AgentTeamTodo | null>(null);
   const [page, setPage] = useState(0);
+  const [focusError, setFocusError] = useState<string | null>(null);
+  const [activeFocus, setActiveFocus] = useState<{ todoId: string; requestId: number } | null>(null);
+  const handledFocusRequest = useRef<number | null>(null);
   const cycling = useRef(false);
   const pageSize = 10;
   const supportsTodos = Boolean(
@@ -1184,6 +1255,32 @@ function AgentTeamTodosView({
     if (page > lastPage) setPage(lastPage);
   }, [page, todos.length]);
 
+  useEffect(() => {
+    if (!focusTarget || handledFocusRequest.current === focusTarget.requestId
+      || todoOwnerUserId !== ownerUserId || todoTeamId !== detail.team.id || isLoading) return;
+    handledFocusRequest.current = focusTarget.requestId;
+    const index = todos.findIndex((todo) => todo.id === focusTarget.todoId);
+    if (index < 0) {
+      setFocusError("无法定位来源团队任务；该任务可能已被删除或不属于当前账号。");
+      onFocusHandled(focusTarget.requestId);
+      return;
+    }
+    setFocusError(null);
+    setPage(Math.floor(index / pageSize));
+    setExpandedTodoId(focusTarget.todoId);
+    setActiveFocus({ todoId: focusTarget.todoId, requestId: focusTarget.requestId });
+    onFocusHandled(focusTarget.requestId);
+  }, [
+    detail.team.id,
+    focusTarget,
+    isLoading,
+    onFocusHandled,
+    ownerUserId,
+    todoOwnerUserId,
+    todoTeamId,
+    todos,
+  ]);
+
   if (!supportsTodos) {
     return (
       <div className="agent-team-todos__state is-error" role="alert">
@@ -1205,6 +1302,7 @@ function AgentTeamTodosView({
 
   return (
     <div className="agent-team-todos">
+      {focusError && <div className="agent-team-conversation__error" role="alert">{focusError}</div>}
       {error && (
         <div className="agent-team-conversation__error" role="alert">
           <span>{error}</span><button onClick={() => void refresh(port)} type="button">刷新</button>
@@ -1231,6 +1329,7 @@ function AgentTeamTodosView({
             {visibleTodos.map((todo) => (
               <AgentTeamTodoCard
                 expanded={expandedTodoId === todo.id}
+                focusRequestId={activeFocus?.todoId === todo.id ? activeFocus.requestId : null}
                 key={todo.id}
                 onOpenResult={() => setResultTodo(todo)}
                 onToggle={() => setExpandedTodoId((current) => current === todo.id ? null : todo.id)}
@@ -1258,6 +1357,7 @@ function AgentTeamTodosView({
 
 function AgentTeamTodoCard({
   expanded,
+  focusRequestId,
   onOpenResult,
   onToggle,
   ownerUserId,
@@ -1266,6 +1366,7 @@ function AgentTeamTodoCard({
   todo,
 }: {
   expanded: boolean;
+  focusRequestId: number | null;
   onOpenResult: () => void;
   onToggle: () => void;
   ownerUserId: string;
@@ -1275,6 +1376,15 @@ function AgentTeamTodoCard({
 }) {
   const [progress, setProgress] = useState<AgentTeamTodoProgress[]>([]);
   const [progressError, setProgressError] = useState<string | null>(null);
+  const cardRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (focusRequestId == null) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      cardRef.current?.scrollIntoView?.({ block: "center" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusRequestId]);
 
   useEffect(() => {
     if (!port.listTeamTodoProgress || todo.status === "pending") {
@@ -1313,7 +1423,7 @@ function AgentTeamTodoCard({
     && todo.executionPlan.builtinCapabilities.includes("project_write");
   const statusColor = todo.status === "blocked" ? "warning" : todo.status;
   return (
-    <article className={`agent-team-todo-card is-${statusColor}`}>
+    <article className={`agent-team-todo-card is-${statusColor}`} ref={cardRef}>
       <div className="agent-team-todo-card__identity">
         <span aria-hidden="true" className="agent-team-todo-card__avatar">{todo.agentName.trim().slice(0, 1) || "A"}</span>
         <div>
@@ -1417,7 +1527,7 @@ function TeamTodoAuthorization({ plan }: { plan: AgentTeamTodo["executionPlan"] 
         <strong>执行模式</strong><span>{plan.requiresExecution ? "独立执行环境" : "仅协调，无独立执行"}</span>
       </div>
       {capabilities.length === 0 ? (
-        <p className="agent-team-todo-authorization__empty">未授权项目文件或终端工具。</p>
+        <p className="agent-team-todo-authorization__empty">未授权内置执行工具。</p>
       ) : (
         <div className="agent-team-todo-authorization__list">
           <small>内置工具</small>
@@ -1495,6 +1605,18 @@ function teamTodoCapability(capability: AgentTeamTodo["executionPlan"]["builtinC
       name: "项目终端",
       detail: "在当前任务绑定的项目目录内执行和管理命令进程。",
       tools: ["terminal_execute", "terminal_poll", "terminal_write", "terminal_kill"],
+    },
+    requirement_survey_read: {
+      key: capability,
+      name: "需求调研读取",
+      detail: "读取当前团队 Todo 绑定的调研答案与方案上下文。",
+      tools: [],
+    },
+    requirement_survey_write: {
+      key: capability,
+      name: "需求调研",
+      detail: "在正式需求调研中心创建问卷，并在提交后保存版本化方案。",
+      tools: ["requirement_survey_create", "requirement_plan_save"],
     },
   }[capability];
 }

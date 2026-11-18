@@ -79,12 +79,20 @@ pub(crate) struct RequirementSurveyPlan {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct RequirementSurveyTeamRoute {
+    room_id: String,
+    todo_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct RequirementSurveyFollowUpSnapshot {
     survey_id: String,
     survey_version: u64,
     follow_up: RequirementSurveyFollowUp,
     plan: Option<RequirementSurveyPlan>,
     plan_follow_up: Option<RequirementSurveyFollowUp>,
+    source_team_route: Option<RequirementSurveyTeamRoute>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -215,12 +223,12 @@ pub(crate) async fn load_requirement_survey_follow_up(
         .session_generation_for_owner(&owner_user_id)
         .await?;
     let survey = get_survey(&manager, &owner_user_id, &project_id, &survey_id).await?;
-    let follow_up = if survey.status == LocalRequirementSurveyStatus::Open {
-        RequirementSurveyFollowUp::awaiting_answers()
+    let (follow_up, source_team_route) = if survey.status == LocalRequirementSurveyStatus::Open {
+        (RequirementSurveyFollowUp::awaiting_answers(), None)
     } else {
         let run = get_run(&manager, &owner_user_id, &survey.source_run_id).await?;
         validate_survey_run(&survey, &run)?;
-        project_follow_up(&run)
+        (project_follow_up(&run), source_team_route(&survey, &run)?)
     };
     let plan = get_plan(&manager, &owner_user_id, &survey_id, None).await?;
     let (plan, plan_follow_up) = if let Some(plan) = plan {
@@ -241,6 +249,7 @@ pub(crate) async fn load_requirement_survey_follow_up(
         follow_up,
         plan,
         plan_follow_up,
+        source_team_route,
     })
 }
 
@@ -476,27 +485,83 @@ fn validate_survey_run(
     survey: &LocalRequirementSurvey,
     run: &LocalAgentRunRecord,
 ) -> Result<(), String> {
-    let conversation_field = if survey.source_task_id.is_some() {
-        "source_conversation_id"
-    } else {
-        "conversation_id"
-    };
-    let valid_owner = run.owner_user_id == survey.owner_user_id
-        && run.run_id == survey.source_run_id
-        && run.input.get(conversation_field).and_then(Value::as_str)
+    let is_main_chat = survey.source_task_id.is_none()
+        && run.profile_key == "main_chat"
+        && run.owner_entity_type == "conversation_turn"
+        && run.input.get("conversation_id").and_then(Value::as_str)
             == Some(survey.source_conversation_id.as_str());
-    let valid_entity = match &survey.source_task_id {
-        Some(task_id) => {
-            run.profile_key == "task_execution"
-                && run.owner_entity_type == "task"
-                && run.owner_entity_id == *task_id
-        }
-        None => run.profile_key == "main_chat" && run.owner_entity_type == "conversation_turn",
-    };
-    if !valid_owner || !valid_entity {
+    let is_task = survey.source_task_id.as_deref().is_some_and(|task_id| {
+        run.profile_key == "task_execution"
+            && run.owner_entity_type == "task"
+            && run.owner_entity_id == task_id
+            && run
+                .input
+                .get("source_conversation_id")
+                .and_then(Value::as_str)
+                == Some(survey.source_conversation_id.as_str())
+    });
+    let is_team_todo = survey.source_task_id.as_deref().is_some_and(|todo_id| {
+        let team = run
+            .input
+            .get("team_executor_context")
+            .and_then(Value::as_object);
+        run.profile_key == "task_execution"
+            && run.owner_entity_type == "conversation_turn"
+            && run.input.get("conversation_id").and_then(Value::as_str)
+                == Some(survey.source_conversation_id.as_str())
+            && team
+                .and_then(|value| value.get("todo_id"))
+                .and_then(Value::as_str)
+                == Some(todo_id)
+            && team
+                .and_then(|value| value.get("project_id"))
+                .and_then(Value::as_str)
+                == Some(survey.project_resource_id.as_str())
+    });
+    if run.owner_user_id != survey.owner_user_id
+        || run.run_id != survey.source_run_id
+        || !(is_main_chat || is_task || is_team_todo)
+    {
         return Err("需求调研来源 Run 身份不一致。".into());
     }
     Ok(())
+}
+
+fn source_team_route(
+    survey: &LocalRequirementSurvey,
+    run: &LocalAgentRunRecord,
+) -> Result<Option<RequirementSurveyTeamRoute>, String> {
+    validate_survey_run(survey, run)?;
+    if run.profile_key != "task_execution"
+        || run.owner_entity_type != "conversation_turn"
+        || survey.source_task_id.is_none()
+    {
+        return Ok(None);
+    }
+    let Some(team) = run
+        .input
+        .get("team_executor_context")
+        .and_then(Value::as_object)
+    else {
+        return Err("团队需求调研缺少团队上下文。".into());
+    };
+    let room_id = team
+        .get("team_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "团队需求调研缺少团队路由。".to_owned())?;
+    let todo_id = team
+        .get("todo_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "团队需求调研缺少任务路由。".to_owned())?;
+    validate_identifier(room_id)?;
+    validate_identifier(todo_id)?;
+    if survey.source_task_id.as_deref() != Some(todo_id) {
+        return Err("团队需求调研任务路由不一致。".into());
+    }
+    Ok(Some(RequirementSurveyTeamRoute {
+        room_id: room_id.to_owned(),
+        todo_id: todo_id.to_owned(),
+    }))
 }
 
 fn validate_plan(
@@ -519,6 +584,17 @@ fn validate_plan(
 fn validate_plan_run(plan: &LocalRequirementPlan, run: &LocalAgentRunRecord) -> Result<(), String> {
     let is_main = run.profile_key == "main_chat" && run.owner_entity_type == "conversation_turn";
     let is_task = run.profile_key == "task_execution" && run.owner_entity_type == "task";
+    let is_team_todo = run.profile_key == "task_execution"
+        && run.owner_entity_type == "conversation_turn"
+        && run.input.get("conversation_id").and_then(Value::as_str)
+            == Some(plan.source_conversation_id.as_str())
+        && run
+            .input
+            .get("team_executor_context")
+            .and_then(Value::as_object)
+            .and_then(|team| team.get("project_id"))
+            .and_then(Value::as_str)
+            == Some(plan.project_resource_id.as_str());
     let conversation_matches = if is_main {
         run.input.get("conversation_id").and_then(Value::as_str)
             == Some(plan.source_conversation_id.as_str())
@@ -528,7 +604,7 @@ fn validate_plan_run(plan: &LocalRequirementPlan, run: &LocalAgentRunRecord) -> 
             .and_then(Value::as_str)
             == Some(plan.source_conversation_id.as_str())
     } else {
-        false
+        is_team_todo
     };
     if run.owner_user_id != plan.owner_user_id
         || run.run_id != plan.source_run_id
@@ -715,6 +791,38 @@ mod tests {
         let mut wrong_plan = plan;
         wrong_plan.source_survey_id = "survey-forged".into();
         assert!(validate_plan(&survey, &wrong_plan).is_err());
+    }
+
+    #[test]
+    fn team_todo_source_is_bound_to_its_project_conversation_and_route() {
+        let mut survey = survey();
+        survey.source_conversation_id = "agent-team-executor-delivery-1".into();
+        survey.source_task_id = Some("todo-1".into());
+        let mut run = run();
+        run.profile_key = "task_execution".into();
+        run.owner_entity_type = "conversation_turn".into();
+        run.input = serde_json::json!({
+            "conversation_id": "agent-team-executor-delivery-1",
+            "team_executor_context": {
+                "team_id": "team-1",
+                "todo_id": "todo-1",
+                "project_id": "project-1"
+            }
+        });
+
+        assert!(validate_survey_run(&survey, &run).is_ok());
+        let route = source_team_route(&survey, &run).unwrap().unwrap();
+        assert_eq!(route.room_id, "team-1");
+        assert_eq!(route.todo_id, "todo-1");
+
+        let mut plan = plan();
+        plan.source_conversation_id = survey.source_conversation_id.clone();
+        assert!(validate_plan_run(&plan, &run).is_ok());
+
+        run.input["team_executor_context"]["project_id"] = serde_json::json!("project-forged");
+        assert!(validate_survey_run(&survey, &run).is_err());
+        assert!(source_team_route(&survey, &run).is_err());
+        assert!(validate_plan_run(&plan, &run).is_err());
     }
 
     fn survey() -> LocalRequirementSurvey {

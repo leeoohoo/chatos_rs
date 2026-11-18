@@ -85,7 +85,7 @@ function snapshot(overrides: Partial<RequirementSurveyFollowUpSnapshot> = {}): R
   return {
     surveyId: "survey-1", surveyVersion: 2,
     followUp: { status: "processing", markdown: null },
-    plan: null, planFollowUp: null, ...overrides,
+    plan: null, planFollowUp: null, sourceTeamRoute: null, ...overrides,
   };
 }
 

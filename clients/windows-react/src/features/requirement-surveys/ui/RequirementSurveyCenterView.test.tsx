@@ -151,6 +151,7 @@ describe("RequirementSurveyCenterView", () => {
         followUp: { status: "completed_without_reply" as const, markdown: null },
         plan: currentPlan,
         planFollowUp: { status: "completed_without_reply" as const, markdown: null },
+        sourceTeamRoute: null,
       })),
       confirmPlan,
     });
@@ -168,6 +169,39 @@ describe("RequirementSurveyCenterView", () => {
     fireEvent.click(screen.getByRole("button", { name: "返回原对话，安排下一步" }));
     expect(onOpenConversation).toHaveBeenCalledWith("project-1", "conversation-1");
   });
+
+  it("returns a confirmed team survey to its exact team Todo", async () => {
+    const resolved = survey({
+      status: "resolved", version: 2, answers: { goal: "Alpha" }, sourceTaskId: "todo-1",
+      updatedAtUnixMs: 30, resolvedAtUnixMs: 30,
+    });
+    const currentPlan = plan({ markdown: "# 团队实施方案", confirmedAtUnixMs: 50 });
+    const onOpenConversation = vi.fn();
+    const onOpenTeam = vi.fn();
+    const port = stubPort({
+      listProjectRequirementSurveys: vi.fn(async () => [resolved]),
+      loadFollowUp: vi.fn(async () => ({
+        surveyId: "survey-1", surveyVersion: 2,
+        followUp: { status: "completed_without_reply" as const, markdown: null },
+        plan: currentPlan,
+        planFollowUp: { status: "completed_without_reply" as const, markdown: null },
+        sourceTeamRoute: { roomId: "team-1", todoId: "todo-1" },
+      })),
+    });
+    render(<RequirementSurveyCenterView
+      hostReady
+      onOpenConversation={onOpenConversation}
+      onOpenTeam={onOpenTeam}
+      ownerUserId="owner-1"
+      projects={[{ id: "project-1", title: "Alpha" }]}
+      port={port}
+    />);
+    fireEvent.click(await screen.findByRole("button", { name: /Alpha/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /项目目标/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "返回原对话，安排下一步" }));
+    expect(onOpenTeam).toHaveBeenCalledWith("team-1", "todo-1");
+    expect(onOpenConversation).not.toHaveBeenCalled();
+  });
 });
 
 function stubPort(overrides: Partial<RequirementSurveyPort> = {}): RequirementSurveyPort {
@@ -179,7 +213,7 @@ function stubPort(overrides: Partial<RequirementSurveyPort> = {}): RequirementSu
     loadFollowUp: vi.fn(async (_owner, _project, surveyId) => ({
       surveyId, surveyVersion: 2,
       followUp: { status: "processing" as const, markdown: null },
-      plan: null, planFollowUp: null,
+      plan: null, planFollowUp: null, sourceTeamRoute: null,
     })),
     confirmPlan: vi.fn(async () => plan({ confirmedAtUnixMs: 50 })),
     adoptPlan: vi.fn(async () => plan({ confirmedAtUnixMs: 50 })),

@@ -701,7 +701,13 @@ export const agentTeamTodoExecutionContractSchema = z.object({
 
 export const agentTeamTodoExecutionPlanSchema = z.object({
   requiresExecution: z.boolean(),
-  builtinCapabilities: z.array(z.enum(["project_read", "project_write", "terminal"])).max(3),
+  builtinCapabilities: z.array(z.enum([
+    "project_read",
+    "project_write",
+    "terminal",
+    "requirement_survey_read",
+    "requirement_survey_write",
+  ])).max(5),
   plugins: z.array(z.object({
     pluginId: z.string().trim().min(1).max(512),
     componentKey: z.string().trim().min(1).max(512),
@@ -715,7 +721,15 @@ export const agentTeamTodoExecutionPlanSchema = z.object({
     context.addIssue({ code: "custom", message: "团队任务内建能力不能重复。", path: ["builtinCapabilities"] });
   }
   if (!plan.requiresExecution && plan.builtinCapabilities.some((capability) => capability !== "project_read")) {
-    context.addIssue({ code: "custom", message: "非执行任务不能申请写入或终端能力。", path: ["builtinCapabilities"] });
+    context.addIssue({ code: "custom", message: "非执行任务不能申请执行型内建能力。", path: ["builtinCapabilities"] });
+  }
+  if (plan.builtinCapabilities.includes("project_write")
+    && !plan.builtinCapabilities.includes("project_read")) {
+    context.addIssue({ code: "custom", message: "项目写入能力必须同时包含项目读取能力。", path: ["builtinCapabilities"] });
+  }
+  if (plan.builtinCapabilities.includes("requirement_survey_write")
+    && !plan.builtinCapabilities.includes("requirement_survey_read")) {
+    context.addIssue({ code: "custom", message: "需求调研写入能力必须同时包含需求调研读取能力。", path: ["builtinCapabilities"] });
   }
 });
 
