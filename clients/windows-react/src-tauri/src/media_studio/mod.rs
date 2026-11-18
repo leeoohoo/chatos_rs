@@ -182,11 +182,13 @@ impl MediaStudioManager {
     pub(crate) async fn cleanup_stale_temporaries(&self) -> usize {
         let image_accounts = self.history.temporary_cleanup_root();
         let video_accounts = self.video_history.temporary_cleanup_root();
+        let workflow_accounts = self.workflows.temporary_cleanup_root();
         tauri::async_runtime::spawn_blocking(move || {
             let cutoff = SystemTime::now()
                 .checked_sub(STALE_HISTORY_TEMPORARY_AGE)
                 .unwrap_or(UNIX_EPOCH);
             cleanup_history_temporaries(&image_accounts, &video_accounts, cutoff)
+                .saturating_add(cleanup_workflow_temporaries(&workflow_accounts, cutoff))
         })
         .await
         .unwrap_or_default()
@@ -1082,6 +1084,76 @@ fn canonical_history_manifest_temporary_name(value: &str) -> bool {
             .and_then(|value| value.strip_suffix(".tmp"))
             .is_some_and(canonical_record_id)
     })
+}
+
+fn cleanup_workflow_temporaries(accounts: &Path, cutoff: SystemTime) -> usize {
+    if !safe_cleanup_directory(accounts) {
+        return 0;
+    }
+    let mut state = HistoryTemporaryCleanupState::default();
+    let Ok(owners) = fs::read_dir(accounts) else {
+        return 0;
+    };
+    for owner in owners {
+        if !state.visit() {
+            break;
+        }
+        let Ok(owner) = owner else {
+            continue;
+        };
+        let Some(owner_name) = owner.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let owner_path = owner.path();
+        if !canonical_owner_hash(&owner_name) || !safe_cleanup_directory(&owner_path) {
+            continue;
+        }
+        let Ok(workflows) = fs::read_dir(owner_path) else {
+            continue;
+        };
+        for workflow in workflows {
+            if !state.visit() {
+                return state.removed;
+            }
+            let Ok(workflow) = workflow else {
+                continue;
+            };
+            let Some(workflow_name) = workflow.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let workflow_path = workflow.path();
+            if !canonical_record_id(&workflow_name) || !safe_cleanup_directory(&workflow_path) {
+                continue;
+            }
+            let Ok(entries) = fs::read_dir(workflow_path) else {
+                continue;
+            };
+            for entry in entries {
+                if !state.visit() {
+                    return state.removed;
+                }
+                let Ok(entry) = entry else {
+                    continue;
+                };
+                let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                    continue;
+                };
+                if canonical_workflow_manifest_temporary_name(&name)
+                    && try_remove_stale_owned_file(&entry.path(), cutoff)
+                {
+                    state.removed = state.removed.saturating_add(1);
+                }
+            }
+        }
+    }
+    state.removed
+}
+
+fn canonical_workflow_manifest_temporary_name(value: &str) -> bool {
+    value
+        .strip_prefix(".workflow-")
+        .and_then(|value| value.strip_suffix(".tmp"))
+        .is_some_and(canonical_record_id)
 }
 
 fn safe_cleanup_directory(path: &Path) -> bool {
@@ -2384,6 +2456,66 @@ mod tests {
         assert!(unrelated.exists());
         assert!(invalid_owner_temporary.exists());
         assert!(invalid_record_temporary.exists());
+    }
+
+    #[test]
+    fn stale_workflow_cleanup_only_removes_owned_manifest_temporaries() {
+        let root = tempdir().unwrap();
+        let manager = MediaStudioManager::new(root.path().to_path_buf()).unwrap();
+        let accounts = manager.workflows.temporary_cleanup_root();
+        let owner = history::owner_hash("alice");
+        let workflow = accounts.join(&owner).join(Uuid::new_v4().to_string());
+        fs::create_dir_all(workflow.join("assets")).unwrap();
+
+        let owned_temporary = workflow.join(format!(".workflow-{}.tmp", Uuid::new_v4()));
+        let malformed_temporary = workflow.join(".workflow-NOT-A-UUID.tmp");
+        let committed = workflow.join("workflow.json");
+        let unrelated = workflow.join("notes.tmp");
+        let nested_temporary = workflow
+            .join("assets")
+            .join(format!(".workflow-{}.tmp", Uuid::new_v4()));
+        for path in [
+            &owned_temporary,
+            &malformed_temporary,
+            &committed,
+            &unrelated,
+            &nested_temporary,
+        ] {
+            fs::write(path, b"value").unwrap();
+        }
+
+        let hard_link_source = workflow.join("hard-link-source");
+        fs::write(&hard_link_source, b"linked").unwrap();
+        let hard_link_temporary = workflow.join(format!(".workflow-{}.tmp", Uuid::new_v4()));
+        fs::hard_link(&hard_link_source, &hard_link_temporary).unwrap();
+
+        let invalid_owner_temporary = accounts
+            .join("not-an-owner")
+            .join(Uuid::new_v4().to_string())
+            .join(format!(".workflow-{}.tmp", Uuid::new_v4()));
+        fs::create_dir_all(invalid_owner_temporary.parent().unwrap()).unwrap();
+        fs::write(&invalid_owner_temporary, b"value").unwrap();
+        let invalid_workflow_temporary = accounts
+            .join(&owner)
+            .join("not-a-workflow")
+            .join(format!(".workflow-{}.tmp", Uuid::new_v4()));
+        fs::create_dir_all(invalid_workflow_temporary.parent().unwrap()).unwrap();
+        fs::write(&invalid_workflow_temporary, b"value").unwrap();
+
+        assert_eq!(cleanup_workflow_temporaries(&accounts, UNIX_EPOCH), 0);
+        assert_eq!(
+            cleanup_workflow_temporaries(&accounts, SystemTime::now() + Duration::from_secs(1),),
+            1
+        );
+        assert!(!owned_temporary.exists());
+        assert!(malformed_temporary.exists());
+        assert!(committed.exists());
+        assert!(unrelated.exists());
+        assert!(nested_temporary.exists());
+        assert!(hard_link_source.exists());
+        assert!(hard_link_temporary.exists());
+        assert!(invalid_owner_temporary.exists());
+        assert!(invalid_workflow_temporary.exists());
     }
 
     #[test]

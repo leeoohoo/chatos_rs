@@ -303,6 +303,10 @@ impl MediaStudioWorkflowStore {
         fs::remove_dir_all(folder).map_err(|_| "无法删除工作流。".to_owned())
     }
 
+    pub(super) fn temporary_cleanup_root(&self) -> PathBuf {
+        self.root.join("Accounts")
+    }
+
     pub(crate) fn resolve_images(
         &self,
         owner: &str,

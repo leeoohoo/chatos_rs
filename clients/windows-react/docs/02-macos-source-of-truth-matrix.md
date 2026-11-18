@@ -1401,4 +1401,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 114. [已完成] Windows 登录后的默认入口已增加纯函数回归保护：认证 Shell 首帧保持 `workspace`，owner-scoped 资源索引到达后优先选择首个项目，没有项目时选择首个联系人；显式设置页、用户已选资源和其他账号索引不会被覆盖，避免首屏再次落入设置页或空 workbench。React 全量 138 个测试文件、514 项通过，新增 `workspaceEntry` 3 项回归测试；最新 NSIS 安装版原生启动 smoke 通过，安装 `3,203 ms`、启动 `9,826 ms`、卸载 `1,163 ms`，报告为 `%TEMP%\\chatos-windows-workspace-entry-nsis.json`，同包 Hook/重启恢复 smoke 也通过，报告为 `%TEMP%\\chatos-windows-workspace-entry-hook.json`。直接启动 Release EXE 的原生窗口观察到标题 `ChatOS Pet`，首屏已进入 `chatos` 项目的“用户消息”工作区，未进入设置页；截图取证保存在本机临时目录，不进入仓库。
 
+115. [已完成] Windows Media Studio 工作流原子清单已补齐崩溃残留治理：生产保存继续以 `.workflow-<小写 UUID>.tmp` 独占写入并原子替换 `workflow.json`；启动后台维护只进入 `MediaStudio/Workflows/Accounts/<64 位小写 owner hash>/<小写 workflow UUID>`，每根最多访问 10,000 项，并只删除超过 24 小时的直属 canonical 临时文件。近期文件、畸形身份、嵌套资产、正式清单、symlink/Windows reparse 与多硬链接均失败关闭或保留。Windows Tauri 全量 `632 passed, 0 failed, 7 ignored`，React/Vitest `147` 个文件 / `567 passed`，Rustfmt、Clippy `-D warnings`、TypeScript、production build、架构/Bundle/Skill 示例审计均通过；正式 Release 在现有已提交工作流目录的真实启动 smoke 中于 `352 ms` 内仅删除过期 fixture，保留近期/畸形 fixture 和正式清单，随后精确清理全部测试残留。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
