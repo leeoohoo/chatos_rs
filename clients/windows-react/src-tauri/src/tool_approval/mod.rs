@@ -599,7 +599,7 @@ async fn reconcile_recorded_decisions(
 ) -> Result<Vec<LocalAgentToolInvocationRecord>, String> {
     let mut invocations = load_pending(manager, owner_user_id).await?;
     let mut changed = false;
-    for record in journal.snapshot(owner_user_id) {
+    for record in journal.snapshot(owner_user_id)? {
         let matching = invocations.iter().find(|invocation| {
             record.matches(owner_user_id, &invocation.invocation_id, invocation.version)
                 && is_pending(invocation)

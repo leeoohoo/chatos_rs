@@ -1,6 +1,6 @@
 # Windows React 与 macOS 功能拉齐关闭清单
 
-更新时间：2026-11-18
+更新时间：2026-11-19
 
 分支：`3.0.9.3.1`
 
@@ -44,6 +44,8 @@ Windows 产品版本：`3.0.9`
 - 2026-11-18 原生 Run 检查器键盘回归发现并关闭模态焦点缺口：旧实现没有自身的初始焦点、`Escape` 关闭或触发控件恢复合同，导致键盘进入后无法可靠完成检查并返回原 Run。Windows 现在打开检查器即聚焦“完成”，正反向 `Tab` 均限制在当前弹窗；`Escape`、标题按钮或背景关闭后会把焦点恢复到实际打开它的 Run 行，列表行与通讯/任务执行摘要入口均保留精确触发控件。焦点元素筛选提升为共享无障碍 helper，继续排除 disabled、hidden 与祖先隐藏的控件。正式 Release 在真实 25 事件/4 次模型调用的任务 Run 上复测：`Tab` / `Shift+Tab` 均保持“完成”按钮可见焦点，`Escape` 关闭后第三条任务 Run 行获得可见焦点。门禁为 React/Vitest `146` 个文件、`558 passed`，TypeScript、production build、architecture audit、bundle audit（入口 `459.97 KiB raw / 138.99 KiB gzip`）与 `git diff --check` 全部通过；Tauri `--no-bundle` 正式 Release 重建成功。
 
 - 2026-11-18 Windows 已对齐 `3.0.9.11` 的本地 HTTP Plugin 应用认证。每个动态或静态 runtime 使用独立的 32 字节随机 Base64URL 凭据；Host 只通过受保护的 loopback bootstrap 地址向 WebView 建立 `HttpOnly`、`SameSite=Strict` 会话，303 响应禁止 Referer 泄漏并立即回到无凭据根地址。未认证请求、错误 bootstrap token、重复 Cookie/会话值和客户端伪造认证 Header 均失败关闭；Host 仅在会话验证后向 Plugin 子进程注入认证 Header。健康检查使用随机 challenge 与 HMAC-SHA256 proof，阻止其他本机进程抢占子进程端口冒充就绪；静态资源服务执行同一认证合同。真实 TCP 集成回归覆盖动态/静态内容、认证 Header 注入、Cookie 属性、错误凭据、健康证明，以及 `101 Switching Protocols` 后的双向长连接；Plugin runtime 定向测试 `13 passed`。最终门禁为 Windows Tauri Rust `627 passed, 0 failed, 7 ignored`、Rustfmt、Clippy `-D warnings`；React/Vitest `147` 个文件、`565 passed`，TypeScript、production build、architecture audit、bundle audit（入口 `459.97 KiB raw / 139.00 KiB gzip`）与 `git diff --check` 均通过。`--no-bundle` Release 构建成功，EXE SHA-256 为 `7C76B7EA7203EDA3EA045A891F0661F91442D241EC36E47935222F71F158E3BA`；原生窗口真实恢复现有测试账号会话、Host 进入“本地服务已就绪”且“应用”页可达，但该账号当前明确显示“还没有插件应用”，因此本条不把未发生的 iframe 页面加载伪报为原生 Plugin 业务闭环。
+
+- 2026-11-19 Windows 已对齐 macOS 的审批决定日志损坏失败关闭合同。启动时若发现 JSON 解码失败、记录超限、非普通记录、读取失败、记录超出 16 KiB、字段非法或文件名与记录身份不匹配，journal 会保留不可用状态；后续恢复、记录和删除审批决定均返回统一安全错误，不再静默忽略坏记录后继续自动或会话审批，也不会覆盖或删除原始证据。合法旧记录仍按原合同恢复。临时目录回归逐项验证损坏、超限、错名和非法内容均失败关闭且原字节不变；全量 Windows Tauri Rust 为 `627 passed, 0 failed, 7 ignored`，Rustfmt、Clippy `-D warnings`、React/Vitest `147` 个文件 / `565 passed`、TypeScript、production build、architecture audit、bundle audit 与 `git diff --check` 均通过。`--no-bundle` Release 构建成功，EXE SHA-256 为 `24A79B4DAB882EC412687AFA2171A8EF0656E8ECE57841176490FDB72D752E41`。正式 Windows Release 真实恢复既有会话，Host 进入“本地服务已就绪”；命令审批页正常显示三种审批模式、空等待队列和既有审计记录，证明合法 journal 路径未被误伤。损坏场景仅使用隔离临时目录，没有修改真实用户审批数据。
 
 - 2026-11-17 在当前 HEAD 重跑 Windows React 前端门禁：Vitest `145` 个测试文件、`536 passed, 0 failed`；`npm run typecheck`、`npm run audit:architecture` 和 `npm run audit:bundle` 均通过，入口 Bundle 为 `456.97 KiB raw / 137.71 KiB gzip`。本轮未修改前端运行逻辑，结果只证明合并后的前端契约、类型、架构边界和 Bundle 预算无回归，不替代原生逐页视觉和发布环境验收。
 
