@@ -687,8 +687,8 @@
 "本项目的 Task 还没有发起调研。" = "No Task in this project has started a survey yet.";
 "提交并恢复任务" = "Submit and Resume Task";
 "答案已保存，原 Agent Run 已恢复执行。" = "Answers saved. The original Agent Run has resumed.";
-"需求调研已迁移" = "Requirement Surveys Moved";
-"Task 调研现在由 Local Agent Host 保存并恢复原 Run，不再属于 Agent 群聊。" = "Task surveys are now saved by Local Agent Host and resume their original Run; they are no longer part of Agent group chat.";
+"项目需求调研" = "Project Requirement Survey";
+"团队发起的正式调研由 Local Agent Host 保存；提交后会恢复原团队 Todo 并继续整理方案。" = "Formal surveys started by the team are saved by Local Agent Host. Submitting one resumes the original team Todo so the proposal can continue.";
 "打开需求调研" = "Open Requirement Surveys";
 "Agent 文档" = "Agent Documents";
 "显示当前账户由 Local Agent Host 保存的 Markdown 文档。" = "Shows Markdown documents saved by Local Agent Host for the current account.";
