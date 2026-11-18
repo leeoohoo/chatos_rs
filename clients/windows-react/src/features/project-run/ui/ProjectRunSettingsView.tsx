@@ -8,6 +8,7 @@ import {
   type ProjectRunToolchainOption,
 } from "../domain/projectRun";
 import type { ProjectRunPort } from "../ports/ProjectRunPort";
+import { ProjectRunLogView } from "./ProjectRunLogView";
 
 export function ProjectRunSettingsView({
   ownerUserId,
@@ -335,11 +336,13 @@ function RunInstanceCard({ instance, expanded, busy, onToggle, onStop, onDelete 
       </header>
       <button className="project-run-log-toggle" aria-expanded={expanded} onClick={onToggle} type="button">{expanded ? "⌄ 收起运行日志" : "› 展开运行日志"}</button>
       {expanded && (
-        <div className="project-run-log">
-          <header><strong>实时运行日志</strong><span>{instance.exitCode != null ? `退出码 ${instance.exitCode}` : instance.isRunning ? "实时更新" : "已结束"}</span></header>
-          <pre>{instance.log || "进程已经启动，暂时还没有日志输出。"}</pre>
-          {instance.logTruncated && <p>日志已达到 512 KiB 上限，只保留最近输出。</p>}
-        </div>
+        <ProjectRunLogView
+          content={instance.log}
+          followsTail={instance.isRunning}
+          label={`${instance.name}运行日志`}
+          status={instance.exitCode != null ? `退出码 ${instance.exitCode}` : instance.isRunning ? "实时更新 · 跟随末尾" : "已结束"}
+          truncated={instance.logTruncated}
+        />
       )}
     </article>
   );
