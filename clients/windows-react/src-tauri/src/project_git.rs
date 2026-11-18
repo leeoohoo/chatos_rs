@@ -189,8 +189,16 @@ pub async fn load_project_git_diff(
 ) -> Result<ProjectGitDiff, String> {
     let _permit = acquire_git_permit(&resources).await?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
+    load_git_diff(&context, path, staged).await
+}
+
+async fn load_git_diff(
+    context: &GitProjectContext,
+    path: String,
+    staged: bool,
+) -> Result<ProjectGitDiff, String> {
     let path = normalized_relative_path(&path)?;
-    let current = required_snapshot(&context).await?;
+    let current = required_snapshot(context).await?;
     let change = current
         .snapshot
         .changes
@@ -208,12 +216,7 @@ pub async fn load_project_git_diff(
             "--no-ext-diff".to_owned(),
             "--".to_owned(),
             null_device_path().to_owned(),
-            current
-                .repository
-                .root
-                .join(&path)
-                .to_string_lossy()
-                .into_owned(),
+            path.clone(),
         ]
     } else {
         let mut arguments = vec![
@@ -237,7 +240,7 @@ pub async fn load_project_git_diff(
     )
     .await?;
     Ok(ProjectGitDiff {
-        project_id: context.project_id,
+        project_id: context.project_id.clone(),
         path,
         is_staged: staged,
         content: output_text(output.stdout)?,
@@ -1490,6 +1493,14 @@ mod tests {
             .unwrap();
         assert_eq!(change.kind, ProjectGitChangeKind::Untracked);
         assert!(change.has_working_tree_changes);
+        let untracked_diff = load_git_diff(&project, "README.md".into(), false)
+            .await
+            .unwrap();
+        assert!(untracked_diff.content.contains("+# First"));
+        assert!(untracked_diff.content.contains("+++ b/README.md"));
+        assert!(!untracked_diff
+            .content
+            .contains(directory.path().to_string_lossy().as_ref()));
 
         let current = required_snapshot(&project).await.unwrap();
         let paths =
