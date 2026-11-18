@@ -565,7 +565,7 @@ function GenerationSettings({
   onChooseHistory(): void;
 }) {
   const state = useMediaStudioStore();
-  const selectedModel = state.models.find((model) => model.id === state.selectedModelId);
+  const selectedModel = state.imageModels.find((model) => model.id === state.selectedModelId);
   const canGenerate = canGenerateMediaStudioImage(state);
 
   return (
@@ -582,9 +582,9 @@ function GenerationSettings({
       </header>
       <div className="media-settings__scroll">
         <Field label="模型">
-          {state.isLoadingModels && state.models.length === 0 ? (
+          {state.isLoadingModels && state.imageModels.length === 0 ? (
             <div className="media-model-state"><span className="mini-spinner" />正在读取模型…</div>
-          ) : state.models.length === 0 ? (
+          ) : state.imageModels.length === 0 ? (
             <div className="media-model-empty">
               <strong>没有可用模型</strong>
               <span>{state.modelsErrorMessage ?? "请先配置一个全局启用且具有 API 密钥的模型。"}</span>
@@ -598,7 +598,7 @@ function GenerationSettings({
                 onChange={(event) => state.setSelectedModel(event.target.value)}
                 value={state.selectedModelId ?? ""}
               >
-                {state.models.map((model) => (
+                {state.imageModels.map((model) => (
                   <option key={model.id} value={model.id}>{model.name} · {model.modelName}</option>
                 ))}
               </select>
@@ -654,7 +654,7 @@ function GenerationSettings({
           </Field>
         </div>
 
-        {state.modelsErrorMessage && state.models.length > 0 && (
+        {state.modelsErrorMessage && state.imageModels.length > 0 && (
           <InlineNotice message={state.modelsErrorMessage} tone="warning" />
         )}
         {state.generationErrorMessage && (

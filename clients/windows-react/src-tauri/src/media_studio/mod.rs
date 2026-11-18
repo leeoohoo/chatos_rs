@@ -238,7 +238,7 @@ impl MediaStudioManager {
         &self,
         owner_user_id: &str,
         workflow: &MediaWorkflow,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         self.workflows.save(owner_user_id, workflow)
     }
 
@@ -1184,9 +1184,30 @@ pub(crate) struct MediaStudioModelOption {
     name: String,
     provider: String,
     model_name: String,
+    workload: MediaStudioModelWorkload,
     enabled: bool,
     task_enabled: bool,
     has_api_key: bool,
+    supports_image_input: bool,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MediaStudioModelWorkload {
+    Chat,
+    Image,
+    Video,
+}
+
+impl From<chatos_service_runtime::model_workload::ModelWorkload> for MediaStudioModelWorkload {
+    fn from(value: chatos_service_runtime::model_workload::ModelWorkload) -> Self {
+        use chatos_service_runtime::model_workload::ModelWorkload;
+        match value {
+            ModelWorkload::Chat => Self::Chat,
+            ModelWorkload::Image => Self::Image,
+            ModelWorkload::Video => Self::Video,
+        }
+    }
 }
 
 #[tauri::command]
@@ -2208,6 +2229,10 @@ fn present_model_catalog(
                 && !model.model.trim().is_empty()
         })
         .map(|model| MediaStudioModelOption {
+            workload: chatos_service_runtime::model_workload::ModelWorkload::for_model(
+                &model.model,
+            )
+            .into(),
             id: model.id,
             name: model.name,
             provider: model.provider,
@@ -2215,6 +2240,7 @@ fn present_model_catalog(
             enabled: model.enabled,
             task_enabled: model.task_enabled.unwrap_or(model.enabled),
             has_api_key: model.has_api_key,
+            supports_image_input: model.supports_images,
         })
         .collect::<Vec<_>>();
     models.sort_by(|left, right| {
@@ -2226,13 +2252,10 @@ fn present_model_catalog(
 }
 
 fn image_model_rank(model: &MediaStudioModelOption) -> u8 {
-    if format!("{} {}", model.name, model.model_name)
-        .to_lowercase()
-        .contains("image")
-    {
-        0
-    } else {
-        1
+    match model.workload {
+        MediaStudioModelWorkload::Image => 0,
+        MediaStudioModelWorkload::Chat => 1,
+        MediaStudioModelWorkload::Video => 2,
     }
 }
 
@@ -2368,10 +2391,10 @@ mod tests {
         let models = present_model_catalog(
             "alice",
             vec![
-                model("chat", "alice", "Zeta", true),
-                model("image", "alice", "Image Alpha", true),
-                model("disabled", "alice", "Image Disabled", false),
-                model("other", "bob", "Image Other", true),
+                model("chat", "alice", "gpt-6.1-sol", true),
+                model("image", "alice", "gpt-image-1", true),
+                model("disabled", "alice", "gpt-image-2", false),
+                model("other", "bob", "gpt-image-3", true),
             ],
         )
         .unwrap();
@@ -2386,6 +2409,10 @@ mod tests {
         assert!(!encoded.contains("must-never-cross"));
         assert!(!encoded.contains("api_key"));
         assert!(encoded.contains("hasApiKey"));
+        assert!(encoded.contains("supportsImageInput"));
+        assert!(encoded.contains("\"workload\":\"image\""));
+        assert_eq!(models[0].workload, MediaStudioModelWorkload::Image);
+        assert_eq!(models[1].workload, MediaStudioModelWorkload::Chat);
     }
 
     #[test]

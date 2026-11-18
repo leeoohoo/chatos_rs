@@ -609,6 +609,7 @@ dependencies = [
  "chatos_ai_runtime",
  "chatos_local_agent_protocol",
  "chatos_plugin_management_sdk",
+ "chatos_service_runtime",
  "chrono",
  "clipboard-win",
  "dirs 6.0.0",

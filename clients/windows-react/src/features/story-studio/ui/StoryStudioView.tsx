@@ -911,11 +911,11 @@ function ModelSelect({ disabled = false, label, models, value, onChange }: { dis
 
 function modelChoices(models: ReturnType<typeof useStoryStudioStore.getState>["models"]) {
   const enabled = models.filter((model) => model.enabled && model.hasApiKey);
-  const video = enabled.filter((model) => model.modelName.toLowerCase() === "minimax-h3");
-  const image = enabled.filter((model) => /image|flux|seedream|dall-e/iu.test(model.modelName));
-  const excluded = new Set([...video, ...image].map((model) => model.id));
-  const text = enabled.filter((model) => !excluded.has(model.id));
-  return { text: text.length ? text : enabled, image: image.length ? image : enabled, video: video.length ? video : enabled };
+  return {
+    text: enabled.filter((model) => model.workload === "chat"),
+    image: enabled.filter((model) => model.workload === "image"),
+    video: enabled.filter((model) => model.workload === "video" && model.modelName.toLowerCase() === "minimax-h3"),
+  };
 }
 
 function projectStage(project: ReturnType<typeof useStoryStudioStore.getState>["projects"][number]) {

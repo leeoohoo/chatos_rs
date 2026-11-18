@@ -361,8 +361,9 @@ describe("media studio store", () => {
 function port(overrides: Partial<MediaStudioPort> = {}): MediaStudioPort {
   return {
     listWorkflows: vi.fn(async () => []),
-    saveWorkflow: vi.fn(async () => undefined),
+    saveWorkflow: vi.fn(async () => true),
     deleteWorkflow: vi.fn(async () => undefined),
+    watchWorkflowRun: vi.fn(async () => () => undefined),
     runWorkflow: vi.fn(async ({ workflowId, clientRequestId }) => ({
       workflowId,
       clientRequestId,
@@ -370,6 +371,7 @@ function port(overrides: Partial<MediaStudioPort> = {}): MediaStudioPort {
       finalText: "",
       imageRecordIds: [],
       videoRecordIds: [],
+      nodeResults: [],
       errorMessage: null,
     })),
     listModels: vi.fn(async () => [model("image-model")]),
@@ -418,9 +420,11 @@ function model(id: string): MediaStudioModel {
     name: id,
     provider: "openai-compatible",
     modelName: "gpt-image-1",
+    workload: "image",
     enabled: true,
     taskEnabled: true,
     hasApiKey: true,
+    supportsImageInput: true,
   };
 }
 
@@ -430,9 +434,11 @@ function videoModel(): MediaStudioModel {
     name: "MiniMax Video",
     provider: "openai-compatible",
     modelName: "MiniMax-H3",
+    workload: "video",
     enabled: true,
     taskEnabled: false,
     hasApiKey: true,
+    supportsImageInput: true,
   };
 }
 

@@ -37,9 +37,11 @@ export const mediaStudioModelSchema = z.object({
   name: safeText(1_024).min(1),
   provider: safeText(1_024).min(1),
   modelName: safeText(1_024).min(1),
+  workload: z.enum(["chat", "image", "video"]),
   enabled: z.boolean(),
   taskEnabled: z.boolean(),
   hasApiKey: z.boolean(),
+  supportsImageInput: z.boolean(),
 }).strict();
 
 export const mediaStudioModelListSchema = z.array(mediaStudioModelSchema).max(1_000);

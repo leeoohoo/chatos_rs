@@ -1,6 +1,6 @@
 # Windows React 与 macOS 功能拉齐关闭清单
 
-更新时间：2026-11-17
+更新时间：2026-11-18
 
 分支：`3.0.9.3.1`
 
@@ -22,7 +22,7 @@ Windows 产品版本：`3.0.9`
 
 - 重新执行 `git fetch origin --prune --tags` 后，远端最新版本分支仍为 `origin/3.0.9.10`，头提交为 `37a7ad4cc`，没有出现 `3.0.9.11`。当前 Windows 分支已通过合并提交 `a6fffc816` 包含该远端头，并已推送到 `origin/3.0.9.3.1`。
 - `3.0.9.10` 的 Local Agent 会话上下文、Memory compose 故障存活、Browser session 初始化清理、Browser `0.1.27` 与部署用户增长校验均位于共享 Rust/Plugin/脚本层，Windows 合并后直接复用。重新执行 Windows Tauri `cargo test --all-targets` 为 `601 passed, 0 failed, 6 ignored`；React/Vitest 为 `145` 个测试文件、`536 passed, 0 failed`，TypeScript typecheck 与 architecture audit 均通过。测试生成的 `target-shared/debug` 中间产物约 `3.31 GB`，确认没有占用进程后已删除；正式 Release 产物未修改。
-- macOS 工作流的专用文本成品提示词、模型 capability/上下文/输出预算失败关闭和 `520px` Inspector 宽度已经在 Windows 跟进。仍未跟进的是逐节点运行/成功/失败结果、图片/视频节点结果直接预览，以及 macOS 新增的过期保存拒绝和并发资产清理保护；Windows 当前只能在整个工作流完成后显示最终文本与图片/视频记录数量。
+- [x] Windows 已完成 macOS 工作流逐节点结果与安全持久化对齐：保存写锁会拒绝过期快照，并保护并发资产清理；旧版 `1280x720` 视频清单会安全迁移为当前 `768P` 参数。文本、图片和视频节点均通过原生事件展示运行、成功或失败状态，并在节点内直接展示文本、图片或视频播放控件；运行期间禁止编辑、移动、删除和保存，模型列表严格按文本、图片、视频 workload 分类。图片/视频历史会在同一会话即时同步，并在 Release 重启后连同工作流一起恢复。工作流视频轮询还从错误的 `500ms × 180`（约 90 秒）修正为与 macOS 独立视频页一致的 `10s × 180`，真实任务已越过原 50% 超时点并最终成功。空文本结果会失败关闭，节点和全局均显示精确错误 `文本节点没有返回内容。`。本轮门禁为 React/Vitest `145` 个文件、`550 passed`，前端 production build、architecture audit、bundle audit、Rustfmt、`git diff --check` 全部通过；Windows Tauri 为 `615 passed, 0 failed, 6 ignored`，Windows Tauri 与根 Rust workspace 的 Clippy `-D warnings` 及根 workspace 全量测试均通过。正式 Windows Release 原生回归覆盖图片→视频、纯文本成功、空结果失败、同会话记录同步，以及彻底重启后的图片、视频与工作流恢复。
 - Local Agent Host v53 的 `target_concurrent_work_items` 协议字段和压力更新基础已进入 Windows，但 Windows `MachineResourceGovernor` 仍使用 Host 固定预留与 App 固定剩余池，没有 macOS `ClientMachineConcurrencyAllocator` 在 Host 与 App 之间按活动/排队状态动态借用逻辑，因此“动态并发借用”仍是实际功能差距。
 - [x] Windows 已完成 `3.0.9.10` 的团队共享资产审核闭环：完成态 Todo 可原子持久化最多 8 条、Markdown 总量最多 256 KB 的 `asset_update_suggestions`，并在 durable review 表中执行 `pending` / `applied` / `rejected` 状态机；项目经理 Run 通过 Run-scoped `review_ref` / `team_ref` / `asset_ref` 使用 `team_asset_review_list`、`team_asset_create` / `team_asset_update` 与 `team_asset_review_resolve`，未清空 pending 时 `agent_cycle_complete` 会失败关闭。创建、更新、归档、审核和审核完成入口均要求当前活跃项目经理，应用结果还必须绑定同一团队的 active 资产及精确 revision；团队资产页展示待审核来源 Todo、提交 Agent、事实理由和安全 Markdown 正文，并在处理完成后只显示正式 revision 资产。项目经理简报目前仍始终单行省略，没有 macOS 对超过 800 字历史简报的可展开收起呈现，该差距继续保留。
 

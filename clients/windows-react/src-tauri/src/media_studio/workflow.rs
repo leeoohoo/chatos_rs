@@ -6,11 +6,13 @@ use chatos_ai_runtime::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::SystemTime,
 };
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 use crate::{
@@ -22,6 +24,7 @@ use crate::{
 const MAXIMUM_MANIFEST_BYTES: usize = 2 * 1_024 * 1_024;
 const MAXIMUM_IMAGE_BYTES: usize = 20 * 1_024 * 1_024;
 const MAXIMUM_TEXT_LENGTH: usize = 20_000;
+const VIDEO_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const MEDIA_WORKFLOW_SYSTEM_PROMPT: &str = r#"你是 AI 创作工作流中的文本节点。完整执行节点要求，输出可直接交给下游文本、图片或视频节点使用的成品，而不是简短建议、过程说明或任务摘要。
 
 准确分析所有提供的图片和当前工作文本，不臆造不可见信息。严格遵循用户指定的语言、格式和篇幅；用户未限制篇幅时，应提供完成任务所需的充分细节。
@@ -123,7 +126,7 @@ fn default_image_size() -> String {
 }
 
 fn default_video_size() -> String {
-    "1280x720".into()
+    "768P".into()
 }
 
 fn default_video_ratio() -> String {
@@ -165,9 +168,12 @@ pub(crate) fn validate_workflow(workflow: &MediaWorkflow) -> Result<(), String> 
             if video_index.replace(index).is_some() || index + 1 != workflow.nodes.len() {
                 return Err("视频节点只能出现一次并且必须位于流程末尾。".into());
             }
-            if node.video_size.trim().is_empty()
-                || node.video_ratio.trim().is_empty()
-                || !(1..=120).contains(&node.video_seconds)
+            if !matches!(node.video_size.as_str(), "768P" | "2K")
+                || !matches!(
+                    node.video_ratio.as_str(),
+                    "16:9" | "9:16" | "1:1" | "4:3" | "3:4" | "21:9"
+                )
+                || !(4..=15).contains(&node.video_seconds)
             {
                 return Err("视频节点尺寸、比例或时长无效。".into());
             }
@@ -216,13 +222,17 @@ fn validate_references(
 #[derive(Clone)]
 pub(crate) struct MediaStudioWorkflowStore {
     root: PathBuf,
+    write_lock: Arc<Mutex<()>>,
 }
 
 impl MediaStudioWorkflowStore {
     pub(crate) fn new(app_data_directory: PathBuf) -> Result<Self, String> {
         let root = app_data_directory.join("MediaStudio").join("Workflows");
         ensure_owned_directory(&root).map_err(|_| "无法创建工作流目录。".to_owned())?;
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            write_lock: Arc::new(Mutex::new(())),
+        })
     }
 
     pub(crate) fn list(&self, owner: &str) -> Result<Vec<MediaWorkflow>, String> {
@@ -246,24 +256,42 @@ impl MediaStudioWorkflowStore {
         Ok(workflows)
     }
 
-    pub(crate) fn save(&self, owner: &str, workflow: &MediaWorkflow) -> Result<(), String> {
+    pub(crate) fn save(&self, owner: &str, workflow: &MediaWorkflow) -> Result<bool, String> {
         validate_owner(owner)?;
         validate_workflow(workflow)?;
+        let _write_guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "工作流保存状态不可用。".to_owned())?;
         let folder = self.workflow_directory(owner, &workflow.id)?;
+        let manifest = folder.join("workflow.json");
+        let previous_manifest_modified_at = fs::symlink_metadata(&manifest)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
+        if manifest.exists() {
+            let saved = self.load(&folder, owner)?;
+            if saved.updated_at_unix_ms > workflow.updated_at_unix_ms {
+                return Ok(false);
+            }
+        }
         let assets = folder.join("assets");
         ensure_owned_directory(&assets).map_err(|_| "无法创建工作流资产目录。".to_owned())?;
         let bytes = serde_json::to_vec(workflow).map_err(|_| "无法编码工作流。".to_owned())?;
         if bytes.len() > MAXIMUM_MANIFEST_BYTES {
             return Err("工作流清单过大。".into());
         }
-        replace_owned_file(&folder, &folder.join("workflow.json"), ".workflow-", &bytes)
+        replace_owned_file(&folder, &manifest, ".workflow-", &bytes)
             .map_err(|_| "无法保存工作流。".to_owned())?;
-        self.cleanup_assets(&assets, workflow)?;
-        Ok(())
+        self.cleanup_assets(&assets, workflow, previous_manifest_modified_at)?;
+        Ok(true)
     }
 
     pub(crate) fn delete(&self, owner: &str, id: &str) -> Result<(), String> {
         validate_owner(owner)?;
+        let _write_guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "工作流保存状态不可用。".to_owned())?;
         let id = Uuid::parse_str(id).map_err(|_| "工作流标识无效。".to_owned())?;
         let folder = self.owner_directory(owner).join(id.to_string());
         if !folder.exists() {
@@ -320,8 +348,9 @@ impl MediaStudioWorkflowStore {
             return Err("工作流清单无效。".into());
         }
         let bytes = fs::read(&manifest).map_err(|_| "工作流清单无效。".to_owned())?;
-        let workflow: MediaWorkflow =
+        let mut workflow: MediaWorkflow =
             serde_json::from_slice(&bytes).map_err(|_| "工作流清单无效。".to_owned())?;
+        normalize_legacy_workflow_defaults(&mut workflow);
         if workflow.id
             != folder
                 .file_name()
@@ -349,7 +378,12 @@ impl MediaStudioWorkflowStore {
         Ok(workflow)
     }
 
-    fn cleanup_assets(&self, assets: &Path, workflow: &MediaWorkflow) -> Result<(), String> {
+    fn cleanup_assets(
+        &self,
+        assets: &Path,
+        workflow: &MediaWorkflow,
+        previous_manifest_modified_at: Option<SystemTime>,
+    ) -> Result<(), String> {
         let referenced: HashSet<&str> = workflow
             .input_images
             .iter()
@@ -373,6 +407,15 @@ impl MediaStudioWorkflowStore {
             }
             if !is_plain_file(&path) {
                 return Err("工作流资产无效。".into());
+            }
+            let Some(previous_manifest_modified_at) = previous_manifest_modified_at else {
+                continue;
+            };
+            let modified_at = fs::symlink_metadata(&path)
+                .and_then(|metadata| metadata.modified())
+                .map_err(|_| "无法读取工作流资产时间。".to_owned())?;
+            if modified_at > previous_manifest_modified_at {
+                continue;
             }
             fs::remove_file(path).map_err(|_| "无法清理工作流资产。".to_owned())?;
         }
@@ -399,6 +442,14 @@ impl MediaStudioWorkflowStore {
             return Err("工作流不存在。".into());
         }
         Ok(directory)
+    }
+}
+
+fn normalize_legacy_workflow_defaults(workflow: &mut MediaWorkflow) {
+    for node in &mut workflow.nodes {
+        if node.video_size == "1280x720" {
+            node.video_size = default_video_size();
+        }
     }
 }
 
@@ -434,7 +485,7 @@ pub(crate) fn save_media_studio_workflow(
     owner_user_id: String,
     workflow: MediaWorkflow,
     manager: State<'_, super::MediaStudioManager>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     manager.save_workflow(&owner_user_id, &workflow)
 }
 
@@ -454,6 +505,49 @@ pub(crate) struct MediaWorkflowRunRequest {
     pub client_request_id: String,
 }
 
+const MEDIA_WORKFLOW_RUN_EVENT: &str = "media-workflow-run";
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub(crate) enum MediaWorkflowNodeRunResult {
+    Text {
+        text: String,
+    },
+    Images {
+        item: super::history::ImageHistoryItem,
+    },
+    Video {
+        item: super::video_history::VideoHistoryItem,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MediaWorkflowCompletedNode {
+    node_id: String,
+    result: MediaWorkflowNodeRunResult,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaWorkflowNodeRunEvent {
+    owner_user_id: String,
+    workflow_id: String,
+    client_request_id: String,
+    node_id: String,
+    phase: String,
+    progress: Option<String>,
+    result: Option<MediaWorkflowNodeRunResult>,
+    error_message: Option<String>,
+}
+
+struct WorkflowRunEventScope<'a> {
+    app: &'a AppHandle,
+    request: &'a MediaWorkflowRunRequest,
+    workflow_id: &'a str,
+    node_id: &'a str,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MediaWorkflowRunResult {
@@ -463,11 +557,38 @@ pub(crate) struct MediaWorkflowRunResult {
     pub final_text: String,
     pub image_record_ids: Vec<String>,
     pub video_record_ids: Vec<String>,
+    pub node_results: Vec<MediaWorkflowCompletedNode>,
     pub error_message: Option<String>,
+}
+
+fn emit_workflow_node_event(
+    scope: &WorkflowRunEventScope<'_>,
+    phase: &str,
+    progress: Option<String>,
+    result: Option<MediaWorkflowNodeRunResult>,
+    error_message: Option<String>,
+) -> Result<(), String> {
+    scope
+        .app
+        .emit(
+            MEDIA_WORKFLOW_RUN_EVENT,
+            MediaWorkflowNodeRunEvent {
+                owner_user_id: scope.request.owner_user_id.clone(),
+                workflow_id: scope.workflow_id.to_owned(),
+                client_request_id: scope.request.client_request_id.clone(),
+                node_id: scope.node_id.to_owned(),
+                phase: phase.to_owned(),
+                progress,
+                result,
+                error_message,
+            },
+        )
+        .map_err(|_| "工作流节点状态发布失败。".to_owned())
 }
 
 #[tauri::command]
 pub(crate) async fn run_media_studio_workflow(
+    app: AppHandle,
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, super::MediaStudioManager>,
     request: MediaWorkflowRunRequest,
@@ -485,6 +606,13 @@ pub(crate) async fn run_media_studio_workflow(
     let generation = authentication
         .session_generation_for_owner(&request.owner_user_id)
         .await?;
+    let models = resolve_workflow_models(
+        &authentication,
+        &request.owner_user_id,
+        generation,
+        &workflow,
+    )
+    .await?;
     let preview_token = manager.activate_session(&request.owner_user_id, generation)?;
     // Workflow execution starts at the first model node. The legacy input fields
     // remain deserializable for compatibility, but are intentionally not part of
@@ -493,97 +621,145 @@ pub(crate) async fn run_media_studio_workflow(
     let mut current_images = Vec::new();
     let mut image_record_ids = Vec::new();
     let mut video_record_ids = Vec::new();
+    let mut node_results = Vec::new();
     for node in &workflow.nodes {
-        authentication
-            .require_session_generation(&request.owner_user_id, generation)
-            .await?;
-        let references = manager.workflows.resolve_images(
-            &request.owner_user_id,
-            &node.reference_images,
-            &workflow.id,
-        )?;
-        let prompt = format!(
-            "节点要求：\n{}\n\n当前工作文本：\n{}",
-            node.prompt.trim(),
-            current_text
-        );
-        match node.kind {
-            MediaWorkflowNodeKind::Text => {
-                current_text = generate_workflow_text(
-                    &authentication,
-                    &manager,
-                    &request.owner_user_id,
-                    generation,
-                    &node.model_config_id,
-                    &prompt,
-                    &current_images,
-                    &references,
-                )
+        let event_scope = WorkflowRunEventScope {
+            app: &app,
+            request: &request,
+            workflow_id: &workflow.id,
+            node_id: &node.id,
+        };
+        emit_workflow_node_event(&event_scope, "running", None, None, None)?;
+        let node_result: Result<MediaWorkflowNodeRunResult, String> = async {
+            authentication
+                .require_session_generation(&request.owner_user_id, generation)
                 .await?;
-            }
-            MediaWorkflowNodeKind::Image => {
-                let input = super::provider::ImageGenerationRequest {
-                    model_config_id: node.model_config_id.clone(),
-                    prompt: prompt.clone(),
-                    size: Some(node.image_size.clone()),
-                    count: 1,
-                    reference_images: current_images
-                        .iter()
-                        .cloned()
-                        .chain(references.iter().cloned())
-                        .collect(),
-                    client_request_id: format!("{}-{}", request.client_request_id, node.id),
-                };
-                if input.reference_images.len() > 8 {
-                    return Err("当前图片与节点参考图合计不能超过 8 张。".into());
+            let references = manager.workflows.resolve_images(
+                &request.owner_user_id,
+                &node.reference_images,
+                &workflow.id,
+            )?;
+            let prompt = format!(
+                "节点要求：\n{}\n\n当前工作文本：\n{}",
+                node.prompt.trim(),
+                current_text
+            );
+            let model = models
+                .get(&node.model_config_id)
+                .cloned()
+                .ok_or_else(|| "工作流模型快照不完整。".to_owned())?;
+            match node.kind {
+                MediaWorkflowNodeKind::Text => {
+                    current_text = generate_workflow_text(
+                        &authentication,
+                        &manager,
+                        &request.owner_user_id,
+                        generation,
+                        model,
+                        &prompt,
+                        &current_images,
+                        &references,
+                    )
+                    .await?;
+                    Ok(MediaWorkflowNodeRunResult::Text {
+                        text: current_text.clone(),
+                    })
                 }
-                let (item, next_image) = generate_workflow_image(
-                    &authentication,
-                    &manager,
-                    &request.owner_user_id,
-                    generation,
-                    input,
-                    &preview_token,
-                )
-                .await?;
-                image_record_ids.push(item.id);
-                current_images = vec![next_image];
-            }
-            MediaWorkflowNodeKind::Video => {
-                if current_images.len() + references.len() > 1 {
-                    return Err("视频节点最多只能接收一张首帧图片。".into());
-                }
-                let input_image =
-                    current_images
-                        .first()
-                        .or_else(|| references.first())
-                        .map(|image| super::video_provider::VideoInput {
-                            mime_type: image.mime_type.clone(),
-                            bytes: image.bytes.clone(),
-                        });
-                let result = generate_workflow_video(
-                    &authentication,
-                    &manager,
-                    &request.owner_user_id,
-                    generation,
-                    &workflow.id,
-                    super::video_provider::VideoGenerationRequest {
+                MediaWorkflowNodeKind::Image => {
+                    let input = super::provider::ImageGenerationRequest {
                         model_config_id: node.model_config_id.clone(),
-                        prompt,
-                        size: node.video_size.clone(),
-                        seconds: node.video_seconds as u8,
-                        ratio: node.video_ratio.clone(),
-                        input_image,
-                        last_frame_image: None,
-                        reference_video: None,
-                        reference_audio: None,
-                        reference_purpose: super::video_provider::VideoReferencePurpose::Reference,
+                        prompt: prompt.clone(),
+                        size: Some(node.image_size.clone()),
+                        count: 1,
+                        reference_images: current_images
+                            .iter()
+                            .cloned()
+                            .chain(references.iter().cloned())
+                            .collect(),
                         client_request_id: format!("{}-{}", request.client_request_id, node.id),
-                    },
-                    &preview_token,
-                )
-                .await?;
-                video_record_ids.push(result.id);
+                    };
+                    if input.reference_images.len() > 8 {
+                        return Err("当前图片与节点参考图合计不能超过 8 张。".into());
+                    }
+                    let (item, next_image) = generate_workflow_image(
+                        &authentication,
+                        &manager,
+                        &request.owner_user_id,
+                        generation,
+                        input,
+                        model,
+                        &preview_token,
+                    )
+                    .await?;
+                    image_record_ids.push(item.id.clone());
+                    current_images = vec![next_image];
+                    Ok(MediaWorkflowNodeRunResult::Images { item })
+                }
+                MediaWorkflowNodeKind::Video => {
+                    if current_images.len() + references.len() > 1 {
+                        return Err("视频节点最多只能接收一张首帧图片。".into());
+                    }
+                    let input_image =
+                        current_images
+                            .first()
+                            .or_else(|| references.first())
+                            .map(|image| super::video_provider::VideoInput {
+                                mime_type: image.mime_type.clone(),
+                                bytes: image.bytes.clone(),
+                            });
+                    let item = generate_workflow_video(
+                        &event_scope,
+                        &authentication,
+                        &manager,
+                        &request.owner_user_id,
+                        generation,
+                        super::video_provider::VideoGenerationRequest {
+                            model_config_id: node.model_config_id.clone(),
+                            prompt,
+                            size: node.video_size.clone(),
+                            seconds: node.video_seconds as u8,
+                            ratio: node.video_ratio.clone(),
+                            input_image,
+                            last_frame_image: None,
+                            reference_video: None,
+                            reference_audio: None,
+                            reference_purpose:
+                                super::video_provider::VideoReferencePurpose::Reference,
+                            client_request_id: format!("{}-{}", request.client_request_id, node.id),
+                        },
+                        model,
+                        &preview_token,
+                    )
+                    .await?;
+                    video_record_ids.push(item.id.clone());
+                    Ok(MediaWorkflowNodeRunResult::Video { item })
+                }
+            }
+        }
+        .await;
+        match node_result {
+            Ok(result) => {
+                emit_workflow_node_event(
+                    &event_scope,
+                    "completed",
+                    None,
+                    Some(result.clone()),
+                    None,
+                )?;
+                node_results.push(MediaWorkflowCompletedNode {
+                    node_id: node.id.clone(),
+                    result,
+                });
+            }
+            Err(error) => {
+                let _ = emit_workflow_node_event(
+                    &event_scope,
+                    "failed",
+                    None,
+                    None,
+                    Some(error.clone()),
+                );
+                return Err(error);
             }
         }
     }
@@ -594,26 +770,97 @@ pub(crate) async fn run_media_studio_workflow(
         final_text: current_text,
         image_record_ids,
         video_record_ids,
+        node_results,
         error_message: None,
     })
 }
 
+async fn resolve_workflow_models(
+    authentication: &AuthenticationManager,
+    owner: &str,
+    generation: u64,
+    workflow: &MediaWorkflow,
+) -> Result<HashMap<String, GatewayModelConfig>, String> {
+    let mut ids = workflow
+        .nodes
+        .iter()
+        .map(|node| node.model_config_id.clone())
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    let resolved = authentication
+        .resolved_models_for_owner(owner, ids.clone())
+        .await
+        .map_err(|error| error.message)?;
+    authentication
+        .require_session_generation(owner, generation)
+        .await?;
+    let models = resolved
+        .into_iter()
+        .map(|model| (model.id.clone(), model))
+        .collect::<HashMap<_, _>>();
+    if models.len() != ids.len() || ids.iter().any(|id| !models.contains_key(id)) {
+        return Err("工作流中的模型已不可用。".into());
+    }
+    validate_workflow_models(owner, workflow, &models)?;
+    Ok(models)
+}
+
+fn validate_workflow_models(
+    owner: &str,
+    workflow: &MediaWorkflow,
+    models: &HashMap<String, GatewayModelConfig>,
+) -> Result<(), String> {
+    use chatos_service_runtime::model_workload::ModelWorkload;
+
+    let mut has_images = false;
+    for node in &workflow.nodes {
+        let model = models
+            .get(&node.model_config_id)
+            .ok_or_else(|| "工作流中的模型已不可用。".to_owned())?;
+        if model.owner_user_id != owner
+            || model.id != node.model_config_id
+            || !model.enabled
+            || !model.has_api_key
+        {
+            return Err("工作流模型配置与当前账号不匹配。".into());
+        }
+        match node.kind {
+            MediaWorkflowNodeKind::Text => {
+                if ModelWorkload::for_model(&model.model) != ModelWorkload::Chat {
+                    return Err("文本节点所选模型不支持文本生成。".into());
+                }
+                validate_workflow_text_capability(model)?;
+                if (has_images || !node.reference_images.is_empty()) && !model.supports_images {
+                    return Err("文本节点所选模型不支持读取当前图片输入。".into());
+                }
+            }
+            MediaWorkflowNodeKind::Image => {
+                super::provider::resolve_image_model(owner, &node.model_config_id, model.clone())?;
+                has_images = true;
+            }
+            MediaWorkflowNodeKind::Video => {
+                super::video_provider::resolve_video_model(
+                    owner,
+                    &node.model_config_id,
+                    model.clone(),
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn generate_workflow_video(
+    event_scope: &WorkflowRunEventScope<'_>,
     authentication: &AuthenticationManager,
     manager: &super::MediaStudioManager,
     owner: &str,
     generation: u64,
-    presentation_id: &str,
     request: super::video_provider::VideoGenerationRequest,
+    model: GatewayModelConfig,
     preview_token: &str,
 ) -> Result<super::video_history::VideoHistoryItem, String> {
-    let mut models = authentication
-        .resolved_models_for_owner(owner, vec![request.model_config_id.clone()])
-        .await
-        .map_err(|error| error.message)?;
-    let model = models
-        .pop()
-        .ok_or_else(|| "所选视频模型已不可用。".to_owned())?;
     let runtime =
         super::video_provider::resolve_video_model(owner, &request.model_config_id, model)?;
     let wire = super::video_provider::make_video_create_request(&runtime, &request)?;
@@ -645,11 +892,12 @@ async fn generate_workflow_video(
     let snapshot = manager.video_jobs.register(
         owner,
         generation,
-        presentation_id,
+        event_scope.workflow_id,
         request,
         runtime,
         provider_job,
     )?;
+    emit_workflow_video_progress(event_scope, &snapshot)?;
     if snapshot.terminal {
         return workflow_video_snapshot_result(snapshot);
     }
@@ -658,10 +906,12 @@ async fn generate_workflow_video(
         authentication
             .require_session_generation(owner, generation)
             .await?;
-        let start =
-            manager
-                .video_jobs
-                .begin_poll(owner, generation, presentation_id, &snapshot.job_id)?;
+        let start = manager.video_jobs.begin_poll(
+            owner,
+            generation,
+            event_scope.workflow_id,
+            &snapshot.job_id,
+        )?;
         let super::video_job::VideoPollStart::Work(work) = start else {
             let super::video_job::VideoPollStart::Snapshot(snapshot) = start else {
                 unreachable!()
@@ -688,11 +938,26 @@ async fn generate_workflow_video(
                 return Err(error);
             }
         };
+        emit_workflow_video_progress(event_scope, &snapshot)?;
         if snapshot.terminal {
             return workflow_video_snapshot_result(snapshot);
         }
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        // Keep workflow video polling aligned with the standalone Windows flow and macOS.
+        // MiniMax jobs commonly take several minutes; polling faster while retaining the
+        // shared 180-poll ceiling would turn that ceiling into a false early timeout.
+        tokio::time::sleep(VIDEO_POLL_INTERVAL).await;
     }
+}
+
+fn emit_workflow_video_progress(
+    event_scope: &WorkflowRunEventScope<'_>,
+    snapshot: &super::video_job::MediaStudioVideoJobSnapshot,
+) -> Result<(), String> {
+    let progress = snapshot
+        .percent
+        .map(|percent| format!("{percent:.0}%"))
+        .or_else(|| Some(snapshot.status.clone()));
+    emit_workflow_node_event(event_scope, "running", progress, None, None)
 }
 
 fn workflow_video_snapshot_result(
@@ -711,18 +976,16 @@ async fn generate_workflow_text(
     manager: &super::MediaStudioManager,
     owner: &str,
     generation: u64,
-    model_id: &str,
+    model: GatewayModelConfig,
     prompt: &str,
     current_images: &[super::provider::ImageGenerationInput],
     references: &[super::provider::ImageGenerationInput],
 ) -> Result<String, String> {
-    let mut models = authentication
-        .resolved_models_for_owner(owner, vec![model_id.to_owned()])
-        .await
-        .map_err(|error| error.message)?;
-    let model = models
-        .pop()
-        .ok_or_else(|| "所选文本模型已不可用。".to_owned())?;
+    if chatos_service_runtime::model_workload::ModelWorkload::for_model(&model.model)
+        != chatos_service_runtime::model_workload::ModelWorkload::Chat
+    {
+        return Err("所选模型不支持文本生成。".into());
+    }
     if !model.enabled
         || !model.has_api_key
         || !(model.supports_images || current_images.is_empty() && references.is_empty())
@@ -800,6 +1063,7 @@ async fn generate_workflow_image(
     owner: &str,
     generation: u64,
     request: super::provider::ImageGenerationRequest,
+    model: GatewayModelConfig,
     preview_token: &str,
 ) -> Result<
     (
@@ -808,13 +1072,6 @@ async fn generate_workflow_image(
     ),
     String,
 > {
-    let mut models = authentication
-        .resolved_models_for_owner(owner, vec![request.model_config_id.clone()])
-        .await
-        .map_err(|error| error.message)?;
-    let model = models
-        .pop()
-        .ok_or_else(|| "所选图片模型已不可用。".to_owned())?;
     let runtime = super::provider::resolve_image_model(owner, &request.model_config_id, model)?;
     let wire = super::provider::make_provider_request(&runtime, &request)?;
     let response = manager
@@ -919,6 +1176,29 @@ mod tests {
         }
     }
 
+    fn model_for(id: &str, model_name: &str) -> GatewayModelConfig {
+        let mut model = text_model();
+        model.id = id.into();
+        model.name = model_name.into();
+        model.model = model_name.into();
+        model.base_url = Some("https://provider.example/v1".into());
+        model
+    }
+
+    fn node(kind: MediaWorkflowNodeKind, model_config_id: &str) -> MediaWorkflowNode {
+        MediaWorkflowNode {
+            id: Uuid::new_v4().to_string(),
+            kind,
+            model_config_id: model_config_id.into(),
+            prompt: "run".into(),
+            reference_images: vec![],
+            image_size: default_image_size(),
+            video_size: default_video_size(),
+            video_ratio: default_video_ratio(),
+            video_seconds: default_video_seconds(),
+        }
+    }
+
     #[test]
     fn validates_video_is_last_and_unique() {
         let mut value = workflow();
@@ -936,6 +1216,30 @@ mod tests {
         assert!(validate_workflow(&value).is_ok());
         value.nodes.swap(0, 1);
         assert!(validate_workflow(&value).is_err());
+    }
+
+    #[test]
+    fn validates_minimax_h3_workflow_video_options() {
+        let mut value = workflow();
+        value.nodes = vec![node(MediaWorkflowNodeKind::Video, "video")];
+        assert!(validate_workflow(&value).is_ok());
+
+        value.nodes[0].video_size = "1280x720".into();
+        assert_eq!(
+            validate_workflow(&value).unwrap_err(),
+            "视频节点尺寸、比例或时长无效。"
+        );
+        value.nodes[0].video_size = default_video_size();
+        value.nodes[0].video_ratio = "2:1".into();
+        assert!(validate_workflow(&value).is_err());
+        value.nodes[0].video_ratio = default_video_ratio();
+        value.nodes[0].video_seconds = 16;
+        assert!(validate_workflow(&value).is_err());
+    }
+
+    #[test]
+    fn keeps_workflow_video_poll_interval_on_the_shared_runtime_contract() {
+        assert_eq!(VIDEO_POLL_INTERVAL, std::time::Duration::from_secs(10));
     }
 
     #[test]
@@ -972,14 +1276,113 @@ mod tests {
     }
 
     #[test]
+    fn validates_every_workflow_model_before_execution() {
+        let mut value = workflow();
+        value.nodes.push(node(MediaWorkflowNodeKind::Text, "text"));
+        value
+            .nodes
+            .push(node(MediaWorkflowNodeKind::Video, "video"));
+        let models = HashMap::from([
+            ("image".into(), model_for("image", "gpt-image-1")),
+            ("text".into(), model_for("text", "gpt-6.1-sol")),
+            ("video".into(), model_for("video", "MiniMax-H3")),
+        ]);
+        assert!(validate_workflow_models("alice", &value, &models).is_ok());
+
+        let mut wrong_image = value.clone();
+        wrong_image.nodes[0].model_config_id = "chat-as-image".into();
+        let mut wrong_models = models.clone();
+        wrong_models.insert(
+            "chat-as-image".into(),
+            model_for("chat-as-image", "gpt-6.1-sol"),
+        );
+        assert_eq!(
+            validate_workflow_models("alice", &wrong_image, &wrong_models).unwrap_err(),
+            "所选模型不支持图片生成。"
+        );
+
+        let mut no_vision = models;
+        no_vision.get_mut("text").unwrap().supports_images = false;
+        assert_eq!(
+            validate_workflow_models("alice", &value, &no_vision).unwrap_err(),
+            "文本节点所选模型不支持读取当前图片输入。"
+        );
+    }
+
+    #[test]
     fn persists_lists_and_deletes_account_scoped_workflows() {
         let root = tempdir().unwrap();
         let store = MediaStudioWorkflowStore::new(root.path().to_path_buf()).unwrap();
         let value = workflow();
-        store.save("alice", &value).unwrap();
+        assert!(store.save("alice", &value).unwrap());
         assert_eq!(store.list("alice").unwrap(), vec![value.clone()]);
         assert!(store.list("bob").unwrap().is_empty());
         store.delete("alice", &value.id).unwrap();
         assert!(store.list("alice").unwrap().is_empty());
+    }
+
+    #[test]
+    fn loads_legacy_workflow_video_default_as_minimax_h3_768p() {
+        let root = tempdir().unwrap();
+        let store = MediaStudioWorkflowStore::new(root.path().to_path_buf()).unwrap();
+        let mut value = workflow();
+        value
+            .nodes
+            .push(node(MediaWorkflowNodeKind::Video, "video"));
+        value.nodes[0].video_size = "1280x720".into();
+        value.nodes[1].video_size = "1280x720".into();
+        let folder = store.owner_directory("alice").join(&value.id);
+        fs::create_dir_all(folder.join("assets")).unwrap();
+        fs::write(
+            folder.join("workflow.json"),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = store.list("alice").unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert!(loaded[0]
+            .nodes
+            .iter()
+            .all(|node| node.video_size == "768P" && node.video_seconds == 4));
+    }
+
+    #[test]
+    fn rejects_stale_workflow_saves() {
+        let root = tempdir().unwrap();
+        let store = MediaStudioWorkflowStore::new(root.path().to_path_buf()).unwrap();
+        let mut current = workflow();
+        current.updated_at_unix_ms = 20;
+        assert!(store.save("alice", &current).unwrap());
+
+        let mut stale = current.clone();
+        stale.name = "stale".into();
+        stale.updated_at_unix_ms = 19;
+        assert!(!store.save("alice", &stale).unwrap());
+        assert_eq!(store.list("alice").unwrap(), vec![current]);
+    }
+
+    #[test]
+    fn preserves_assets_created_after_the_previous_manifest_until_a_later_save() {
+        let root = tempdir().unwrap();
+        let store = MediaStudioWorkflowStore::new(root.path().to_path_buf()).unwrap();
+        let mut value = workflow();
+        assert!(store.save("alice", &value).unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        let assets = store
+            .owner_directory("alice")
+            .join(&value.id)
+            .join("assets");
+        let concurrent_asset = assets.join("concurrent.png");
+        fs::write(&concurrent_asset, b"new asset").unwrap();
+        value.updated_at_unix_ms += 1;
+        assert!(store.save("alice", &value).unwrap());
+        assert!(concurrent_asset.exists());
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        value.updated_at_unix_ms += 1;
+        assert!(store.save("alice", &value).unwrap());
+        assert!(!concurrent_asset.exists());
     }
 }

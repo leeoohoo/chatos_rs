@@ -1,10 +1,22 @@
 import { z } from "zod";
+import {
+  mediaStudioHistoryItemSchema,
+  mediaStudioVideoHistoryItemSchema,
+} from "./mediaStudio";
 
 const identifier = z.string().trim().min(1).max(1_024);
 const uuid = z.string().uuid();
 const boundedText = z.string().max(20_000);
 
 export const mediaWorkflowNodeKindSchema = z.enum(["text", "image", "video"]);
+export const mediaWorkflowImageSizeSchema = z.enum(["auto", "1024x1024", "1536x1024", "1024x1536"]);
+export const mediaWorkflowVideoSizeSchema = z.enum(["768P", "2K"]);
+export const mediaWorkflowVideoRatioSchema = z.enum(["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]);
+
+export const mediaWorkflowImageSizes = mediaWorkflowImageSizeSchema.options;
+export const mediaWorkflowVideoSizes = mediaWorkflowVideoSizeSchema.options;
+export const mediaWorkflowVideoRatios = mediaWorkflowVideoRatioSchema.options;
+export const mediaWorkflowVideoSeconds = Array.from({ length: 12 }, (_, index) => index + 4);
 
 export const mediaWorkflowImageReferenceSchema = z.object({
   id: uuid,
@@ -20,10 +32,10 @@ export const mediaWorkflowNodeSchema = z.object({
   modelConfigId: identifier,
   prompt: boundedText,
   referenceImages: z.array(mediaWorkflowImageReferenceSchema).max(8),
-  imageSize: z.string().min(1).max(128),
-  videoSize: z.string().min(1).max(128),
-  videoRatio: z.string().min(1).max(32),
-  videoSeconds: z.number().int().min(1).max(120),
+  imageSize: mediaWorkflowImageSizeSchema,
+  videoSize: mediaWorkflowVideoSizeSchema,
+  videoRatio: mediaWorkflowVideoRatioSchema,
+  videoSeconds: z.number().int().min(4).max(15),
 }).strict();
 
 export const mediaWorkflowSchema = z.object({
@@ -56,6 +68,45 @@ export const mediaWorkflowSchema = z.object({
 
 export const mediaWorkflowListSchema = z.array(mediaWorkflowSchema).max(1_000);
 
+export const mediaWorkflowNodeRunResultSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: boundedText }).strict(),
+  z.object({ type: z.literal("images"), item: mediaStudioHistoryItemSchema }).strict(),
+  z.object({ type: z.literal("video"), item: mediaStudioVideoHistoryItemSchema }).strict(),
+]);
+
+export const mediaWorkflowCompletedNodeSchema = z.object({
+  nodeId: uuid,
+  result: mediaWorkflowNodeRunResultSchema,
+}).strict();
+
+const mediaWorkflowRunEventBaseSchema = z.object({
+  ownerUserId: identifier,
+  workflowId: uuid,
+  clientRequestId: identifier,
+  nodeId: uuid,
+});
+
+export const mediaWorkflowRunEventSchema = z.discriminatedUnion("phase", [
+  mediaWorkflowRunEventBaseSchema.extend({
+    phase: z.literal("running"),
+    progress: boundedText.nullable(),
+    result: z.null(),
+    errorMessage: z.null(),
+  }).strict(),
+  mediaWorkflowRunEventBaseSchema.extend({
+    phase: z.literal("completed"),
+    progress: z.null(),
+    result: mediaWorkflowNodeRunResultSchema,
+    errorMessage: z.null(),
+  }).strict(),
+  mediaWorkflowRunEventBaseSchema.extend({
+    phase: z.literal("failed"),
+    progress: z.null(),
+    result: z.null(),
+    errorMessage: boundedText.min(1),
+  }).strict(),
+]);
+
 export const mediaWorkflowRunResultSchema = z.object({
   workflowId: uuid,
   clientRequestId: identifier,
@@ -63,24 +114,34 @@ export const mediaWorkflowRunResultSchema = z.object({
   finalText: boundedText,
   imageRecordIds: z.array(uuid).max(8),
   videoRecordIds: z.array(uuid).max(1),
+  nodeResults: z.array(mediaWorkflowCompletedNodeSchema).max(8).superRefine((results, context) => {
+    if (new Set(results.map((result) => result.nodeId)).size !== results.length) {
+      context.addIssue({ code: "custom", message: "工作流运行结果包含重复节点。" });
+    }
+  }),
   errorMessage: boundedText.nullable(),
 }).strict();
 
 export type MediaWorkflowRunResult = z.infer<typeof mediaWorkflowRunResultSchema>;
+export type MediaWorkflowNodeRunResult = z.infer<typeof mediaWorkflowNodeRunResultSchema>;
+export type MediaWorkflowRunEvent = z.infer<typeof mediaWorkflowRunEventSchema>;
 
 export type MediaWorkflowNodeKind = z.infer<typeof mediaWorkflowNodeKindSchema>;
 export type MediaWorkflowImageReference = z.infer<typeof mediaWorkflowImageReferenceSchema>;
 export type MediaWorkflowNode = z.infer<typeof mediaWorkflowNodeSchema>;
 export type MediaWorkflow = z.infer<typeof mediaWorkflowSchema>;
 
-export function newMediaWorkflow(modelConfigId = ""): MediaWorkflow {
+export function newMediaWorkflow(
+  modelConfigId = "",
+  kind: MediaWorkflowNodeKind = "image",
+): MediaWorkflow {
   const now = Date.now();
   return {
     id: crypto.randomUUID(),
     name: "工作流 1",
     inputPrompt: "",
     inputImages: [],
-    nodes: [newMediaWorkflowNode("image", modelConfigId)],
+    nodes: [newMediaWorkflowNode(kind, modelConfigId)],
     createdAtUnixMs: now,
     updatedAtUnixMs: now,
   };
@@ -91,10 +152,14 @@ export function newMediaWorkflowNode(kind: MediaWorkflowNodeKind, modelConfigId 
     id: crypto.randomUUID(),
     kind,
     modelConfigId,
-    prompt: "",
+    prompt: kind === "text"
+      ? "优化当前工作文本"
+      : kind === "image"
+        ? "根据当前文本生成图片"
+        : "根据当前文本生成视频",
     referenceImages: [],
     imageSize: "1024x1024",
-    videoSize: "1280x720",
+    videoSize: "768P",
     videoRatio: "16:9",
     videoSeconds: 4,
   };
