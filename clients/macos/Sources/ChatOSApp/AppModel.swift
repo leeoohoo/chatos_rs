@@ -203,7 +203,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var mainWindowPresentationHandler: (() -> Void)?
     var settingsWindowPresentationHandler: (() -> Void)?
 
-    init(authenticationService injectedAuthenticationService: (any AuthenticationServicing)? = nil) {
+    init(authenticationService injectedAuthenticationService: (any AuthenticationServicing)? = nil) throws {
         let credentialStore = KeychainCredentialStore()
         let apiClient = ChatOSAPIClient(
             configuration: .init(baseURL: RuntimeConfiguration.apiBaseURL),
@@ -227,7 +227,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             upstream: remoteConnectionMetadataService,
             connectorStateURL: RuntimeConfiguration.nativeConnectorStateURL
         )
-        let localConnectorService = NativeLocalConnectorService(
+        let localConnectorService = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: RuntimeConfiguration.localConnectorCloudBaseURL,
                 stateURL: RuntimeConfiguration.nativeConnectorStateURL,

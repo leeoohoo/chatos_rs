@@ -211,7 +211,7 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         accountCycleMaximumMilliseconds: Double
     ) {
         let service = AppScenarioAuthenticationService()
-        let model = AppModel(authenticationService: service)
+        let model = try AppModel(authenticationService: service)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 800),
             styleMask: [.borderless],

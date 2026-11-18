@@ -26,7 +26,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
             ? [rootWorkspace, projectWorkspace]
             : [projectWorkspace, rootWorkspace]
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let connector = NativeLocalConnectorService(
+        let connector = try NativeLocalConnectorService(
             configuration: .init(gatewayBaseURL: URL(string: "http://127.0.0.1:1")!, stateURL: stateURL),
             ticketProvider: NoNetworkTicketProvider())
         return Context(root: root, connector: connector,
@@ -382,7 +382,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
             .init(id: "other", alias: "other", absoluteRoot: root.appendingPathComponent("other").path, fingerprint: "other-fingerprint"),
         ]
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let connector = NativeLocalConnectorService(
+        let connector = try NativeLocalConnectorService(
             configuration: .init(gatewayBaseURL: URL(string: "http://127.0.0.1:1")!, stateURL: stateURL),
             ticketProvider: NoNetworkTicketProvider()
         )

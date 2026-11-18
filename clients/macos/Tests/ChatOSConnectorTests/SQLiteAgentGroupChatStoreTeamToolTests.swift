@@ -32,7 +32,7 @@ extension SQLiteAgentGroupChatStoreTests {
             fingerprint: "fingerprint"
         )]
         try NativeConnectorStateStore(stateURL: connectorStateURL).save(connectorState)
-        let connector = NativeLocalConnectorService(
+        let connector = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: connectorStateURL

@@ -24,7 +24,7 @@ final class NativeLocalAgentTeamProjectContextTests: XCTestCase {
             fingerprint: "fingerprint-1"
         )]
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let connector = NativeLocalConnectorService(
+        let connector = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: stateURL
@@ -118,7 +118,7 @@ final class NativeLocalAgentTeamProjectContextTests: XCTestCase {
         state.user = .init(id: "user-1", username: "user", displayName: nil, role: "user")
         state.deviceID = "device-1"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let connector = NativeLocalConnectorService(
+        let connector = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: stateURL

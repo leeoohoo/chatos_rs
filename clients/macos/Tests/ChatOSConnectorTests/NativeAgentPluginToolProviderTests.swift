@@ -62,7 +62,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         state.user = .init(id: "alice", username: "alice", displayName: nil, role: "user")
         state.deviceID = "device-1"
         try JSONEncoder().encode(state).write(to: stateURL)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!, stateURL: stateURL
             ),
@@ -264,7 +264,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         )]
         try JSONEncoder().encode(state).write(to: stateURL)
 
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: stateURL
@@ -367,7 +367,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         ]
         try JSONEncoder().encode(state).write(to: stateURL)
 
-        var service = NativeLocalConnectorService(
+        var service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: stateURL
@@ -385,7 +385,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             )
         try Data("\n".utf8).write(to: manifestURL, options: .atomic)
         try JSONEncoder().encode(state).write(to: stateURL, options: .atomic)
-        service = NativeLocalConnectorService(
+        service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: stateURL
@@ -514,7 +514,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         ]
         try JSONEncoder().encode(state).write(to: stateURL)
 
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: stateURL

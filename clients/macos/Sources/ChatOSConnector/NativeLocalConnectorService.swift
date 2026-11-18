@@ -121,8 +121,8 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         configuration: NativeConnectorConfiguration,
         ticketProvider: any LocalConnectorPairingTicketProviding,
         approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory? = nil
-    ) {
-        self.init(
+    ) throws {
+        try self.init(
             configuration: configuration,
             ticketProvider: ticketProvider,
             approvalMemoryProviderFactory: approvalMemoryProviderFactory,
@@ -139,7 +139,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         customPluginStateSaver: @escaping NativeCustomPluginStateSaver = { state, store in
             try store.save(state)
         }
-    ) {
+    ) throws {
         self.configuration = configuration
         self.ticketProvider = ticketProvider
         self.gateway = NativeConnectorGateway(baseURL: configuration.gatewayBaseURL)
@@ -172,7 +172,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             pluginInstallationRootURL: pluginInstallationRootURL
         )
         self.approvalMemoryProviderFactory = approvalMemoryProviderFactory
-        self.state = (try? stateStore.load()) ?? .empty
+        self.state = try stateStore.load()
         self.activityHistory = (try? activityHistoryStore.load()) ?? .empty
         try? self.pluginInstaller.recoverCustomPluginTransactions(
             referencedInstallationPaths: (self.state.installedPluginRecords ?? [:]).values.map {

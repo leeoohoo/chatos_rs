@@ -95,9 +95,14 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
             fatalError("Performance acceptance mode requires an isolated smoke configuration")
         }
         performanceAcceptanceConfiguration = acceptanceConfiguration
-        let model = AppModel(authenticationService: acceptanceConfiguration.map {
-            BuildSmokeAuthenticationService(configuration: $0)
-        })
+        let model: AppModel
+        do {
+            model = try AppModel(authenticationService: acceptanceConfiguration.map {
+                BuildSmokeAuthenticationService(configuration: $0)
+            })
+        } catch {
+            fatalError("Local Connector state could not be loaded: \(error.localizedDescription)")
+        }
         self.model = model
         super.init()
         model.mainWindowPresentationHandler = { [weak self] in

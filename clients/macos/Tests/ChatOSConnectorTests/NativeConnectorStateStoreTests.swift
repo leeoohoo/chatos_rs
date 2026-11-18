@@ -4,6 +4,30 @@ import Testing
 @testable import ChatOSConnector
 
 struct NativeConnectorStateStoreTests {
+    @Test("corrupt connector state aborts startup before plugin cleanup")
+    func corruptStateDoesNotBecomeEmptyState() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateURL = directory.appendingPathComponent("state.json")
+        let corruptState = Data("{not-json".utf8)
+        let orphan = directory.appendingPathComponent("Plugins/orphan", isDirectory: true)
+        try FileManager.default.createDirectory(at: orphan, withIntermediateDirectories: true)
+        try corruptState.write(to: stateURL)
+
+        #expect(throws: DecodingError.self) {
+            try NativeLocalConnectorService(
+                configuration: .init(
+                    gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                    stateURL: stateURL
+                ),
+                ticketProvider: RejectingTicketProvider()
+            )
+        }
+        #expect(try Data(contentsOf: stateURL) == corruptState)
+        #expect(FileManager.default.fileExists(atPath: orphan.path))
+    }
+
     @Test("offline Plugin catalog keeps installed Marketplace records visible")
     func offlinePluginCatalogRetainsMarketplaceInstallations() async throws {
         let directory = FileManager.default.temporaryDirectory
@@ -35,7 +59,7 @@ struct NativeConnectorStateStoreTests {
         state.installedPluginIDs = [record.pluginID]
         state.installedPluginRecords = [record.pluginID: record]
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -112,7 +136,7 @@ struct NativeConnectorStateStoreTests {
             capabilitySnapshotsByModelConfigRef: [snapshot.modelConfigRef: capability],
             pluginInstallerCapabilitySnapshotsByModelConfigRef: [:]
         )
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -145,7 +169,7 @@ struct NativeConnectorStateStoreTests {
         state.approvalMode = .autoApproval
         state.commandApprovalModelConfigID = "approval-model"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -192,7 +216,7 @@ struct NativeConnectorStateStoreTests {
         state.approvalMode = .autoApproval
         state.commandApprovalModelConfigID = "approval-model"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -244,7 +268,7 @@ struct NativeConnectorStateStoreTests {
         state.user = .init(id: "owner-1", username: "owner", displayName: "Owner", role: "user")
         state.deviceID = "device-1"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.example.test")!,
                 stateURL: stateURL
@@ -467,7 +491,7 @@ struct NativeConnectorStateStoreTests {
         state.deviceID = "device-local"
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
 
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.jgoool.com")!,
                 stateURL: stateURL,
@@ -493,7 +517,7 @@ struct NativeConnectorStateStoreTests {
         state.user = .init(id: "alice", username: "alice", displayName: "Alice", role: "user")
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
 
-        let service = NativeLocalConnectorService(
+        let service = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://connector.jgoool.com")!,
                 stateURL: stateURL,

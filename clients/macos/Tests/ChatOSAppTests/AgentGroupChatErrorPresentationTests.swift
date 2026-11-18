@@ -8,8 +8,8 @@ import XCTest
 
 @MainActor
 final class AgentGroupChatErrorPresentationTests: XCTestCase {
-    func testComposerDraftDoesNotPublishTeamWorkspaceUpdates() {
-        let fixture = makeFixture()
+    func testComposerDraftDoesNotPublishTeamWorkspaceUpdates() throws {
+        let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let viewModel = AgentGroupChatViewModel(
             projectID: "project-1",
@@ -38,8 +38,8 @@ final class AgentGroupChatErrorPresentationTests: XCTestCase {
         withExtendedLifetime((workspaceCancellable, composerCancellable)) {}
     }
 
-    func testComposerDraftDoesNotPublishDirectTimelineUpdates() {
-        let fixture = makeFixture()
+    func testComposerDraftDoesNotPublishDirectTimelineUpdates() throws {
+        let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let viewModel = AgentDirectChatViewModel(
             ownerUserID: "alice",
@@ -139,7 +139,7 @@ final class AgentGroupChatErrorPresentationTests: XCTestCase {
     }
 
     func testWorkspaceRefreshDoesNotDismissRunActionError() async throws {
-        let fixture = makeFixture()
+        let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let viewModel = AgentGroupChatWorkspaceViewModel(
             ownerUserID: "alice",
@@ -155,7 +155,7 @@ final class AgentGroupChatErrorPresentationTests: XCTestCase {
     }
 
     func testTeamRefreshDoesNotDismissRunActionError() async throws {
-        let fixture = makeFixture()
+        let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let viewModel = AgentGroupChatViewModel(
             projectID: "project-1",
@@ -172,13 +172,13 @@ final class AgentGroupChatErrorPresentationTests: XCTestCase {
         XCTAssertEqual(viewModel.errorMessage, "运行历史或记忆范围不一致")
     }
 
-    private func makeFixture() -> Fixture {
+    private func makeFixture() throws -> Fixture {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("agent-error-presentation-\(UUID().uuidString)")
         let groupChatService = NativeAgentGroupChatService(
             databaseURL: rootURL.appendingPathComponent("group-chat.db")
         )
-        let connector = NativeLocalConnectorService(
+        let connector = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "https://error-presentation.invalid")!,
                 stateURL: rootURL.appendingPathComponent("connector-state.json")

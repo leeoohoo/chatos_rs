@@ -24,7 +24,7 @@ final class NativeProjectCodeNavigationServiceTests: XCTestCase {
             .init(id: "workspace", alias: "test", absoluteRoot: root.path, fingerprint: "test"),
         ]
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let connector = NativeLocalConnectorService(
+        let connector = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: stateURL
@@ -73,7 +73,7 @@ final class NativeProjectCodeNavigationServiceTests: XCTestCase {
             .init(id: "workspace", alias: "test", absoluteRoot: root.path, fingerprint: "test"),
         ]
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
-        let connector = NativeLocalConnectorService(
+        let connector = try NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: stateURL
