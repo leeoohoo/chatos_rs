@@ -30,7 +30,9 @@ fn desired_targets(
         app: total - base_host,
     };
     if host_queued > 0 && app_queued_resource_units == 0 {
-        let app_keep = app_used_resource_units.div_ceil(RESOURCE_UNITS_PER_APP_JOB).max(1);
+        let app_keep = app_used_resource_units
+            .div_ceil(RESOURCE_UNITS_PER_APP_JOB)
+            .max(1);
         let host_demand = base.host.max(host_active.saturating_add(host_queued));
         let host = host_demand.min(total.saturating_sub(app_keep));
         return MachineConcurrencyTargets {
@@ -132,14 +134,8 @@ impl MachineConcurrencyAllocator {
         let Some(stable_desired) = self.stabilized(desired) else {
             return;
         };
-        self.apply(
-            stable_desired,
-            host,
-            app,
-            resources,
-            update_host_target,
-        )
-        .await;
+        self.apply(stable_desired, host, app, resources, update_host_target)
+            .await;
     }
 
     async fn apply<F, Fut>(
@@ -175,8 +171,7 @@ impl MachineConcurrencyAllocator {
         }
         if shrank
             || host.active_work_items > host_target
-            || app.used_resource_units
-                > app_target.saturating_mul(RESOURCE_UNITS_PER_APP_JOB)
+            || app.used_resource_units > app_target.saturating_mul(RESOURCE_UNITS_PER_APP_JOB)
         {
             return;
         }

@@ -2,7 +2,7 @@ use super::transport::ManagedHost;
 use std::{collections::BTreeMap, path::Path, process::Stdio};
 use tokio::process::Command;
 
-const READ_ONLY_TOOL_NAMES: [&str; 30] = [
+const READ_ONLY_TOOL_NAMES: [&str; 31] = [
     "local_attachment_read",
     "read_file_raw",
     "read_file_range",
@@ -18,6 +18,7 @@ const READ_ONLY_TOOL_NAMES: [&str; 30] = [
     "team_asset_list",
     "team_asset_get",
     "team_asset_review_list",
+    "project_dashboard_get",
     "capability_search",
     "capability_describe",
     "plugin_installer_search_npm",
@@ -346,7 +347,10 @@ mod tests {
         health_check(&mut host)
             .await
             .expect("health after target update");
-        let refreshed = host.scheduler.clone().expect("refreshed scheduler snapshot");
+        let refreshed = host
+            .scheduler
+            .clone()
+            .expect("refreshed scheduler snapshot");
         assert_eq!(refreshed.maximum_concurrent_work_items, 9);
         assert_eq!(refreshed.target_concurrent_work_items, 7);
 
@@ -471,6 +475,8 @@ mod tests {
         assert!(READ_ONLY_TOOL_NAMES.contains(&"team_asset_list"));
         assert!(READ_ONLY_TOOL_NAMES.contains(&"team_asset_get"));
         assert!(READ_ONLY_TOOL_NAMES.contains(&"team_asset_review_list"));
+        assert!(READ_ONLY_TOOL_NAMES.contains(&"project_dashboard_get"));
+        assert!(!READ_ONLY_TOOL_NAMES.contains(&"project_dashboard_update"));
         assert!(!APPROVAL_EXEMPT_TOOL_NAMES.contains(&"team_asset_create"));
         assert!(!APPROVAL_EXEMPT_TOOL_NAMES.contains(&"team_asset_update"));
         assert!(!APPROVAL_EXEMPT_TOOL_NAMES.contains(&"team_asset_review_resolve"));

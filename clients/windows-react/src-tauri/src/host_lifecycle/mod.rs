@@ -23,9 +23,7 @@ use chatos_local_agent_protocol::{
 use diagnostics::{
     classify_authentication_error, classify_error, HostDiagnostics, HostDiagnosticsSnapshot,
 };
-use process::{
-    spawn, spawn_with_memory, HostConcurrencyConfiguration, MemoryLaunchConfig,
-};
+use process::{spawn, spawn_with_memory, HostConcurrencyConfiguration, MemoryLaunchConfig};
 use serde::Serialize;
 use std::{collections::BTreeMap, path::PathBuf};
 use tauri::{AppHandle, Manager, State};
