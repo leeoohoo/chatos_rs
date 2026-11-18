@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { auditIconOnlyButtonAccessibleNames } from "./audit-architecture-rules.mjs";
+import {
+  auditIconOnlyButtonAccessibleNames,
+  auditSecondaryTextContrast,
+} from "./audit-architecture-rules.mjs";
 
 const agentManagementStylesheet = readFileSync(
   resolve(process.cwd(), "src/features/agent-management/ui/agentManagement.css"),
@@ -30,6 +33,34 @@ describe("audit-architecture icon-only buttons", () => {
     auditIconOnlyButtonAccessibleNames(
       '<button aria-label="Close">×</button>\n<button aria-labelledby="close-title">x</button>',
       "src/example.tsx",
+      violations,
+    );
+
+    expect(violations).toEqual([]);
+  });
+});
+
+describe("audit-architecture secondary text contrast", () => {
+  it("rejects the previous low-contrast secondary label token", () => {
+    const violations = [];
+
+    auditSecondaryTextContrast(
+      ":root { --secondary: rgba(60, 60, 67, 0.62); }",
+      "src/design-system/theme.css",
+      violations,
+    );
+
+    expect(violations).toEqual([
+      "src/design-system/theme.css: --secondary text contrast must be at least 4.5:1 on core light surfaces (found 3.449:1)",
+    ]);
+  });
+
+  it("accepts secondary text with contrast margin on every core surface", () => {
+    const violations = [];
+
+    auditSecondaryTextContrast(
+      ":root { --secondary: rgba(60, 60, 67, 0.76); }",
+      "src/design-system/theme.css",
       violations,
     );
 

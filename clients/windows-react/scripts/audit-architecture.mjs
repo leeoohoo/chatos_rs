@@ -1,7 +1,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { auditIconOnlyButtonAccessibleNames as auditIconOnlyButtonAccessibleNamesRules } from "./audit-architecture-rules.mjs";
+import {
+  auditIconOnlyButtonAccessibleNames as auditIconOnlyButtonAccessibleNamesRules,
+  auditSecondaryTextContrast,
+} from "./audit-architecture-rules.mjs";
 
 const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const sourceRoot = join(projectRoot, "src");
@@ -36,6 +39,13 @@ for (const file of sourceFiles(sourceRoot)) {
     auditIconOnlyButtonAccessibleNamesRules(source, path, violations);
   }
 }
+
+const themePath = join(sourceRoot, "design-system", "theme.css");
+auditSecondaryTextContrast(
+  readFileSync(themePath, "utf8"),
+  relative(projectRoot, themePath).split(sep).join("/"),
+  violations,
+);
 
 if (violations.length > 0) {
   process.stderr.write(`Windows React architecture violations:\n${violations.map((item) => `- ${item}`).join("\n")}\n`);
