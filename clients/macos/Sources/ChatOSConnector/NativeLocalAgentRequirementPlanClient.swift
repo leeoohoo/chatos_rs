@@ -78,12 +78,24 @@ public struct NativeLocalAgentRequirementPlanClient: Sendable {
     public func sourceFollowUp(ownerUserID: String, plan: LocalAgentHostRequirementPlan) async throws -> RequirementSurveyFollowUp {
         guard plan.ownerUserID == ownerUserID else { throw NativeLocalAgentHostError.invalidResponse }
         let run = try await NativeLocalAgentRuntimeClient(host: host).run(ownerUserID: ownerUserID, runID: plan.sourceRunID)
+        guard case let .object(input) = run.input else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        let isTeamTodo: Bool
+        if case let .object(team)? = input["team_executor_context"] {
+            isTeamTodo = run.profileKey == "task_execution"
+                && run.ownerEntityType == "conversation_turn"
+                && input["conversation_id"] == .string(plan.sourceConversationID)
+                && team["project_id"] == .string(plan.projectResourceID)
+        } else {
+            isTeamTodo = false
+        }
         guard run.ownerUserID == ownerUserID, run.runID == plan.sourceRunID,
-              case let .object(input) = run.input,
               (run.profileKey == "main_chat" && run.ownerEntityType == "conversation_turn"
                 && input["conversation_id"] == .string(plan.sourceConversationID))
                 || (run.profileKey == "task_execution" && run.ownerEntityType == "task"
-                    && input["source_conversation_id"] == .string(plan.sourceConversationID)) else {
+                    && input["source_conversation_id"] == .string(plan.sourceConversationID))
+                || isTeamTodo else {
             throw NativeLocalAgentHostError.invalidResponse
         }
         return RequirementSurveyFollowUp.project(run)

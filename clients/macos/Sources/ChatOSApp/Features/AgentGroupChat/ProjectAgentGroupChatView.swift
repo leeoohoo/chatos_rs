@@ -200,9 +200,9 @@ struct ProjectAgentGroupChatView: View {
             )
         case .research:
             ContentUnavailableView {
-                Label("需求调研已迁移", systemImage: "list.clipboard.fill")
+                Label("项目需求调研", systemImage: "list.clipboard.fill")
             } description: {
-                Text("Task 调研现在由 Local Agent Host 保存并恢复原 Run，不再属于 Agent 群聊。")
+                Text("团队发起的正式调研由 Local Agent Host 保存；提交后会恢复原团队 Todo 并继续整理方案。")
             } actions: {
                 Button("打开需求调研") { model.selection = .requirementSurveys }
                     .buttonStyle(.borderedProminent)

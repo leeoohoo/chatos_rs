@@ -121,6 +121,7 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
         XCTAssertTrue(rendered.contains("统一调用 chat_send_message"))
         XCTAssertTrue(rendered.contains("禁止索要或编排 conversation_ref"))
         XCTAssertTrue(rendered.contains("只有团队明确绑定且职业为 project_manager"))
+        XCTAssertTrue(rendered.contains("requirement_survey_write"))
         XCTAssertTrue(rendered.contains("普通 blocked Todo 不是 Human 待办"))
 
         let todoStatus = LocalAgentPromptCatalog.render(.todoStatusCycle)

@@ -6,7 +6,7 @@ extension NativeLocalAgentPlatformToolCatalog {
   public static let requirementSurveyTools: [LocalAgentJSONValue] = [
     taskTool(
       name: requirementSurveyCreateToolName,
-      description: "Collect material project goals, audience, constraints, preferences and acceptance decisions in the Requirement Survey center. Main Chat can ask before creating Tasks. Call alone, then wait for submitted answers; never invent answers or dispatch dependent work while waiting.",
+      description: "Collect material project goals, audience, constraints, preferences and acceptance decisions in the Requirement Survey center. Project Main Chat, an authorized Agent team survey Todo, or a blocked Task can ask. Call alone, then wait for submitted answers; never invent answers or dispatch dependent work while waiting.",
       properties: [
         "title": .object(["type": .string("string")]),
         "description": .object(["type": .string("string")]),

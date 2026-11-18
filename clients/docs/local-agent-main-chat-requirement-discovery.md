@@ -4,9 +4,9 @@
 
 ## 现状与变化
 
-需求调研中心已是 Local Agent Host 持久化的项目模块，不属于 Agent 团队。此前项目主聊天创建的后台 Task 可以在选择调研能力后调用 `requirement_survey_create`，但 Main Chat 没有直接工具，executor只允许task_execution；且模型planner缺少 `requirement_survey_resolved` 续跑分支。
+需求调研中心是 Local Agent Host 持久化的统一项目模块。项目主聊天、后台 Task 和 Agent 团队 Todo 都复用同一套问卷、答案、版本化方案与 Run 恢复机制；产品界面不要求用户区分这些底层来源。
 
-现在 Main Chat 可在分解任务前直接发起调研，无需创建“先问问题”的占位Task。Task原有调研路径保留；两者使用同一项目调研中心、存储、答案校验与Run恢复机制。联系人聊天无项目绑定，不能伪造项目调研，仍用普通对话澄清。
+Main Chat 可在分解任务前直接发起调研，无需创建“先问问题”的占位Task。Task原有路径保留；Agent 团队项目经理则创建冻结 `requirement_survey_write` 的独立 Todo，由该 Todo 的 Executor 直接调用同一 `requirement_survey_create` / `requirement_plan_save`。联系人聊天无项目绑定，不能伪造项目调研，仍用普通对话澄清。
 
 ## Skill与使用判断
 
@@ -15,14 +15,15 @@
 - 入口说明创建、等待、提交后使用答案；reference按开发/财务、设计、文案、研究/数据、混合产物说明如何提问。
 - 问题围绕实际目标、受众、限制、优先级、偏好和验收；通常一轮3–6个关键问题，复用已知答案。明确任务直接执行，不一律问卷，不要求用户替模型选择无关技术细节。
 - Main直接澄清关键决策，不能将未经确认的用户偏好交给worker猜测。提交后将已确认答案转为任务输入、预期输出及验收标准，而非仅回复“收到”。
+- Agent 团队收到明确调研要求，或关键业务选择会改变范围、方向或验收时，项目经理必须创建正式调研 Todo；不能在群聊中自问自答或用 Markdown 冒充问卷。
 
 ## 链路与边界
 
 1. 激活调研Skill，单独调用 `requirement_survey_create`，只传title/description/questions，不允许模型提供项目、源会话或源Run ID。
-2. executor校验当前owner；Main要求 `main_chat + conversation_turn` 且原会话turn/run匹配，Task要求 `task_execution + task`。项目绑定从源会话读取，拒绝联系人、越权owner和错误来源。
+2. executor校验当前owner；Main要求 `main_chat + conversation_turn` 且原会话turn/run匹配，Task要求 `task_execution + task`。团队 Todo 要求 `task_execution + conversation_turn`，并严格匹配冻结的team、project、todo、内部会话和来源Run。拒绝联系人、越权owner和错误来源。
 3. 工具创建成功并commit后Run进入 `waiting_user`。Main会话显示一条持久化通知，指向需求调研；项目聊天工具栏也有入口。创建期间不以“handoff”伪称工作已开始。
-4. 用户在同一调研中心提交真实答案。Host验证必填/类型/版本，原子保存与恢复原Run为 `continuation_ready`；重复提交按既有command幂等处理，不另开Run。
-5. planner将结构化答案补为原 `requirement_survey_create` 的 `function_call_output`，避免unsupported continuation或挂起的函数调用无返回。Main通知原消息更新为已提交，再继续规划/答复；Task同理。
+4. 用户在同一调研中心提交真实答案。Host验证必填/类型/版本，原子保存与恢复原Run为 `continuation_ready`；重复提交按既有command幂等处理，不另开Run。团队来源恢复同一个 Todo Executor Run。
+5. planner将结构化答案补为原 `requirement_survey_create` 的 `function_call_output`，避免unsupported continuation或挂起的函数调用无返回。Main、Task和团队 Todo 都从原执行位置继续规划/答复；确认方案后的“返回原对话”会回到对应团队 Todo。
 6. 问卷不是审批，不扩大授权；不收集密码/token等不必要敏感值；可选未答项不捏造。等待期间不创建依赖未知答案的任务。
 
 调研工具应单独调用。Host在提交工具batch前拒绝混合调用；不自动回滚或重放其他工具的副作用。运行时取消及调研版本校验沿用既有Host契约；Main取消时原通知更新为已取消，不再提示填写已删除的开放问卷。
@@ -32,7 +33,7 @@
 - Main schema新增独立Survey companion，原8个Task工具不变。main bundle包含新的on-demand binding、document与reference；激活仅解释权限，不增加权限。
 - macOS首次bootstrap与离线restore迁移均发布新immutable capability revision，并补入当前survey schema。旧Run、旧冻结工具与Plugin版本不覆盖。
 - 调研中心监听 `requirement_survey_waiting` 和 `requirement_survey_resolved`，避免创建后等待五分钟一致性刷新。
-- Windows需同样发布Main Survey schema与Skill/catalog binding，保证restore产生新revision；消费waiting/resolved事件，显示Main通知、复用调研中心，提交后保持原Main Run。shared Host/planner逻辑共用，不另外实现团队专用存储或零散prompt。
+- Windows需同样发布Survey schema与Skill/catalog binding，保证restore产生新revision；消费waiting/resolved事件，复用调研中心，提交后保持原Main、Task或团队Todo Run。shared Host/planner逻辑共用，不另外实现团队专用存储或零散prompt。
 
 ## 验证
 

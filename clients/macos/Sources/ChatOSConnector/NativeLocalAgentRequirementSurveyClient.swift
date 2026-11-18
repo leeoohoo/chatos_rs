@@ -70,6 +70,11 @@ public struct LocalAgentHostRequirementSurveyResolution: Decodable, Sendable, Eq
     }
 }
 
+public struct LocalAgentRequirementSurveyTeamRoute: Sendable, Equatable {
+    public let roomID: String
+    public let todoID: String
+}
+
 public struct NativeLocalAgentRequirementSurveyClient: Sendable {
     private let host: any LocalAgentHostClientServicing
 
@@ -78,6 +83,34 @@ public struct NativeLocalAgentRequirementSurveyClient: Sendable {
     }
 
     public var planClient: NativeLocalAgentRequirementPlanClient { .init(host: host) }
+
+    public func sourceTeamRoute(
+        ownerUserID: String,
+        survey: LocalAgentHostRequirementSurvey
+    ) async throws -> LocalAgentRequirementSurveyTeamRoute? {
+        guard survey.ownerUserID == ownerUserID else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        let run = try await NativeLocalAgentRuntimeClient(host: host).run(
+            ownerUserID: ownerUserID,
+            runID: survey.sourceRunID
+        )
+        guard run.ownerUserID == ownerUserID,
+              run.profileKey == "task_execution",
+              run.ownerEntityType == "conversation_turn",
+              case let .object(input) = run.input,
+              input["conversation_id"] == .string(survey.sourceConversationID),
+              case let .object(team)? = input["team_executor_context"] else {
+            return nil
+        }
+        guard case let .string(roomID)? = team["team_id"],
+              case let .string(todoID)? = team["todo_id"],
+              team["project_id"] == .string(survey.projectResourceID),
+              survey.sourceTaskID == todoID else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        return .init(roomID: roomID, todoID: todoID)
+    }
 
     /// A submitted form is not evidence that its follow-up has finished. Read the
     /// exact source Run, and expose only the final user-facing reply, never traces.
@@ -90,14 +123,29 @@ public struct NativeLocalAgentRequirementSurveyClient: Sendable {
         let run = try await NativeLocalAgentRuntimeClient(host: host).run(
             ownerUserID: ownerUserID, runID: survey.sourceRunID
         )
+        guard case let .object(input) = run.input else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        let isMainChat = survey.sourceTaskID == nil
+            && run.profileKey == "main_chat"
+            && run.ownerEntityType == "conversation_turn"
+            && input["conversation_id"] == .string(survey.sourceConversationID)
+        let isTask = run.profileKey == "task_execution"
+            && run.ownerEntityType == "task"
+            && run.ownerEntityID == survey.sourceTaskID
+            && input["source_conversation_id"] == .string(survey.sourceConversationID)
+        let isTeamTodo: Bool
+        if case let .object(team)? = input["team_executor_context"] {
+            isTeamTodo = run.profileKey == "task_execution"
+                && run.ownerEntityType == "conversation_turn"
+                && input["conversation_id"] == .string(survey.sourceConversationID)
+                && team["todo_id"] == survey.sourceTaskID.map(LocalAgentJSONValue.string)
+                && team["project_id"] == .string(survey.projectResourceID)
+        } else {
+            isTeamTodo = false
+        }
         guard run.ownerUserID == ownerUserID, run.runID == survey.sourceRunID,
-              case let .object(input) = run.input,
-              input[survey.sourceTaskID == nil ? "conversation_id" : "source_conversation_id"]
-                == .string(survey.sourceConversationID),
-              survey.sourceTaskID == nil
-                ? (run.profileKey == "main_chat" && run.ownerEntityType == "conversation_turn")
-                : (run.profileKey == "task_execution" && run.ownerEntityType == "task"
-                    && run.ownerEntityID == survey.sourceTaskID)
+              isMainChat || isTask || isTeamTodo
         else { throw NativeLocalAgentHostError.invalidResponse }
         return RequirementSurveyFollowUp.project(run)
     }

@@ -508,7 +508,10 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             }
         )
         XCTAssertTrue(names.contains("local_attachment_read"))
-        XCTAssertTrue(names.filter { $0 != "local_attachment_read" }.allSatisfy {
+        XCTAssertTrue(names.filter {
+            !["local_attachment_read", "requirement_survey_create", "requirement_plan_save"]
+                .contains($0)
+        }.allSatisfy {
             !NativeLocalAgentPlatformToolCatalog.taskExecutionToolNames.contains($0)
         })
         XCTAssertEqual(
@@ -549,6 +552,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "agent_skill_read_resource", "capability_invoke",
                 "todo_get_context", "todo_progress_append", "todo_acceptance_update",
                 "todo_complete", "todo_block", "team_asset_list", "team_asset_get",
+                "requirement_survey_create", "requirement_plan_save",
             ])
         )
         XCTAssertEqual(

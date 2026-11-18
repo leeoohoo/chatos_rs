@@ -1,13 +1,13 @@
 ---
 name: chatos-requirement-discovery
-description: Understand material project goals, audience, constraints, preferences and acceptance decisions through the durable Requirement Survey center before committing to a plan. Use in project Main Chat before Task creation, or for a newly discovered Task blocker; not for clear requests, casual questions or secrets.
+description: Understand material project goals, audience, constraints, preferences and acceptance decisions through the durable Requirement Survey center before committing to a plan. Use in project Main Chat before Task creation, an authorized Agent team survey Todo, or for a newly discovered Task blocker; not for clear requests, casual questions or secrets.
 ---
 
 # Project requirement discovery
 
 Help the user express the outcome they actually want, not just choose implementation details. Reuse facts and preferences already in the conversation. Ask when missing answers would materially change the scope, design, content, cost, risk, ownership or acceptance criteria; do not turn every request into a questionnaire.
 
-For a project-bound Main Chat, activate this Skill and call `requirement_survey_create` directly before creating dependent Tasks. A survey is not a Task: do not create a placeholder worker merely to ask questions. Use the same existing Requirement Survey center as Task surveys, not a separate storage or Agent-team workflow. A Task can use its authorized survey capability when a new blocker appears during execution.
+For a project-bound Main Chat, activate this Skill and call `requirement_survey_create` directly before creating dependent Tasks; do not create a placeholder worker merely to ask questions. In an Agent team, the project manager creates an explicit survey Todo with `requirement_survey_write`, and that Todo's Executor calls the same tool directly. A normal Task can use its authorized survey capability when a new blocker appears during execution. All three routes use the existing Requirement Survey center, never a separate store or a team-specific imitation.
 
 When the program-owned `user_selected_capability_contract` says the user chose Requirement Survey in the composer, treat that as an explicit request for this workflow. Use the user's natural-language message to design the survey; never ask them for a tool name, Skill ref, version, schema, or internal identifier.
 
@@ -24,4 +24,4 @@ Read [references/scenarios-and-question-design.md](references/scenarios-and-ques
 - Confirmation is a human-only UI action, not a model tool. Never infer it from submitted answers, “you decide,” or a previous version's confirmation. Even an already requested implementation waits for this new proposal's confirmation before dependent Tasks. Confirmation alone does not authorize implementation, payments, publishing, deletion or broader access; preserve the user's original implementation scope and leave unanswered optional points open.
 - Use another focused round only when the answer reveals a new material decision. Never ask again for supplied information or seek commitments beyond the user's scope. Survey submission is not approval for payments, publishing, deletion or broader access.
 
-The current survey module requires a project-bound conversation. In a contact-only chat, ask a concise conversational clarification instead of inventing a project or claiming a survey was created. Do not put passwords, tokens, payment details or unnecessary personal data into persistent survey fields.
+The current survey module requires a project-bound source; an Agent team survey Todo receives that binding from its frozen team execution context even though its internal conversation is not shown as a project chat. In a contact-only chat, ask a concise conversational clarification instead of inventing a project or claiming a survey was created. Do not put passwords, tokens, payment details or unnecessary personal data into persistent survey fields.

@@ -89,7 +89,7 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         return String(cString: value)
     }
 
-    func testRetiredRequirementSurveyCapabilitiesRemainReadableWithoutMutation() async throws {
+    func testRequirementSurveyCapabilitiesRemainReadableWithoutMutation() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let store = try SQLiteAgentGroupChatStore(databaseURL: url)
@@ -122,7 +122,10 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             todoID: todo.id
         )
 
-        XCTAssertEqual(loaded?.executionPlan.builtinCapabilities, [])
+        XCTAssertEqual(
+            loaded?.executionPlan.builtinCapabilities,
+            [.requirementSurveyRead, .requirementSurveyWrite]
+        )
         XCTAssertEqual(loaded?.executionPlan.selectionRevision, "local-capability-catalog-v1")
         XCTAssertEqual(try sqliteText(
             url,
