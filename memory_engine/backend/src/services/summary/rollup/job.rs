@@ -31,8 +31,7 @@ pub(super) async fn create_claimed_rollup_job_run(
             metadata: Some(serde_json::json!({"pipeline": "thread_rollup"})),
         },
     )
-    .await
-    ?;
+    .await?;
     let claim = thread_partitions::try_claim_rollup_in_tx(
         &mut tx,
         tenant_id,
@@ -77,9 +76,7 @@ pub(super) fn done_metadata(
     value
 }
 
-pub(super) fn partition_claim_deferred_job(
-    selected_count: usize,
-) -> FinishEngineJobRunRequest {
+pub(super) fn partition_claim_deferred_job(selected_count: usize) -> FinishEngineJobRunRequest {
     FinishEngineJobRunRequest {
         status: "done".to_string(),
         input_count: selected_count as i64,

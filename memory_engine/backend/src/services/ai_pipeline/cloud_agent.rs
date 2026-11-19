@@ -383,9 +383,7 @@ impl CloudSummaryPipelineState {
             .iter()
             .map(|item| super::estimate_tokens_text(item))
             .sum::<i64>();
-        if next_limit <= 0
-            || next_limit >= self.effective_token_limit
-            || group_tokens <= next_limit
+        if next_limit <= 0 || next_limit >= self.effective_token_limit || group_tokens <= next_limit
         {
             return Ok(false);
         }
@@ -417,11 +415,9 @@ impl CloudSummaryPipelineState {
         }
         let mut contract = self.payload_contract.clone();
         contract.source_refs = source_refs;
-        contract.supersession_candidates.retain(|candidate| {
-            group
-                .iter()
-                .any(|item| item.contains(candidate.as_str()))
-        });
+        contract
+            .supersession_candidates
+            .retain(|candidate| group.iter().any(|item| item.contains(candidate.as_str())));
         contract.validate()?;
         Ok(contract)
     }
@@ -775,8 +771,8 @@ mod tests {
             5,
         )
         .await;
-        let state = test_state(spec(vec!["x".repeat(1_800)], 512), contract())
-            .expect("pipeline state");
+        let state =
+            test_state(spec(vec!["x".repeat(1_800)], 512), contract()).expect("pipeline state");
         let (outcome, state, result) = state.execute_one(&ai, 2).await.expect("model step");
 
         assert!(
@@ -797,8 +793,8 @@ mod tests {
             5,
         )
         .await;
-        let mut state = test_state(spec(vec!["x".repeat(1_800)], 512), contract())
-            .expect("pipeline state");
+        let mut state =
+            test_state(spec(vec!["x".repeat(1_800)], 512), contract()).expect("pipeline state");
         state.transient_split_count = MAX_OVERFLOW_RETRIES;
 
         let (outcome, state, result) = state.execute_one(&ai, 2).await.expect("model step");
@@ -994,9 +990,7 @@ mod tests {
             vec!["fact-visible".to_string(), "fact-hidden".to_string()];
         let state = test_state(spec(vec!["input".to_string()], 512), payload_contract)
             .expect("pipeline state");
-        let group = vec![
-            "[id=source-1]\n{\"supersedes\":[\"fact-visible\"]}".to_string(),
-        ];
+        let group = vec!["[id=source-1]\n{\"supersedes\":[\"fact-visible\"]}".to_string()];
 
         let contract = state
             .payload_contract_for_group(group.as_slice())

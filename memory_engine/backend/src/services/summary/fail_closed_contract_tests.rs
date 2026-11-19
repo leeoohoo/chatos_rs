@@ -289,13 +289,7 @@ async fn occupied_rollup_partition_does_not_create_a_duplicate_job_run() {
     .await
     .expect("create owning rollup job");
     crate::repositories::thread_partitions::try_claim_rollup(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "__none__",
-        &owner.id,
-        300,
+        &pool, &tenant, &source, &thread_id, "__none__", &owner.id, 300,
     )
     .await
     .expect("claim rollup partition")

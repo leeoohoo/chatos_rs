@@ -685,7 +685,10 @@ mod tests {
         value.source_refs = vec!["record-provider-size-marker".to_string()];
         value.supersession_candidates = vec!["fact-provider-size-marker".to_string()];
 
-        let response_format = value.response_format().expect("response schema").to_string();
+        let response_format = value
+            .response_format()
+            .expect("response schema")
+            .to_string();
         let instruction = value.model_instruction().expect("model instruction");
 
         assert!(response_format.contains("record-provider-size-marker"));
