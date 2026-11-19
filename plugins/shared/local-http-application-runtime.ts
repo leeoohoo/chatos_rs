@@ -34,6 +34,20 @@ interface PluginLocalHttpResponse {
   sendStatus(status: number): unknown;
 }
 
+interface PluginJsonResponse {
+  setHeader(name: string, value: string): unknown;
+  json(value: unknown): unknown;
+}
+
+interface PluginEventRequest {
+  on(event: 'close', callback: () => void): unknown;
+}
+
+interface PluginEventResponse extends PluginJsonResponse {
+  flushHeaders(): unknown;
+  write(value: string): unknown;
+}
+
 export interface PluginDirectoryMonitorOptions {
   directory: string;
   accepts: (fileName: string) => boolean;
@@ -44,6 +58,59 @@ export interface PluginDirectoryMonitorOptions {
 
 export interface PluginDirectoryMonitor {
   close(): void;
+}
+
+export function pluginHealthHandler(service: string, dataDirectory: string) {
+  return (_request: unknown, response: PluginJsonResponse): void => {
+    response.setHeader('Cache-Control', 'no-store');
+    response.json({ ok: true, service, dataDirectory });
+  };
+}
+
+export function pluginContextHandler(context: unknown) {
+  return (_request: unknown, response: PluginJsonResponse): void => {
+    response.setHeader('Cache-Control', 'no-store');
+    response.json(context);
+  };
+}
+
+export function createPluginChangeStream(eventName: string) {
+  const subscribers = new Set<PluginEventResponse>();
+  return {
+    publish(): void {
+      const payload = `event: ${eventName}\ndata: ${JSON.stringify({ changedAt: new Date().toISOString() })}\n\n`;
+      for (const response of subscribers) response.write(payload);
+    },
+    handle(request: PluginEventRequest, response: PluginEventResponse): void {
+      response.setHeader('Content-Type', 'text/event-stream');
+      response.setHeader('Cache-Control', 'no-store');
+      response.setHeader('Connection', 'keep-alive');
+      response.flushHeaders();
+      response.write('event: ready\ndata: {}\n\n');
+      subscribers.add(response);
+      request.on('close', () => subscribers.delete(response));
+    }
+  };
+}
+
+export function setPluginStaticAssetHeaders(
+  response: Pick<PluginLocalHttpResponse, 'setHeader'>,
+  noStore = false
+): void {
+  if (noStore) {
+    response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    response.setHeader('Pragma', 'no-cache');
+    response.setHeader('Expires', '0');
+  }
+  response.setHeader('X-Content-Type-Options', 'nosniff');
+  response.setHeader('Referrer-Policy', 'no-referrer');
+}
+
+export function reportPluginApplicationStarted(
+  name: string,
+  endpoint: Pick<PluginLocalHttpEndpoint, 'host' | 'port'>
+): void {
+  process.stdout.write(`${name} is available at http://${endpoint.host}:${endpoint.port}\n`);
 }
 
 export function readPluginLocalHttpEndpoint(

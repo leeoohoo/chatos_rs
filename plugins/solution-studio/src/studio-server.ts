@@ -6,8 +6,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import {
+  createPluginChangeStream,
+  pluginContextHandler,
+  pluginHealthHandler,
   pluginLocalHttpAuthentication,
   readPluginLocalHttpEndpoint,
+  reportPluginApplicationStarted,
+  setPluginStaticAssetHeaders,
   startPluginDirectoryMonitor
 } from '../../shared/local-http-application-runtime.js';
 import { assertSolutionWorkspace, validateWorkspace, workspaceToMarkdown, type SourceMode } from './schema.js';
@@ -28,21 +33,11 @@ app.disable('x-powered-by');
 app.use(pluginLocalHttpAuthentication(endpoint));
 app.use(express.json({ limit: '12mb' }));
 
-const subscribers = new Set<express.Response>();
-function publishChange() {
-  const payload = `event: workspaces-changed\ndata: ${JSON.stringify({ changedAt: new Date().toISOString() })}\n\n`;
-  for (const response of subscribers) response.write(payload);
-}
+const changes = createPluginChangeStream('workspaces-changed');
+const publishChange = changes.publish;
 
-app.get('/api/health', (_request, response) => {
-  response.setHeader('Cache-Control', 'no-store');
-  response.json({ ok: true, service: 'solution-studio', dataDirectory: store.rootDirectory });
-});
-
-app.get('/api/context', (_request, response) => {
-  response.setHeader('Cache-Control', 'no-store');
-  response.json(runtimeContext);
-});
+app.get('/api/health', pluginHealthHandler('solution-studio', store.rootDirectory));
+app.get('/api/context', pluginContextHandler(runtimeContext));
 
 app.get('/api/workspaces', async (_request, response, next) => {
   try { response.setHeader('Cache-Control', 'no-store'); response.json({ items: await store.list() }); }
@@ -197,25 +192,14 @@ app.delete('/api/workspaces/:workspaceId', async (request, response, next) => {
   catch (error) { next(error); }
 });
 
-app.get('/api/events', (request, response) => {
-  response.setHeader('Content-Type', 'text/event-stream');
-  response.setHeader('Cache-Control', 'no-store');
-  response.setHeader('Connection', 'keep-alive');
-  response.flushHeaders();
-  response.write('event: ready\ndata: {}\n\n');
-  subscribers.add(response);
-  request.on('close', () => subscribers.delete(response));
-});
+app.get('/api/events', changes.handle);
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const uiDirectory = path.resolve(currentDirectory, '../ui');
 app.use(express.static(uiDirectory, {
   etag: true,
   fallthrough: true,
-  setHeaders(response) {
-    response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.setHeader('Referrer-Policy', 'no-referrer');
-  }
+  setHeaders(response) { setPluginStaticAssetHeaders(response); }
 }));
 app.get('*path', (_request, response) => response.sendFile(path.join(uiDirectory, 'index.html')));
 
@@ -229,4 +213,4 @@ startPluginDirectoryMonitor({
   accepts: (fileName) => fileName.endsWith('.solution.json'),
   onChange: publishChange
 });
-app.listen(port, host, () => process.stdout.write(`Solution Studio is available at http://${host}:${port}\n`));
+app.listen(port, host, () => reportPluginApplicationStarted('Solution Studio', endpoint));

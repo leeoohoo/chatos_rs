@@ -2,8 +2,13 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  createPluginChangeStream,
+  pluginContextHandler,
+  pluginHealthHandler,
   pluginLocalHttpAuthentication,
   readPluginLocalHttpEndpoint,
+  reportPluginApplicationStarted,
+  setPluginStaticAssetHeaders,
   startPluginDirectoryMonitor
 } from '../../shared/local-http-application-runtime.js';
 import { DiagramDocumentStore, RevisionConflictError } from './document-store.js';
@@ -40,24 +45,14 @@ app.disable('x-powered-by');
 app.use(pluginLocalHttpAuthentication(endpoint));
 app.use(express.json({ limit: '8mb' }));
 
-const subscribers = new Set<express.Response>();
-function publishChange(): void {
-  const payload = `event: documents-changed\ndata: ${JSON.stringify({ changedAt: new Date().toISOString() })}\n\n`;
-  for (const response of subscribers) response.write(payload);
-}
+const changes = createPluginChangeStream('documents-changed');
+const publishChange = changes.publish;
 
-app.get('/api/health', (_request, response) => {
-  response.setHeader('Cache-Control', 'no-store');
-  response.json({ ok: true, service: 'diagram-studio', dataDirectory: store.rootDirectory });
-});
-
-app.get('/api/context', (_request, response) => {
-  response.setHeader('Cache-Control', 'no-store');
-  response.json({
-    ...runtimeContext,
-    ...(defaultProjectId ? { defaultProjectId } : {})
-  });
-});
+app.get('/api/health', pluginHealthHandler('diagram-studio', store.rootDirectory));
+app.get('/api/context', pluginContextHandler({
+  ...runtimeContext,
+  ...(defaultProjectId ? { defaultProjectId } : {})
+}));
 
 app.get('/api/documents', async (_request, response, next) => {
   try {
@@ -185,25 +180,14 @@ app.delete('/api/documents/:documentId', async (request, response, next) => {
   }
 });
 
-app.get('/api/events', (request, response) => {
-  response.setHeader('Content-Type', 'text/event-stream');
-  response.setHeader('Cache-Control', 'no-store');
-  response.setHeader('Connection', 'keep-alive');
-  response.flushHeaders();
-  response.write(`event: ready\ndata: {}\n\n`);
-  subscribers.add(response);
-  request.on('close', () => subscribers.delete(response));
-});
+app.get('/api/events', changes.handle);
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const uiDirectory = path.resolve(currentDirectory, '../ui');
 app.use(express.static(uiDirectory, {
   etag: true,
   fallthrough: true,
-  setHeaders(response) {
-    response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.setHeader('Referrer-Policy', 'no-referrer');
-  }
+  setHeaders(response) { setPluginStaticAssetHeaders(response); }
 }));
 app.get('*path', (_request, response) => response.sendFile(path.join(uiDirectory, 'index.html')));
 
@@ -221,6 +205,4 @@ startPluginDirectoryMonitor({
   onChange: publishChange
 });
 
-app.listen(port, host, () => {
-  process.stdout.write(`Diagram Studio is available at http://${host}:${port}\n`);
-});
+app.listen(port, host, () => reportPluginApplicationStarted('Diagram Studio', endpoint));

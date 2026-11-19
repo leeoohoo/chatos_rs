@@ -5,9 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  createPluginChangeStream,
+  pluginContextHandler,
+  pluginHealthHandler,
   pluginLocalHttpAuthentication,
   pluginDirectoryWatchMode,
   readPluginLocalHttpEndpoint,
+  setPluginStaticAssetHeaders,
   startPluginDirectoryMonitor
 } from '../dist/local-http-application-runtime.test.mjs';
 
@@ -78,6 +82,43 @@ test('the shared runtime rejects an invalid local_http port', () => {
     defaultPort: 4178,
     environment: { CHATOS_PLUGIN_APP_PORT: 'not-a-port' }
   }), /Invalid local_http application port/);
+});
+
+test('the shared HTTP shell serves metadata, events and secure static headers', () => {
+  const jsonResponses = [];
+  const metadataResponse = {
+    setHeader() {},
+    json(value) { jsonResponses.push(value); }
+  };
+  pluginHealthHandler('diagram-studio', '/tmp/diagrams')({}, metadataResponse);
+  pluginContextHandler({ kind: 'device' })({}, metadataResponse);
+  assert.deepEqual(jsonResponses, [
+    { ok: true, service: 'diagram-studio', dataDirectory: '/tmp/diagrams' },
+    { kind: 'device' }
+  ]);
+
+  const headers = {};
+  setPluginStaticAssetHeaders({ setHeader(name, value) { headers[name] = value; } }, true);
+  assert.equal(headers['Cache-Control'], 'no-store, no-cache, must-revalidate');
+  assert.equal(headers['X-Content-Type-Options'], 'nosniff');
+
+  const writes = [];
+  let close;
+  const changes = createPluginChangeStream('documents-changed');
+  changes.handle(
+    { on(_event, callback) { close = callback; } },
+    {
+      setHeader() {},
+      flushHeaders() {},
+      write(value) { writes.push(value); }
+    }
+  );
+  changes.publish();
+  assert.match(writes.at(-1), /^event: documents-changed\n/);
+  close();
+  const count = writes.length;
+  changes.publish();
+  assert.equal(writes.length, count);
 });
 
 test('the shared polling monitor observes atomic directory changes', async () => {
