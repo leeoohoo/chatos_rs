@@ -10,6 +10,8 @@ use std::{
 };
 use uuid::Uuid;
 
+use crate::atomic_file::replace_file;
+
 use super::{
     batch::{StoryMediaBatchHistoryPage, StoryMediaBatchRecord, MAXIMUM_MEDIA_BATCH_BYTES},
     domain::{valid_storage_filename, StoryProject},
@@ -1059,9 +1061,9 @@ fn commit_private_json(
         }
     }
     write_private_file(&temporary, bytes)?;
-    if let Err(error) = replace_file(&temporary, &target) {
+    if replace_file(&temporary, &target).is_err() {
         let _ = fs::remove_file(&temporary);
-        return Err(error);
+        return Err(store_error());
     }
     sync_directory(directory)
 }
@@ -1190,41 +1192,6 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     file.write_all(bytes)
         .and_then(|_| file.sync_all())
         .map_err(|_| store_error())
-}
-
-#[cfg(not(windows))]
-fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
-    fs::rename(source, destination).map_err(|_| store_error())
-}
-
-#[cfg(windows)]
-fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-    let source = source
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let destination = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let succeeded = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if succeeded == 0 {
-        Err(store_error())
-    } else {
-        Ok(())
-    }
 }
 
 fn sync_directory(path: &Path) -> Result<(), String> {

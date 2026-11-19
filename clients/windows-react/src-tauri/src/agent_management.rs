@@ -9,6 +9,7 @@ use std::{
 use tauri::{http, State};
 
 use crate::{
+    agent_professions::PROFESSION_KEYS,
     authentication::{AuthenticationManager, GatewayModelConfig},
     host_lifecycle::validate_owner,
     media_studio::MediaStudioManager,
@@ -1115,42 +1116,6 @@ fn invalid_row() -> rusqlite::Error {
 fn store_error() -> String {
     "Agent 管理数据不可用，请检查本机存储后重试。".into()
 }
-
-const PROFESSION_KEYS: &[&str] = &[
-    "project_manager",
-    "product_manager",
-    "technical_manager",
-    "solution_architect",
-    "security_engineer",
-    "qa_engineer",
-    "software_engineer",
-    "fullstack_engineer",
-    "frontend_engineer",
-    "backend_engineer",
-    "mobile_engineer",
-    "desktop_engineer",
-    "game_engineer",
-    "embedded_iot_engineer",
-    "database_engineer",
-    "devops_engineer",
-    "data_engineer",
-    "data_analyst",
-    "machine_learning_engineer",
-    "research_specialist",
-    "product_designer",
-    "ui_designer",
-    "ux_designer",
-    "game_designer",
-    "technical_writer",
-    "business_analyst",
-    "implementation_consultant",
-    "erp_consultant",
-    "wms_consultant",
-    "domain_expert",
-    "operations_specialist",
-    "growth_marketing_specialist",
-    "general_member",
-];
 
 #[cfg(test)]
 mod tests {

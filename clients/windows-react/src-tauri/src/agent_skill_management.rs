@@ -10,7 +10,10 @@ use std::{
 use tauri::State;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{authentication::AuthenticationManager, host_lifecycle::validate_owner};
+use crate::{
+    atomic_file::replace_file, authentication::AuthenticationManager,
+    host_lifecycle::validate_owner,
+};
 
 const SKILL_CATALOG: &str =
     include_str!("../../../macos/Sources/ChatOSCore/AgentSkills/Catalog/ChatOSSkillCatalog.json");
@@ -947,39 +950,8 @@ fn persist_payload(file: &Path, payload: &OverridePayload) -> Result<(), String>
         .as_file()
         .sync_all()
         .map_err(|_| storage_error())?;
-    replace_file(temporary.into_temp_path().as_ref(), file)?;
+    replace_file(temporary.into_temp_path().as_ref(), file).map_err(|_| storage_error())?;
     Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
-    fs::rename(source, destination).map_err(|_| storage_error())
-}
-
-#[cfg(target_os = "windows")]
-fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-    let destination: Vec<u16> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    let result = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(storage_error())
-    } else {
-        Ok(())
-    }
 }
 
 fn symlink_safe_metadata(path: &Path) -> Result<Option<fs::Metadata>, String> {

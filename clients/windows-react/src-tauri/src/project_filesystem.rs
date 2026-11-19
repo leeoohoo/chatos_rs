@@ -10,7 +10,10 @@ use std::{
 use tauri::{AppHandle, Manager};
 use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
 
-use crate::{host_lifecycle::validate_owner, platform_execution_context::resolve_project_root};
+use crate::{
+    atomic_file::replace_file, host_lifecycle::validate_owner,
+    platform_execution_context::resolve_project_root,
+};
 
 const MAXIMUM_DIRECTORY_ENTRIES: usize = 5_000;
 const MAXIMUM_TEXT_PREVIEW_BYTES: u64 = 2 * 1_024 * 1_024;
@@ -541,41 +544,6 @@ fn atomic_write(path: &Path, bytes: &[u8], permissions: fs::Permissions) -> std:
         let _ = fs::remove_file(&temporary_path);
     }
     result
-}
-
-#[cfg(not(windows))]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    fs::rename(source, destination)
-}
-
-#[cfg(windows)]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-    let source = source
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let destination = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let succeeded = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if succeeded == 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
 }
 
 fn content_revision(bytes: &[u8]) -> String {

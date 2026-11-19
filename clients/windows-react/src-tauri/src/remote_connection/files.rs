@@ -19,6 +19,8 @@ use std::{
 };
 use tauri::State;
 
+use crate::atomic_file::replace_file;
+
 const REMOTE_OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MAXIMUM_REMOTE_PATH_BYTES: usize = 4_096;
 const MAXIMUM_REMOTE_NAME_BYTES: usize = 1_024;
@@ -1133,41 +1135,6 @@ fn persist_download(source: &Path, destination: &Path, overwrite: bool) -> Resul
             }
         })?;
         let _ = fs::remove_file(source);
-        Ok(())
-    }
-}
-
-#[cfg(not(windows))]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    fs::rename(source, destination)
-}
-
-#[cfg(windows)]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-    let source = source
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let destination = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let succeeded = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if succeeded == 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
         Ok(())
     }
 }

@@ -14,6 +14,7 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 use crate::{
+    atomic_file::replace_file,
     authentication::AuthenticationManager,
     general_settings::GeneralSettingsStore,
     global_utilities::{dispatch_action, GlobalUtilityAction, GlobalUtilityPreferencesStore},
@@ -1355,42 +1356,6 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut file = options.open(path)?;
     file.write_all(bytes)?;
     file.sync_all()
-}
-
-#[cfg(not(target_os = "windows"))]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    fs::rename(source, destination)
-}
-
-#[cfg(target_os = "windows")]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-
-    let source = source
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let destination = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let result = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
 }
 
 fn require_presentation(
