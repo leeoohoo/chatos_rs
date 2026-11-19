@@ -689,7 +689,9 @@ describe("AgentManagementView", () => {
     expect(screen.getByText("界面设计师 的运行")).toBeVisible();
     expect(screen.getByText("通讯与任务执行彼此独立，可同时运行")).toBeVisible();
     expect(screen.getByRole("button", { name: "查看全部" })).toBeVisible();
-    const runDetailTrigger = screen.getByRole("button", { name: "查看界面设计师的运行详情" });
+    const runDetailTrigger = screen.getByRole("button", {
+      name: "查看界面设计师的通讯运行详情，已完成，默认 Agent，Run run-team-1",
+    });
     fireEvent.click(runDetailTrigger);
     expect(await screen.findByRole("dialog", { name: "团队 Run 检查器" })).toBeVisible();
     const closeRunDetail = screen.getByRole("button", { name: "完成" });
@@ -771,7 +773,9 @@ describe("AgentManagementView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
     fireEvent.click(await screen.findByRole("button", { name: "运行" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看界面设计师的运行状态" }));
-    fireEvent.click(await screen.findByRole("button", { name: "查看界面设计师的运行详情" }));
+    fireEvent.click(await screen.findByRole("button", {
+      name: "查看界面设计师的通讯运行详情，运行中，默认 Agent，Run run-active",
+    }));
     const closeRunDetail = screen.getByRole("button", { name: "完成" });
     const cancelRun = await screen.findByRole("button", { name: "结束运行" });
     cancelRun.focus();

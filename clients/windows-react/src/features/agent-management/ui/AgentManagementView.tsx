@@ -2228,21 +2228,25 @@ function AgentTeamRunsView({
           </div>
         ) : pagedRuns.map((run) => {
           const metrics = runMetrics[run.runId];
+          const agentName = profileNames.get(run.agentId) ?? run.agentId;
+          const laneLabel = run.lane === "manager" ? "通讯" : "任务执行";
+          const statusLabel = teamRunCheckpointStatusLabel(run.runStatus);
+          const triggerLabel = teamRunTriggerLabel(run.triggerKind);
           return (
             <article key={run.runId}>
               <button
-                aria-label={`查看${profileNames.get(run.agentId) ?? run.agentId}的运行详情`}
+                aria-label={`查看${agentName}的${laneLabel}运行详情，${statusLabel}，${triggerLabel}，Run ${run.runId}`}
                 disabled={!runInspectorPort}
                 onClick={(event) => openRunDetail(run.runId, event.currentTarget)}
                 type="button"
               >
                 <header>
-                  <strong>{profileNames.get(run.agentId) ?? run.agentId}</strong>
-                  <span className={`agent-team-runs__lane is-${run.lane}`}>{run.lane === "manager" ? "通讯" : "任务执行"}</span>
-                  <em className={`is-${teamRunStatusClass(run.runStatus)}`}>{teamRunCheckpointStatusLabel(run.runStatus)}</em>
+                  <strong>{agentName}</strong>
+                  <span className={`agent-team-runs__lane is-${run.lane}`}>{laneLabel}</span>
+                  <em className={`is-${teamRunStatusClass(run.runStatus)}`}>{statusLabel}</em>
                   <b aria-hidden="true">›</b>
                 </header>
-                <p>{teamRunTriggerLabel(run.triggerKind)} · {metrics
+                <p>{triggerLabel} · {metrics
                   ? `${metrics.eventCount}${metrics.hasMoreEvents ? "+" : ""} 条事件 · ${metrics.modelCalls} 次模型调用`
                   : `Run ${run.runId}`}</p>
                 <footer>
