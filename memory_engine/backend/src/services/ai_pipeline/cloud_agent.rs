@@ -129,19 +129,26 @@ impl CloudSummaryPipelineState {
                 "Memory model identity or capability changed during the frozen generation".into(),
             );
         }
+        self.normalize_progress()?;
+        let capacity_group = self
+            .groups
+            .get(self.cursor)
+            .cloned()
+            .ok_or_else(|| "summary pipeline cursor escaped its active groups".to_string())?;
+        let capacity_contract = self.payload_contract_for_group(capacity_group.as_slice())?;
         let directive = format!(
             "{}\n\n{}",
             match self.phase {
                 PipelinePhase::Leaf => &self.spec.leaf_directive,
                 PipelinePhase::Merge => &self.spec.merge_directive,
             },
-            self.payload_contract.model_instruction()?
+            capacity_contract.model_instruction()?
         );
         let empty_input = build_ai_input(self.spec.managed_prompt.as_deref(), &directive, &[]);
         let capacity = ai.payload_source_capacity(
             crate::ai::SUMMARY_SYSTEM_PROMPT,
             &empty_input,
-            &self.payload_contract.response_format()?,
+            &capacity_contract.response_format()?,
         )?;
         if capacity < self.effective_token_limit {
             self.effective_token_limit = capacity;
@@ -410,6 +417,11 @@ impl CloudSummaryPipelineState {
         }
         let mut contract = self.payload_contract.clone();
         contract.source_refs = source_refs;
+        contract.supersession_candidates.retain(|candidate| {
+            group
+                .iter()
+                .any(|item| item.contains(candidate.as_str()))
+        });
         contract.validate()?;
         Ok(contract)
     }
@@ -973,5 +985,23 @@ mod tests {
                 .expect("every chunk remains attributable");
             assert_eq!(group_contract.source_refs, vec!["source-1"]);
         }
+    }
+
+    #[test]
+    fn group_contract_keeps_only_visible_supersession_candidates() {
+        let mut payload_contract = contract();
+        payload_contract.supersession_candidates =
+            vec!["fact-visible".to_string(), "fact-hidden".to_string()];
+        let state = test_state(spec(vec!["input".to_string()], 512), payload_contract)
+            .expect("pipeline state");
+        let group = vec![
+            "[id=source-1]\n{\"supersedes\":[\"fact-visible\"]}".to_string(),
+        ];
+
+        let contract = state
+            .payload_contract_for_group(group.as_slice())
+            .expect("group contract");
+
+        assert_eq!(contract.supersession_candidates, vec!["fact-visible"]);
     }
 }

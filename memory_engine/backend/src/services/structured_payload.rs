@@ -170,7 +170,7 @@ impl MemoryPayloadContract {
                 "status": {"type":"string", "enum":["active", "superseded", "uncertain"]},
                 "supersedes": {
                     "type":"array",
-                    "items": {"type":"string"}
+                    "items": {"type":"string", "enum":self.supersession_candidates}
                 },
                 "source_refs": {
                     "type":"array",
@@ -680,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_contract_only_inlines_source_refs() {
+    fn provider_contract_inlines_frozen_id_sets() {
         let mut value = contract();
         value.source_refs = vec!["record-provider-size-marker".to_string()];
         value.supersession_candidates = vec!["fact-provider-size-marker".to_string()];
@@ -689,7 +689,7 @@ mod tests {
         let instruction = value.model_instruction().expect("model instruction");
 
         assert!(response_format.contains("record-provider-size-marker"));
-        assert!(!response_format.contains("fact-provider-size-marker"));
+        assert!(response_format.contains("fact-provider-size-marker"));
         assert!(!instruction.contains("fact-provider-size-marker"));
     }
 
