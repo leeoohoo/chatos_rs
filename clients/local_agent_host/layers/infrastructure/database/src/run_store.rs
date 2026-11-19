@@ -399,7 +399,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
             .bind(transition.next_attempt_at_unix_ms)
             .bind(json_option(&transition.pending_tool_batch)?)
             .bind(json_option(&transition.terminal_outcome)?)
-            .bind(json_option(&transition.checkpoint)?)
+            .bind(checkpoint_option(&transition.checkpoint)?)
             .bind(transition.clear_continuation_input)
             .bind(transition.occurred_at_unix_ms)
             .bind(&transition.run_id)

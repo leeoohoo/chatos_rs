@@ -848,3 +848,7 @@ pub(super) const SCHEMA_V48: &[&str] = &[
     "DELETE FROM local_conversation_runtime_settings",
     "DELETE FROM local_model_config_snapshots",
 ];
+
+/// Checkpoints may use the v1 compressed BLOB. Bump the schema gate so an
+/// older binary cannot silently interpret those bytes as model history.
+pub(super) const SCHEMA_V49: &[&str] = &[];

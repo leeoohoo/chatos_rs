@@ -169,7 +169,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn durable_history_replaces_its_memory_snapshot_with_latest_context() {
+    async fn durable_history_ignores_a_new_memory_snapshot() {
         let (composer, scope, server) = memory_composer_mock(json!({
             "thread_id": "thread-1",
             "blocks": [{"block_type": "thread_summary_top_level", "text": "summary"}],
@@ -200,10 +200,8 @@ mod tests {
         server.abort();
 
         let items = input.as_array().expect("items");
-        assert_eq!(items.len(), durable.len() + 1);
-        assert!(items[0].to_string().contains("[memory_engine_context]"));
-        assert!(items[0].to_string().contains("summary"));
-        assert_eq!(&items[1..], durable.as_slice());
+        assert_eq!(items, durable.as_slice());
+        assert!(!input.to_string().contains("[memory_engine_context]"));
         assert_eq!(
             items
                 .iter()
@@ -228,7 +226,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn durable_history_drops_the_previous_memory_snapshot_before_refreshing() {
+    async fn durable_history_reuses_the_original_memory_snapshot() {
         let (composer, scope, server) = memory_composer_mock(json!({
             "thread_id": "thread-1",
             "blocks": [{"block_type": "agent_memory_recent", "text": "fresh-memory"}],
@@ -259,8 +257,8 @@ mod tests {
         server.abort();
 
         let text = input.to_string();
-        assert!(text.contains("fresh-memory"));
-        assert!(!text.contains("stale-memory"));
+        assert!(!text.contains("fresh-memory"));
+        assert!(text.contains("stale-memory"));
         assert_eq!(text.matches("[memory_engine_context]").count(), 1);
     }
 
