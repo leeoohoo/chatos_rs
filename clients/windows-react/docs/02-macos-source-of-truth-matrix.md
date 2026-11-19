@@ -1445,4 +1445,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 135. [部分完成] 团队共享资产已在同一正式 Windows Release 完成现有真实数据的只读业务与可访问性回归。`Parity Smoke Team` 恢复“Windows Release 共享资产审核回归”决策资产、`r1`、完整 Markdown、来源 Agent、来源 Todo、审核建议理由、单页分页及“任务启动时固定 revision”说明；展开操作菜单后，原生树完整发布 `menu` 及“编辑 / 版本历史 / 归档”三个 `menuitem`。只读打开“版本历史”后，对话框真实返回当前 `r1`、`Parity Smoke Agent`、保存时间和同一 Markdown 正文。本轮没有创建、编辑、归档或保存资产。macOS 源码 `ProjectAgentGroupChatAssetViews.swift` 的资产卡片、revision 历史和编辑/归档合同与 Windows 实际行为一致；但标为第 16 页的 `clients/macos/docs/screenshots/16-agent-team-assets.png` 实际只拍到 macOS 桌面和联系人聊天，没有显示共享资产工作区，因此当前证据只关闭业务、数据恢复和可访问语义，不虚报像素视觉对照完成。需要重拍正确的 macOS 第 16 页基线后再关闭最终截图差距。
 
+136. [已完成] macOS 截图第 15 页“团队需求调研”已在同一正式 Windows Release 完成原生视觉与导航业务对照。`Parity Smoke Team` 的调研页与 macOS `15-agent-team-surveys.png` 一致显示“需求调研已迁移”、Task 调研由 Local Agent Host 保存并恢复原 Run、不再属于 Agent 群聊的说明，以及“打开需求调研”主操作；团队导航、右侧在线成员和禁用的邀请入口保持可见。点击入口后真实切换到全局需求调研中心并恢复 `chatos` 的 `0` 张待填写、`1` 张已提交、项目卡片、刷新及单页分页，证明不是静态占位。本轮没有创建、回答、提交或刷新调研，也没有修改、确认方案或触发来源任务。该条关闭第 15 页迁移空态、可访问名称和全局中心路由对照；具体已提交调研详情由第 133 条覆盖。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
