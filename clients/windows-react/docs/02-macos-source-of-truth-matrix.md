@@ -1449,4 +1449,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 137. [已完成] macOS 截图第 14 页“团队任务”已在同一正式 Windows Release 完成现有 completed 数据的原生视觉与只读业务对照。`Parity Smoke Team` 真实恢复 2 条已完成 Todo；概览准确区分 `0` 项目文件交付、`2` 管理/检查完成、`0` 需人工处理和 `0` 待执行，卡片显示标题、负责人、工作契约、完成状态、计划交付、验收标准、冻结工具授权、执行记录数及单页分页。展开“Windows 团队需求调研回归”后，范围、2 项交付物、4 项验收条件、4 项约束、独立执行模式、自动补齐的 `requirement_survey_read`、`requirement_survey_write`、授权快照、3 条真实执行记录和最终管理结果均可读取；“查看完整结果”对话框继续以安全 Markdown 恢复完整结果并可正常关闭。原生 accessibility tree 发布团队任务区域、概览、Todo article、列表、时间、展开按钮和具名结果对话框。本轮没有创建、停止、重试、取消或修改任务，也没有启动任何 Run。该条关闭第 14 页 completed 卡片、详情、结果与分页对照；合法 `reviewing_followup` / `waiting_confirmation` 等任务审查特殊状态仍需真实实例逐态取证，不由本条替代。
 
+138. [部分完成] macOS 截图第 13 页“团队聊天”已在同一正式 Windows Release 完成现有持久消息的原生视觉与只读交互对照。`Parity Smoke Team` 真实恢复 12 条 Human/系统消息，覆盖长 Markdown 工作契约、标题、列表、时间、失败/取消/完成 Delivery 状态及失败原因；默认 Agent 路由、`@` 选择菜单、已选择 Agent 胶囊、附件入口、空草稿发送禁用和右侧在线成员面板均在原生 accessibility tree 中具名可达。实际打开 `@` 菜单后可选择并移除 `Parity Smoke Agent`，清理后恢复默认路由且没有发送消息。当前历史没有持久附件样本，也没有为本轮新增 Agent 回复或 Run，因此本条关闭第 13 页四栏布局、消息恢复、Markdown、Delivery 状态和本地路由控件对照；历史附件渲染、真实发送后的回复与对应 Run 串联继续保留，不能用可见入口代替业务闭环。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
