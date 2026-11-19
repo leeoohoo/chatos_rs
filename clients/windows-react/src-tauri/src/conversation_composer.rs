@@ -213,6 +213,7 @@ async fn start_new_turn(
             StartConversationTurnCommand {
                 owner_user_id: owner_user_id.to_owned(),
                 conversation_id: conversation_id.to_owned(),
+                conversation_if_missing: None,
                 expected_conversation_version: detail.conversation.version,
                 turn_id: turn_id.clone(),
                 message_id: message_id.clone(),

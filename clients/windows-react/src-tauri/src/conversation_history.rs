@@ -21,7 +21,7 @@ pub async fn load_conversation_history(
             GetConversationHistoryCommand {
                 owner_user_id: owner_user_id.clone(),
                 conversation_id: conversation_id.clone(),
-                before_ordinal,
+                before_cursor: before_ordinal.map(|value| value.to_string()),
                 limit: CONVERSATION_HISTORY_PAGE_SIZE,
             },
         ))

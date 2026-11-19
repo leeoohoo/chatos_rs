@@ -4476,6 +4476,7 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
     let command = StartConversationTurnCommand {
         owner_user_id: owner_user_id.clone(),
         conversation_id: conversation_id.clone(),
+        conversation_if_missing: None,
         expected_conversation_version: detail.conversation.version,
         turn_id: turn_id.clone(),
         message_id: host_message_id.clone(),
@@ -4638,6 +4639,7 @@ pub(crate) async fn dispatch_next_agent_communication_delivery(
     let command = StartConversationTurnCommand {
         owner_user_id: owner_user_id.clone(),
         conversation_id,
+        conversation_if_missing: None,
         expected_conversation_version: detail.conversation.version,
         turn_id: turn_id.clone(),
         message_id: host_message_id.clone(),
@@ -4830,6 +4832,7 @@ pub(crate) async fn send_agent_conversation_draft(
     let command = StartConversationTurnCommand {
         owner_user_id: input.owner_user_id.clone(),
         conversation_id,
+        conversation_if_missing: None,
         expected_conversation_version: detail.conversation.version,
         turn_id: turn_id.clone(),
         message_id: message_id.clone(),
