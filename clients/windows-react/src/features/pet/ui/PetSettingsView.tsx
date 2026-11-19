@@ -38,7 +38,7 @@ export function PetSettingsView({ ownerUserId, port }: PetSettingsViewProps) {
         <PreferenceRow detail={english ? "Hides the pet window immediately while preserving notification history." : "关闭后宠物窗口会立即隐藏，但提醒记录仍会保留。"} title={english ? "Enable global pet" : "启用全局宠物"}>
           <Switch checked={state.preferences.isEnabled} disabled={state.isLoading} label={english ? "Enable global pet" : "启用全局宠物"} onChange={(isEnabled) => updateDraft({ isEnabled })} />
         </PreferenceRow>
-        <PreferenceRow detail={english ? "Keeps the pet visible when switching Spaces or entering full-screen apps." : "切换 Space 或进入全屏应用时，宠物仍保持可见。"} title={english ? "Show across desktops and full-screen apps" : "跨桌面与全屏应用显示"}>
+        <PreferenceRow detail={english ? "Keeps the pet visible when switching virtual desktops or entering full-screen apps." : "切换虚拟桌面或进入全屏应用时，宠物仍保持可见。"} title={english ? "Show across desktops and full-screen apps" : "跨桌面与全屏应用显示"}>
           <Switch checked={state.preferences.showAcrossSpaces} disabled={state.isLoading} label={english ? "Show across desktops" : "跨桌面显示"} onChange={(showAcrossSpaces) => updateDraft({ showAcrossSpaces })} />
         </PreferenceRow>
       </SettingsCard>

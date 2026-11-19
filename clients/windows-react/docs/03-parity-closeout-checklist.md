@@ -553,6 +553,8 @@ Windows 产品版本：`3.0.9`
 
   - 2026-11-19 设置、终端入口与应用目录回归：正式 Release 的设置覆盖层依次真实加载常规与账号、插件与 Skills、命令审批、运行与权限、访问控制；命令审批可读取既有审计记录且默认“需要确认”，运行权限显示终端、Computer Use、屏幕采集“已就绪”和文件目录“按需授权”，访问控制明确把尚未完成的文件/网络系统级隔离保持为锁定并标注本机进程“部分保护”。关闭设置后原 AI 创作视频、MiniMax-H3 选择和播放进度保持。本机终端入口恢复既有 `17986` PowerShell 会话、`C:\Users\17986` 工作目录和“已连接”状态，但依照 Computer Use 安全边界未通过 UI 输入命令。应用目录刷新后仍准确展示已安装启用的 Diagram Studio 0.4.8“本地服务”卡片；未切换 Plugin、未安装、更新、卸载或启动应用卡片。“等待健康检查”不作为 Diagram Studio MCP 握手成功证据，启动与握手继续保留为需当次确认的独立回归。
 
+  - 2026-11-19 补充设置页与宠物 Windows 文案回归：正式 Release 的微信小程序、宠物、全局工具、AI 模型、设备与网关五页均能读取真实状态；本轮没有生成小程序码、撤销登录设备、改开关或模型、同步、保存、断开服务。取证发现宠物页把 Windows 虚拟桌面误称为 macOS `Space`，现已将中英文说明分别修为“切换虚拟桌面”和 `switching virtual desktops`，并增加明确拒绝 `Space` 回退的组件测试。定向 `3 passed`，React 全量 `149` 个测试文件 / `591 passed`，TypeScript、production build、architecture audit、Bundle audit、Skill 示例审计和 `git diff --check` 全部通过。以 `AWS_LC_SYS_PREBUILT_NASM=1` 复用依赖包预构建汇编对象完成正式 Tauri Release，产物 `62,054,912` bytes、SHA-256 `7E192AE60F7C342B2E1875A28CAC205EE6F61454F9C3B14CCF82FD13CB357D51`；新产物恢复“本地服务已就绪”后，原生 accessibility tree 与可见设置页均显示新文案。
+
 ## C. 仍存在的真实功能差距
 
 ### P1：用户能直接感知

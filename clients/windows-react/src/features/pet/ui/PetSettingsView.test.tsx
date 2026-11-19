@@ -18,6 +18,8 @@ describe("PetSettingsView", () => {
     render(<PetSettingsView ownerUserId="owner-1" port={port} />);
     expect(screen.getByRole("heading", { name: "宠物" })).toBeVisible();
     expect(screen.getByText("枫团 · 秋日小狐狸")).toBeVisible();
+    expect(screen.getByText("切换虚拟桌面或进入全屏应用时，宠物仍保持可见。")).toBeVisible();
+    expect(screen.queryByText(/Space/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: "启用全局宠物" }));
     await waitFor(() => expect(port.update).toHaveBeenCalledWith("owner-1", expect.objectContaining({ isEnabled: false })));
   });
@@ -28,6 +30,15 @@ describe("PetSettingsView", () => {
     render(<PetSettingsView ownerUserId="owner-1" port={port} />);
     fireEvent.click(screen.getByRole("button", { name: "恢复默认位置" }));
     await waitFor(() => expect(port.resetPosition).toHaveBeenCalledWith("owner-1", 1));
+  });
+
+  it("uses Windows virtual desktop wording in English", async () => {
+    const port = stubPort();
+    useGeneralSettingsStore.getState().updateDraft({ interfaceLanguage: "en-US" });
+    await usePetPreferencesStore.getState().activate(port, "owner-1");
+    render(<PetSettingsView ownerUserId="owner-1" port={port} />);
+    expect(screen.getByText("Keeps the pet visible when switching virtual desktops or entering full-screen apps.")).toBeVisible();
+    expect(screen.queryByText(/Spaces/)).not.toBeInTheDocument();
   });
 });
 
