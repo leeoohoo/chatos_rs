@@ -7,8 +7,8 @@ use memory_engine_sdk::{
     SdkBatchSyncRecordsRequest, SdkComposeContextRequest, SdkUpsertThreadRequest,
     UpsertRecordInput,
 };
-use serde_json::{json, Map, Value};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::authentication::{runtime_api_base_url, AuthenticationManager};
@@ -521,8 +521,7 @@ fn validate_scope(scope: &StoryAgentMemoryScope, owner_identity: &str) -> Result
         || scope.source_id != MEMORY_SOURCE_ID
         || scope.project_id.trim().is_empty()
         || scope.project_id.chars().any(char::is_control)
-        || scope.thread_id
-            != format!("client-agent:story:{}:{}", scope.project_id, scope.run_id)
+        || scope.thread_id != format!("client-agent:story:{}:{}", scope.project_id, scope.run_id)
         || scope.subject_id != format!("agent:story-studio:{}", scope.project_id)
         || scope.thread_id.trim().is_empty()
         || scope.subject_id.trim().is_empty()
@@ -705,11 +704,7 @@ pub(super) fn current_memory_query(run: &StoryPlanningRun) -> Result<(String, St
         .ok_or_else(memory_contract_error)?;
     Ok((
         message.content.clone(),
-        conversation_turn_id(
-            &memory.scope,
-            run.checkpoint.messages.as_slice(),
-            index,
-        )?,
+        conversation_turn_id(&memory.scope, run.checkpoint.messages.as_slice(), index)?,
     ))
 }
 

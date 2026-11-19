@@ -399,10 +399,11 @@ fn resolved_snapshot(
         .output_reserve_tokens
         .and_then(|value| u64::try_from(value).ok())
         .ok_or_else(|| "模型配置缺少有效的输出预留能力。".to_owned())?;
-    let protocol_overhead_estimator_id = model
-        .protocol_overhead_estimator_id
-        .and_then(non_empty)
-        .ok_or_else(|| "模型配置缺少协议开销估算器。".to_owned())?;
+    let protocol_overhead_estimator_id =
+        model
+            .protocol_overhead_estimator_id
+            .and_then(non_empty)
+            .ok_or_else(|| "模型配置缺少协议开销估算器。".to_owned())?;
     let tokenizer_id = model.tokenizer_id.and_then(non_empty);
     let variable = model_credential_environment_variable(&model_config_ref);
     let revision = model_revision(
