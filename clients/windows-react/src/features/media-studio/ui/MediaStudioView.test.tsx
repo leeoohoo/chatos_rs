@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useMediaStudioStore } from "../application/mediaStudioStore";
 import { useMediaWorkflowStore } from "../application/mediaWorkflowStore";
@@ -84,6 +84,78 @@ describe("MediaStudioView", () => {
     expect(screen.getByText("1 / 8")).toBeVisible();
   });
 
+  it("hands a saved image directly to the video workspace like macOS", async () => {
+    const item = historyItem(RECORD_ID, "quiet lake");
+    const adapter = port({
+      loadImageHistory: vi.fn(async () => ({ items: [item], nextCursor: null, unreadableCount: 0 })),
+      stageHistoryReferences: vi.fn(async () => ({
+        references: [{
+          id: REFERENCE_ID,
+          name: "generated.png",
+          mimeType: "image/png" as const,
+          byteSize: 1_024,
+          previewUrl: null,
+        }],
+        errors: [],
+      })),
+    });
+    render(<MediaStudioView ownerUserId="alice" port={adapter} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "▧ 用作视频首帧" }));
+
+    expect(await screen.findByRole("heading", { name: "视频画布" })).toBeVisible();
+    await waitFor(() => expect(adapter.stageHistoryReferences).toHaveBeenCalledWith({
+      ownerUserId: "alice",
+      presentationId: expect.any(String),
+      assets: [{ recordId: RECORD_ID, contentToken: CONTENT_TOKEN }],
+    }));
+    expect(await screen.findByText("generated.png")).toBeVisible();
+  });
+
+  it("previews multiple images with navigation and zoom before video handoff", async () => {
+    const item = historyItem(RECORD_ID, "quiet lake");
+    const secondToken = "e".repeat(32);
+    item.images.push({
+      ...item.images[0]!,
+      id: `asset-${GENERATED_ID}`,
+      contentToken: secondToken,
+      previewUrl: `http://chatos-media.localhost/${SESSION_ID}/${RECORD_ID}/${secondToken}`,
+    });
+    const adapter = port({
+      loadImageHistory: vi.fn(async () => ({ items: [item], nextCursor: null, unreadableCount: 0 })),
+      stageHistoryReferences: vi.fn(async () => ({
+        references: [{
+          id: REFERENCE_ID,
+          name: "second.png",
+          mimeType: "image/png" as const,
+          byteSize: 2_048,
+          previewUrl: null,
+        }],
+        errors: [],
+      })),
+    });
+    render(<MediaStudioView ownerUserId="alice" port={adapter} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "预览 quiet lake 1" }));
+    const dialog = screen.getByRole("dialog", { name: "图片预览" });
+    expect(dialog).toHaveTextContent("1 / 2");
+    fireEvent.click(screen.getByRole("button", { name: "下一张图片" }));
+    expect(dialog).toHaveTextContent("2 / 2");
+    expect(dialog.querySelector(".media-preview__viewport img")).toHaveAttribute("alt", "quiet lake 2");
+    fireEvent.click(screen.getByRole("button", { name: "放大图片" }));
+    expect(dialog).toHaveTextContent("125%");
+    fireEvent.click(screen.getByRole("button", { name: "适应窗口" }));
+    expect(dialog).toHaveTextContent("适应");
+    fireEvent.click(within(dialog).getByRole("button", { name: "▧ 用作视频首帧" }));
+
+    expect(await screen.findByRole("heading", { name: "视频画布" })).toBeVisible();
+    await waitFor(() => expect(adapter.stageHistoryReferences).toHaveBeenCalledWith({
+      ownerUserId: "alice",
+      presentationId: expect.any(String),
+      assets: [{ recordId: RECORD_ID, contentToken: secondToken }],
+    }));
+  });
+
   it("keeps non-persisted generated media visible and discards the page on unmount", async () => {
     const adapter = port({
       generateImage: vi.fn(async ({ request }) => ({
@@ -112,6 +184,7 @@ describe("MediaStudioView", () => {
 
     expect(await screen.findByText(/disk full/)).toBeVisible();
     expect(screen.getByText("仅保留在当前页面，尚未写入本机创作记录")).toBeVisible();
+    expect(screen.getByRole("button", { name: "▧ 用作视频首帧" })).toBeDisabled();
     const presentationId = useMediaStudioStore.getState().presentationId;
     rendered.unmount();
     await waitFor(() => expect(adapter.discardPresentation).toHaveBeenCalledWith({

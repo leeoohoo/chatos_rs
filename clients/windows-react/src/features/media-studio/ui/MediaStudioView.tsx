@@ -16,7 +16,7 @@ import type {
   MediaStudioHistoryAsset,
   MediaStudioHistoryItem,
 } from "../domain/mediaStudio";
-import type { MediaStudioPort } from "../ports/MediaStudioPort";
+import type { MediaStudioHistoryReference, MediaStudioPort } from "../ports/MediaStudioPort";
 import type { StoryStudioPort } from "../../story-studio/ports/StoryStudioPort";
 import { MediaWorkflowWorkspace } from "./MediaWorkflowWorkspace";
 import "./mediaStudio.css";
@@ -34,11 +34,28 @@ interface MediaStudioViewProps {
 
 type StudioSection = "workflow" | "image" | "video" | "story" | "history";
 
+interface ImagePreviewItem {
+  url: string;
+  alt: string;
+  historyReference: MediaStudioHistoryReference | null;
+}
+
+interface ImagePreviewRequest {
+  items: ImagePreviewItem[];
+  selectedIndex: number;
+}
+
 export function MediaStudioView({ ownerUserId, port, storyPort }: MediaStudioViewProps) {
   const store = useMediaStudioStore();
   const [section, setSection] = useState<StudioSection>("image");
   const [historyPicker, setHistoryPicker] = useState<"image" | "video" | null>(null);
-  const [preview, setPreview] = useState<{ url: string; alt: string } | null>(null);
+  const [preview, setPreview] = useState<ImagePreviewRequest | null>(null);
+
+  const useAsVideoFirstFrame = (reference: MediaStudioHistoryReference) => {
+    setPreview(null);
+    setSection("video");
+    void store.addHistoryVideoInput(port, reference);
+  };
 
   useEffect(() => {
     void store.activate(port, ownerUserId);
@@ -51,7 +68,8 @@ export function MediaStudioView({ ownerUserId, port, storyPort }: MediaStudioVie
       {section === "image" ? (
         <ImageWorkspace
           onChooseHistory={() => setHistoryPicker("image")}
-          onPreview={(url, alt) => setPreview({ url, alt })}
+          onPreview={setPreview}
+          onUseForVideo={useAsVideoFirstFrame}
           port={port}
         />
       ) : section === "workflow" ? (
@@ -66,7 +84,8 @@ export function MediaStudioView({ ownerUserId, port, storyPort }: MediaStudioVie
         ) : null
       ) : (
         <HistoryWorkspace
-          onPreview={(url, alt) => setPreview({ url, alt })}
+          onPreview={setPreview}
+          onUseForVideo={useAsVideoFirstFrame}
           port={port}
         />
       )}
@@ -87,9 +106,10 @@ export function MediaStudioView({ ownerUserId, port, storyPort }: MediaStudioVie
       )}
       {preview && (
         <ImagePreview
-          alt={preview.alt}
-          url={preview.url}
+          items={preview.items}
+          selectedIndex={preview.selectedIndex}
           onDismiss={() => setPreview(null)}
+          onUseForVideo={useAsVideoFirstFrame}
         />
       )}
     </section>
@@ -157,14 +177,16 @@ function ImageWorkspace({
   port,
   onChooseHistory,
   onPreview,
+  onUseForVideo,
 }: {
   port: MediaStudioPort;
   onChooseHistory(): void;
-  onPreview(url: string, alt: string): void;
+  onPreview(request: ImagePreviewRequest): void;
+  onUseForVideo(reference: MediaStudioHistoryReference): void;
 }) {
   return (
     <div className="media-studio__workspace">
-      <CreationCanvas onPreview={onPreview} />
+      <CreationCanvas onPreview={onPreview} onUseForVideo={onUseForVideo} />
       <GenerationSettings onChooseHistory={onChooseHistory} port={port} />
     </div>
   );
@@ -457,7 +479,13 @@ function VideoAudioSelector({ port, disabled }: { port: MediaStudioPort; disable
   );
 }
 
-function CreationCanvas({ onPreview }: { onPreview(url: string, alt: string): void }) {
+function CreationCanvas({
+  onPreview,
+  onUseForVideo,
+}: {
+  onPreview(request: ImagePreviewRequest): void;
+  onUseForVideo(reference: MediaStudioHistoryReference): void;
+}) {
   const state = useMediaStudioStore();
   const items = mediaStudioDisplayItems(state);
   const latest = items[0];
@@ -482,7 +510,7 @@ function CreationCanvas({ onPreview }: { onPreview(url: string, alt: string): vo
         {state.isLoadingHistory && !item ? (
           <StudioState icon={<span className="mini-spinner" />} title="正在读取创作记录…" />
         ) : item ? (
-          <ResultItem item={latest!} onPreview={onPreview} />
+          <ResultItem item={latest!} onPreview={onPreview} onUseForVideo={onUseForVideo} />
         ) : (
           <EmptyCanvas />
         )}
@@ -523,24 +551,46 @@ function EmptyCanvas() {
 function ResultItem({
   item,
   onPreview,
+  onUseForVideo,
   compact = false,
 }: {
   item: MediaStudioDisplayItem;
-  onPreview(url: string, alt: string): void;
+  onPreview(request: ImagePreviewRequest): void;
+  onUseForVideo(reference: MediaStudioHistoryReference): void;
   compact?: boolean;
 }) {
   const value = displayItem(item);
+  const previewItems = value.images.flatMap((asset, index) => {
+    const url = mediaStudioAssetPreviewUrl(asset);
+    if (!url) return [];
+    return [{
+      url,
+      alt: `${(asset.revisedPrompt ?? value.prompt) || "生成图片"} ${index + 1}`,
+      historyReference: historyReferenceForAsset(item, asset),
+    } satisfies ImagePreviewItem];
+  });
   return (
     <article className={`media-result ${compact ? "media-result--compact" : ""}`}>
       <div className="media-result__images">
         {value.images.map((asset, index) => {
           const url = mediaStudioAssetPreviewUrl(asset);
-          const alt = `${value.prompt || "生成图片"} ${index + 1}`;
+          const alt = `${(asset.revisedPrompt ?? value.prompt) || "生成图片"} ${index + 1}`;
+          const reference = historyReferenceForAsset(item, asset);
+          const previewIndex = previewItems.findIndex((candidate) => candidate.url === url && candidate.alt === alt);
           return url ? (
-            <button key={asset.id} onClick={() => onPreview(url, alt)} type="button">
-              <img alt={alt} loading="lazy" src={url} />
-              <span aria-hidden="true">⌕</span>
-            </button>
+            <div className="media-result__image" key={asset.id}>
+              <button aria-label={`预览 ${alt}`} onClick={() => onPreview({ items: previewItems, selectedIndex: previewIndex })} type="button">
+                <img alt={alt} loading="lazy" src={url} />
+                <span aria-hidden="true">⌕</span>
+              </button>
+              <button
+                className="media-result__video-action"
+                disabled={reference == null}
+                onClick={() => { if (reference) onUseForVideo(reference); }}
+                title={reference == null ? "图片尚未保存到创作记录，不能安全设为视频首帧" : undefined}
+                type="button"
+              >▧ 用作视频首帧</button>
+            </div>
           ) : (
             <div className="media-result__unavailable" key={asset.id}>图片预览不可用</div>
           );
@@ -750,9 +800,11 @@ function ReferenceSelector({
 function HistoryWorkspace({
   port,
   onPreview,
+  onUseForVideo,
 }: {
   port: MediaStudioPort;
-  onPreview(url: string, alt: string): void;
+  onPreview(request: ImagePreviewRequest): void;
+  onUseForVideo(reference: MediaStudioHistoryReference): void;
 }) {
   const state = useMediaStudioStore();
   const items = mediaStudioDisplayItems(state);
@@ -805,7 +857,7 @@ function HistoryWorkspace({
             return (
               <section className="media-history-entry" key={`${item.source}-${value.id}`}>
                 <header><div><strong>{value.modelName}</strong><small>{formatDate(value.createdAtUnixMs)}</small></div><span>{value.images.length} 张</span></header>
-                <ResultItem compact item={item} onPreview={onPreview} />
+                <ResultItem compact item={item} onPreview={onPreview} onUseForVideo={onUseForVideo} />
               </section>
             );
           })}
@@ -893,20 +945,68 @@ function HistoryReferencePicker({
 }
 
 function ImagePreview({
-  url,
-  alt,
+  items,
+  selectedIndex,
   onDismiss,
+  onUseForVideo,
 }: {
-  url: string;
-  alt: string;
+  items: ImagePreviewItem[];
+  selectedIndex: number;
   onDismiss(): void;
+  onUseForVideo(reference: MediaStudioHistoryReference): void;
 }) {
+  const [index, setIndex] = useState(Math.min(Math.max(0, selectedIndex), Math.max(0, items.length - 1)));
+  const [scale, setScale] = useState<number | null>(null);
+  const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
+  const current = items[index];
   useDismissOnEscape(onDismiss);
+  useEffect(() => {
+    setScale(null);
+    setImageSize(null);
+  }, [index]);
+  if (!current) return null;
+  const percentage = scale == null ? "适应" : `${Math.round(scale * 100)}%`;
   return (
     <div className="media-preview-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onDismiss(); }}>
       <section aria-label="图片预览" aria-modal="true" className="media-preview" role="dialog">
-        <button aria-label="关闭图片预览" autoFocus onClick={onDismiss} type="button">×</button>
-        <img alt={alt} src={url} />
+        <header>
+          <strong>图片预览</strong>
+          {items.length > 1 && <>
+            <button aria-label="上一张图片" disabled={index === 0} onClick={() => setIndex((value) => value - 1)} type="button">‹</button>
+            <span>{index + 1} / {items.length}</span>
+            <button aria-label="下一张图片" disabled={index + 1 >= items.length} onClick={() => setIndex((value) => value + 1)} type="button">›</button>
+          </>}
+          <span className="media-preview__spacer" />
+          <button
+            disabled={current.historyReference == null}
+            onClick={() => { if (current.historyReference) onUseForVideo(current.historyReference); }}
+            title={current.historyReference == null ? "图片尚未保存到创作记录" : undefined}
+            type="button"
+          >▧ 用作视频首帧</button>
+          <button aria-label="关闭图片预览" autoFocus onClick={onDismiss} type="button">×</button>
+        </header>
+        <div className="media-preview__viewport">
+          <img
+            alt={current.alt}
+            onLoad={(event) => setImageSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+            src={current.url}
+            style={scale == null || imageSize == null ? undefined : {
+              height: `${imageSize.height * scale}px`,
+              maxHeight: "none",
+              maxWidth: "none",
+              width: `${imageSize.width * scale}px`,
+            }}
+          />
+        </div>
+        <footer>
+          <span>{imageSize ? `${imageSize.width} × ${imageSize.height}` : "正在读取尺寸…"}</span>
+          <span className="media-preview__spacer" />
+          <button aria-label="缩小图片" onClick={() => setScale((value) => Math.max(.05, (value ?? 1) / 1.25))} type="button">−</button>
+          <span>{percentage}</span>
+          <button aria-label="放大图片" onClick={() => setScale((value) => Math.min(8, (value ?? 1) * 1.25))} type="button">＋</button>
+          <button onClick={() => setScale(1)} type="button">100%</button>
+          <button onClick={() => setScale(null)} type="button">适应窗口</button>
+        </footer>
       </section>
     </div>
   );
@@ -969,6 +1069,14 @@ function displayItem(item: MediaStudioDisplayItem): {
   images: Array<MediaStudioHistoryAsset | MediaStudioGeneratedAsset>;
 } {
   return item.source === "history" ? item.item : item;
+}
+
+function historyReferenceForAsset(
+  item: MediaStudioDisplayItem,
+  asset: MediaStudioHistoryAsset | MediaStudioGeneratedAsset,
+): MediaStudioHistoryReference | null {
+  if (item.source !== "history" || !("contentToken" in asset)) return null;
+  return { recordId: item.item.id, contentToken: asset.contentToken };
 }
 
 function formatDate(value: number) {

@@ -583,6 +583,8 @@ Windows 产品版本：`3.0.9`
 
   - 2026-11-19 macOS 第 19 页本机终端对照：正式 Release 恢复既有 `17986` PowerShell 会话，页面显示会话标签、搜索、上一项/下一项、新建终端、`C:\Users\17986`、PowerShell、“已连接”和真实 prompt；终端操作菜单实际包含清屏、中断、关闭终端，无障碍树发布对应工作区、标签、按钮、状态与输入名称。依照 Computer Use 安全边界，本轮没有通过 UI 输入命令，也没有清屏、中断、关闭或新建会话。该记录关闭截图第 19 页的现有会话视觉与只读菜单对照，ConPTY IO、信号和进程树业务语义继续由既有原生测试及历史真实执行证据证明。
 
+  - 2026-11-20 macOS 第 06 页 AI 图片预览与视频首帧 handoff 回归：Windows 图片结果卡片和具名“图片预览”对话框都新增“用作视频首帧”，预览补齐多图导航、计数、真实尺寸、缩小/放大、`100%` 与适应窗口；未持久化的临时图片不能绕过 owner-scoped 历史引用边界。定向 UI `8 passed`、React/Vitest 全量 `149` 个测试文件 / `593 passed`，TypeScript、production build、architecture audit、Bundle audit、Skill 示例审计与差异检查全部通过。正式 Release `target-shared/release/chatos-windows-react.exe` 为 `62,054,912` bytes，SHA-256 `416943D6597AEF0C13BA1E458012B716151B23F0E82260772B015EA1E3A7BABF`。现有测试账号的纸狐狸结果真实显示新入口；预览读取 `1254 × 1254`，放大到 `125%` 后恢复适应，从预览交给视频页后首帧缩略图、具名暂存文件与移除入口均出现，移除后恢复为空。本轮没有生成、保存、删除或上传媒体，Diagram Studio 0.4.8 保持安装与启用且未启动应用卡片。
+
 ## C. 仍存在的真实功能差距
 
 ### P1：用户能直接感知
