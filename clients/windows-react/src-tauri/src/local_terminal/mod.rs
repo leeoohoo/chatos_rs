@@ -1,3 +1,6 @@
+use crate::interactive_pty::MAXIMUM_INPUT_BYTES;
+#[cfg(test)]
+use crate::interactive_pty::{MAXIMUM_OUTPUT_EVENTS, MAXIMUM_POLL_EVENTS};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::Serialize;
 use std::{
@@ -10,13 +13,6 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 const MAXIMUM_ACTIVE_SESSIONS_PER_OWNER: usize = 4;
-const MAXIMUM_INPUT_BYTES: usize = 64 * 1_024;
-const MAXIMUM_OUTPUT_EVENTS: usize = 512;
-const MAXIMUM_RETAINED_OUTPUT_BYTES: usize = 2 * 1_024 * 1_024;
-const MAXIMUM_POLL_EVENTS: usize = 128;
-const MAXIMUM_POLL_BYTES: usize = 256 * 1_024;
-const MAXIMUM_POLL_TIMEOUT_MS: u64 = 30_000;
-const OUTPUT_READ_BYTES: usize = 8 * 1_024;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct PresentationKey {

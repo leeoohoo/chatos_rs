@@ -20,6 +20,7 @@ mod device_gateway;
 mod general_settings;
 mod global_utilities;
 mod host_lifecycle;
+mod interactive_pty;
 mod local_terminal;
 mod media_studio;
 mod notepad;
