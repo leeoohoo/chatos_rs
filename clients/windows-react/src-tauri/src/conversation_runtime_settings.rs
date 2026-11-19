@@ -1,6 +1,7 @@
 use crate::{
     control_plane::ControlPlaneModelOption,
     host_lifecycle::{HostExecutionError, HostManager},
+    model_selection::is_generation_only_model,
 };
 use chatos_local_agent_protocol::{
     GetConversationRuntimeSettingsCommand, HostCommand, HostResult, ListRemoteConnectionsCommand,
@@ -347,30 +348,6 @@ fn default_model(models: &[ControlPlaneModelOption]) -> Option<&ControlPlaneMode
         .iter()
         .find(|model| !is_generation_only_model(&model.model_name))
         .or_else(|| models.first())
-}
-
-fn is_generation_only_model(model: &str) -> bool {
-    let value = model.trim().to_ascii_lowercase();
-    [
-        "gpt-image",
-        "dall-e",
-        "imagen",
-        "imagegen",
-        "image-generation",
-        "sora",
-        "veo",
-        "kling",
-        "seedance",
-        "hailuo",
-        "runway",
-        "luma",
-        "pixverse",
-        "vidu",
-        "cogvideo",
-        "hunyuan-video",
-    ]
-    .iter()
-    .any(|candidate| value.contains(candidate))
 }
 
 fn required(field: &str, value: String) -> Result<String, String> {

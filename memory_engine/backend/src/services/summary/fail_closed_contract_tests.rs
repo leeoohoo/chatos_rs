@@ -250,6 +250,94 @@ async fn oversized_thread_rollup_fails_without_marking_source_done() {
 }
 
 #[tokio::test]
+async fn occupied_rollup_partition_does_not_create_a_duplicate_job_run() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let thread_id = format!("thread-{suffix}");
+    let thread = thread(&pool, &tenant, &source, &thread_id).await;
+    let summary = crate::repositories::summaries::insert_test_thread_summary(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        &thread.subject_id,
+        "rollup source",
+        None,
+        None,
+        1,
+        None,
+    )
+    .await
+    .expect("create rollup source summary");
+    let owner = crate::repositories::control_plane::create_job_run(
+        &pool,
+        crate::models::CreateEngineJobRunRequest {
+            job_type: "rollup".to_string(),
+            trigger_type: "database_worker".to_string(),
+            tenant_id: Some(tenant.clone()),
+            source_id: Some(source.clone()),
+            thread_id: Some(thread_id.clone()),
+            subject_id: Some(thread.subject_id.clone()),
+            thread_label: None,
+            metadata: None,
+        },
+    )
+    .await
+    .expect("create owning rollup job");
+    crate::repositories::thread_partitions::try_claim_rollup(
+        &pool, &tenant, &source, &thread_id, "__none__", &owner.id, 300,
+    )
+    .await
+    .expect("claim rollup partition")
+    .expect("own rollup partition");
+
+    let result = run_prepared_thread_rollup(
+        &test_config(),
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        PreparedThreadRollup {
+            thread_id: thread_id.clone(),
+            project_partition_key: "__none__".to_string(),
+            level: 0,
+            selected: vec![summary],
+            trigger_reason: "model_input_capacity".to_string(),
+            cloud_job_run_id: None,
+        },
+        &RollupSettings {
+            token_limit: 500,
+            source_batch_token_limit: 500,
+            cloud_owner_entity_id: None,
+            cloud_source_id: None,
+            cloud_thread_id: None,
+        },
+        SCHEDULER_TRIGGER,
+    )
+    .await
+    .expect("occupied rollup is a no-op");
+    assert_eq!(result.batches, 0);
+    assert_eq!(result.generated, 0);
+    assert_eq!(result.marked, 0);
+
+    let job_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM engine_job_runs WHERE tenant_id=$1 AND source_id=$2 \
+         AND thread_id=$3 AND job_type='rollup'",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count rollup jobs");
+    assert_eq!(job_count, 1);
+}
+
+#[tokio::test]
 async fn late_success_callback_acknowledges_an_already_failed_summary_job() {
     let Some(pool) = pool().await else {
         return;

@@ -51,28 +51,23 @@ pub(super) fn transition_for_outcome(
     );
     let (next_status, next_attempt, pending_tool_batch, terminal_outcome, event_type, payload) =
         match outcome {
-            LocalAgentStepOutcome::Continue { checkpoint }
-                if run.iteration >= run.max_iterations =>
-            {
-                (
-                    LocalAgentRunStatus::NeedsReview,
-                    None,
-                    None,
-                    None,
-                    "iteration_limit_reached",
-                    json!({
-                        "reason": "maximum model iterations reached",
-                        "checkpoint": checkpoint
-                    }),
-                )
-            }
-            LocalAgentStepOutcome::Continue { checkpoint } => (
+            LocalAgentStepOutcome::Continue { .. } if run.iteration >= run.max_iterations => (
+                LocalAgentRunStatus::NeedsReview,
+                None,
+                None,
+                None,
+                "iteration_limit_reached",
+                json!({
+                    "reason": "maximum model iterations reached"
+                }),
+            ),
+            LocalAgentStepOutcome::Continue { .. } => (
                 LocalAgentRunStatus::ContinuationReady,
                 None,
                 None,
                 None,
                 "continuation_requested",
-                json!({"checkpoint": checkpoint}),
+                json!({}),
             ),
             LocalAgentStepOutcome::WaitForTool {
                 batch_id,
@@ -264,5 +259,24 @@ mod tests {
         )
         .expect("transition");
         assert!(transition.clear_continuation_input);
+    }
+
+    #[test]
+    fn continuation_event_does_not_duplicate_the_checkpoint() {
+        let run = run_with_tool_results();
+        let checkpoint = json!({"response": {"request_input_items": ["x".repeat(1_000_000)]}});
+        let transition = transition_for_outcome(
+            &run,
+            "claim-1".into(),
+            run.version,
+            LocalAgentStepOutcome::Continue {
+                checkpoint: checkpoint.clone(),
+            },
+            3_000,
+        )
+        .expect("transition");
+
+        assert_eq!(transition.checkpoint, Some(checkpoint));
+        assert_eq!(transition.event_payload, json!({}));
     }
 }

@@ -211,12 +211,68 @@ async fn history_repair_quarantines_untrusted_outputs_and_restores_partition_bac
             .expect("load migration run");
     assert_eq!(run_status, "completed");
 
-    for expected_kind in [
-        "thread_l0",
-        "thread_rollup",
-        "project_memory",
-        "agent_memory",
+    let ignored_record_id = format!("ignored-{suffix}");
+    let future_record_id = format!("future-{suffix}");
+    let mut tx = pool.begin().await.expect("begin rebuild boundary records");
+    for (id, summary_status, created_at) in [
+        (ignored_record_id.clone(), "ignored", "2026-11-09T00:00:01Z"),
+        (future_record_id.clone(), "pending", "2099-01-01T00:00:00Z"),
     ] {
+        crate::repositories::records::upsert_record_row(
+            &mut tx,
+            &EngineRecord {
+                id,
+                thread_id: thread_id.clone(),
+                tenant_id: tenant.clone(),
+                source_id: source.clone(),
+                external_record_id: None,
+                role: "assistant".to_string(),
+                record_type: "message".to_string(),
+                content: "outside the historical rebuild snapshot".to_string(),
+                structured_payload: None,
+                metadata: Some(json!({"memory_project_id": "project:alpha"})),
+                summary_status: summary_status.to_string(),
+                summary_id: None,
+                summarized_at: None,
+                created_at: created_at.to_string(),
+            },
+        )
+        .await
+        .expect("insert rebuild boundary record");
+    }
+    sqlx::query(
+        "UPDATE engine_records SET project_partition_key='project:alpha' \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=ANY($3)",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(vec![ignored_record_id, future_record_id])
+    .execute(&mut *tx)
+    .await
+    .expect("scope rebuild boundary records");
+    tx.commit().await.expect("commit rebuild boundary records");
+
+    let l0_claim =
+        crate::repositories::partition_rebuilds::claim_next(&pool, "contract-worker", 300)
+            .await
+            .expect("claim thread L0 rebuild")
+            .expect("expected thread L0 rebuild");
+    assert_eq!(l0_claim.rebuild_kind, "thread_l0");
+    let l0_state =
+        crate::repositories::partition_rebuilds::load_thread_l0_rebuild_state(&pool, &l0_claim)
+            .await
+            .expect("load thread L0 rebuild state")
+            .expect("thread L0 rebuild partition exists");
+    assert_eq!(l0_state.uncovered_count, 1);
+    assert!(crate::repositories::partition_rebuilds::record_completed(
+        &pool,
+        &l0_claim,
+        json!({"phase": "thread_l0_complete"}),
+    )
+    .await
+    .expect("complete thread L0 rebuild"));
+
+    for expected_kind in ["thread_rollup", "project_memory", "agent_memory"] {
         let claim =
             crate::repositories::partition_rebuilds::claim_next(&pool, "contract-worker", 300)
                 .await

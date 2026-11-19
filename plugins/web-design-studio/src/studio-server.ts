@@ -2,8 +2,12 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  pluginContextHandler,
+  pluginHealthHandler,
   pluginLocalHttpAuthentication,
-  readPluginLocalHttpEndpoint
+  readPluginLocalHttpEndpoint,
+  reportPluginApplicationStarted,
+  setPluginStaticAssetHeaders
 } from '../../shared/local-http-application-runtime.js';
 import { WebDesignDocumentStore, RevisionConflictError } from './document-store.js';
 import { runtimeScopeFingerprint } from './runtime-scope.js';
@@ -90,15 +94,11 @@ app.disable('x-powered-by');
 app.use(pluginLocalHttpAuthentication(endpoint));
 app.use(express.json({ limit: '50mb' }));
 
-app.get('/api/health', (_request, response) => {
-  response.setHeader('Cache-Control', 'no-store');
-  response.json({ ok: true, service: 'web-design-studio', dataDirectory: store.rootDirectory });
-});
-
-app.get('/api/context', (_request, response) => {
-  response.setHeader('Cache-Control', 'no-store');
-  response.json({ ...runtimeContext, ...(defaultProjectId ? { defaultProjectId } : {}) });
-});
+app.get('/api/health', pluginHealthHandler('web-design-studio', store.rootDirectory));
+app.get('/api/context', pluginContextHandler({
+  ...runtimeContext,
+  ...(defaultProjectId ? { defaultProjectId } : {})
+}));
 
 app.get('/api/documents', async (_request, response, next) => {
   try {
@@ -370,18 +370,10 @@ app.use(express.static(uiDirectory, {
   etag: false,
   lastModified: false,
   fallthrough: true,
-  setHeaders(response) {
-    response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    response.setHeader('Pragma', 'no-cache');
-    response.setHeader('Expires', '0');
-    response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.setHeader('Referrer-Policy', 'no-referrer');
-  }
+  setHeaders(response) { setPluginStaticAssetHeaders(response, true); }
 }));
 app.get('*path', (_request, response) => {
-  response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-  response.setHeader('Pragma', 'no-cache');
-  response.setHeader('Expires', '0');
+  setPluginStaticAssetHeaders(response, true);
   response.sendFile(path.join(uiDirectory, 'index.html'));
 });
 
@@ -394,6 +386,4 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   });
 });
 
-app.listen(port, host, () => {
-  process.stdout.write(`Web Design Studio is available at http://${host}:${port}\n`);
-});
+app.listen(port, host, () => reportPluginApplicationStarted('Web Design Studio', endpoint));

@@ -6,8 +6,9 @@ use crate::db::Db;
 use crate::models::{RunSubjectMemoryJobRequest, RunSubjectMemoryJobResponse};
 
 use super::common::{
-    build_outer_failed_job_run, create_subject_memory_job_run, empty_subject_memory_response,
-    finish_subject_memory_job_run, log_noop, prepare_subject_memory_job, SubjectMemoryJobProgress,
+    build_outer_failed_job_run, build_scope_busy_job_run, create_subject_memory_job_run,
+    empty_subject_memory_response, finish_subject_memory_job_run, log_noop,
+    prepare_subject_memory_job, SubjectMemoryJobProgress,
 };
 use super::level0::process_level0_selection;
 use super::rollup::process_rollup_selection;
@@ -54,17 +55,16 @@ pub(crate) async fn run_subject_memory_job_internal(
             finish_subject_memory_job_run(
                 db,
                 job_run.id.as_str(),
-                build_outer_failed_job_run(
+                build_scope_busy_job_run(
                     &req,
                     initial_prep.settings.relation_subject_id.as_str(),
-                    true,
                     initial_prep.input_count,
-                    &SubjectMemoryJobProgress::new(),
-                    "subject memory scope slot already occupied".to_string(),
                 ),
             )
             .await;
-            return Err("subject memory scope slot already occupied".to_string());
+            return Err(
+                crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED.to_string(),
+            );
         }
         Some(job_run.id.as_str())
     } else {
@@ -341,6 +341,16 @@ pub(crate) async fn resume_subject_memory_job(
             ),
         )
         .await;
+        if let Some(scope_key) = req.scope_key.as_deref() {
+            crate::repositories::subject_memory_scopes::release_subject_memory_scope_slot(
+                db,
+                req.tenant_id.as_str(),
+                req.source_id.as_str(),
+                scope_key,
+                job_run_id,
+            )
+            .await?;
+        }
         return Ok(empty_subject_memory_response(req.subject_id.clone()));
     }
     result

@@ -16,7 +16,10 @@ use super::super::selectors::select_rollup_batch;
 use super::super::{
     PreparedThreadRollup, RollupSettings, ThreadRollupDrainError, ThreadRollupResult,
 };
-use super::job::{create_rollup_job_run, done_metadata, failed_metadata, finish_rollup_job_run};
+use super::job::{
+    create_claimed_rollup_job_run, done_metadata, failed_metadata, finish_rollup_job_run,
+    partition_claim_deferred_job,
+};
 
 const THREAD_ROLLUP_GENERATION_STEP: &str = "thread_rollup_final";
 const GENERATION_FINALIZE_LEASE_SECONDS: i64 = 300;
@@ -130,15 +133,21 @@ pub(crate) async fn run_prepared_thread_rollup(
             .await?
             .ok_or_else(|| format!("rollup job run not found: {job_run_id}"))?
     } else {
-        create_rollup_job_run(
+        let Some(job_run) = create_claimed_rollup_job_run(
             db,
             tenant_id,
             source_id,
             thread.id.as_str(),
             thread.subject_id.as_str(),
+            project_partition_key.as_str(),
+            config.rollup_lock_timeout_secs,
             trigger_type,
         )
         .await?
+        else {
+            return Ok(empty_rollup_result());
+        };
+        job_run
     };
     if job_run.status == "done" {
         return Ok(ThreadRollupResult {
@@ -163,44 +172,16 @@ pub(crate) async fn run_prepared_thread_rollup(
         )
         .await?
     } else {
-        thread_partitions::try_claim_rollup(
-            db,
-            tenant_id,
-            source_id,
-            thread_id,
-            project_partition_key.as_str(),
-            job_run.id.as_str(),
-            config.rollup_lock_timeout_secs,
-        )
-        .await?
-        .is_some()
+        true
     };
     if !owns_claim {
         finish_rollup_job_run(
             db,
             job_run.id.as_str(),
-            FinishEngineJobRunRequest {
-                status: "failed".to_string(),
-                input_count: selected.len() as i64,
-                output_count: 0,
-                processed_count: 0,
-                success_count: 0,
-                error_count: 1,
-                metadata: Some(failed_metadata(
-                    Some(selected.len()),
-                    0,
-                    0,
-                    0,
-                    Some("partition_claim_occupied"),
-                )),
-                error_message: Some("thread rollup partition claim is occupied".to_string()),
-            },
+            partition_claim_deferred_job(selected.len()),
         )
         .await;
-        if resumed {
-            return Ok(empty_rollup_result());
-        }
-        return Err("thread rollup partition claim is occupied".to_string());
+        return Ok(empty_rollup_result());
     }
 
     let selected_ids = selected

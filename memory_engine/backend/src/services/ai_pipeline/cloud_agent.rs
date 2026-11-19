@@ -129,19 +129,26 @@ impl CloudSummaryPipelineState {
                 "Memory model identity or capability changed during the frozen generation".into(),
             );
         }
+        self.normalize_progress()?;
+        let capacity_group = self
+            .groups
+            .get(self.cursor)
+            .cloned()
+            .ok_or_else(|| "summary pipeline cursor escaped its active groups".to_string())?;
+        let capacity_contract = self.payload_contract_for_group(capacity_group.as_slice())?;
         let directive = format!(
             "{}\n\n{}",
             match self.phase {
                 PipelinePhase::Leaf => &self.spec.leaf_directive,
                 PipelinePhase::Merge => &self.spec.merge_directive,
             },
-            self.payload_contract.model_instruction()?
+            capacity_contract.model_instruction()?
         );
         let empty_input = build_ai_input(self.spec.managed_prompt.as_deref(), &directive, &[]);
         let capacity = ai.payload_source_capacity(
             crate::ai::SUMMARY_SYSTEM_PROMPT,
             &empty_input,
-            &self.payload_contract.response_format()?,
+            &capacity_contract.response_format()?,
         )?;
         if capacity < self.effective_token_limit {
             self.effective_token_limit = capacity;
@@ -217,7 +224,7 @@ impl CloudSummaryPipelineState {
                 message,
                 retry_kind,
                 backoff_ms,
-            }) if model_attempt <= ai.max_transient_retries() => Ok((
+            }) if model_attempt <= ai.transient_retry_limit(message.as_str()) => Ok((
                 AiSingleStepOutcome::Retry {
                     error: message,
                     retry_kind,
@@ -234,7 +241,7 @@ impl CloudSummaryPipelineState {
                     AiSingleStepOutcome::Failed {
                         error: format!(
                             "model request exhausted {} transient retries: {message}",
-                            ai.max_transient_retries()
+                            ai.transient_retry_limit(message.as_str())
                         ),
                     }
                 },
@@ -376,10 +383,7 @@ impl CloudSummaryPipelineState {
             .iter()
             .map(|item| super::estimate_tokens_text(item))
             .sum::<i64>();
-        if next_limit <= 0
-            || next_limit >= self.effective_token_limit
-            || group_tokens <= next_limit
-            || self.transient_split_count >= MAX_OVERFLOW_RETRIES
+        if next_limit <= 0 || next_limit >= self.effective_token_limit || group_tokens <= next_limit
         {
             return Ok(false);
         }
@@ -411,6 +415,9 @@ impl CloudSummaryPipelineState {
         }
         let mut contract = self.payload_contract.clone();
         contract.source_refs = source_refs;
+        contract
+            .supersession_candidates
+            .retain(|candidate| group.iter().any(|item| item.contains(candidate.as_str())));
         contract.validate()?;
         Ok(contract)
     }
@@ -728,6 +735,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_upstream_stream_is_returned_as_queue_retry() {
+        let ai = test_ai(
+            vec![TestResponse {
+                status: StatusCode::OK,
+                body: String::new(),
+            }],
+            3,
+        )
+        .await;
+        let state =
+            test_state(spec(vec!["input".to_string()], 512), contract()).expect("pipeline state");
+        let (outcome, _, result) = state.execute_one(&ai, 1).await.expect("model step");
+
+        assert!(
+            matches!(
+                &outcome,
+                AiSingleStepOutcome::Retry {
+                    next_model_attempt: 2,
+                    ..
+                }
+            ),
+            "unexpected empty-stream outcome: {outcome:?}"
+        );
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn repeated_empty_upstream_stream_splits_large_input_after_one_retry() {
+        let ai = test_ai(
+            vec![TestResponse {
+                status: StatusCode::OK,
+                body: String::new(),
+            }],
+            5,
+        )
+        .await;
+        let state =
+            test_state(spec(vec!["x".repeat(1_800)], 512), contract()).expect("pipeline state");
+        let (outcome, state, result) = state.execute_one(&ai, 2).await.expect("model step");
+
+        assert!(
+            matches!(outcome, AiSingleStepOutcome::Continue { ref reason, .. } if reason == "summary_transient_split")
+        );
+        assert_eq!(state.effective_token_limit, 256);
+        assert!(state.chunk_count > 1);
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn empty_stream_keeps_splitting_past_context_overflow_retry_cap() {
+        let ai = test_ai(
+            vec![TestResponse {
+                status: StatusCode::OK,
+                body: String::new(),
+            }],
+            5,
+        )
+        .await;
+        let mut state =
+            test_state(spec(vec!["x".repeat(1_800)], 512), contract()).expect("pipeline state");
+        state.transient_split_count = MAX_OVERFLOW_RETRIES;
+
+        let (outcome, state, result) = state.execute_one(&ai, 2).await.expect("model step");
+
+        assert!(
+            matches!(outcome, AiSingleStepOutcome::Continue { ref reason, .. } if reason == "summary_transient_split")
+        );
+        assert_eq!(state.effective_token_limit, 256);
+        assert_eq!(state.transient_split_count, MAX_OVERFLOW_RETRIES + 1);
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
     async fn exhausted_transient_retries_split_large_input_before_failing_job() {
         let ai = test_ai(
             vec![error(
@@ -901,5 +981,21 @@ mod tests {
                 .expect("every chunk remains attributable");
             assert_eq!(group_contract.source_refs, vec!["source-1"]);
         }
+    }
+
+    #[test]
+    fn group_contract_keeps_only_visible_supersession_candidates() {
+        let mut payload_contract = contract();
+        payload_contract.supersession_candidates =
+            vec!["fact-visible".to_string(), "fact-hidden".to_string()];
+        let state = test_state(spec(vec!["input".to_string()], 512), payload_contract)
+            .expect("pipeline state");
+        let group = vec!["[id=source-1]\n{\"supersedes\":[\"fact-visible\"]}".to_string()];
+
+        let contract = state
+            .payload_contract_for_group(group.as_slice())
+            .expect("group contract");
+
+        assert_eq!(contract.supersession_candidates, vec!["fact-visible"]);
     }
 }

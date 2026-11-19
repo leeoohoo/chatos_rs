@@ -26,6 +26,7 @@ use tokio::sync::watch;
 
 mod artifact_store;
 mod capability_snapshot_store;
+mod checkpoint_codec;
 mod conversation_commands;
 mod conversation_guidance;
 mod conversation_history;
@@ -354,7 +355,7 @@ impl SqliteClientStorage {
         .bind(i64::from(run.model_attempt))
         .bind(i64::from(run.max_iterations))
         .bind(run.version as i64)
-        .bind(serde_json::to_string(&run.checkpoint)?)
+        .bind(checkpoint_codec::encode(&run.checkpoint)?)
         .bind(run.created_at_unix_ms)
         .bind(run.updated_at_unix_ms)
         .execute(&mut *connection)
@@ -376,6 +377,10 @@ fn json_option(value: &Option<Value>) -> Result<Option<String>, ClientStorageErr
         .map(serde_json::to_string)
         .transpose()
         .map_err(Into::into)
+}
+
+fn checkpoint_option(value: &Option<Value>) -> Result<Option<Vec<u8>>, ClientStorageError> {
+    value.as_ref().map(checkpoint_codec::encode).transpose()
 }
 
 fn is_unique_violation(error: &sqlx::Error) -> bool {

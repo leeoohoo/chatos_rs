@@ -108,6 +108,10 @@ impl AiClient {
         self.max_transient_retries
     }
 
+    pub(crate) fn transient_retry_limit(&self, error: &str) -> usize {
+        chatos_ai_runtime::effective_transient_retry_limit(error, self.max_transient_retries)
+    }
+
     pub(crate) async fn generate_memory_payload_once(
         &self,
         system_prompt: &str,
@@ -202,7 +206,7 @@ impl AiClient {
             classify_generate_text_error(err, self.max_transient_retries)
         })?;
         validate_summary_text(self, request_kind, started_at, text)
-            .map_err(AiGenerateTextError::Fatal)
+            .map_err(|error| classify_generate_text_error(error, self.max_transient_retries))
     }
 }
 

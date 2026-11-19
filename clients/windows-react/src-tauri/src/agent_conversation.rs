@@ -21,9 +21,9 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::{
     agent_skill_management::{AgentProfessionRuntimeSnapshot, AgentSkillStore},
-    app_data_transaction::ensure_owned_directory,
     attachment_tool_worker::AttachmentToolWorker,
     authentication::AuthenticationManager,
+    connector_storage,
     conversation_attachments::{AttachmentManager, AttachmentScope},
     general_settings::GeneralSettingsStore,
     host_lifecycle::{validate_owner, HostManager},
@@ -5166,8 +5166,8 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
     let command = StartConversationTurnCommand {
         owner_user_id: owner_user_id.clone(),
         conversation_id: conversation_id.clone(),
-        expected_conversation_version: detail.conversation.version,
         conversation_if_missing: None,
+        expected_conversation_version: detail.conversation.version,
         turn_id: turn_id.clone(),
         message_id: host_message_id.clone(),
         run_id: run_id.clone(),
@@ -5339,8 +5339,8 @@ pub(crate) async fn dispatch_next_agent_communication_delivery(
     let command = StartConversationTurnCommand {
         owner_user_id: owner_user_id.clone(),
         conversation_id,
-        expected_conversation_version: detail.conversation.version,
         conversation_if_missing: None,
+        expected_conversation_version: detail.conversation.version,
         turn_id: turn_id.clone(),
         message_id: host_message_id.clone(),
         run_id: run_id.clone(),
@@ -5532,8 +5532,8 @@ pub(crate) async fn send_agent_conversation_draft(
     let command = StartConversationTurnCommand {
         owner_user_id: input.owner_user_id.clone(),
         conversation_id,
-        expected_conversation_version: detail.conversation.version,
         conversation_if_missing: None,
+        expected_conversation_version: detail.conversation.version,
         turn_id: turn_id.clone(),
         message_id: message_id.clone(),
         run_id: run_id.clone(),
@@ -6118,49 +6118,11 @@ fn open_database(path: &Path, read_only: bool) -> Result<Connection, String> {
 }
 
 fn confined_connector_directory(app_data_directory: &Path) -> Result<PathBuf, String> {
-    ensure_owned_directory(app_data_directory).map_err(|_| store_error())?;
-    reject_link_or_non_directory(app_data_directory)?;
-    let app_data = fs::canonicalize(app_data_directory).map_err(|_| store_error())?;
-    let requested = app_data.join("NativeConnector");
-    ensure_owned_directory(&requested).map_err(|_| store_error())?;
-    reject_link_or_non_directory(&requested)?;
-    let connector = fs::canonicalize(requested).map_err(|_| store_error())?;
-    if !connector.starts_with(&app_data) {
-        return Err(store_error());
-    }
-    Ok(connector)
-}
-
-fn reject_link_or_non_directory(path: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| store_error())?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
-        Err(store_error())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(windows)]
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn is_reparse_point(_: &fs::Metadata) -> bool {
-    false
+    connector_storage::confined_connector_directory(app_data_directory).map_err(|_| store_error())
 }
 
 fn reject_link_or_non_file(path: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            Err(store_error())
-        }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(store_error()),
-    }
+    connector_storage::reject_link_or_non_file(path).map_err(|_| store_error())
 }
 
 fn validate_identifier(value: &str) -> Result<(), String> {
@@ -6806,6 +6768,7 @@ fn team_asset_review_conflict() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn store() -> (tempfile::TempDir, AgentConversationStore) {
         let directory = tempfile::tempdir().unwrap();
@@ -11003,6 +10966,6 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("not-a-directory");
         fs::write(&file, b"file").unwrap();
-        assert!(reject_link_or_non_directory(&file).is_err());
+        assert!(connector_storage::reject_link_or_non_directory(&file).is_err());
     }
 }

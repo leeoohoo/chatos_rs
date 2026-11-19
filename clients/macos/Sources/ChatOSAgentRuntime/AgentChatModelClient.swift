@@ -1,4 +1,3 @@
-import ChatOSNetworking
 import Foundation
 
 public struct AgentHTTPStreamResponse: Sendable {
@@ -16,25 +15,13 @@ public struct AgentHTTPStreamResponse: Sendable {
 public struct AgentChatModelClient: AgentModelClient {
     public typealias Transport = @Sendable (URLRequest) async throws -> (Data, Int)
     public typealias StreamTransport = @Sendable (URLRequest) async throws -> AgentHTTPStreamResponse
-    private typealias FileTransport = @Sendable (
-        URLRequest,
-        AgentModelRequestBodyFile
-    ) async throws -> (Data, Int)
-    private typealias FileStreamTransport = @Sendable (
-        URLRequest,
-        AgentModelRequestBodyFile
-    ) async throws -> AgentHTTPStreamResponse
-
     private let endpoint: URL
     private let model: String
     private let apiKey: String
     private let thinking: String?
     private let maximumOutputTokens: Int?
     private let temperature: Double?
-    private let transport: Transport
-    private let streamTransport: StreamTransport
-    private let fileTransport: FileTransport
-    private let fileStreamTransport: FileStreamTransport
+    private let httpTransport: AgentModelHTTPTransport
 
     public init(
         baseURL: URL, model: String, apiKey: String, thinking: String? = nil,
@@ -52,43 +39,7 @@ public struct AgentChatModelClient: AgentModelClient {
         self.endpoint = endpoint; self.model = model; self.apiKey = apiKey
         self.thinking = thinking; self.maximumOutputTokens = maximumOutputTokens
         self.temperature = temperature
-        let resolvedTransport: Transport = transport ?? { request in
-            let (data, response) = try await BoundedURLSessionDataLoader.load(
-                request: request,
-                maximumBytes: 2 * 1_024 * 1_024
-            )
-            guard let response = response as? HTTPURLResponse else {
-                throw AgentRuntimeError.invalidResponse
-            }
-            return (data, response.statusCode)
-        }
-        self.transport = resolvedTransport
-        self.fileTransport = if transport == nil {
-            AgentModelRequestBodyTransport.upload
-        } else {
-            { request, bodyFile in
-                try await resolvedTransport(
-                    AgentModelRequestBodyTransport.materialize(
-                        request: request,
-                        bodyFile: bodyFile
-                    )
-                )
-            }
-        }
-        let resolvedStreamTransport = streamTransport ?? AgentURLSessionStream.open
-        self.streamTransport = resolvedStreamTransport
-        self.fileStreamTransport = if streamTransport == nil {
-            AgentModelRequestBodyTransport.stream
-        } else {
-            { request, bodyFile in
-                try await resolvedStreamTransport(
-                    AgentModelRequestBodyTransport.materialize(
-                        request: request,
-                        bodyFile: bodyFile
-                    )
-                )
-            }
-        }
+        self.httpTransport = AgentModelHTTPTransport(data: transport, stream: streamTransport)
     }
 
     public func complete(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval) async throws -> AgentMessage {
@@ -99,11 +50,10 @@ public struct AgentChatModelClient: AgentModelClient {
             stream: false
         )
         defer { prepared.bodyFile?.removeIfNeeded() }
-        let (data, status) = if let bodyFile = prepared.bodyFile {
-            try await fileTransport(prepared.request, bodyFile)
-        } else {
-            try await transport(prepared.request)
-        }
+        let (data, status) = try await httpTransport.send(
+            prepared.request,
+            bodyFile: prepared.bodyFile
+        )
         try Self.validate(status: status, errorBody: data)
         return try Self.decodeCompleteResponse(data)
     }
@@ -117,11 +67,10 @@ public struct AgentChatModelClient: AgentModelClient {
             stream: true
         )
         defer { prepared.bodyFile?.removeIfNeeded() }
-        let response = if let bodyFile = prepared.bodyFile {
-            try await fileStreamTransport(prepared.request, bodyFile)
-        } else {
-            try await streamTransport(prepared.request)
-        }
+        let response = try await httpTransport.openStream(
+            prepared.request,
+            bodyFile: prepared.bodyFile
+        )
         await onEvent(.responseCreated)
         if !(200..<300).contains(response.statusCode) {
             var body = Data()

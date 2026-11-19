@@ -8,22 +8,16 @@ struct NativeLocalAgentModelCredentialStore: Sendable {
     private let keychain: KeychainSecretStore
 
     init(rootURL: URL? = nil) {
-        let resolvedRootURL: URL
-        if let rootURL {
-            resolvedRootURL = rootURL
-        } else {
-            let support = FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first ?? FileManager.default.homeDirectoryForCurrentUser
-            resolvedRootURL = support
-                .appendingPathComponent("ChatOSSwift", isDirectory: true)
-                .appendingPathComponent("NativeConnector", isDirectory: true)
-                .appendingPathComponent("Secrets", isDirectory: true)
-                .appendingPathComponent("LocalAgentModels", isDirectory: true)
-        }
+        let resolvedRootURL = rootURL ?? Self.productionRootURL
         self.rootURL = resolvedRootURL
-        self.keychain = KeychainSecretStore(service: Self.keychainService(rootURL: resolvedRootURL))
+        let service = Self.keychainService(rootURL: resolvedRootURL)
+        self.keychain = KeychainSecretStore(
+            service: service,
+            vaultService: Self.usesProductionVault(rootURL: resolvedRootURL)
+                ? KeychainSecretStore.chatOSVaultService
+                : "\(service).vault",
+            legacyItemPolicy: .none
+        )
     }
 
     func loadWithoutUserInteraction(
@@ -100,6 +94,15 @@ struct NativeLocalAgentModelCredentialStore: Sendable {
             .map { String(format: "%02x", $0) }
             .joined()
         return "com.chatos.swift.native-connector.local-agent-models.\(digest)"
+    }
+
+    static var productionRootURL: URL {
+        NativeConnectorSecretStore.productionRootURL
+            .appendingPathComponent("LocalAgentModels", isDirectory: true)
+    }
+
+    static func usesProductionVault(rootURL: URL) -> Bool {
+        rootURL.standardizedFileURL == productionRootURL.standardizedFileURL
     }
 }
 

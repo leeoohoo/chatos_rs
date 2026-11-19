@@ -3,20 +3,23 @@
 
 use crate::db::Db;
 use crate::models::{CreateEngineJobRunRequest, FinishEngineJobRunRequest};
-use crate::repositories::control_plane as cp_repo;
+use crate::repositories::{control_plane as cp_repo, thread_partitions};
 
 pub(crate) const SCHEDULER_TRIGGER: &str = "scheduler";
 
-pub(super) async fn create_rollup_job_run(
+pub(super) async fn create_claimed_rollup_job_run(
     db: &Db,
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
     subject_id: &str,
+    project_partition_key: &str,
+    lease_seconds: i64,
     trigger_type: &str,
-) -> Result<crate::models::EngineJobRun, String> {
-    cp_repo::create_job_run(
-        db,
+) -> Result<Option<crate::models::EngineJobRun>, String> {
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let job = cp_repo::create_job_run_in_tx(
+        &mut tx,
         CreateEngineJobRunRequest {
             job_type: "rollup".to_string(),
             trigger_type: trigger_type.to_string(),
@@ -28,7 +31,23 @@ pub(super) async fn create_rollup_job_run(
             metadata: Some(serde_json::json!({"pipeline": "thread_rollup"})),
         },
     )
-    .await
+    .await?;
+    let claim = thread_partitions::try_claim_rollup_in_tx(
+        &mut tx,
+        tenant_id,
+        source_id,
+        thread_id,
+        project_partition_key,
+        job.id.as_str(),
+        lease_seconds,
+    )
+    .await?;
+    if claim.is_none() {
+        tx.rollback().await.map_err(|error| error.to_string())?;
+        return Ok(None);
+    }
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(Some(job))
 }
 
 pub(super) async fn finish_rollup_job_run(
@@ -57,6 +76,24 @@ pub(super) fn done_metadata(
     value
 }
 
+pub(super) fn partition_claim_deferred_job(selected_count: usize) -> FinishEngineJobRunRequest {
+    FinishEngineJobRunRequest {
+        status: "done".to_string(),
+        input_count: selected_count as i64,
+        output_count: 0,
+        processed_count: 0,
+        success_count: 0,
+        error_count: 0,
+        metadata: Some(done_metadata(
+            selected_count,
+            0,
+            None,
+            "partition_claim_occupied",
+        )),
+        error_message: None,
+    }
+}
+
 pub(super) fn failed_metadata(
     selected_count: Option<usize>,
     marked_count: usize,
@@ -77,4 +114,22 @@ pub(super) fn failed_metadata(
         value["trigger_reason"] = serde_json::json!(reason);
     }
     value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::partition_claim_deferred_job;
+
+    #[test]
+    fn occupied_partition_is_deferred_without_recording_a_failure() {
+        let result = partition_claim_deferred_job(137);
+
+        assert_eq!(result.status, "done");
+        assert_eq!(result.error_count, 0);
+        assert_eq!(result.error_message, None);
+        assert_eq!(
+            result.metadata.unwrap()["trigger_reason"],
+            "partition_claim_occupied"
+        );
+    }
 }

@@ -58,8 +58,14 @@ struct NativeRemoteConnectionCredentialStore: Sendable {
         self.secretStore = secretStore
     }
 
-    func load(connectionID: String) throws -> NativeRemoteConnectionCredentials? {
-        guard let data = try secretStore.load(account: account(connectionID)) else { return nil }
+    func load(
+        connectionID: String,
+        migrateLegacy: Bool = true
+    ) throws -> NativeRemoteConnectionCredentials? {
+        guard let data = try secretStore.load(
+            account: account(connectionID),
+            migrateLegacy: migrateLegacy
+        ) else { return nil }
         return try JSONDecoder().decode(NativeRemoteConnectionCredentials.self, from: data)
     }
 

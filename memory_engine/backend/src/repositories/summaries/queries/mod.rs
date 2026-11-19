@@ -14,6 +14,7 @@ pub use rollups::{
     list_summaries_by_ids_in_source, list_threads_with_pending_rollups,
 };
 pub use thread::{
-    get_summary_by_id, list_latest_thread_summaries_at_level_for_project,
-    list_latest_thread_summary_frontier, list_thread_summaries,
+    get_highest_thread_summary_for_project, get_summary_by_id,
+    list_latest_thread_summaries_at_level_for_project, list_latest_thread_summary_frontier,
+    list_thread_summaries,
 };

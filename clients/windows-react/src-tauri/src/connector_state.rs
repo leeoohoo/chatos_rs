@@ -1,12 +1,12 @@
 use serde_json::{json, Map, Value};
 use std::{
-    fs::{self, OpenOptions},
+    fs::OpenOptions,
     io::Read,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
 };
 
-use crate::app_data_transaction::{ensure_owned_directory, replace_owned_file};
+use crate::{app_data_transaction::replace_owned_file, connector_storage};
 
 const MAXIMUM_STATE_BYTES: u64 = 16 * 1_024 * 1_024;
 static STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -102,53 +102,11 @@ fn new_device_id() -> String {
 }
 
 fn confined_connector_directory(app_data_directory: &Path) -> Result<PathBuf, String> {
-    ensure_owned_directory(app_data_directory).map_err(|_| state_error())?;
-    validate_private_directory(app_data_directory)?;
-    let canonical_data = fs::canonicalize(app_data_directory).map_err(|_| state_error())?;
-    let requested = canonical_data.join("NativeConnector");
-    ensure_owned_directory(&requested).map_err(|_| state_error())?;
-    validate_private_directory(&requested)?;
-    let canonical_connector = fs::canonicalize(requested).map_err(|_| state_error())?;
-    if !canonical_connector.starts_with(&canonical_data) {
-        return Err(state_error());
-    }
-    Ok(canonical_connector)
-}
-
-fn validate_private_directory(path: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| state_error())?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
-        Err(state_error())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(windows)]
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn is_reparse_point(_: &fs::Metadata) -> bool {
-    false
+    connector_storage::confined_connector_directory(app_data_directory).map_err(|_| state_error())
 }
 
 fn reject_symbolic_link(path: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata)
-            if metadata.file_type().is_symlink()
-                || is_reparse_point(&metadata)
-                || !metadata.is_file() =>
-        {
-            Err(state_error())
-        }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(state_error()),
-    }
+    connector_storage::reject_link_or_non_file(path).map_err(|_| state_error())
 }
 
 fn load_state(path: &Path) -> Result<Map<String, Value>, String> {
@@ -254,6 +212,7 @@ fn state_error() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn initializes_owner_state_and_preserves_same_owner_grants() {

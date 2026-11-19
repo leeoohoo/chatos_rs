@@ -9,7 +9,8 @@ use crate::repositories::{memory_facts, subject_memories, subject_memory_scopes,
 
 use super::policy::ResolvedComposeContextPolicy;
 
-const RECENT_SUBJECT_MEMORY_LIMIT: i64 = 3;
+const RECENT_THREAD_LEVEL0_SUMMARY_LIMIT: i64 = 2;
+const RECENT_PROJECT_MEMORY_LIMIT: i64 = 3;
 
 pub(crate) struct BuiltContextBlocks {
     pub(crate) blocks: Vec<ComposeContextBlock>,
@@ -35,8 +36,6 @@ pub(crate) async fn build_context_blocks(
         tenant_id,
         source_id,
         thread.id.as_str(),
-        200,
-        thread_allows_dynamic_project_recall(thread),
         context_project_subject_id,
     )
     .await?;
@@ -315,43 +314,34 @@ pub(crate) fn build_thread_summary_level0_text(rows: &[EngineSummary]) -> String
         .join("\n\n---\n\n")
 }
 
-pub(crate) fn build_thread_summary_blocks_from_frontier(
-    mut frontier: Vec<EngineSummary>,
+pub(crate) fn build_thread_summary_blocks(
+    level0_rows: Vec<EngineSummary>,
+    top_summary: Option<EngineSummary>,
 ) -> (Vec<ComposeContextBlock>, usize) {
     let mut blocks = Vec::new();
-    let summary_count = frontier.len();
-    frontier.sort_by(|left, right| {
-        right
-            .level
-            .cmp(&left.level)
-            .then_with(|| right.created_at.cmp(&left.created_at))
-            .then_with(|| left.id.cmp(&right.id))
-    });
-    for top_summary in frontier.iter().filter(|summary| summary.level > 0) {
+    let mut summary_count = level0_rows.len();
+    if let Some(top_summary) = top_summary.filter(|summary| summary.level > 0) {
+        summary_count += 1;
         let source_ref = top_summary.id.clone();
         blocks.push(context_block(
             source_ref.clone(),
             "thread_summary_top_level",
             "thread_continuity",
-            Some(top_summary.subject_id.clone()),
+            Some(top_summary.subject_id),
             "__none__".to_string(),
             Some(top_summary.level),
             vec![source_ref],
-            top_summary.summary_text.clone(),
-            "canonical_thread_frontier",
+            top_summary.summary_text,
+            "highest_thread_summary",
         ));
     }
 
-    let level0_rows = frontier
-        .into_iter()
-        .filter(|summary| summary.level == 0)
-        .collect::<Vec<_>>();
     if !level0_rows.is_empty() {
         let source_refs = level0_rows
             .iter()
             .map(|summary| summary.id.clone())
             .collect::<Vec<_>>();
-        let block_id = format!("thread-summary-frontier:{}", source_refs.join(":"));
+        let block_id = format!("thread-summary-level0:{}", source_refs.join(":"));
         let subject_id = level0_rows
             .first()
             .map(|summary| summary.subject_id.clone());
@@ -364,7 +354,7 @@ pub(crate) fn build_thread_summary_blocks_from_frontier(
             Some(0),
             source_refs,
             build_thread_summary_level0_text(level0_rows.as_slice()),
-            "canonical_thread_frontier",
+            "recent_thread_level0",
         ));
     }
 
@@ -422,39 +412,30 @@ async fn load_thread_summary_blocks(
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
-    summary_limit: i64,
-    isolate_dynamic_project: bool,
     context_project_subject_id: Option<&str>,
 ) -> Result<(Vec<ComposeContextBlock>, usize), String> {
-    // Stable Agent threads may contain several projects. Their existing rollups can combine
-    // those projects, so only project-scoped level-0 summaries are safe as Thread context.
-    // Cross-project durable knowledge is already supplied by Agent Memory, while the current
-    // project's complete rollup is supplied by Project Summary.
-    let frontier = if isolate_dynamic_project {
-        summaries::list_latest_thread_summaries_at_level_for_project(
-            db,
-            tenant_id,
-            source_id,
-            thread_id,
-            "thread_incremental",
-            0,
-            context_project_subject_id,
-            summary_limit,
-        )
-        .await?
-    } else {
-        summaries::list_latest_thread_summary_frontier(
-            db,
-            tenant_id,
-            source_id,
-            thread_id,
-            "thread_incremental",
-            summary_limit,
-        )
-        .await?
-    };
+    let level0_rows = summaries::list_latest_thread_summaries_at_level_for_project(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        "thread_incremental",
+        0,
+        context_project_subject_id,
+        RECENT_THREAD_LEVEL0_SUMMARY_LIMIT,
+    )
+    .await?;
+    let top_summary = summaries::get_highest_thread_summary_for_project(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        "thread_incremental",
+        context_project_subject_id,
+    )
+    .await?;
 
-    let (mut blocks, count) = build_thread_summary_blocks_from_frontier(frontier);
+    let (mut blocks, count) = build_thread_summary_blocks(level0_rows, top_summary);
     let partition = context_project_subject_id.unwrap_or("__none__");
     for block in &mut blocks {
         block.project_partition_key = partition.to_string();
@@ -471,32 +452,57 @@ async fn load_subject_memory_blocks(
     let mut blocks = Vec::new();
 
     for subject_id in subject_ids {
-        let (memory_type, rollup_block_type, recent_block_type) =
-            if subject_id.starts_with("agent:") {
-                ("agent_memory", "agent_memory_rollup", "agent_memory_recent")
-            } else if subject_id.starts_with("project:") {
-                (
-                    "project_summary",
-                    "project_summary_rollup",
-                    "project_summary_recent",
-                )
-            } else {
-                continue;
-            };
-        let required_generation_profile = subject_id
-            .starts_with("agent:")
-            .then_some(subject_memory_scopes::AGENT_STABLE_MEMORY_PROFILE);
+        if subject_id.starts_with("agent:") {
+            if let Some(memory) = subject_memories::list_subject_memories_for_context(
+                db,
+                tenant_id,
+                source_id,
+                subject_id,
+                "agent_memory",
+                None,
+                None,
+                None,
+                Some(subject_memory_scopes::AGENT_STABLE_MEMORY_PROFILE),
+                1,
+            )
+            .await?
+            .into_iter()
+            .next()
+            {
+                let block_id = memory.id.clone();
+                let level = memory.level;
+                blocks.push(context_block(
+                    block_id.clone(),
+                    if level > 0 {
+                        "agent_memory_rollup"
+                    } else {
+                        "agent_memory_recent"
+                    },
+                    "agent_stable_memory",
+                    Some(subject_id.clone()),
+                    "__none__".to_string(),
+                    Some(level),
+                    vec![block_id],
+                    format_subject_memory(memory),
+                    "highest_agent_memory",
+                ));
+            }
+            continue;
+        }
+        if !subject_id.starts_with("project:") {
+            continue;
+        }
 
         let rollup = subject_memories::list_subject_memories_for_context(
             db,
             tenant_id,
             source_id,
             subject_id,
-            memory_type,
+            "project_summary",
             None,
             None,
             None,
-            required_generation_profile,
+            None,
             1,
         )
         .await?
@@ -509,18 +515,10 @@ async fn load_subject_memory_blocks(
             let level = memory.level;
             blocks.push(context_block(
                 block_id.clone(),
-                rollup_block_type,
-                if subject.starts_with("project:") {
-                    "project_state"
-                } else {
-                    "agent_stable_memory"
-                },
+                "project_summary_rollup",
+                "project_state",
                 Some(subject.clone()),
-                if subject.starts_with("project:") {
-                    subject
-                } else {
-                    "__none__".to_string()
-                },
+                subject,
                 Some(level),
                 vec![block_id],
                 format_subject_memory(memory),
@@ -533,12 +531,12 @@ async fn load_subject_memory_blocks(
             tenant_id,
             source_id,
             subject_id,
-            memory_type,
+            "project_summary",
             Some(0),
             Some("pending"),
             Some(subject_id),
-            required_generation_profile,
-            RECENT_SUBJECT_MEMORY_LIMIT,
+            None,
+            RECENT_PROJECT_MEMORY_LIMIT,
         )
         .await?;
         if recent.is_empty() && !has_rollup {
@@ -547,11 +545,11 @@ async fn load_subject_memory_blocks(
                 tenant_id,
                 source_id,
                 subject_id,
-                memory_type,
+                "project_summary",
                 Some(0),
                 None,
                 None,
-                required_generation_profile,
+                None,
                 1,
             )
             .await?;
@@ -565,18 +563,10 @@ async fn load_subject_memory_blocks(
             let block_id = format!("subject-memory-frontier:{}", source_refs.join(":"));
             blocks.push(context_block(
                 block_id,
-                recent_block_type,
-                if subject_id.starts_with("project:") {
-                    "project_state"
-                } else {
-                    "agent_stable_memory"
-                },
+                "project_summary_recent",
+                "project_state",
                 Some(subject_id.clone()),
-                if subject_id.starts_with("project:") {
-                    subject_id.clone()
-                } else {
-                    "__none__".to_string()
-                },
+                subject_id.clone(),
                 level,
                 source_refs,
                 recent

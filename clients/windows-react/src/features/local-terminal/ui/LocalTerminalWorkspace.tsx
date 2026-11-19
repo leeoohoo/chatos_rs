@@ -38,7 +38,6 @@ export function LocalTerminalWorkspace({
     if (query) surfaceRef.current?.findNext(query);
     else surfaceRef.current?.clearSearch();
   }, [searchText, selected?.id]);
-
   if (!hostReady) {
     return (
       <section className="local-terminal local-terminal--unavailable" aria-label="本机终端工作区">
@@ -71,7 +70,6 @@ export function LocalTerminalWorkspace({
     actionsRef.current?.removeAttribute("open");
     state.closeTerminal(port, selected.id);
   };
-
   return (
     <section className="local-terminal" aria-label="本机终端工作区">
       <header className="local-terminal-commandbar">
@@ -143,9 +141,9 @@ export function LocalTerminalWorkspace({
               <code>{localTerminalDisplayPath(selected.workingDirectory)}</code>
             </div>
             <span className={`local-terminal-status local-terminal-status--${selected.phase}`}>
-              {selected.shellName}
+              {statusLabel(selected.phase, selected.exitCode)}
             </span>
-            <span className="local-terminal-shell">{statusLabel(selected.phase, selected.exitCode)}</span>
+            <span className="local-terminal-shell">{selected.shellName}</span>
           </header>
           <LocalTerminalSurface key={selected.id} port={port} ref={surfaceRef} tabId={selected.id} />
           {(selected.errorMessage || selected.warningMessage) && (

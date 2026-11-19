@@ -513,6 +513,31 @@ pub async fn try_claim_rollup(
     job_run_id: &str,
     lease_seconds: i64,
 ) -> Result<Option<PartitionRollupClaim>, String> {
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let claim = try_claim_rollup_in_tx(
+        &mut tx,
+        tenant_id,
+        source_id,
+        thread_id,
+        project_partition_key,
+        job_run_id,
+        lease_seconds,
+    )
+    .await?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(claim)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn try_claim_rollup_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    project_partition_key: &str,
+    job_run_id: &str,
+    lease_seconds: i64,
+) -> Result<Option<PartitionRollupClaim>, String> {
     if job_run_id.trim().is_empty() {
         return Err("partition rollup job_run_id is required".to_string());
     }
@@ -532,7 +557,7 @@ pub async fn try_claim_rollup(
     .bind(project_partition_key)
     .bind(job_run_id)
     .bind(lease_seconds.clamp(1, 86_400) as f64)
-    .fetch_optional(db)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(|error| error.to_string())?;
     Ok(claim)

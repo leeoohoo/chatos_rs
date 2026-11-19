@@ -4,6 +4,80 @@
 use super::*;
 
 #[tokio::test]
+async fn large_checkpoint_is_compressed_at_rest_and_loaded_losslessly() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    storage
+        .create_run(&command("create", "create"), &run(1_000), "created")
+        .await
+        .unwrap();
+    let claim = storage
+        .claim_next_run(
+            &command("claim", "claim"),
+            "user-1",
+            "worker-1",
+            "token-1",
+            2_000,
+            12_000,
+            "claimed",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let checkpoint = serde_json::json!({
+        "response": {
+            "request_input_items": [{
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": "T".repeat(1_000_000)
+            }]
+        }
+    });
+    let updated = storage
+        .apply_transition(
+            &command("continue", "continue"),
+            &RunTransition {
+                run_id: claim.run.run_id.clone(),
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                expected_status: LocalAgentRunStatus::ModelRunning,
+                next_status: LocalAgentRunStatus::ContinuationReady,
+                next_model_attempt: 1,
+                next_attempt_at_unix_ms: None,
+                pending_tool_batch: None,
+                tool_batch: None,
+                checkpoint: Some(checkpoint.clone()),
+                clear_continuation_input: true,
+                terminal_outcome: None,
+                event_id: "continued".into(),
+                event_type: "continuation_requested".into(),
+                event_payload: serde_json::json!({"reason": "test"}),
+                occurred_at_unix_ms: 2_001,
+            },
+        )
+        .await
+        .unwrap();
+
+    let stored: Vec<u8> =
+        sqlx::query_scalar("SELECT checkpoint_json FROM local_agent_runs WHERE run_id = ?")
+            .bind(&claim.run.run_id)
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
+    assert!(stored.starts_with(b"chatos-checkpoint-gzip-v1\0"));
+    assert!(stored.len() < 768 * 1_024);
+    assert_eq!(updated.checkpoint, checkpoint);
+    assert_eq!(
+        storage
+            .get_run(&claim.run.run_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .checkpoint,
+        checkpoint
+    );
+}
+
+#[tokio::test]
 async fn large_create_replays_original_run_after_business_state_changes_and_restart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("client.sqlite");

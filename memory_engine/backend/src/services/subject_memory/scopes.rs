@@ -238,7 +238,10 @@ mod tests {
 
     #[test]
     fn legacy_project_scope_uses_the_canonical_memory_type() {
-        assert_eq!(canonical_scope_memory_type("project_memory"), "project_summary");
+        assert_eq!(
+            canonical_scope_memory_type("project_memory"),
+            "project_summary"
+        );
         assert_eq!(canonical_scope_memory_type("agent_memory"), "agent_memory");
     }
 }

@@ -428,6 +428,7 @@ dependencies = [
  "chatos_local_agent_ports",
  "chatos_local_agent_protocol",
  "chrono",
+ "flate2",
  "fs2",
  "libc",
  "serde",

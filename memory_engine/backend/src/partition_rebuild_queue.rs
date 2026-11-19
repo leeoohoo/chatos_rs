@@ -4,7 +4,6 @@
 use std::sync::Arc;
 
 use serde_json::{json, Value};
-use sqlx::Row;
 use tracing::{info, warn};
 
 use crate::repositories::{
@@ -77,49 +76,17 @@ async fn reconcile_thread_l0(
     state: &AppState,
     claim: &partition_rebuilds::PartitionRebuildClaim,
 ) -> Result<RebuildOutcome, String> {
-    let row = sqlx::query(
-        "SELECT p.pending_record_count,p.pending_summary_tokens,p.summary_status, \
-                p.summary_dispatch_version,p.summary_dispatch_published_version, \
-                p.summary_dispatch_consumed_version,p.summary_dispatch_dead_letter_version, \
-                (SELECT COUNT(*) FROM engine_records r \
-                  WHERE r.tenant_id=p.tenant_id AND r.source_id=p.source_id \
-                    AND r.thread_id=p.thread_id AND r.project_partition_key=p.project_partition_key \
-                    AND r.recall_eligible AND NOT EXISTS ( \
-                        SELECT 1 FROM engine_summary_record_coverage coverage \
-                         WHERE coverage.tenant_id=r.tenant_id AND coverage.source_id=r.source_id \
-                           AND coverage.record_id=r.id AND coverage.status='active')) AS uncovered_count \
-           FROM engine_thread_summary_partitions p \
-          WHERE p.tenant_id=$1 AND p.source_id=$2 AND p.thread_id=$3 \
-            AND p.project_partition_key=$4",
-    )
-    .bind(&claim.tenant_id)
-    .bind(&claim.source_id)
-    .bind(&claim.thread_id)
-    .bind(&claim.project_partition_key)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|error| error.to_string())?
-    .ok_or_else(|| "partition rebuild source partition is missing".to_string())?;
-    let pending_count: i64 = row
-        .try_get("pending_record_count")
-        .map_err(|e| e.to_string())?;
-    let pending_tokens: i64 = row
-        .try_get("pending_summary_tokens")
-        .map_err(|e| e.to_string())?;
-    let summary_status: String = row.try_get("summary_status").map_err(|e| e.to_string())?;
-    let version: i64 = row
-        .try_get("summary_dispatch_version")
-        .map_err(|e| e.to_string())?;
-    let published: i64 = row
-        .try_get("summary_dispatch_published_version")
-        .map_err(|e| e.to_string())?;
-    let consumed: i64 = row
-        .try_get("summary_dispatch_consumed_version")
-        .map_err(|e| e.to_string())?;
-    let dead_letter: Option<i64> = row
-        .try_get("summary_dispatch_dead_letter_version")
-        .map_err(|e| e.to_string())?;
-    let uncovered: i64 = row.try_get("uncovered_count").map_err(|e| e.to_string())?;
+    let row = partition_rebuilds::load_thread_l0_rebuild_state(&state.pool, claim)
+        .await?
+        .ok_or_else(|| "partition rebuild source partition is missing".to_string())?;
+    let pending_count = row.pending_record_count;
+    let pending_tokens = row.pending_summary_tokens;
+    let summary_status = row.summary_status;
+    let version = row.summary_dispatch_version;
+    let published = row.summary_dispatch_published_version;
+    let consumed = row.summary_dispatch_consumed_version;
+    let dead_letter = row.summary_dispatch_dead_letter_version;
+    let uncovered = row.uncovered_count;
     let cursor = json!({
         "phase": if uncovered == 0 { "thread_l0_complete" } else { "thread_l0_waiting" },
         "uncovered_records": uncovered,

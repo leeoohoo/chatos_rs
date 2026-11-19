@@ -7,7 +7,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 #[tokio::test]
-async fn version_forty_nine_allows_team_conversations_to_share_contact_identity() {
+async fn version_fifty_allows_team_conversations_to_share_contact_identity() {
     let mut connection = SqliteConnection::connect_with(
         &SqliteConnectOptions::from_str("sqlite::memory:")
             .unwrap()
@@ -39,7 +39,7 @@ async fn version_forty_nine_allows_team_conversations_to_share_contact_identity(
     .await
     .unwrap();
 
-    for statement in schema::SCHEMA_V49 {
+    for statement in schema::SCHEMA_V50 {
         sqlx::query(sqlx::AssertSqlSafe(*statement))
             .execute(&mut connection)
             .await
@@ -780,12 +780,13 @@ async fn version_forty_two_accepts_legacy_hook_events_without_recovery_payloads(
     .expect("legacy Hook invocation");
     let mut connection = storage.pool.acquire().await.expect("connection");
     for statement in [
-        "DELETE FROM client_schema_migrations WHERE version = 49",
+        "DELETE FROM client_schema_migrations WHERE version = 50",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN tokenizer_id",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN protocol_overhead_estimator_id",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN output_reserve_tokens",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN context_window_tokens",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN model_capability_revision",
+        "DELETE FROM client_schema_migrations WHERE version = 49",
         "DELETE FROM client_schema_migrations WHERE version = 48",
         "DROP TRIGGER local_memory_outbox_activity_update",
         "DROP TRIGGER local_memory_outbox_activity_insert",
@@ -870,12 +871,13 @@ pub(super) async fn rewind_receipt_v36(connection: &mut SqliteConnection) {
 
 pub(super) async fn rewind_receipt_v37(connection: &mut SqliteConnection) {
     for statement in [
-        "DELETE FROM client_schema_migrations WHERE version = 49",
+        "DELETE FROM client_schema_migrations WHERE version = 50",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN tokenizer_id",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN protocol_overhead_estimator_id",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN output_reserve_tokens",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN context_window_tokens",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN model_capability_revision",
+        "DELETE FROM client_schema_migrations WHERE version = 49",
         "DELETE FROM client_schema_migrations WHERE version = 48",
         "DROP TRIGGER local_memory_outbox_activity_update",
         "DROP TRIGGER local_memory_outbox_activity_insert",

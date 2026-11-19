@@ -81,32 +81,12 @@ enum ChatOSResponseBodyFileWriter {
             throw MediaGenerationClientError.invalidVideoContent
         }
         let plannedBytes = expectedBytes ?? maximumBytes
-        _ = reconcileOrphanedArtifacts(
-            in: temporaryDirectory,
-            olderThan: Date().addingTimeInterval(-orphanRetention),
-            maximumCandidates: maximumCleanupCandidates,
+        let destination = try prepareDestination(
+            plannedBytes: plannedBytes,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride,
             artifactKind: artifactKind
         )
-        do {
-            // The downloaded temporary file normally coexists with one final Story/History
-            // copy. Keep room for that second copy on the common same-volume path.
-            if let availableCapacityOverride {
-                try MediaDiskCapacityPolicy.ensureCapacity(
-                    availableBytes: availableCapacityOverride,
-                    writeBytes: Int64(plannedBytes),
-                    retainedBytes: Int64(plannedBytes)
-                )
-            } else {
-                try MediaDiskCapacityPolicy.ensureCapacity(
-                    in: temporaryDirectory,
-                    writeBytes: Int64(plannedBytes),
-                    retainedBytes: Int64(plannedBytes)
-                )
-            }
-        } catch let error as MediaDiskCapacityError {
-            throw MediaGenerationClientError.insufficientDiskSpace(error.localizedDescription)
-        }
-        let destination = try makeDestination(in: temporaryDirectory, artifactKind: artifactKind)
         var completed = false
         defer {
             try? destination.handle.close()
@@ -130,29 +110,15 @@ enum ChatOSResponseBodyFileWriter {
                   expectedBytes.map({ byteCount == $0 }) ?? true else {
                 throw MediaGenerationClientError.invalidVideoContent
             }
-            try destination.handle.synchronize()
-            try destination.handle.close()
+            let result = try commit(destination, byteCount: byteCount)
             completed = true
-            let owner = destination.owner
-            return GeneratedMediaFile(
-                url: owner.payloadURL,
-                byteCount: byteCount,
-                deleteWhenReleased: true,
-                cleanup: { owner.removeArtifact() }
-            )
+            return result
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as MediaGenerationClientError {
             throw error
         } catch {
-            let error = error as NSError
-            if (error.domain == NSPOSIXErrorDomain && error.code == Int(ENOSPC))
-                || (error.domain == NSCocoaErrorDomain
-                    && error.code == CocoaError.fileWriteOutOfSpace.rawValue) {
-                throw MediaGenerationClientError.insufficientDiskSpace(
-                    "写入过程中磁盘空间已耗尽。"
-                )
-            }
+            if let error = diskFullError(error) { throw error }
             throw MediaGenerationClientError.invalidVideoContent
         }
     }
@@ -167,31 +133,12 @@ enum ChatOSResponseBodyFileWriter {
         guard maximumBytes > 0 else {
             throw MediaGenerationClientError.invalidVideoContent
         }
-        _ = reconcileOrphanedArtifacts(
-            in: temporaryDirectory,
-            olderThan: Date().addingTimeInterval(-orphanRetention),
-            maximumCandidates: maximumCleanupCandidates,
+        let destination = try prepareDestination(
+            plannedBytes: maximumBytes,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride,
             artifactKind: artifactKind
         )
-        do {
-            if let availableCapacityOverride {
-                try MediaDiskCapacityPolicy.ensureCapacity(
-                    availableBytes: availableCapacityOverride,
-                    writeBytes: Int64(maximumBytes),
-                    retainedBytes: Int64(maximumBytes)
-                )
-            } else {
-                try MediaDiskCapacityPolicy.ensureCapacity(
-                    in: temporaryDirectory,
-                    writeBytes: Int64(maximumBytes),
-                    retainedBytes: Int64(maximumBytes)
-                )
-            }
-        } catch let error as MediaDiskCapacityError {
-            throw MediaGenerationClientError.insufficientDiskSpace(error.localizedDescription)
-        }
-
-        let destination = try makeDestination(in: temporaryDirectory, artifactKind: artifactKind)
         var completed = false
         defer {
             try? destination.handle.close()
@@ -201,36 +148,16 @@ enum ChatOSResponseBodyFileWriter {
             try Task.checkCancellation()
             try populate(destination.handle)
             try Task.checkCancellation()
-            var status = stat()
-            guard fstat(destination.handle.fileDescriptor, &status) == 0,
-                  isOwnedSingleLinkRegularFile(status),
-                  status.st_size > 0,
-                  status.st_size <= maximumBytes else {
-                throw MediaGenerationClientError.invalidVideoContent
-            }
-            try destination.handle.synchronize()
-            try destination.handle.close()
+            let byteCount = try validatedSize(destination, maximumBytes: maximumBytes)
+            let result = try commit(destination, byteCount: byteCount)
             completed = true
-            let owner = destination.owner
-            return GeneratedMediaFile(
-                url: owner.payloadURL,
-                byteCount: Int(status.st_size),
-                deleteWhenReleased: true,
-                cleanup: { owner.removeArtifact() }
-            )
+            return result
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as MediaGenerationClientError {
             throw error
         } catch {
-            let error = error as NSError
-            if (error.domain == NSPOSIXErrorDomain && error.code == Int(ENOSPC))
-                || (error.domain == NSCocoaErrorDomain
-                    && error.code == CocoaError.fileWriteOutOfSpace.rawValue) {
-                throw MediaGenerationClientError.insufficientDiskSpace(
-                    "写入过程中磁盘空间已耗尽。"
-                )
-            }
+            if let error = diskFullError(error) { throw error }
             throw MediaGenerationClientError.invalidVideoContent
         }
     }
@@ -245,31 +172,12 @@ enum ChatOSResponseBodyFileWriter {
         guard maximumBytes > 0 else {
             throw MediaGenerationClientError.invalidVideoContent
         }
-        _ = reconcileOrphanedArtifacts(
-            in: temporaryDirectory,
-            olderThan: Date().addingTimeInterval(-orphanRetention),
-            maximumCandidates: maximumCleanupCandidates,
+        let destination = try prepareDestination(
+            plannedBytes: maximumBytes,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride,
             artifactKind: artifactKind
         )
-        do {
-            if let availableCapacityOverride {
-                try MediaDiskCapacityPolicy.ensureCapacity(
-                    availableBytes: availableCapacityOverride,
-                    writeBytes: Int64(maximumBytes),
-                    retainedBytes: Int64(maximumBytes)
-                )
-            } else {
-                try MediaDiskCapacityPolicy.ensureCapacity(
-                    in: temporaryDirectory,
-                    writeBytes: Int64(maximumBytes),
-                    retainedBytes: Int64(maximumBytes)
-                )
-            }
-        } catch let error as MediaDiskCapacityError {
-            throw MediaGenerationClientError.insufficientDiskSpace(error.localizedDescription)
-        }
-
-        let destination = try makeDestination(in: temporaryDirectory, artifactKind: artifactKind)
         var completed = false
         defer {
             try? destination.handle.close()
@@ -279,38 +187,88 @@ enum ChatOSResponseBodyFileWriter {
             try Task.checkCancellation()
             try await populate(destination.owner.payloadURL, destination.handle)
             try Task.checkCancellation()
-            var status = stat()
-            guard fstat(destination.handle.fileDescriptor, &status) == 0,
-                  isOwnedSingleLinkRegularFile(status),
-                  status.st_size > 0,
-                  status.st_size <= maximumBytes else {
-                throw MediaGenerationClientError.invalidVideoContent
-            }
-            try destination.handle.synchronize()
-            try destination.handle.close()
+            let byteCount = try validatedSize(destination, maximumBytes: maximumBytes)
+            let result = try commit(destination, byteCount: byteCount)
             completed = true
-            let owner = destination.owner
-            return GeneratedMediaFile(
-                url: owner.payloadURL,
-                byteCount: Int(status.st_size),
-                deleteWhenReleased: true,
-                cleanup: { owner.removeArtifact() }
-            )
+            return result
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as MediaGenerationClientError {
             throw error
         } catch {
-            let error = error as NSError
-            if (error.domain == NSPOSIXErrorDomain && error.code == Int(ENOSPC))
-                || (error.domain == NSCocoaErrorDomain
-                    && error.code == CocoaError.fileWriteOutOfSpace.rawValue) {
-                throw MediaGenerationClientError.insufficientDiskSpace(
-                    "写入过程中磁盘空间已耗尽。"
-                )
-            }
+            if let error = diskFullError(error) { throw error }
             throw error
         }
+    }
+
+    private static func prepareDestination(
+        plannedBytes: Int,
+        temporaryDirectory: URL,
+        availableCapacityOverride: Int64?,
+        artifactKind: ArtifactKind
+    ) throws -> Destination {
+        _ = reconcileOrphanedArtifacts(
+            in: temporaryDirectory,
+            olderThan: Date().addingTimeInterval(-orphanRetention),
+            maximumCandidates: maximumCleanupCandidates,
+            artifactKind: artifactKind
+        )
+        do {
+            // The temporary file normally coexists with one final Story/History copy.
+            if let availableCapacityOverride {
+                try MediaDiskCapacityPolicy.ensureCapacity(
+                    availableBytes: availableCapacityOverride,
+                    writeBytes: Int64(plannedBytes),
+                    retainedBytes: Int64(plannedBytes)
+                )
+            } else {
+                try MediaDiskCapacityPolicy.ensureCapacity(
+                    in: temporaryDirectory,
+                    writeBytes: Int64(plannedBytes),
+                    retainedBytes: Int64(plannedBytes)
+                )
+            }
+        } catch let error as MediaDiskCapacityError {
+            throw MediaGenerationClientError.insufficientDiskSpace(error.localizedDescription)
+        }
+        return try makeDestination(in: temporaryDirectory, artifactKind: artifactKind)
+    }
+
+    private static func validatedSize(
+        _ destination: Destination,
+        maximumBytes: Int
+    ) throws -> Int {
+        var status = stat()
+        guard fstat(destination.handle.fileDescriptor, &status) == 0,
+              isOwnedSingleLinkRegularFile(status),
+              status.st_size > 0,
+              status.st_size <= maximumBytes else {
+            throw MediaGenerationClientError.invalidVideoContent
+        }
+        return Int(status.st_size)
+    }
+
+    private static func commit(
+        _ destination: Destination,
+        byteCount: Int
+    ) throws -> GeneratedMediaFile {
+        try destination.handle.synchronize()
+        try destination.handle.close()
+        let owner = destination.owner
+        return GeneratedMediaFile(
+            url: owner.payloadURL,
+            byteCount: byteCount,
+            deleteWhenReleased: true,
+            cleanup: { owner.removeArtifact() }
+        )
+    }
+
+    private static func diskFullError(_ error: Error) -> MediaGenerationClientError? {
+        let error = error as NSError
+        guard (error.domain == NSPOSIXErrorDomain && error.code == Int(ENOSPC))
+                || (error.domain == NSCocoaErrorDomain
+                    && error.code == CocoaError.fileWriteOutOfSpace.rawValue) else { return nil }
+        return .insufficientDiskSpace("写入过程中磁盘空间已耗尽。")
     }
 
     @discardableResult

@@ -88,20 +88,13 @@ public enum ProgressiveSkillFileLoader {
         guard file.path.hasPrefix(root.path + "/"), fileManager.fileExists(atPath: file.path) else {
             throw LoaderError.unavailableFile
         }
-        let values = try file.resourceValues(forKeys: [
-            .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
-        ])
-        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+        do {
+            return try BoundedFileReader.read(file, maximumBytes: maximumBytes)
+        } catch BoundedFileReadError.fileTooLarge {
+            throw LoaderError.fileTooLarge
+        } catch {
             throw LoaderError.unavailableFile
         }
-        guard values.fileSize ?? maximumBytes + 1 <= maximumBytes else {
-            throw LoaderError.fileTooLarge
-        }
-        let handle = try FileHandle(forReadingFrom: file)
-        defer { try? handle.close() }
-        let data = try handle.read(upToCount: maximumBytes + 1) ?? Data()
-        guard data.count <= maximumBytes else { throw LoaderError.fileTooLarge }
-        return data
     }
 
     public static func readTextPage(

@@ -13,7 +13,7 @@ pub(super) fn decode_run(row: SqliteRow) -> Result<LocalAgentRunRecord, ClientSt
     let input: String = row.try_get("input_json").db()?;
     let pending_tool_batch: Option<String> = row.try_get("pending_tool_batch_json").db()?;
     let terminal_outcome: Option<String> = row.try_get("terminal_outcome_json").db()?;
-    let checkpoint: String = row.try_get("checkpoint_json").db()?;
+    let checkpoint: Vec<u8> = row.try_get_unchecked("checkpoint_json").db()?;
     let continuation_input: Option<String> = row.try_get("continuation_input_json").db()?;
     Ok(LocalAgentRunRecord {
         run_id: row.try_get("run_id").db()?,
@@ -36,7 +36,7 @@ pub(super) fn decode_run(row: SqliteRow) -> Result<LocalAgentRunRecord, ClientSt
         pending_tool_batch: pending_tool_batch
             .map(|value| serde_json::from_str(&value))
             .transpose()?,
-        checkpoint: serde_json::from_str(&checkpoint)?,
+        checkpoint: super::checkpoint_codec::decode(&checkpoint)?,
         continuation_input: continuation_input
             .map(|value| serde_json::from_str(&value))
             .transpose()?,

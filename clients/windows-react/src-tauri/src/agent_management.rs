@@ -1,7 +1,6 @@
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::{
-    fs,
     io::Cursor,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -9,8 +8,9 @@ use std::{
 use tauri::{http, State};
 
 use crate::{
-    app_data_transaction::ensure_owned_directory,
+    agent_professions::PROFESSION_KEYS,
     authentication::{AuthenticationManager, GatewayModelConfig},
+    connector_storage,
     host_lifecycle::validate_owner,
     media_studio::MediaStudioManager,
 };
@@ -1087,49 +1087,11 @@ fn open_database(path: &Path, read_only: bool) -> Result<Connection, String> {
 }
 
 fn confined_connector_directory(app_data_directory: &Path) -> Result<PathBuf, String> {
-    ensure_owned_directory(app_data_directory).map_err(|_| store_error())?;
-    reject_link_or_non_directory(app_data_directory)?;
-    let app_data = fs::canonicalize(app_data_directory).map_err(|_| store_error())?;
-    let requested = app_data.join("NativeConnector");
-    ensure_owned_directory(&requested).map_err(|_| store_error())?;
-    reject_link_or_non_directory(&requested)?;
-    let connector = fs::canonicalize(requested).map_err(|_| store_error())?;
-    if !connector.starts_with(&app_data) {
-        return Err(store_error());
-    }
-    Ok(connector)
-}
-
-fn reject_link_or_non_directory(path: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| store_error())?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
-        Err(store_error())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(windows)]
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn is_reparse_point(_: &fs::Metadata) -> bool {
-    false
+    connector_storage::confined_connector_directory(app_data_directory).map_err(|_| store_error())
 }
 
 fn reject_link_or_non_file(path: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            Err(store_error())
-        }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(store_error()),
-    }
+    connector_storage::reject_link_or_non_file(path).map_err(|_| store_error())
 }
 
 fn invalid_row() -> rusqlite::Error {
@@ -1140,45 +1102,10 @@ fn store_error() -> String {
     "Agent 管理数据不可用，请检查本机存储后重试。".into()
 }
 
-const PROFESSION_KEYS: &[&str] = &[
-    "project_manager",
-    "product_manager",
-    "technical_manager",
-    "solution_architect",
-    "security_engineer",
-    "qa_engineer",
-    "software_engineer",
-    "fullstack_engineer",
-    "frontend_engineer",
-    "backend_engineer",
-    "mobile_engineer",
-    "desktop_engineer",
-    "game_engineer",
-    "embedded_iot_engineer",
-    "database_engineer",
-    "devops_engineer",
-    "data_engineer",
-    "data_analyst",
-    "machine_learning_engineer",
-    "research_specialist",
-    "product_designer",
-    "ui_designer",
-    "ux_designer",
-    "game_designer",
-    "technical_writer",
-    "business_analyst",
-    "implementation_consultant",
-    "erp_consultant",
-    "wms_consultant",
-    "domain_expert",
-    "operations_specialist",
-    "growth_marketing_specialist",
-    "general_member",
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn store() -> (tempfile::TempDir, AgentProfileStore) {
         let directory = tempfile::tempdir().unwrap();
@@ -1443,7 +1370,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("not-a-directory");
         fs::write(&file, b"file").unwrap();
-        assert!(reject_link_or_non_directory(&file).is_err());
+        assert!(connector_storage::reject_link_or_non_directory(&file).is_err());
     }
 
     fn mutation() -> AgentProfileMutationInput {

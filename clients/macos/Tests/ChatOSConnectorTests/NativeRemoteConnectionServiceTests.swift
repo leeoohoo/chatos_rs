@@ -6,6 +6,36 @@ import Foundation
 import XCTest
 
 final class NativeRemoteConnectionServiceTests: XCTestCase {
+    func testListingDoesNotMigrateLegacyCredentialsUntilConnectionIsUsed() async throws {
+        let upstream = RemoteConnectionUpstreamStub()
+        let saved = try await upstream.createConnection(Self.passwordDraft)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-remote-lazy-migration-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let legacyURL = root.appendingPathComponent(
+            "remote-connection-credentials-v1_\(saved.id)"
+        )
+        try JSONEncoder().encode(
+            NativeRemoteConnectionCredentials(password: "legacy-secret")
+        ).write(to: legacyURL)
+        let service = NativeRemoteConnectionService(
+            upstream: upstream,
+            tester: RemoteConnectionTesterSpy(),
+            credentialStore: NativeRemoteConnectionCredentialStore(
+                secretStore: NativeConnectorSecretStore(rootURL: root)
+            )
+        )
+
+        let listed = try await service.listConnections()
+
+        XCTAssertEqual(listed.first?.hasPassword, false)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+        let resolved = try await service.resolvedDraft(id: saved.id)
+        XCTAssertEqual(resolved.password, "legacy-secret")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyURL.path))
+    }
+
     func testStoresCredentialsLocallyAndNeverSendsThemToCloud() async throws {
         let upstream = RemoteConnectionUpstreamStub()
         let tester = RemoteConnectionTesterSpy()

@@ -3,8 +3,7 @@
 
 use std::time::Duration;
 
-use chatos_config_sdk::{ConfigClient, ConfigSnapshot, ServicePressureSignal};
-use tokio::sync::watch;
+use chatos_config_sdk::{ConfigClient, ConfigSnapshot, ConfigWatchState, ServicePressureSignal};
 use tokio::task::JoinHandle;
 
 pub use chatos_config_sdk::PlatformPressureLevel;
@@ -29,38 +28,18 @@ pub struct LocalConnectorPressurePolicy {
 
 impl LocalConnectorPressurePolicy {
     pub fn from_snapshot(snapshot: &ConfigSnapshot) -> Result<Self, String> {
-        let level = snapshot
-            .value(PLATFORM_PRESSURE_LEVEL_CONFIG_KEY)
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                format!(
-                    "{PLATFORM_PRESSURE_LEVEL_CONFIG_KEY} is required from configuration center"
-                )
-            })
-            .and_then(PlatformPressureLevel::parse)?;
-        let pending_relay_elevated = required_usize(
-            snapshot,
-            PRESSURE_PENDING_RELAY_ELEVATED_CONFIG_KEY,
-            1,
-            10_000_000,
-        )?;
-        let pending_relay_critical = required_usize(
-            snapshot,
-            PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY,
-            2,
-            100_000_000,
-        )?;
+        let level = snapshot.required_pressure_level(PLATFORM_PRESSURE_LEVEL_CONFIG_KEY)?;
+        let pending_relay_elevated =
+            snapshot.required_usize(PRESSURE_PENDING_RELAY_ELEVATED_CONFIG_KEY, 1, 10_000_000)?;
+        let pending_relay_critical =
+            snapshot.required_usize(PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY, 2, 100_000_000)?;
         if pending_relay_elevated >= pending_relay_critical {
             return Err(format!(
                 "{PRESSURE_PENDING_RELAY_ELEVATED_CONFIG_KEY} must be less than {PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY}"
             ));
         }
-        let report_interval_ms = required_u64(
-            snapshot,
-            PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
-            1_000,
-            300_000,
-        )?;
+        let report_interval_ms =
+            snapshot.required_u64(PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY, 1_000, 300_000)?;
         Ok(Self {
             level,
             pending_relay_elevated,
@@ -70,29 +49,7 @@ impl LocalConnectorPressurePolicy {
     }
 }
 
-#[derive(Clone)]
-pub struct LocalConnectorPressureState {
-    sender: watch::Sender<LocalConnectorPressurePolicy>,
-}
-
-impl LocalConnectorPressureState {
-    pub fn new(initial: LocalConnectorPressurePolicy) -> Self {
-        let (sender, _) = watch::channel(initial);
-        Self { sender }
-    }
-
-    pub fn snapshot(&self) -> LocalConnectorPressurePolicy {
-        self.sender.borrow().clone()
-    }
-
-    fn update(&self, next: LocalConnectorPressurePolicy) -> bool {
-        if *self.sender.borrow() == next {
-            return false;
-        }
-        self.sender.send_replace(next);
-        true
-    }
-}
+pub type LocalConnectorPressureState = ConfigWatchState<LocalConnectorPressurePolicy>;
 
 pub fn start_pressure_reporter(
     state: AppState,
@@ -170,36 +127,6 @@ fn pressure_signal_from_relay_stats(
             stats.pending_relay_requests
         ),
     }
-}
-
-fn required_usize(
-    snapshot: &ConfigSnapshot,
-    key: &str,
-    minimum: usize,
-    maximum: usize,
-) -> Result<usize, String> {
-    let value = snapshot
-        .usize(key)
-        .ok_or_else(|| format!("{key} is required from configuration center"))?;
-    if !(minimum..=maximum).contains(&value) {
-        return Err(format!("{key} must be between {minimum} and {maximum}"));
-    }
-    Ok(value)
-}
-
-fn required_u64(
-    snapshot: &ConfigSnapshot,
-    key: &str,
-    minimum: u64,
-    maximum: u64,
-) -> Result<u64, String> {
-    let value = snapshot
-        .u64(key)
-        .ok_or_else(|| format!("{key} is required from configuration center"))?;
-    if !(minimum..=maximum).contains(&value) {
-        return Err(format!("{key} must be between {minimum} and {maximum}"));
-    }
-    Ok(value)
 }
 
 #[cfg(test)]

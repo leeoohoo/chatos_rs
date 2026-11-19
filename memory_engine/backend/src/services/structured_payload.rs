@@ -239,10 +239,8 @@ impl MemoryPayloadContract {
             " The payload must contain at least one durable fact."
         };
         Ok(format!(
-            "Return exactly one {schema} JSON object matching the enforced response schema. Classify each durable statement into the narrowest fact collection. Every fact must cite only source_refs visible in the supplied source items. Use supersedes only when a newer fact directly replaces one of these frozen candidate IDs: {candidates}. fact_id is a required model-local identifier and will be replaced by the server's deterministic identifier. Do not include credentials, authorization grants, or facts unsupported by the sources.{empty_instruction}",
+            "Return exactly one {schema} JSON object matching the enforced response schema. Classify each durable statement into the narrowest fact collection. Every fact must cite only source_refs visible in the supplied source items. Use supersedes only when a newer fact directly replaces a frozen candidate fact_id visible in the supplied source items. fact_id is a required model-local identifier and will be replaced by the server's deterministic identifier. Do not include credentials, authorization grants, or facts unsupported by the sources.{empty_instruction}",
             schema = MEMORY_PAYLOAD_SCHEMA,
-            candidates = serde_json::to_string(&self.supersession_candidates)
-                .map_err(|error| error.to_string())?,
         ))
     }
 
@@ -679,6 +677,23 @@ mod tests {
                 "provider schema must not contain {unsupported}"
             );
         }
+    }
+
+    #[test]
+    fn provider_contract_inlines_frozen_id_sets() {
+        let mut value = contract();
+        value.source_refs = vec!["record-provider-size-marker".to_string()];
+        value.supersession_candidates = vec!["fact-provider-size-marker".to_string()];
+
+        let response_format = value
+            .response_format()
+            .expect("response schema")
+            .to_string();
+        let instruction = value.model_instruction().expect("model instruction");
+
+        assert!(response_format.contains("record-provider-size-marker"));
+        assert!(response_format.contains("fact-provider-size-marker"));
+        assert!(!instruction.contains("fact-provider-size-marker"));
     }
 
     #[test]

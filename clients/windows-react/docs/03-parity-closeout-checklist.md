@@ -1,10 +1,12 @@
 # Windows React 与 macOS 功能拉齐关闭清单
 
-更新时间：2026-11-19
+更新时间：2026-11-20
 
 分支：`3.0.9.3.1`
 
 Windows 产品版本：`3.0.9`
+
+- 2026-11-20 完成 `origin/3.0.9.12`（`30d2943d9`）向 Windows 分支的集成与真实回归。共享变更包含 Local Agent durable checkpoint/任务状态、AI durable response history、模型选择、字符串会话历史游标、Plugin `local_http` runtime 与压力治理；Windows 端同步补齐 v50 Contact identity 迁移、共享 reparse-safe Connector storage、原子文件提交、共享本机/远端交互 PTY 和统一终端画布。Diagram Studio 打包测试修正 Windows npm CLI 调用后为 `60 passed, 0 failed`，并验证脱离仓库 `node_modules` 的打包插件可真实启动本地后端；0.4.8 已安装启用状态保持，未启动应用卡片。Rust 门禁为 AI runtime `212 passed`、Client storage/migration `227 passed`、Windows Tauri `641 passed, 0 failed, 7 ignored`，Windows `--all-targets`、根 workspace 全量测试及两套 Clippy `-D warnings` 均通过；React/Vitest 在原生复测发现并关闭“清空终端搜索仍保留 xterm 选择”后为 `150` 个文件 / `594 passed`，TypeScript、production build、architecture audit、Bundle audit（入口 `459.74 KiB raw / 138.88 KiB gzip`）、Skill 示例审计、Rustfmt 和差异检查均通过。正式 `--no-bundle` Release 为 `61,842,432` bytes，SHA-256 `50A7FBDDF5190A06940095FDCADE0DDDE90BD4688D2CEC477AA5183D07D36E2A`；现有测试账号真实恢复 Host ready、项目目录、插件安装助手历史、Agent 项目经理职业及 33 个职业 Skill，本机 PowerShell 会话、搜索、搜索清除和清屏/中断/关闭菜单均可达。终端搜索先真实命中 `PowerShell`，清空后匹配选择和上下项状态同步消失；全程未通过 UI 输入终端命令、未发送消息、未修改业务数据。
 
 - 2026-11-20 完成 macOS 第 07 页“AI 视频”的 Windows Release 现有媒体和首帧选择回归。视频画布真实恢复已保存的 `MiniMax-H3` 纸狐狸视频、原提示词和本机保存状态；播放控件进入“暂停”，进度到约 `4.46` 秒后正常结束并恢复“播放”。设置区真实加载 `my_api / MiniMax-H3`、`768P`、`6s`、`16:9`、首帧历史/本机图片和参考音频入口，空提示词时生成按钮禁用。从当前账号 5 条图片记录中选择纸狐狸图片并“设为首帧”后，缩略图、来源与移除入口出现；随后移除，恢复未选择状态。未上传图片/音频、未输入提示词、未生成或取消新视频；上传格式、生成轮询和取消继续由既有原生/前端回归及历史真实生成证据覆盖。
 

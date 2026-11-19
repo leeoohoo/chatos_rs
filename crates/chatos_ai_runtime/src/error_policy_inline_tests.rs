@@ -206,6 +206,10 @@ mod tests {
             "incomplete Responses SSE stream: ended after 925 valid event(s) without response.completed, response.incomplete, or response.failed"
         ));
         assert!(is_transient_transport_or_parse_error(
+            "ai stream error: stream error: upstream terminated with incomplete empty response (0 tokens)"
+        ));
+        assert!(is_transient_transport_or_parse_error("ai empty content"));
+        assert!(is_transient_transport_or_parse_error(
             "status 504: gateway timeout"
         ));
         assert!(!is_transient_transport_or_parse_error(
@@ -342,6 +346,27 @@ mod tests {
                 assert!(error_message.contains("已自动重试 1 次"));
             }
             _ => panic!("second inactivity timeout should exhaust retries"),
+        }
+    }
+
+    #[test]
+    fn zero_token_empty_responses_are_limited_to_one_retry() {
+        for error in [
+            "ai empty content",
+            "ai stream error: upstream terminated with incomplete empty response (0 tokens)",
+        ] {
+            assert_eq!(effective_transient_retry_limit(error, 5), 1);
+            assert!(matches!(
+                classify_transient_retry(error, 0, 5),
+                Some(TransientRetryAction::Retry {
+                    next_retry_count: 1,
+                    ..
+                })
+            ));
+            assert!(matches!(
+                classify_transient_retry(error, 1, 5),
+                Some(TransientRetryAction::Exhausted { .. })
+            ));
         }
     }
 
