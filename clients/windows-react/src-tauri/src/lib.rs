@@ -157,7 +157,8 @@ use pet::{
 };
 use plugin_application::{
     discard_plugin_application_presentation, handle_plugin_application_bridge_request,
-    launch_plugin_application, list_plugin_applications, PluginApplicationManager,
+    launch_plugin_application, list_plugin_applications, plugin_application_icon_protocol,
+    PluginApplicationIconStore, PluginApplicationManager,
 };
 use plugin_settings::{
     discard_manual_plugin_directory, inspect_manual_plugin_directory,
@@ -270,6 +271,9 @@ pub fn run() {
     let protocol_pet_asset_store = pet_asset_store.clone();
     let clipboard_history_manager = ClipboardHistoryManager::default();
     let protocol_clipboard_history_manager = clipboard_history_manager.clone();
+    let plugin_application_icons = PluginApplicationIconStore::default();
+    let setup_plugin_application_icons = plugin_application_icons.clone();
+    let protocol_plugin_application_icons = plugin_application_icons.clone();
     let drop_attachment_manager = attachment_manager.clone();
     let machine_resource_governor = MachineResourceGovernor::default();
     let drop_resource_governor = machine_resource_governor.clone();
@@ -298,7 +302,7 @@ pub fn run() {
         .manage(ApprovalReviewer::default())
         .manage(ConversationRuntimeSettingsManager::default())
         .manage(ProjectCreationManager::default())
-        .setup(|app| {
+        .setup(move |app| {
             let data_dir = app
                 .path()
                 .app_data_dir()
@@ -328,9 +332,10 @@ pub fn run() {
             ));
             let app_data_maintenance_root = data_dir.clone();
             app.manage(
-                PluginApplicationManager::try_new_with_resources(
+                PluginApplicationManager::try_new_with_resources_and_icons(
                     data_dir,
                     app.state::<MachineResourceGovernor>().inner().clone(),
+                    setup_plugin_application_icons.clone(),
                 )
                 .map_err(std::io::Error::other)?,
             );
@@ -393,6 +398,9 @@ pub fn run() {
         })
         .register_uri_scheme_protocol("chatos-agent", move |_context, request| {
             agent_avatar_protocol(protocol_agent_profile_store.clone(), request)
+        })
+        .register_uri_scheme_protocol("chatos-plugin-icon", move |_context, request| {
+            plugin_application_icon_protocol(protocol_plugin_application_icons.clone(), request)
         })
         .register_uri_scheme_protocol("chatos-wechat", move |_context, request| {
             wechat_qr_protocol(protocol_wechat_companion_manager.clone(), request)

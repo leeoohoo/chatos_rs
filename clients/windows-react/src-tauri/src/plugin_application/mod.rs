@@ -4,17 +4,18 @@ use chatos_local_agent_protocol::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fmt,
     fs::File,
     future::Future,
-    io::Read,
+    io::{Cursor, Read},
     path::{Path, PathBuf},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
-use tauri::State;
+use tauri::{http, State};
 
 mod runtime;
 use crate::agent_plugin_runtime::{
@@ -40,6 +41,11 @@ const MAXIMUM_UI_CONTRIBUTIONS: usize = 64;
 const MAXIMUM_UI_ASSETS: usize = 256;
 const MAXIMUM_BRIDGE_CAPABILITIES: usize = 64;
 const MAXIMUM_MCP_SERVERS: usize = 64;
+const MAXIMUM_ICON_SOURCE_BYTES: u64 = 5 * 1_024 * 1_024;
+const MAXIMUM_ICON_SOURCE_PIXELS: u64 = 16_000_000;
+const MAXIMUM_ICON_DISPLAY_PIXELS: u32 = 256;
+const MAXIMUM_ICON_PNG_BYTES: usize = 512 * 1_024;
+const MAXIMUM_ICON_SESSIONS: usize = 8;
 const SKILLS_ONLY_COMPONENT_KEY: &str = "skills-only";
 const HOOKS_ONLY_COMPONENT_KEY: &str = "hooks-only";
 
@@ -55,10 +61,131 @@ impl PluginInstallationMetadataClient for crate::host_lifecycle::HostManager {
     }
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct PluginApplicationIconStore {
+    active: Arc<Mutex<VecDeque<PluginApplicationIconSession>>>,
+    generation: Arc<AtomicU64>,
+}
+
+struct PluginApplicationIconSession {
+    token: String,
+    icons: BTreeMap<String, PluginApplicationIconSource>,
+}
+
+#[derive(Clone)]
+struct PluginApplicationIconSource {
+    plugin_root: PathBuf,
+    installation_root: PathBuf,
+    relative: String,
+}
+
+impl PluginApplicationIconStore {
+    fn publish(
+        &self,
+        expected_generation: u64,
+        token: String,
+        icons: BTreeMap<String, PluginApplicationIconSource>,
+    ) -> Result<(), String> {
+        if uuid::Uuid::parse_str(&token).is_err()
+            || icons.keys().any(|key| uuid::Uuid::parse_str(key).is_err())
+        {
+            return Err(plugin_catalog_error());
+        }
+        if self.generation.load(Ordering::Acquire) != expected_generation {
+            return Ok(());
+        }
+        let mut active = self.active.lock().map_err(|_| plugin_catalog_error())?;
+        if self.generation.load(Ordering::Acquire) != expected_generation {
+            return Ok(());
+        }
+        active.push_back(PluginApplicationIconSession { token, icons });
+        while active.len() > MAXIMUM_ICON_SESSIONS {
+            active.pop_front();
+        }
+        Ok(())
+    }
+
+    fn reset(&self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        if let Ok(mut active) = self.active.lock() {
+            active.clear();
+        }
+    }
+
+    fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    fn protocol_response(&self, request: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
+        if request.method() != http::Method::GET {
+            return http::Response::builder()
+                .status(http::StatusCode::METHOD_NOT_ALLOWED)
+                .header(http::header::ALLOW, "GET")
+                .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .header("Cache-Control", "no-store")
+                .body(b"Plugin application icon unavailable".to_vec())
+                .expect("valid Plugin application icon method response");
+        }
+        match self.protocol_body(request.uri().path()) {
+            Ok(body) => http::Response::builder()
+                .status(http::StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "image/png")
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Cache-Control", "no-store")
+                .body(body)
+                .expect("valid Plugin application icon response"),
+            Err(status) => http::Response::builder()
+                .status(status)
+                .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .header("Cache-Control", "no-store")
+                .body(b"Plugin application icon unavailable".to_vec())
+                .expect("valid Plugin application icon error response"),
+        }
+    }
+
+    fn protocol_body(&self, path: &str) -> Result<Vec<u8>, http::StatusCode> {
+        let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
+        if parts.len() != 2
+            || uuid::Uuid::parse_str(parts[0]).is_err()
+            || uuid::Uuid::parse_str(parts[1]).is_err()
+        {
+            return Err(http::StatusCode::BAD_REQUEST);
+        }
+        let active = self
+            .active
+            .lock()
+            .map_err(|_| http::StatusCode::SERVICE_UNAVAILABLE)?;
+        let source = active
+            .iter()
+            .rev()
+            .find(|session| session.token == parts[0])
+            .ok_or(http::StatusCode::UNAUTHORIZED)?
+            .icons
+            .get(parts[1])
+            .cloned()
+            .ok_or(http::StatusCode::NOT_FOUND)?;
+        drop(active);
+        normalize_plugin_application_icon(
+            &source.plugin_root,
+            &source.installation_root,
+            &source.relative,
+        )
+        .map_err(|_| http::StatusCode::UNSUPPORTED_MEDIA_TYPE)
+    }
+}
+
+pub(crate) fn plugin_application_icon_protocol(
+    icons: PluginApplicationIconStore,
+    request: http::Request<Vec<u8>>,
+) -> http::Response<Vec<u8>> {
+    icons.protocol_response(request)
+}
+
 #[derive(Clone)]
 pub(crate) struct PluginApplicationManager {
     plugin_root: PathBuf,
     credentials: Arc<dyn PluginCredentialStore>,
+    icons: PluginApplicationIconStore,
     runtime: PluginApplicationRuntime,
     pub(crate) agent_runtime: AgentPluginRuntime,
     #[cfg(target_os = "windows")]
@@ -78,17 +205,20 @@ impl PluginApplicationManager {
             app_data_directory,
             platform_plugin_credential_store(),
             MachineResourceGovernor::default(),
+            PluginApplicationIconStore::default(),
         )
     }
 
-    pub(crate) fn try_new_with_resources(
+    pub(crate) fn try_new_with_resources_and_icons(
         app_data_directory: PathBuf,
         resources: MachineResourceGovernor,
+        icons: PluginApplicationIconStore,
     ) -> Result<Self, String> {
         Self::try_with_credential_store_and_resources(
             app_data_directory,
             platform_plugin_credential_store(),
             resources,
+            icons,
         )
     }
 
@@ -110,6 +240,7 @@ impl PluginApplicationManager {
             app_data_directory,
             credentials,
             MachineResourceGovernor::default(),
+            PluginApplicationIconStore::default(),
         )
     }
 
@@ -117,6 +248,7 @@ impl PluginApplicationManager {
         app_data_directory: PathBuf,
         credentials: Arc<dyn PluginCredentialStore>,
         resources: MachineResourceGovernor,
+        icons: PluginApplicationIconStore,
     ) -> Result<Self, String> {
         let plugin_root = app_data_directory.join("NativeConnector").join("Plugins");
         #[cfg(target_os = "windows")]
@@ -124,6 +256,7 @@ impl PluginApplicationManager {
         Ok(Self {
             plugin_root: plugin_root.clone(),
             credentials,
+            icons,
             runtime: PluginApplicationRuntime::new_with_resources(
                 app_data_directory
                     .join("NativeConnector")
@@ -151,6 +284,7 @@ impl PluginApplicationManager {
     pub(crate) async fn reset(&self) {
         self.runtime.reset().await;
         self.agent_runtime.reset().await;
+        self.icons.reset();
     }
 
     pub(crate) async fn resolve_agent_plugin(
@@ -434,6 +568,7 @@ impl PluginApplicationManager {
         owner_user_id: &str,
     ) -> Result<Vec<PresentedPluginApplication>, String> {
         crate::host_lifecycle::validate_owner(owner_user_id)?;
+        let icon_generation = self.icons.generation();
         let summaries = list_installation_summaries(client, owner_user_id).await?;
         let mut latest_by_plugin = BTreeMap::<String, LocalPluginInstallationSummary>::new();
         for summary in summaries {
@@ -446,6 +581,8 @@ impl PluginApplicationManager {
         }
 
         let plugin_root = confined_plugin_root(&self.plugin_root)?;
+        let icon_session_token = uuid::Uuid::new_v4().to_string().to_lowercase();
+        let mut icons = BTreeMap::new();
         let mut applications = BTreeMap::new();
         for summary in latest_by_plugin.into_values() {
             let record = get_installation(client, owner_user_id, &summary.installation_id).await?;
@@ -455,9 +592,14 @@ impl PluginApplicationManager {
             let Ok((installation_root, manifest)) = load_manifest(&plugin_root, &record) else {
                 continue;
             };
-            for application in
-                project_applications(&plugin_root, &installation_root, &record, &manifest)
-            {
+            for application in project_applications(
+                &plugin_root,
+                &installation_root,
+                &record,
+                &manifest,
+                Some(&icon_session_token),
+                &mut icons,
+            ) {
                 applications.insert(application.id(), application);
             }
         }
@@ -468,6 +610,8 @@ impl PluginApplicationManager {
                 .cmp(&right.display_name.to_lowercase())
                 .then_with(|| left.id().cmp(&right.id()))
         });
+        self.icons
+            .publish(icon_generation, icon_session_token, icons)?;
         Ok(applications)
     }
 
@@ -516,6 +660,8 @@ impl PluginApplicationManager {
             &record,
             &manifest,
             &contribution,
+            None,
+            &mut BTreeMap::new(),
         )?;
         Ok(ResolvedPluginApplication {
             record,
@@ -544,6 +690,7 @@ pub struct PresentedPluginApplication {
     display_name: String,
     description: String,
     brand_color: Option<String>,
+    icon_preview_url: Option<String>,
     requires_local_runtime: bool,
     context_scope: Option<String>,
     missing_context: Option<String>,
@@ -713,6 +860,7 @@ impl PathReference {
 struct PluginInterface {
     display_name: Option<String>,
     brand_color: Option<String>,
+    logo: Option<PathReference>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1157,6 +1305,8 @@ fn project_applications(
     installation_root: &Path,
     record: &LocalPluginInstallationRecord,
     manifest: &PluginManifest,
+    icon_session_token: Option<&str>,
+    icons: &mut BTreeMap<String, PluginApplicationIconSource>,
 ) -> Vec<PresentedPluginApplication> {
     manifest
         .ui
@@ -1169,6 +1319,8 @@ fn project_applications(
                 record,
                 manifest,
                 contribution,
+                icon_session_token,
+                icons,
             )
             .ok()
         })
@@ -1181,6 +1333,8 @@ fn project_application(
     record: &LocalPluginInstallationRecord,
     manifest: &PluginManifest,
     contribution: &PluginUiContribution,
+    icon_session_token: Option<&str>,
+    icons: &mut BTreeMap<String, PluginApplicationIconSource>,
 ) -> Result<PresentedPluginApplication, String> {
     validate_text(&record.spec.plugin_id, 1_024)?;
     validate_text(&contribution.component_key, 1_024)?;
@@ -1244,12 +1398,33 @@ fn project_application(
         .and_then(|interface| interface.brand_color.as_deref())
         .filter(|value| valid_brand_color(value))
         .map(str::to_owned);
+    let icon_preview_url = icon_session_token.and_then(|session_token| {
+        manifest
+            .interface
+            .as_ref()
+            .and_then(|interface| interface.logo.as_ref())
+            .and_then(|logo| {
+                let source =
+                    resolve_installed_file(plugin_root, installation_root, logo.path()).ok()?;
+                source.is_file().then(|| PluginApplicationIconSource {
+                    plugin_root: plugin_root.to_path_buf(),
+                    installation_root: installation_root.to_path_buf(),
+                    relative: logo.path().to_owned(),
+                })
+            })
+            .map(|source| {
+                let icon_token = uuid::Uuid::new_v4().to_string().to_lowercase();
+                icons.insert(icon_token.clone(), source);
+                plugin_application_icon_url(session_token, &icon_token)
+            })
+    });
     Ok(PresentedPluginApplication {
         plugin_id: record.spec.plugin_id.clone(),
         component_key: contribution.component_key.clone(),
         display_name,
         description,
         brand_color,
+        icon_preview_url,
         requires_local_runtime: contribution.runtime.is_some(),
         context_scope: runtime_context.map(|context| context.scope.clone()),
         missing_context: runtime_context.map(|context| context.missing_context.clone()),
@@ -1327,6 +1502,121 @@ fn resolve_installed_file(
         return Err(plugin_catalog_error());
     }
     Ok(canonical)
+}
+
+fn normalize_plugin_application_icon(
+    plugin_root: &Path,
+    installation_root: &Path,
+    relative: &str,
+) -> Result<Vec<u8>, String> {
+    let source = resolve_installed_file(plugin_root, installation_root, relative)?;
+    let metadata = source.metadata().map_err(|_| plugin_catalog_error())?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAXIMUM_ICON_SOURCE_BYTES {
+        return Err(plugin_catalog_error());
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    File::open(&source)
+        .and_then(|file| {
+            file.take(MAXIMUM_ICON_SOURCE_BYTES + 1)
+                .read_to_end(&mut bytes)
+        })
+        .map_err(|_| plugin_catalog_error())?;
+    if bytes.is_empty() || bytes.len() as u64 > MAXIMUM_ICON_SOURCE_BYTES {
+        return Err(plugin_catalog_error());
+    }
+    if source
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+    {
+        return normalize_plugin_application_svg(&bytes);
+    }
+    let format = image::guess_format(&bytes).map_err(|_| plugin_catalog_error())?;
+    if !matches!(
+        format,
+        image::ImageFormat::Png
+            | image::ImageFormat::Jpeg
+            | image::ImageFormat::Gif
+            | image::ImageFormat::WebP
+    ) {
+        return Err(plugin_catalog_error());
+    }
+    let (width, height) = image::ImageReader::with_format(Cursor::new(&bytes), format)
+        .into_dimensions()
+        .map_err(|_| plugin_catalog_error())?;
+    if width == 0
+        || height == 0
+        || u64::from(width)
+            .checked_mul(u64::from(height))
+            .filter(|pixels| *pixels <= MAXIMUM_ICON_SOURCE_PIXELS)
+            .is_none()
+    {
+        return Err(plugin_catalog_error());
+    }
+    let decoded =
+        image::load_from_memory_with_format(&bytes, format).map_err(|_| plugin_catalog_error())?;
+    let normalized = decoded.thumbnail(MAXIMUM_ICON_DISPLAY_PIXELS, MAXIMUM_ICON_DISPLAY_PIXELS);
+    let mut output = Cursor::new(Vec::new());
+    normalized
+        .write_to(&mut output, image::ImageFormat::Png)
+        .map_err(|_| plugin_catalog_error())?;
+    let output = output.into_inner();
+    if output.is_empty() || output.len() > MAXIMUM_ICON_PNG_BYTES {
+        return Err(plugin_catalog_error());
+    }
+    Ok(output)
+}
+
+fn normalize_plugin_application_svg(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    // Plugin manifests are untrusted. usvg's default string resolver may read an
+    // arbitrary local image path, while data URLs can hide a second, unbounded
+    // SVG document. A plugin logo must therefore be completely self-contained.
+    let options = resvg::usvg::Options {
+        image_href_resolver: resvg::usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..Default::default()
+    };
+    let tree = resvg::usvg::Tree::from_data(bytes, &options).map_err(|_| plugin_catalog_error())?;
+    let source_size = tree.size();
+    let source_width = source_size.width();
+    let source_height = source_size.height();
+    if !source_width.is_finite()
+        || !source_height.is_finite()
+        || source_width <= 0.0
+        || source_height <= 0.0
+        || f64::from(source_width) * f64::from(source_height) > MAXIMUM_ICON_SOURCE_PIXELS as f64
+    {
+        return Err(plugin_catalog_error());
+    }
+    let scale = (MAXIMUM_ICON_DISPLAY_PIXELS as f32 / source_width)
+        .min(MAXIMUM_ICON_DISPLAY_PIXELS as f32 / source_height);
+    let width = (source_width * scale)
+        .ceil()
+        .clamp(1.0, MAXIMUM_ICON_DISPLAY_PIXELS as f32) as u32;
+    let height = (source_height * scale)
+        .ceil()
+        .clamp(1.0, MAXIMUM_ICON_DISPLAY_PIXELS as f32) as u32;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height).ok_or_else(plugin_catalog_error)?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    let output = pixmap.encode_png().map_err(|_| plugin_catalog_error())?;
+    if output.is_empty() || output.len() > MAXIMUM_ICON_PNG_BYTES {
+        return Err(plugin_catalog_error());
+    }
+    Ok(output)
+}
+
+fn plugin_application_icon_url(session_token: &str, icon_token: &str) -> String {
+    if cfg!(target_os = "windows") {
+        format!("http://chatos-plugin-icon.localhost/{session_token}/{icon_token}")
+    } else {
+        format!("chatos-plugin-icon://localhost/{session_token}/{icon_token}")
+    }
 }
 
 fn validate_runtime(runtime: &PluginUiRuntime) -> Result<(), String> {

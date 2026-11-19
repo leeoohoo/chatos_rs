@@ -2550,6 +2550,8 @@ mod tests {
                 &record,
                 &manifest,
                 &contribution,
+                None,
+                &mut BTreeMap::new(),
             )
             .unwrap();
             Self {

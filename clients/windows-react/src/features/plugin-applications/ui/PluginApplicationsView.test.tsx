@@ -44,6 +44,29 @@ describe("PluginApplicationsView", () => {
     expect(onOpenPluginManagement).toHaveBeenCalledTimes(1);
   });
 
+  it("renders the native safe icon preview and falls back when loading fails", async () => {
+    const iconPreviewUrl = "http://chatos-plugin-icon.localhost/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222";
+    const adapter = port({
+      list: vi.fn(async () => [pluginApplicationFixture({ iconPreviewUrl })]),
+    });
+    const { container } = render(
+      <PluginApplicationsView
+        hostReady
+        ownerUserId="alice"
+        port={adapter}
+        onOpen={() => undefined}
+        onOpenPluginManagement={() => undefined}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: /Canvas/ })).toBeVisible();
+    const image = container.querySelector<HTMLImageElement>(".plugin-application-icon__image");
+    expect(image).toHaveAttribute("src", iconPreviewUrl);
+    fireEvent.error(image!);
+    expect(container.querySelector(".plugin-application-icon__image")).toBeNull();
+    expect(container.querySelector(".plugin-application-icon")).toHaveTextContent("▦");
+  });
+
   it("offers shared and project contexts before launching", async () => {
     const adapter = port();
     render(

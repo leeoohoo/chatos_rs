@@ -1,4 +1,5 @@
 use super::*;
+use base64::Engine as _;
 use chatos_local_agent_protocol::{LocalPluginInstallationPage, LocalPluginInstallationSpec};
 use serde_json::{json, Value};
 use std::{
@@ -294,6 +295,168 @@ async fn catalog_projects_only_valid_owner_scoped_metadata_without_local_paths()
     assert!(!projection.contains("installationPath"));
     assert!(!projection.contains("source"));
     assert_eq!(client.remaining(), 0);
+}
+
+#[tokio::test]
+async fn catalog_normalizes_logo_behind_an_opaque_revocable_preview() {
+    let fixture = CatalogFixture::new();
+    let logo = fixture.installation.join("logo.svg");
+    fs::write(
+        &logo,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 320"><rect width="640" height="320" fill="#145ab4"/></svg>"##,
+    )
+    .unwrap();
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["interface"]["logo"] = json!("./logo.svg");
+    fixture.write_manifest(manifest);
+    let record = fixture.record();
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let applications = manager
+        .list(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+
+    let preview = applications[0].icon_preview_url.as_deref().unwrap();
+    assert!(preview.starts_with(if cfg!(target_os = "windows") {
+        "http://chatos-plugin-icon.localhost/"
+    } else {
+        "chatos-plugin-icon://localhost/"
+    }));
+    assert!(!preview.contains(&fixture.app_data.to_string_lossy().to_string()));
+    let preview = url::Url::parse(preview).unwrap();
+    let png = manager.icons.protocol_body(preview.path()).unwrap();
+    assert_eq!(image::guess_format(&png).unwrap(), image::ImageFormat::Png);
+    let dimensions =
+        image::ImageReader::with_format(std::io::Cursor::new(&png), image::ImageFormat::Png)
+            .into_dimensions()
+            .unwrap();
+    assert_eq!(dimensions, (256, 128));
+    let response = manager.icons.protocol_response(
+        http::Request::builder()
+            .method(http::Method::GET)
+            .uri(preview.path())
+            .body(Vec::new())
+            .unwrap(),
+    );
+    assert_eq!(response.status(), http::StatusCode::OK);
+    assert_eq!(response.headers()[http::header::CONTENT_TYPE], "image/png");
+    assert_eq!(response.headers()["X-Content-Type-Options"], "nosniff");
+    assert_eq!(response.headers()[http::header::CACHE_CONTROL], "no-store");
+    let response = manager.icons.protocol_response(
+        http::Request::builder()
+            .method(http::Method::POST)
+            .uri(preview.path())
+            .body(Vec::new())
+            .unwrap(),
+    );
+    assert_eq!(response.status(), http::StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(response.headers()[http::header::ALLOW], "GET");
+
+    let refreshed = manager
+        .list(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+    assert_ne!(
+        refreshed[0].icon_preview_url,
+        applications[0].icon_preview_url
+    );
+    assert!(manager.icons.protocol_body(preview.path()).is_ok());
+
+    manager.reset().await;
+    assert_eq!(
+        manager.icons.protocol_body(preview.path()).unwrap_err(),
+        http::StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn invalid_logo_falls_back_without_hiding_the_application_or_leaking_a_path() {
+    let fixture = CatalogFixture::new();
+    fs::write(fixture.installation.join("logo.svg"), "not an image").unwrap();
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["interface"]["logo"] = json!("./logo.svg");
+    fixture.write_manifest(manifest);
+    let record = fixture.record();
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let applications = manager
+        .list(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+
+    assert_eq!(applications.len(), 1);
+    let preview = url::Url::parse(applications[0].icon_preview_url.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        manager.icons.protocol_body(preview.path()).unwrap_err(),
+        http::StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+    assert!(!serde_json::to_string(&applications)
+        .unwrap()
+        .contains(&fixture.app_data.to_string_lossy().to_string()));
+}
+
+#[test]
+fn svg_icons_never_resolve_scripts_or_embedded_and_external_images() {
+    let fixture = CatalogFixture::new();
+    let local_image = fixture.installation.join("external.png");
+    let mut local_png = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        1,
+        1,
+        image::Rgba([0, 255, 0, 255]),
+    ))
+    .write_to(&mut local_png, image::ImageFormat::Png)
+    .unwrap();
+    fs::write(&local_image, local_png.get_ref()).unwrap();
+    let local_href = local_image.to_string_lossy().replace('\\', "/");
+    let data_href = base64::engine::general_purpose::STANDARD.encode(local_png.get_ref());
+    let safe = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="#ff0000"/></svg>"##;
+    let untrusted = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+            <rect width="16" height="16" fill="#ff0000"/>
+            <script>throw new Error("must not run")</script>
+            <image href="{local_href}" width="16" height="16"/>
+            <image href="https://127.0.0.1:9/never-fetch.png" width="16" height="16"/>
+            <image href="data:image/png;base64,{data_href}" width="16" height="16"/>
+        </svg>"##
+    );
+
+    assert_eq!(
+        normalize_plugin_application_svg(safe).unwrap(),
+        normalize_plugin_application_svg(untrusted.as_bytes()).unwrap()
+    );
+}
+
+#[test]
+fn svg_icons_reject_oversized_and_malformed_documents() {
+    assert!(normalize_plugin_application_svg(
+        br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 5000 5000"><rect width="5000" height="5000"/></svg>"##
+    )
+    .is_err());
+    assert!(normalize_plugin_application_svg(
+        br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path"##
+    )
+    .is_err());
+}
+
+#[test]
+fn production_plugin_svg_logos_render_to_bounded_pngs() {
+    let logos: [&[u8]; 3] = [
+        include_bytes!("../../../../../plugins/diagram-studio/assets/logo.svg"),
+        include_bytes!("../../../../../plugins/solution-studio/assets/logo.svg"),
+        include_bytes!("../../../../../plugins/web-design-studio/assets/logo.svg"),
+    ];
+
+    for logo in logos {
+        let png = normalize_plugin_application_svg(logo).unwrap();
+        assert!(png.len() <= MAXIMUM_ICON_PNG_BYTES);
+        let dimensions =
+            image::ImageReader::with_format(Cursor::new(&png), image::ImageFormat::Png)
+                .into_dimensions()
+                .unwrap();
+        assert_eq!(dimensions, (256, 256));
+    }
 }
 
 #[tokio::test]
@@ -877,7 +1040,14 @@ fn blank_titles_fall_back_to_the_trimmed_interface_name() {
         .unwrap();
     let (installation, manifest) = load_manifest(&plugin_root, &record).unwrap();
 
-    let applications = project_applications(&plugin_root, &installation, &record, &manifest);
+    let applications = project_applications(
+        &plugin_root,
+        &installation,
+        &record,
+        &manifest,
+        None,
+        &mut BTreeMap::new(),
+    );
 
     assert_eq!(applications[0].display_name, "Plugin Interface");
 }

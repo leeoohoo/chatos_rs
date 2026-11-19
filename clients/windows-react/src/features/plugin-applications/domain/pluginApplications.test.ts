@@ -16,6 +16,12 @@ describe("plugin application domain", () => {
       ...pluginApplicationFixture(),
       executable: "C:\\Plugins\\canvas.exe",
     })).toThrow();
+    const iconPreviewUrl = "http://chatos-plugin-icon.localhost/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222";
+    expect(pluginApplicationSchema.parse(pluginApplicationFixture({ iconPreviewUrl })).iconPreviewUrl)
+      .toBe(iconPreviewUrl);
+    expect(() => pluginApplicationSchema.parse(pluginApplicationFixture({
+      iconPreviewUrl: "file:///C:/Plugins/canvas/logo.png",
+    }))).toThrow();
   });
 
   it("only accepts exact loopback HTTP launches from the native runtime", () => {

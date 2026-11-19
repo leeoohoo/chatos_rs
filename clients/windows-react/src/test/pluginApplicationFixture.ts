@@ -14,6 +14,7 @@ export function pluginApplicationFixture(
     displayName: "Canvas",
     description: "在独立工作区中绘制图形。",
     brandColor: "#0A84FF",
+    iconPreviewUrl: null,
     requiresLocalRuntime: true,
     contextScope: "project",
     missingContext: "device",

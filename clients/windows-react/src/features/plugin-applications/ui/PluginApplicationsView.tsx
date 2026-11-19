@@ -280,12 +280,25 @@ function PluginApplicationIcon({
   application: PluginApplication;
   compact?: boolean;
 }) {
+  const [iconFailed, setIconFailed] = useState(false);
+
+  useEffect(() => setIconFailed(false), [application.iconPreviewUrl]);
+
   return (
     <span
       aria-hidden="true"
       className={`plugin-application-icon ${compact ? "plugin-application-icon--compact" : ""}`}
       style={application.brandColor ? { background: application.brandColor } : undefined}
-    >▦</span>
+    >
+      {application.iconPreviewUrl && !iconFailed ? (
+        <img
+          alt=""
+          className="plugin-application-icon__image"
+          onError={() => setIconFailed(true)}
+          src={application.iconPreviewUrl}
+        />
+      ) : "▦"}
+    </span>
   );
 }
 
