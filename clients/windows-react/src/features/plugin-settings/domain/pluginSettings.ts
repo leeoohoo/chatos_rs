@@ -4,7 +4,7 @@ export const pluginPermissionSchema = z.object({
   id: z.string().min(1),
   required: z.boolean(),
   reason: z.string().nullable(),
-  status: z.literal("declared_not_checked"),
+  status: z.enum(["declared_not_checked", "granted", "needs_attention", "unavailable", "disabled"]),
 });
 
 export const pluginCredentialSchema = z.object({
@@ -27,7 +27,10 @@ export const managedPluginSchema = z.object({
   enabled: z.boolean(),
   hasUi: z.boolean(),
   source: z.enum(["marketplace", "local"]),
-  runtimeStatus: z.enum(["not_installed", "not_checked", "disabled"]),
+  runtimeStatus: z.enum(["not_installed", "not_checked", "ready", "unavailable", "disabled"]),
+  runtimeToolCount: z.number().int().nonnegative().nullable(),
+  runtimeLastCheckedAt: z.string().datetime().nullable(),
+  runtimeError: z.string().nullable(),
   mcpServerCount: z.number().int().nonnegative(),
   hookCount: z.number().int().nonnegative(),
   hookRuntimeStatus: z.enum(["ready", "runner_unavailable"]).nullable(),

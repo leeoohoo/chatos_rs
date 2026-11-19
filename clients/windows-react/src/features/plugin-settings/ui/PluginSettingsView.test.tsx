@@ -23,6 +23,38 @@ describe("PluginSettingsView", () => {
     expect(screen.getByText("process.spawn")).toBeInTheDocument();
   });
 
+  it("shows verified runtime health and permission results instead of a pending placeholder", async () => {
+    const snapshot = pluginSettingsSnapshot();
+    snapshot.plugins[0]!.packageName = "open-computer-use";
+    snapshot.plugins[0]!.runtimeStatus = "ready";
+    snapshot.plugins[0]!.runtimeLastCheckedAt = "2026-11-19T00:00:00.000Z";
+    snapshot.plugins[0]!.permissions = [
+      { id: "process.spawn", required: true, reason: "Launch worker", status: "granted" },
+      { id: "computer.control", required: true, reason: "Control apps", status: "needs_attention" },
+    ];
+    render(<PluginSettingsView ownerUserId="owner-1" port={pluginSettingsPort({ load: vi.fn(async () => snapshot) })} onOpenInstallationAssistant={vi.fn()} />);
+
+    expect(await screen.findByText("运行检查通过")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Skills 与权限"));
+    expect(screen.getByText("已验证的 Windows Worker 成功启动并返回一致的能力快照。")).toBeInTheDocument();
+    expect(screen.getByText("已验证 · Windows 运行检查通过")).toBeInTheDocument();
+    expect(screen.getByText("已声明 · Windows 能力需要处理")).toBeInTheDocument();
+  });
+
+  it("surfaces a failed runtime check without claiming the Plugin is ready", async () => {
+    const snapshot = pluginSettingsSnapshot();
+    snapshot.plugins[0]!.runtimeStatus = "unavailable";
+    snapshot.plugins[0]!.runtimeLastCheckedAt = "2026-11-19T00:00:00.000Z";
+    snapshot.plugins[0]!.runtimeError = "Computer Use 运行检查失败。";
+    snapshot.plugins[0]!.permissions[0]!.status = "unavailable";
+    render(<PluginSettingsView ownerUserId="owner-1" port={pluginSettingsPort({ load: vi.fn(async () => snapshot) })} onOpenInstallationAssistant={vi.fn()} />);
+
+    expect(await screen.findByText("运行检查失败")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Skills 与权限"));
+    expect(screen.getByText("Computer Use 运行检查失败。")).toBeInTheDocument();
+    expect(screen.getByText("已声明 · Windows 运行检查失败")).toBeInTheDocument();
+  });
+
   it("filters by Skill and opens the installation assistant", async () => {
     const onOpen = vi.fn();
     render(<PluginSettingsView ownerUserId="owner-1" port={pluginSettingsPort()} onOpenInstallationAssistant={onOpen} />);

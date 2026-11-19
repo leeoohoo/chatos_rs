@@ -146,14 +146,41 @@ function newManualPresentationId() {
 function PluginDetails({ english, plugin }: { english: boolean; plugin: ManagedPlugin }) {
   return <div className="plugin-settings-details">
     <section><h4>{english ? "Bundled Skills" : "内置 Skills"}</h4>{plugin.skills.length ? <div>{plugin.skills.map((skill) => <code key={skill}>{skill}</code>)}</div> : <p>{english ? "No Skills declared." : "未声明 Skill。"}</p>}</section>
+    {plugin.installed && plugin.mcpServerCount > 0 && <section><h4>{english ? "Runtime" : "运行状态"}</h4><p>{runtimeSummary(english, plugin)}</p>{plugin.runtimeLastCheckedAt && <small>{english ? "Last checked" : "上次检查"} · {new Date(plugin.runtimeLastCheckedAt).toLocaleString()}</small>}</section>}
     {plugin.hookCount > 0 && <section><h4>{english ? "Lifecycle Hooks" : "生命周期 Hooks"}</h4><p>{plugin.hookRuntimeStatus === "ready" ? (english ? `${plugin.hookCount} Hook bundle(s) are verified and run in the Windows AppContainer when this Plugin is enabled.` : `${plugin.hookCount} 个 Hook Bundle 已完成校验；Plugin 启用后会在 Windows AppContainer 中执行。`) : plugin.installed ? (english ? `${plugin.hookCount} Hook bundle(s) were checked during installation, but the Windows runner is unavailable.` : `${plugin.hookCount} 个 Hook Bundle 已在安装时完成校验，但 Windows runner 当前不可用。`) : (english ? `${plugin.hookCount} Hook bundle(s) are declared. Full content preflight runs before installation.` : `清单声明了 ${plugin.hookCount} 个 Hook Bundle；安装前会进行完整内容预检。`)}</p></section>}
-    <section><h4>{english ? "Permission declarations" : "权限声明"}</h4>{plugin.permissions.length ? <ul>{plugin.permissions.map((permission) => <li key={permission.id}><div><code>{permission.id}</code>{permission.required && <em>{english ? "Required" : "必需"}</em>}</div><p>{permission.reason ?? (english ? "No reason supplied." : "未提供说明。")}</p><small>{english ? "Declared · Windows runtime check pending" : "已声明 · Windows 运行检查待完成"}</small></li>)}</ul> : <p>{english ? "No native permissions declared." : "未声明原生权限。"}</p>}</section>
+    <section><h4>{english ? "Permission declarations" : "权限声明"}</h4>{plugin.permissions.length ? <ul>{plugin.permissions.map((permission) => <li key={permission.id}><div><code>{permission.id}</code>{permission.required && <em>{english ? "Required" : "必需"}</em>}</div><p>{permission.reason ?? (english ? "No reason supplied." : "未提供说明。")}</p><small>{permissionStatusLabel(english, permission.status)}</small></li>)}</ul> : <p>{english ? "No native permissions declared." : "未声明原生权限。"}</p>}</section>
   </div>;
 }
 
 function RuntimeBadge({ english, status }: { english: boolean; status: ManagedPlugin["runtimeStatus"] }) {
-  const label = status === "disabled" ? (english ? "Disabled" : "已停用") : status === "not_checked" ? (english ? "Health check pending" : "等待健康检查") : (english ? "Not installed" : "未安装");
-  return <em className={status === "not_checked" ? "is-pending" : ""}>{label}</em>;
+  const labels = {
+    not_installed: english ? "Not installed" : "未安装",
+    not_checked: english ? "Health check pending" : "等待健康检查",
+    ready: english ? "Runtime check passed" : "运行检查通过",
+    unavailable: english ? "Runtime check failed" : "运行检查失败",
+    disabled: english ? "Disabled" : "已停用",
+  } satisfies Record<ManagedPlugin["runtimeStatus"], string>;
+  return <em className={status === "not_checked" ? "is-pending" : status === "unavailable" ? "is-warning" : ""}>{labels[status]}</em>;
+}
+
+function runtimeSummary(english: boolean, plugin: ManagedPlugin) {
+  if (plugin.runtimeStatus === "ready") return plugin.runtimeToolCount == null
+    ? (english ? "The verified Windows worker started and returned a consistent capability snapshot." : "已验证的 Windows Worker 成功启动并返回一致的能力快照。")
+    : (english ? `MCP handshake succeeded with ${plugin.runtimeToolCount} tools.` : `已完成 MCP 握手，发现 ${plugin.runtimeToolCount} 个工具。`);
+  if (plugin.runtimeStatus === "unavailable") return plugin.runtimeError ?? (english ? "The runtime check failed." : "运行检查失败。");
+  if (plugin.runtimeStatus === "disabled") return english ? "Enable the Plugin to run the check again." : "启用 Plugin 后可以重新运行检查。";
+  return english ? "Use Check for Updates to run the native health check." : "点击“检查更新”以执行本机健康检查。";
+}
+
+function permissionStatusLabel(english: boolean, status: ManagedPlugin["permissions"][number]["status"]) {
+  const labels = {
+    declared_not_checked: english ? "Declared · Windows runtime check pending" : "已声明 · Windows 运行检查待完成",
+    granted: english ? "Verified · Windows runtime check passed" : "已验证 · Windows 运行检查通过",
+    needs_attention: english ? "Declared · Windows capability needs attention" : "已声明 · Windows 能力需要处理",
+    unavailable: english ? "Declared · Windows runtime check failed" : "已声明 · Windows 运行检查失败",
+    disabled: english ? "Declared · Plugin disabled" : "已声明 · Plugin 已停用",
+  } satisfies Record<typeof status, string>;
+  return labels[status];
 }
 
 function PluginStatus({ title, detail, loading, action, onAction }: { title: string; detail: string; loading?: boolean; action?: string; onAction?(): void }) {

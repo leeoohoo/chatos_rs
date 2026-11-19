@@ -27,7 +27,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::{
     app_data_transaction::ensure_owned_directory,
     authentication::AuthenticationManager,
-    computer_use_worker::TrustedComputerUseLaunch,
+    computer_use_worker::{diagnose as diagnose_computer_use, TrustedComputerUseLaunch},
     connector_state,
     host_lifecycle::HostManager,
     machine_resource_governor::{
@@ -394,6 +394,9 @@ struct PresentedPlugin {
     has_ui: bool,
     source: &'static str,
     runtime_status: &'static str,
+    runtime_tool_count: Option<usize>,
+    runtime_last_checked_at: Option<String>,
+    runtime_error: Option<String>,
     mcp_server_count: usize,
     hook_count: usize,
     hook_runtime_status: Option<&'static str>,
@@ -419,6 +422,15 @@ struct PresentedPluginPermission {
     required: bool,
     reason: Option<String>,
     status: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PluginRuntimeHealthProjection {
+    status: &'static str,
+    checked_at: String,
+    error: Option<String>,
+    process_spawn_status: &'static str,
+    computer_control_status: &'static str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1021,13 +1033,19 @@ pub async fn load_plugin_settings(
             applications.reset().await;
         }
     }
-    project_snapshot(
+    let runtime_health = computer_use_runtime_health(&host, &manager, &owner_user_id).await;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let mut snapshot = project_snapshot(
         &manager.plugin_root,
         sources.map_err(|error| error.message),
         records,
         &owner_user_id,
         &applications,
-    )
+    )?;
+    apply_computer_use_runtime_health(&mut snapshot, runtime_health);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -1170,8 +1188,8 @@ pub async fn install_manual_plugin_directory(
     result?;
     load_snapshot(
         &authentication,
-        &*host,
-        &settings.plugin_root,
+        &host,
+        &settings,
         &selection_input.owner_user_id,
         &applications,
     )
@@ -1266,8 +1284,8 @@ pub async fn update_plugin_enabled(
         .await?;
     load_snapshot(
         &authentication,
-        &*host,
-        &settings.plugin_root,
+        &host,
+        &settings,
         &owner_user_id,
         &applications,
     )
@@ -1309,8 +1327,8 @@ pub async fn update_plugin_credentials(
     applications.reset().await;
     load_snapshot(
         &authentication,
-        &*host,
-        &settings.plugin_root,
+        &host,
+        &settings,
         &owner_user_id,
         &applications,
     )
@@ -1414,8 +1432,8 @@ pub async fn uninstall_plugin(
         .await?;
     load_snapshot(
         &authentication,
-        &*host,
-        &settings.plugin_root,
+        &host,
+        &settings,
         &owner_user_id,
         &applications,
     )
@@ -1507,14 +1525,7 @@ pub(crate) async fn install_marketplace_for_owner(
     authentication
         .require_session_generation(owner_user_id, generation)
         .await?;
-    load_snapshot(
-        authentication,
-        host,
-        &settings.plugin_root,
-        owner_user_id,
-        applications,
-    )
-    .await
+    load_snapshot(authentication, host, settings, owner_user_id, applications).await
 }
 
 fn installation_specs(
@@ -1814,22 +1825,31 @@ async fn rollback_installation_records(
 
 async fn load_snapshot(
     authentication: &AuthenticationManager,
-    host: &dyn PluginSettingsHost,
-    plugin_root: &Path,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
     owner_user_id: &str,
     applications: &PluginApplicationManager,
 ) -> Result<PluginSettingsSnapshot, String> {
+    let generation = authentication
+        .session_generation_for_owner(owner_user_id)
+        .await?;
     let (sources, records) = tokio::join!(
         authentication.plugin_install_sources_for_owner(owner_user_id),
         list_installation_records(host, owner_user_id),
     );
-    project_snapshot(
-        plugin_root,
+    let runtime_health = computer_use_runtime_health(host, settings, owner_user_id).await;
+    authentication
+        .require_session_generation(owner_user_id, generation)
+        .await?;
+    let mut snapshot = project_snapshot(
+        &settings.plugin_root,
         sources.map_err(|error| error.message),
         records,
         owner_user_id,
         applications,
-    )
+    )?;
+    apply_computer_use_runtime_health(&mut snapshot, runtime_health);
+    Ok(snapshot)
 }
 
 fn project_snapshot(
@@ -1942,6 +1962,9 @@ fn project_marketplace_plugin(
         has_ui: source.catalog.has_ui || !manifest.ui.is_empty(),
         source: "marketplace",
         runtime_status: runtime_status(installed, enabled),
+        runtime_tool_count: None,
+        runtime_last_checked_at: None,
+        runtime_error: None,
         mcp_server_count: manifest.mcp_servers.len(),
         hook_count: manifest.hooks.len(),
         hook_runtime_status: (!manifest.hooks.is_empty()).then_some("ready"),
@@ -1999,6 +2022,9 @@ fn project_local_plugin(
         has_ui: manifest.is_some_and(|manifest| !manifest.ui.is_empty()),
         source: "local",
         runtime_status: runtime_status(true, projection.enabled),
+        runtime_tool_count: None,
+        runtime_last_checked_at: None,
+        runtime_error: None,
         mcp_server_count: manifest.map_or(0, |manifest| manifest.mcp_servers.len()),
         hook_count: manifest.map_or(0, |manifest| manifest.hooks.len()),
         hook_runtime_status: manifest
@@ -2162,6 +2188,77 @@ fn runtime_status(installed: bool, enabled: bool) -> &'static str {
         "not_checked"
     } else {
         "disabled"
+    }
+}
+
+async fn computer_use_runtime_health(
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    owner_user_id: &str,
+) -> Option<PluginRuntimeHealthProjection> {
+    let checked_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    match resolve_computer_use_installation(host, settings, owner_user_id).await {
+        Ok(ComputerUseInstallation::Missing) => None,
+        Ok(ComputerUseInstallation::Disabled) => Some(PluginRuntimeHealthProjection {
+            status: "disabled",
+            checked_at,
+            error: None,
+            process_spawn_status: "disabled",
+            computer_control_status: "disabled",
+        }),
+        Ok(ComputerUseInstallation::Ready(launch)) => {
+            match diagnose_computer_use(&launch, &settings.resources).await {
+                Ok(diagnostics) => Some(PluginRuntimeHealthProjection {
+                    status: "ready",
+                    checked_at,
+                    error: None,
+                    process_spawn_status: "granted",
+                    computer_control_status: if diagnostics.all_granted {
+                        "granted"
+                    } else {
+                        "needs_attention"
+                    },
+                }),
+                Err(error) => Some(PluginRuntimeHealthProjection {
+                    status: "unavailable",
+                    checked_at,
+                    error: Some(error),
+                    process_spawn_status: "unavailable",
+                    computer_control_status: "unavailable",
+                }),
+            }
+        }
+        Err(error) => Some(PluginRuntimeHealthProjection {
+            status: "unavailable",
+            checked_at,
+            error: Some(error),
+            process_spawn_status: "unavailable",
+            computer_control_status: "unavailable",
+        }),
+    }
+}
+
+fn apply_computer_use_runtime_health(
+    snapshot: &mut PluginSettingsSnapshot,
+    health: Option<PluginRuntimeHealthProjection>,
+) {
+    let Some(plugin) = snapshot.plugins.iter_mut().find(|plugin| {
+        plugin.installed && plugin.package_name.as_deref() == Some("open-computer-use")
+    }) else {
+        return;
+    };
+    let Some(health) = health else {
+        return;
+    };
+    plugin.runtime_status = health.status;
+    plugin.runtime_last_checked_at = Some(health.checked_at);
+    plugin.runtime_error = health.error;
+    for permission in &mut plugin.permissions {
+        permission.status = match permission.id.as_str() {
+            "process.spawn" => health.process_spawn_status,
+            "computer.control" => health.computer_control_status,
+            _ => permission.status,
+        };
     }
 }
 
@@ -3146,6 +3243,78 @@ mod tests {
         assert_eq!(runtime_status(false, false), "not_installed");
         assert_eq!(runtime_status(true, false), "disabled");
         assert_eq!(runtime_status(true, true), "not_checked");
+    }
+
+    #[test]
+    fn computer_use_health_updates_runtime_and_declared_permission_truthfully() {
+        let mut snapshot = PluginSettingsSnapshot {
+            plugins: vec![PresentedPlugin {
+                id: "computer-use".into(),
+                package_name: Some("open-computer-use".into()),
+                plugin_key: None,
+                display_name: "Visual Computer Use".into(),
+                description: String::new(),
+                category: "Developer Tools".into(),
+                publisher: "Open Computer Use".into(),
+                latest_version: "0.9.0".into(),
+                installed_version: Some("0.9.0".into()),
+                installed: true,
+                update_available: false,
+                enabled: true,
+                has_ui: false,
+                source: "local",
+                runtime_status: "not_checked",
+                runtime_tool_count: None,
+                runtime_last_checked_at: None,
+                runtime_error: None,
+                mcp_server_count: 1,
+                hook_count: 0,
+                hook_runtime_status: None,
+                skills: Vec::new(),
+                permissions: vec![
+                    PresentedPluginPermission {
+                        id: "process.spawn".into(),
+                        required: true,
+                        reason: None,
+                        status: "declared_not_checked",
+                    },
+                    PresentedPluginPermission {
+                        id: "computer.control".into(),
+                        required: true,
+                        reason: None,
+                        status: "declared_not_checked",
+                    },
+                ],
+                installation_issue: None,
+                windows_compatible: true,
+                install_action_available: false,
+                credentials: Vec::new(),
+            }],
+            marketplace_available: true,
+            local_catalog_available: true,
+            marketplace_error: None,
+            local_catalog_error: None,
+            secure_marketplace_install_available: true,
+            manual_install_available: true,
+        };
+        apply_computer_use_runtime_health(
+            &mut snapshot,
+            Some(PluginRuntimeHealthProjection {
+                status: "ready",
+                checked_at: "2026-11-19T00:00:00.000Z".into(),
+                error: None,
+                process_spawn_status: "granted",
+                computer_control_status: "needs_attention",
+            }),
+        );
+        let plugin = &snapshot.plugins[0];
+        assert_eq!(plugin.runtime_status, "ready");
+        assert_eq!(
+            plugin.runtime_last_checked_at.as_deref(),
+            Some("2026-11-19T00:00:00.000Z")
+        );
+        assert_eq!(plugin.permissions[0].status, "granted");
+        assert_eq!(plugin.permissions[1].status, "needs_attention");
     }
 
     #[test]
