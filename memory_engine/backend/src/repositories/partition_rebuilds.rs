@@ -30,6 +30,18 @@ pub struct GenerationEvidence {
     pub config_snapshots: Value,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct ThreadL0RebuildState {
+    pub pending_record_count: i64,
+    pub pending_summary_tokens: i64,
+    pub summary_status: String,
+    pub summary_dispatch_version: i64,
+    pub summary_dispatch_published_version: i64,
+    pub summary_dispatch_consumed_version: i64,
+    pub summary_dispatch_dead_letter_version: Option<i64>,
+    pub uncovered_count: i64,
+}
+
 impl PartitionRebuildClaim {
     pub fn lease_token(&self) -> Result<&str, String> {
         self.lease_token
@@ -37,6 +49,37 @@ impl PartitionRebuildClaim {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| "partition rebuild claim has no lease token".to_string())
     }
+}
+
+pub async fn load_thread_l0_rebuild_state(
+    db: &Db,
+    claim: &PartitionRebuildClaim,
+) -> Result<Option<ThreadL0RebuildState>, String> {
+    sqlx::query_as(
+        "SELECT p.pending_record_count,p.pending_summary_tokens,p.summary_status, \
+                p.summary_dispatch_version,p.summary_dispatch_published_version, \
+                p.summary_dispatch_consumed_version,p.summary_dispatch_dead_letter_version, \
+                (SELECT COUNT(*) FROM engine_records r \
+                  WHERE r.tenant_id=p.tenant_id AND r.source_id=p.source_id \
+                    AND r.thread_id=p.thread_id AND r.project_partition_key=p.project_partition_key \
+                    AND r.created_at<=migration.started_at AND r.recall_eligible \
+                    AND r.summary_status<>'ignored' AND NOT EXISTS ( \
+                        SELECT 1 FROM engine_summary_record_coverage coverage \
+                         WHERE coverage.tenant_id=r.tenant_id AND coverage.source_id=r.source_id \
+                           AND coverage.record_id=r.id AND coverage.status='active')) AS uncovered_count \
+           FROM engine_thread_summary_partitions p \
+           JOIN engine_reliability_migration_runs migration ON migration.id=$5 \
+          WHERE p.tenant_id=$1 AND p.source_id=$2 AND p.thread_id=$3 \
+            AND p.project_partition_key=$4",
+    )
+    .bind(&claim.tenant_id)
+    .bind(&claim.source_id)
+    .bind(&claim.thread_id)
+    .bind(&claim.project_partition_key)
+    .bind(&claim.migration_run_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|error| error.to_string())
 }
 
 pub async fn claim_next(
