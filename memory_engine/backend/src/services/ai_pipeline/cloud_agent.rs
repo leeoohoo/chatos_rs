@@ -379,7 +379,6 @@ impl CloudSummaryPipelineState {
         if next_limit <= 0
             || next_limit >= self.effective_token_limit
             || group_tokens <= next_limit
-            || self.transient_split_count >= MAX_OVERFLOW_RETRIES
         {
             return Ok(false);
         }
@@ -773,6 +772,30 @@ mod tests {
         );
         assert_eq!(state.effective_token_limit, 256);
         assert!(state.chunk_count > 1);
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn empty_stream_keeps_splitting_past_context_overflow_retry_cap() {
+        let ai = test_ai(
+            vec![TestResponse {
+                status: StatusCode::OK,
+                body: String::new(),
+            }],
+            5,
+        )
+        .await;
+        let mut state = test_state(spec(vec!["x".repeat(1_800)], 512), contract())
+            .expect("pipeline state");
+        state.transient_split_count = MAX_OVERFLOW_RETRIES;
+
+        let (outcome, state, result) = state.execute_one(&ai, 2).await.expect("model step");
+
+        assert!(
+            matches!(outcome, AiSingleStepOutcome::Continue { ref reason, .. } if reason == "summary_transient_split")
+        );
+        assert_eq!(state.effective_token_limit, 256);
+        assert_eq!(state.transient_split_count, MAX_OVERFLOW_RETRIES + 1);
         assert!(result.is_none());
     }
 
