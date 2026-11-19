@@ -555,6 +555,8 @@ Windows 产品版本：`3.0.9`
 
   - 2026-11-19 补充设置页与宠物 Windows 文案回归：正式 Release 的微信小程序、宠物、全局工具、AI 模型、设备与网关五页均能读取真实状态；本轮没有生成小程序码、撤销登录设备、改开关或模型、同步、保存、断开服务。取证发现宠物页把 Windows 虚拟桌面误称为 macOS `Space`，现已将中英文说明分别修为“切换虚拟桌面”和 `switching virtual desktops`，并增加明确拒绝 `Space` 回退的组件测试。定向 `3 passed`，React 全量 `149` 个测试文件 / `591 passed`，TypeScript、production build、architecture audit、Bundle audit、Skill 示例审计和 `git diff --check` 全部通过。以 `AWS_LC_SYS_PREBUILT_NASM=1` 复用依赖包预构建汇编对象完成正式 Tauri Release，产物 `62,054,912` bytes、SHA-256 `7E192AE60F7C342B2E1875A28CAC205EE6F61454F9C3B14CCF82FD13CB357D51`；新产物恢复“本地服务已就绪”后，原生 accessibility tree 与可见设置页均显示新文案。
 
+  - 2026-11-19 macOS 第 20 页记事本空态对照：使用同一正式 Release 打开真实“记事本”模态层，逐项核对刷新/关闭、搜索、当前根目录、目录树、左侧无笔记空态、右侧未选择笔记空态、编辑/预览/分栏和复制/导出/保存/删除工具栏；无笔记时 mutation 操作均禁用，accessibility tree 提供对话框、树、搜索框、模式与操作名称，`Escape` 正常关闭并回到原项目页面。本轮未创建、编辑、保存、复制、导出或删除笔记。该记录只关闭截图第 20 页的空目录视觉与只读交互，不替代有数据状态或其余 30 页。
+
 ## C. 仍存在的真实功能差距
 
 ### P1：用户能直接感知
