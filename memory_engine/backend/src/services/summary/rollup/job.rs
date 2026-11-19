@@ -57,6 +57,26 @@ pub(super) fn done_metadata(
     value
 }
 
+pub(super) fn partition_claim_deferred_job(
+    selected_count: usize,
+) -> FinishEngineJobRunRequest {
+    FinishEngineJobRunRequest {
+        status: "done".to_string(),
+        input_count: selected_count as i64,
+        output_count: 0,
+        processed_count: 0,
+        success_count: 0,
+        error_count: 0,
+        metadata: Some(done_metadata(
+            selected_count,
+            0,
+            None,
+            "partition_claim_occupied",
+        )),
+        error_message: None,
+    }
+}
+
 pub(super) fn failed_metadata(
     selected_count: Option<usize>,
     marked_count: usize,
@@ -77,4 +97,22 @@ pub(super) fn failed_metadata(
         value["trigger_reason"] = serde_json::json!(reason);
     }
     value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::partition_claim_deferred_job;
+
+    #[test]
+    fn occupied_partition_is_deferred_without_recording_a_failure() {
+        let result = partition_claim_deferred_job(137);
+
+        assert_eq!(result.status, "done");
+        assert_eq!(result.error_count, 0);
+        assert_eq!(result.error_message, None);
+        assert_eq!(
+            result.metadata.unwrap()["trigger_reason"],
+            "partition_claim_occupied"
+        );
+    }
 }

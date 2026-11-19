@@ -202,7 +202,7 @@ impl AiClient {
             classify_generate_text_error(err, self.max_transient_retries)
         })?;
         validate_summary_text(self, request_kind, started_at, text)
-            .map_err(AiGenerateTextError::Fatal)
+            .map_err(|error| classify_generate_text_error(error, self.max_transient_retries))
     }
 }
 

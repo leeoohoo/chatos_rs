@@ -66,6 +66,8 @@ pub fn replay_request_error_policy(err_msg: &str) -> RequestErrorReplay {
 pub fn is_response_parse_error(err: &str) -> bool {
     let message = err.to_lowercase();
     message.contains("invalid json response")
+        || message.contains("ai empty content")
+        || message.contains("upstream terminated with incomplete empty response")
         || message.contains("incomplete responses sse stream")
         || message.contains("stream response parse failed")
         || message.contains("stream response body failed")

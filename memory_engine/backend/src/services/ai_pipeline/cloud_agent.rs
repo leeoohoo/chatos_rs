@@ -728,6 +728,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_upstream_stream_is_returned_as_queue_retry() {
+        let ai = test_ai(
+            vec![TestResponse {
+                status: StatusCode::OK,
+                body: String::new(),
+            }],
+            3,
+        )
+        .await;
+        let state =
+            test_state(spec(vec!["input".to_string()], 512), contract()).expect("pipeline state");
+        let (outcome, _, result) = state.execute_one(&ai, 1).await.expect("model step");
+
+        assert!(
+            matches!(
+                &outcome,
+                AiSingleStepOutcome::Retry {
+                    next_model_attempt: 2,
+                    ..
+                }
+            ),
+            "unexpected empty-stream outcome: {outcome:?}"
+        );
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
     async fn exhausted_transient_retries_split_large_input_before_failing_job() {
         let ai = test_ai(
             vec![error(
