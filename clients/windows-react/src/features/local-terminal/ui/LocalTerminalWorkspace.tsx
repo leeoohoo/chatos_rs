@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
+import { TerminalSearchControls } from "../../terminal/ui/TerminalSearchControls";
 import {
   useLocalTerminalStore,
   type LocalTerminalPhase,
@@ -18,15 +19,12 @@ export function LocalTerminalWorkspace({
 }) {
   const state = useLocalTerminalStore();
   const surfaceRef = useRef<LocalTerminalSurfaceHandle>(null);
-  const [searchText, setSearchText] = useState("");
   const selected = state.tabs.find((tab) => tab.id === state.selectedTabId) ?? state.tabs[0];
 
   useLayoutEffect(() => {
     void useLocalTerminalStore.getState().activate(port, ownerUserId, hostReady);
     return () => useLocalTerminalStore.getState().deactivate(port);
   }, [hostReady, ownerUserId, port]);
-
-  useEffect(() => setSearchText(""), [selected?.id]);
 
   if (!hostReady) {
     return (
@@ -37,18 +35,6 @@ export function LocalTerminalWorkspace({
       </section>
     );
   }
-
-  const search = (direction: "next" | "previous") => {
-    const query = searchText.trim();
-    if (!query) return;
-    if (direction === "next") surfaceRef.current?.findNext(query);
-    else surfaceRef.current?.findPrevious(query);
-  };
-  const clear = () => {
-    if (!selected) return;
-    surfaceRef.current?.clear();
-    state.clearOutput(selected.id);
-  };
 
   return (
     <section className="local-terminal" aria-label="本机终端工作区">
@@ -93,29 +79,12 @@ export function LocalTerminalWorkspace({
               {statusLabel(selected.phase, selected.exitCode)}
             </span>
             <span className="local-terminal-shell">{selected.shellName}</span>
-            <label className="local-terminal-search">
-              <span aria-hidden="true">⌕</span>
-              <input
-                aria-label="搜索终端输出"
-                onChange={(event) => setSearchText(event.target.value)}
-                onKeyDown={(event) => { if (event.key === "Enter") search("next"); }}
-                placeholder="搜索终端输出"
-                value={searchText}
-              />
-            </label>
-            <button
-              aria-label="上一个匹配项"
-              disabled={!searchText.trim()}
-              onClick={() => search("previous")}
-              type="button"
-            >↑</button>
-            <button
-              aria-label="下一个匹配项"
-              disabled={!searchText.trim()}
-              onClick={() => search("next")}
-              type="button"
-            >↓</button>
-            <button onClick={clear} type="button">清屏</button>
+            <TerminalSearchControls
+              className="local-terminal-search"
+              onClear={() => state.clearOutput(selected.id)}
+              resetKey={selected.id}
+              surfaceRef={surfaceRef}
+            />
             <button
               className="danger-link"
               disabled={selected.phase !== "running" || selected.activeAction != null}

@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
+import { TerminalSearchControls } from "../../terminal/ui/TerminalSearchControls";
 import { useRemoteTerminalStore } from "../application/remoteTerminalStore";
 import type { RemoteTerminalPort } from "../ports/RemoteTerminalPort";
 import { RemoteTerminalSurface, type RemoteTerminalSurfaceHandle } from "./RemoteTerminalSurface";
@@ -19,33 +20,18 @@ export function RemoteTerminalWorkspace({
 }) {
   const state = useRemoteTerminalStore();
   const surfaceRef = useRef<RemoteTerminalSurfaceHandle>(null);
-  const [searchText, setSearchText] = useState("");
 
   useLayoutEffect(() => {
     void useRemoteTerminalStore.getState().activate(port, ownerUserId, connectionId, connectionName, initialWorkingDirectory);
     return () => useRemoteTerminalStore.getState().deactivate(port);
   }, [connectionId, connectionName, initialWorkingDirectory, ownerUserId, port]);
 
-  const search = (direction: "next" | "previous") => {
-    const query = searchText.trim();
-    if (!query) return;
-    if (direction === "next") surfaceRef.current?.findNext(query);
-    else surfaceRef.current?.findPrevious(query);
-  };
-  const clear = () => {
-    surfaceRef.current?.clear();
-    state.clearOutput();
-  };
-
   return (
     <section className="remote-terminal" aria-label="远程终端工作区">
       <header className="remote-terminal__toolbar">
         <div className="remote-terminal__path"><span aria-hidden="true">⌁</span><code>{state.workingDirectory}</code></div>
         <span className={`remote-terminal-status remote-terminal-status--${state.phase}`}>{statusLabel(state.phase, state.exitCode)}</span>
-        <label className="remote-terminal-search"><span aria-hidden="true">⌕</span><input aria-label="搜索终端输出" onChange={(event) => setSearchText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") search("next"); }} placeholder="搜索终端输出" value={searchText} /></label>
-        <button aria-label="上一个匹配项" disabled={!searchText.trim()} onClick={() => search("previous")} type="button">↑</button>
-        <button aria-label="下一个匹配项" disabled={!searchText.trim()} onClick={() => search("next")} type="button">↓</button>
-        <button onClick={clear} type="button">清屏</button>
+        <TerminalSearchControls className="remote-terminal-search" onClear={state.clearOutput} surfaceRef={surfaceRef} />
         <button disabled={state.phase !== "running" || state.activeAction != null} onClick={() => void state.interrupt(port)} type="button">中断</button>
         {state.phase === "running" || state.phase === "connecting" ? (
           <button className="danger-link" disabled={state.activeAction != null} onClick={() => void state.disconnect(port)} type="button">断开</button>
