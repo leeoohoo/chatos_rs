@@ -1,10 +1,12 @@
 use serde_json::{json, Map, Value};
 use std::{
-    fs::{self, File},
+    fs::File,
     io::Read,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
 };
+
+use crate::connector_storage;
 
 const MAXIMUM_STATE_BYTES: u64 = 16 * 1_024 * 1_024;
 static STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -100,26 +102,11 @@ fn new_device_id() -> String {
 }
 
 fn confined_connector_directory(app_data_directory: &Path) -> Result<PathBuf, String> {
-    fs::create_dir_all(app_data_directory).map_err(|_| state_error())?;
-    let canonical_data = fs::canonicalize(app_data_directory).map_err(|_| state_error())?;
-    let requested = canonical_data.join("NativeConnector");
-    fs::create_dir_all(&requested).map_err(|_| state_error())?;
-    let canonical_connector = fs::canonicalize(requested).map_err(|_| state_error())?;
-    if !canonical_connector.starts_with(&canonical_data) {
-        return Err(state_error());
-    }
-    Ok(canonical_connector)
+    connector_storage::confined_connector_directory(app_data_directory).map_err(|_| state_error())
 }
 
 fn reject_symbolic_link(path: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            Err(state_error())
-        }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(state_error()),
-    }
+    connector_storage::reject_link_or_non_file(path).map_err(|_| state_error())
 }
 
 fn load_state(path: &Path) -> Result<Map<String, Value>, String> {

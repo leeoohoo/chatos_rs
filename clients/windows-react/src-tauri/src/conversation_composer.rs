@@ -13,6 +13,7 @@ use crate::{
     attachment_tool_worker::AttachmentToolWorker,
     conversation_attachments::{AttachmentManager, AttachmentScope},
     host_lifecycle::{HostExecutionError, HostManager},
+    model_selection::is_generation_only_model,
     terminal_tool_worker::TerminalToolWorker,
 };
 
@@ -347,30 +348,6 @@ fn default_conversation_model(
         .iter()
         .find(|snapshot| !is_generation_only_model(&snapshot.model))
         .or_else(|| snapshots.first())
-}
-
-fn is_generation_only_model(model: &str) -> bool {
-    let value = model.trim().to_ascii_lowercase();
-    [
-        "gpt-image",
-        "dall-e",
-        "imagen",
-        "imagegen",
-        "image-generation",
-        "sora",
-        "veo",
-        "kling",
-        "seedance",
-        "hailuo",
-        "runway",
-        "luma",
-        "pixverse",
-        "vidu",
-        "cogvideo",
-        "hunyuan-video",
-    ]
-    .iter()
-    .any(|candidate| value.contains(candidate))
 }
 
 fn explicit_capability_json(selection: &ExplicitCapabilitySelection) -> Result<Value, String> {

@@ -1,7 +1,6 @@
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::{
-    fs,
     io::Cursor,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -11,6 +10,7 @@ use tauri::{http, State};
 use crate::{
     agent_professions::PROFESSION_KEYS,
     authentication::{AuthenticationManager, GatewayModelConfig},
+    connector_storage,
     host_lifecycle::validate_owner,
     media_studio::MediaStudioManager,
 };
@@ -1087,26 +1087,11 @@ fn open_database(path: &Path, read_only: bool) -> Result<Connection, String> {
 }
 
 fn confined_connector_directory(app_data_directory: &Path) -> Result<PathBuf, String> {
-    fs::create_dir_all(app_data_directory).map_err(|_| store_error())?;
-    let app_data = fs::canonicalize(app_data_directory).map_err(|_| store_error())?;
-    let requested = app_data.join("NativeConnector");
-    fs::create_dir_all(&requested).map_err(|_| store_error())?;
-    let connector = fs::canonicalize(requested).map_err(|_| store_error())?;
-    if !connector.starts_with(&app_data) {
-        return Err(store_error());
-    }
-    Ok(connector)
+    connector_storage::confined_connector_directory(app_data_directory).map_err(|_| store_error())
 }
 
 fn reject_link_or_non_file(path: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            Err(store_error())
-        }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(store_error()),
-    }
+    connector_storage::reject_link_or_non_file(path).map_err(|_| store_error())
 }
 
 fn invalid_row() -> rusqlite::Error {
