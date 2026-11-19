@@ -3,8 +3,7 @@
 
 use std::time::Duration;
 
-use chatos_config_sdk::{ConfigClient, ConfigSnapshot, ServicePressureSignal};
-use tokio::sync::watch;
+use chatos_config_sdk::{ConfigClient, ConfigSnapshot, ConfigWatchState, ServicePressureSignal};
 use tokio::task::JoinHandle;
 
 pub use chatos_config_sdk::PlatformPressureLevel;
@@ -29,38 +28,18 @@ pub struct PluginManagementPressurePolicy {
 
 impl PluginManagementPressurePolicy {
     pub fn from_snapshot(snapshot: &ConfigSnapshot) -> Result<Self, String> {
-        let level = snapshot
-            .value(PLATFORM_PRESSURE_LEVEL_CONFIG_KEY)
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                format!(
-                    "{PLATFORM_PRESSURE_LEVEL_CONFIG_KEY} is required from configuration center"
-                )
-            })
-            .and_then(PlatformPressureLevel::parse)?;
-        let queue_elevated_messages = required_u64(
-            snapshot,
-            PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
-            1,
-            10_000_000,
-        )?;
-        let queue_critical_messages = required_u64(
-            snapshot,
-            PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
-            2,
-            100_000_000,
-        )?;
+        let level = snapshot.required_pressure_level(PLATFORM_PRESSURE_LEVEL_CONFIG_KEY)?;
+        let queue_elevated_messages =
+            snapshot.required_u64(PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY, 1, 10_000_000)?;
+        let queue_critical_messages =
+            snapshot.required_u64(PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY, 2, 100_000_000)?;
         if queue_elevated_messages >= queue_critical_messages {
             return Err(format!(
                 "{PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY} must be less than {PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY}"
             ));
         }
-        let report_interval_ms = required_u64(
-            snapshot,
-            PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
-            1_000,
-            300_000,
-        )?;
+        let report_interval_ms =
+            snapshot.required_u64(PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY, 1_000, 300_000)?;
         Ok(Self {
             level,
             queue_elevated_messages,
@@ -70,29 +49,7 @@ impl PluginManagementPressurePolicy {
     }
 }
 
-#[derive(Clone)]
-pub struct PluginManagementPressureState {
-    sender: watch::Sender<PluginManagementPressurePolicy>,
-}
-
-impl PluginManagementPressureState {
-    pub fn new(initial: PluginManagementPressurePolicy) -> Self {
-        let (sender, _) = watch::channel(initial);
-        Self { sender }
-    }
-
-    pub fn snapshot(&self) -> PluginManagementPressurePolicy {
-        self.sender.borrow().clone()
-    }
-
-    fn update(&self, next: PluginManagementPressurePolicy) -> bool {
-        if *self.sender.borrow() == next {
-            return false;
-        }
-        self.sender.send_replace(next);
-        true
-    }
-}
+pub type PluginManagementPressureState = ConfigWatchState<PluginManagementPressurePolicy>;
 
 pub fn start_pressure_reporter(
     state: AppState,
@@ -185,21 +142,6 @@ fn pressure_signal_from_backlog(
         level,
         reason: format!("Plugin Catalog database ready_events={ready_events}"),
     }
-}
-
-fn required_u64(
-    snapshot: &ConfigSnapshot,
-    key: &str,
-    minimum: u64,
-    maximum: u64,
-) -> Result<u64, String> {
-    let value = snapshot
-        .u64(key)
-        .ok_or_else(|| format!("{key} is required from configuration center"))?;
-    if !(minimum..=maximum).contains(&value) {
-        return Err(format!("{key} must be between {minimum} and {maximum}"));
-    }
-    Ok(value)
 }
 
 #[cfg(test)]

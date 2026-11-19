@@ -70,6 +70,30 @@ pub struct ServicePressureSignal {
     pub reason: String,
 }
 
+#[derive(Clone)]
+pub struct ConfigWatchState<Value: Clone + PartialEq> {
+    sender: watch::Sender<Value>,
+}
+
+impl<Value: Clone + PartialEq> ConfigWatchState<Value> {
+    pub fn new(initial: Value) -> Self {
+        let (sender, _) = watch::channel(initial);
+        Self { sender }
+    }
+
+    pub fn snapshot(&self) -> Value {
+        self.sender.borrow().clone()
+    }
+
+    pub fn update(&self, next: Value) -> bool {
+        if *self.sender.borrow() == next {
+            return false;
+        }
+        self.sender.send_replace(next);
+        true
+    }
+}
+
 impl ConfigSnapshot {
     pub fn etag(&self) -> String {
         format!("\"{}-{}\"", self.revision, self.checksum)
@@ -119,6 +143,38 @@ impl ConfigSnapshot {
 
     pub fn usize(&self, key: &str) -> Option<usize> {
         self.u64(key).and_then(|value| usize::try_from(value).ok())
+    }
+
+    pub fn required_u64(&self, key: &str, minimum: u64, maximum: u64) -> Result<u64, String> {
+        let value = self
+            .u64(key)
+            .ok_or_else(|| format!("{key} is required from configuration center"))?;
+        if !(minimum..=maximum).contains(&value) {
+            return Err(format!("{key} must be between {minimum} and {maximum}"));
+        }
+        Ok(value)
+    }
+
+    pub fn required_usize(
+        &self,
+        key: &str,
+        minimum: usize,
+        maximum: usize,
+    ) -> Result<usize, String> {
+        let value = self
+            .usize(key)
+            .ok_or_else(|| format!("{key} is required from configuration center"))?;
+        if !(minimum..=maximum).contains(&value) {
+            return Err(format!("{key} must be between {minimum} and {maximum}"));
+        }
+        Ok(value)
+    }
+
+    pub fn required_pressure_level(&self, key: &str) -> Result<PlatformPressureLevel, String> {
+        self.value(key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{key} is required from configuration center"))
+            .and_then(PlatformPressureLevel::parse)
     }
 
     pub fn with_source(mut self, source: impl Into<String>, stale: bool) -> Self {
@@ -635,6 +691,31 @@ mod tests {
             serde_json::to_value(PlatformPressureLevel::Normal).expect("serialize pressure level"),
             Value::String("normal".to_string())
         );
+    }
+
+    #[test]
+    fn pressure_configuration_helpers_validate_ranges_and_publish_changes() {
+        let mut snapshot = test_snapshot();
+        snapshot.values.extend([
+            (
+                "platform.pressure.level".into(),
+                Value::String("elevated".into()),
+            ),
+            ("queue.limit".into(), Value::from(10)),
+        ]);
+        assert_eq!(
+            snapshot
+                .required_pressure_level("platform.pressure.level")
+                .expect("pressure level"),
+            PlatformPressureLevel::Elevated
+        );
+        assert_eq!(snapshot.required_u64("queue.limit", 1, 20), Ok(10));
+        assert!(snapshot.required_usize("queue.limit", 11, 20).is_err());
+
+        let state = ConfigWatchState::new(PlatformPressureLevel::Normal);
+        assert!(!state.update(PlatformPressureLevel::Normal));
+        assert!(state.update(PlatformPressureLevel::Critical));
+        assert_eq!(state.snapshot(), PlatformPressureLevel::Critical);
     }
 
     #[test]
