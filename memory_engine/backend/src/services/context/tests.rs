@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::blocks::{
-    build_thread_summary_blocks_from_frontier, build_thread_summary_level0_text,
-    format_subject_memory, thread_agent_subject_id, thread_allows_dynamic_project_recall,
+    build_thread_summary_blocks, build_thread_summary_level0_text, format_subject_memory,
+    thread_agent_subject_id, thread_allows_dynamic_project_recall,
 };
 use super::policy::ResolvedComposeContextPolicy;
 use super::retain_newest_records_within_budget;
@@ -230,7 +230,6 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
     tx.commit().await.expect("commit context records");
 
     for (text, project) in [
-        ("thread-summary-a", Some(project_a.as_str())),
         ("thread-summary-b", Some(project_b.as_str())),
         ("thread-summary-main", None),
     ] {
@@ -240,6 +239,69 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
         .await
         .expect("create project-scoped summary");
     }
+    for (index, text) in [
+        "thread-summary-a-oldest",
+        "thread-summary-a-middle",
+        "thread-summary-a-latest",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let summary_id = format!("summary-a-{index}-{suffix}");
+        let summary = crate::repositories::summaries::insert_test_summary(
+            &pool,
+            Some(summary_id.as_str()),
+            &tenant,
+            &source,
+            &thread_id,
+            &agent_id,
+            "thread_incremental",
+            0,
+            None,
+            text,
+            None,
+            None,
+            1,
+            Some(json!({"generator":"test"})),
+            Some(project_a.as_str()),
+        )
+        .await
+        .expect("create ordered project-scoped L0 summary");
+        sqlx::query(
+            "UPDATE engine_summaries SET created_at=$4 \
+             WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+        )
+        .bind(&tenant)
+        .bind(&source)
+        .bind(&summary.id)
+        .bind(
+            format!("2027-01-0{}T00:00:00Z", index + 1)
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .expect("test summary timestamp"),
+        )
+        .execute(&pool)
+        .await
+        .expect("order project-scoped L0 summary");
+    }
+    crate::repositories::summaries::insert_test_summary(
+        &pool,
+        None,
+        &tenant,
+        &source,
+        &thread_id,
+        &agent_id,
+        "thread_incremental",
+        2,
+        None,
+        "thread-rollup-a",
+        None,
+        None,
+        2,
+        Some(json!({"generator":"test"})),
+        Some(project_a.as_str()),
+    )
+    .await
+    .expect("create highest project-scoped summary");
 
     for (subject, key, memory_type, text) in [
         (
@@ -297,6 +359,34 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
     crate::repositories::subject_memories::insert_test_subject_memory(
         &pool,
         agent_id.as_str(),
+        "highest-agent-memory",
+        crate::models::UpsertSubjectMemoryRequest {
+            id: None,
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            memory_type: "agent_memory".to_string(),
+            text: "highest-agent-memory".to_string(),
+            level: Some(2),
+            source_digest: None,
+            confidence: None,
+            last_seen_at: None,
+            metadata: Some(json!({
+                "relation_subject_id": agent_id,
+                "generation_profile": crate::repositories::subject_memory_scopes::AGENT_STABLE_MEMORY_PROFILE,
+            })),
+            rollup_status: None,
+            rollup_memory_key: None,
+            rolled_up_at: None,
+            status: None,
+            created_at: None,
+            updated_at: None,
+        },
+    )
+    .await
+    .expect("upsert highest Agent memory");
+    crate::repositories::subject_memories::insert_test_subject_memory(
+        &pool,
+        agent_id.as_str(),
         "legacy-agent-memory",
         crate::models::UpsertSubjectMemoryRequest {
             id: None,
@@ -350,16 +440,29 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
             .collect::<Vec<_>>(),
         vec!["pending-project-a"]
     );
+    assert_eq!(
+        project_context
+            .blocks
+            .iter()
+            .filter(|block| block.pool == "agent_stable_memory")
+            .count(),
+        1
+    );
+    assert_eq!(project_context.meta.summary_count, 3);
     let project_blocks = project_context
         .blocks
         .iter()
         .map(|block| format!("{}\n{}", block.block_type, block.text))
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(project_blocks.contains("durable-agent-memory"));
+    assert!(project_blocks.contains("highest-agent-memory"));
+    assert!(!project_blocks.contains("durable-agent-memory"));
     assert!(!project_blocks.contains("legacy-project-specific-agent-memory"));
     assert!(project_blocks.contains("durable-project-a"));
-    assert!(project_blocks.contains("thread-summary-a"));
+    assert!(!project_blocks.contains("thread-summary-a-oldest"));
+    assert!(project_blocks.contains("thread-summary-a-middle"));
+    assert!(project_blocks.contains("thread-summary-a-latest"));
+    assert!(project_blocks.contains("thread-rollup-a"));
     assert!(!project_blocks.contains("durable-project-b"));
     assert!(!project_blocks.contains("thread-summary-b"));
     assert!(!project_blocks.contains("thread-summary-main"));
@@ -381,7 +484,8 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
         .map(|block| format!("{}\n{}", block.block_type, block.text))
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(main_blocks.contains("durable-agent-memory"));
+    assert!(main_blocks.contains("highest-agent-memory"));
+    assert!(!main_blocks.contains("durable-agent-memory"));
     assert!(main_blocks.contains("thread-summary-main"));
     assert!(!main_blocks.contains("durable-project-a"));
     assert!(!main_blocks.contains("durable-project-b"));
@@ -403,22 +507,26 @@ fn level0_summaries_are_rendered_in_chronological_order() {
 }
 
 #[test]
-fn thread_summary_blocks_keep_all_maximal_rollups_before_uncovered_level0_summaries() {
-    let (blocks, summary_count) = build_thread_summary_blocks_from_frontier(vec![
-        summary("sum_top_b", 3, "2026-05-12T05:00:00Z", "parallel top"),
-        summary("sum_top_a", 2, "2026-05-12T04:00:00Z", "highest level"),
-        summary("sum_3", 0, "2026-05-12T03:00:00Z", "third"),
-        summary("sum_2", 0, "2026-05-12T02:00:00Z", "second"),
-    ]);
+fn thread_summary_blocks_keep_one_highest_rollup_and_two_recent_level0_summaries() {
+    let (blocks, summary_count) = build_thread_summary_blocks(
+        vec![
+            summary("sum_3", 0, "2026-05-12T03:00:00Z", "third"),
+            summary("sum_2", 0, "2026-05-12T02:00:00Z", "second"),
+        ],
+        Some(summary(
+            "sum_top",
+            3,
+            "2026-05-12T05:00:00Z",
+            "highest level",
+        )),
+    );
 
-    assert_eq!(summary_count, 4);
-    assert_eq!(blocks.len(), 3);
+    assert_eq!(summary_count, 3);
+    assert_eq!(blocks.len(), 2);
     assert_eq!(blocks[0].block_type, "thread_summary_top_level");
-    assert_eq!(blocks[0].text, "parallel top");
-    assert_eq!(blocks[1].block_type, "thread_summary_top_level");
-    assert_eq!(blocks[1].text, "highest level");
-    assert_eq!(blocks[2].block_type, "thread_summary_level0");
-    assert_eq!(blocks[2].text, "second\n\n---\n\nthird");
+    assert_eq!(blocks[0].text, "highest level");
+    assert_eq!(blocks[1].block_type, "thread_summary_level0");
+    assert_eq!(blocks[1].text, "second\n\n---\n\nthird");
 }
 
 #[test]

@@ -89,6 +89,30 @@ pub async fn list_latest_thread_summaries_at_level_for_project(
         .push_bind(limit.max(1));
     fetch(db, q).await
 }
+
+pub async fn get_highest_thread_summary_for_project(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    summary_type: &str,
+    project_subject_id: Option<&str>,
+) -> Result<Option<EngineSummary>, String> {
+    let mut q = build_summary_query(
+        "SELECT data FROM engine_summaries",
+        thread_id,
+        Some(tenant_id),
+        Some(source_id),
+        Some(summary_type),
+        Some("done"),
+        None,
+    );
+    q.push(" AND project_partition_key=")
+        .push_bind(project_subject_id.unwrap_or("__none__"));
+    q.push(" ORDER BY level DESC,created_at DESC LIMIT 1");
+    Ok(fetch(db, q).await?.into_iter().next())
+}
+
 pub async fn list_thread_summaries(
     db: &Db,
     values: ListSummariesQuery<'_>,
