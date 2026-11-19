@@ -84,7 +84,7 @@ async fn reconcile_thread_l0(
                 (SELECT COUNT(*) FROM engine_records r \
                   WHERE r.tenant_id=p.tenant_id AND r.source_id=p.source_id \
                     AND r.thread_id=p.thread_id AND r.project_partition_key=p.project_partition_key \
-                    AND r.recall_eligible AND NOT EXISTS ( \
+                    AND r.recall_eligible AND r.summary_status<>'ignored' AND NOT EXISTS ( \
                         SELECT 1 FROM engine_summary_record_coverage coverage \
                          WHERE coverage.tenant_id=r.tenant_id AND coverage.source_id=r.source_id \
                            AND coverage.record_id=r.id AND coverage.status='active')) AS uncovered_count \
