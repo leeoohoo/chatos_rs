@@ -3,6 +3,16 @@ import Foundation
 import Testing
 
 struct NativeLocalAgentModelCredentialStoreTests {
+    @Test("explicit production path still uses the production vault")
+    func recognizesExplicitProductionPath() {
+        #expect(NativeLocalAgentModelCredentialStore.usesProductionVault(
+            rootURL: NativeLocalAgentModelCredentialStore.productionRootURL
+        ))
+        #expect(!NativeLocalAgentModelCredentialStore.usesProductionVault(
+            rootURL: FileManager.default.temporaryDirectory
+        ))
+    }
+
     @Test
     func credentialsRoundTripThroughKeychain() throws {
         let root = FileManager.default.temporaryDirectory

@@ -3,6 +3,7 @@ import Foundation
 
 actor KeychainCredentialStore: CredentialStoring {
     private static let maximumCredentialBytes = 64 * 1_024
+    private static let defaultService = "com.chatos.swift-client.authentication"
     private let keychain: KeychainSecretStore
     private let account: String
     private let credentialURL: URL
@@ -14,7 +15,12 @@ actor KeychainCredentialStore: CredentialStoring {
         account: String = "access-token",
         legacyCredentialURL: URL? = nil
     ) {
-        self.keychain = KeychainSecretStore(service: service)
+        self.keychain = KeychainSecretStore(
+            service: service,
+            vaultService: service == Self.defaultService
+                ? KeychainSecretStore.chatOSVaultService
+                : "\(service).vault"
+        )
         self.account = account
         if let legacyCredentialURL {
             self.credentialURL = legacyCredentialURL

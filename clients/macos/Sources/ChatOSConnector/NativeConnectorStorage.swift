@@ -163,6 +163,7 @@ struct NativeConnectorStateStore: Sendable {
 
 struct NativeConnectorSecretStore: Sendable {
     private static let maximumSecretBytes = 64 * 1_024
+    private static let remoteCredentialAccountPrefix = "remote-connection-credentials-v1:"
     private let rootURL: URL
     private let keychain: KeychainSecretStore
     private let legacyKeychain: KeychainSecretStore?
@@ -172,31 +173,40 @@ struct NativeConnectorSecretStore: Sendable {
         migrateLegacyKeychain: Bool? = nil,
         legacyKeychainService: String = "com.chatos.swift.native-connector"
     ) {
-        let resolvedRootURL: URL
-        if let rootURL {
-            resolvedRootURL = rootURL
-        } else {
-            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-                ?? FileManager.default.homeDirectoryForCurrentUser
-            resolvedRootURL = support
-                .appendingPathComponent("ChatOSSwift", isDirectory: true)
-                .appendingPathComponent("NativeConnector", isDirectory: true)
-                .appendingPathComponent("Secrets", isDirectory: true)
-        }
+        let resolvedRootURL = rootURL ?? Self.productionRootURL
+        let usesProductionVault = Self.usesProductionVault(rootURL: resolvedRootURL)
         self.rootURL = resolvedRootURL
-        self.keychain = KeychainSecretStore(service: Self.keychainService(rootURL: resolvedRootURL))
-        self.legacyKeychain = (migrateLegacyKeychain ?? (rootURL == nil))
-            ? KeychainSecretStore(service: legacyKeychainService)
+        let service = Self.keychainService(rootURL: resolvedRootURL)
+        let vaultService = usesProductionVault
+            ? KeychainSecretStore.chatOSVaultService
+            : "\(service).vault"
+        let legacyItemPolicy: KeychainLegacyItemPolicy = usesProductionVault
+            ? .accountPrefix(Self.remoteCredentialAccountPrefix)
+            : .all
+        self.keychain = KeychainSecretStore(
+            service: service,
+            vaultService: vaultService,
+            legacyItemPolicy: legacyItemPolicy
+        )
+        self.legacyKeychain = (migrateLegacyKeychain ?? usesProductionVault)
+            ? KeychainSecretStore(
+                service: legacyKeychainService,
+                vaultService: usesProductionVault ? vaultService : legacyKeychainService,
+                legacyItemPolicy: legacyItemPolicy
+            )
             : nil
     }
 
-    func load(account: String) throws -> Data? {
+    func load(account: String, migrateLegacy: Bool = true) throws -> Data? {
         let url = secretURL(account: account)
-        if let stored = try keychain.load(account: account) {
-            try legacyKeychain?.delete(account: account)
-            try deleteLegacyFile(url)
+        if let stored = try keychain.load(account: account, migrateLegacy: migrateLegacy) {
+            if migrateLegacy {
+                try legacyKeychain?.delete(account: account)
+                try deleteLegacyFile(url)
+            }
             return stored
         }
+        guard migrateLegacy else { return nil }
         if let legacyKeychain, let stored = try legacyKeychain.load(account: account) {
             try keychain.save(stored, account: account)
             try legacyKeychain.delete(account: account)
@@ -248,6 +258,21 @@ struct NativeConnectorSecretStore: Sendable {
             .map { String(format: "%02x", $0) }
             .joined()
         return "com.chatos.swift.native-connector.\(digest)"
+    }
+
+    static var productionRootURL: URL {
+        let support = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.homeDirectoryForCurrentUser
+        return support
+            .appendingPathComponent("ChatOSSwift", isDirectory: true)
+            .appendingPathComponent("NativeConnector", isDirectory: true)
+            .appendingPathComponent("Secrets", isDirectory: true)
+    }
+
+    static func usesProductionVault(rootURL: URL) -> Bool {
+        rootURL.standardizedFileURL == productionRootURL.standardizedFileURL
     }
 }
 

@@ -255,7 +255,10 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
     }
 
     private func decorateWithLocalCredentialState(_ connection: RemoteConnection) -> RemoteConnection {
-        guard let credentials = try? credentialStore.load(connectionID: connection.id) else {
+        guard let credentials = try? credentialStore.load(
+            connectionID: connection.id,
+            migrateLegacy: false
+        ) else {
             return connection
         }
         var decorated = connection

@@ -5,6 +5,16 @@ import Testing
 
 @Suite("Native Connector Secret Store")
 struct NativeConnectorSecretStoreTests {
+    @Test("explicit production path still uses the production vault")
+    func recognizesExplicitProductionPath() {
+        #expect(NativeConnectorSecretStore.usesProductionVault(
+            rootURL: NativeConnectorSecretStore.productionRootURL
+        ))
+        #expect(!NativeConnectorSecretStore.usesProductionVault(
+            rootURL: FileManager.default.temporaryDirectory
+        ))
+    }
+
     @Test("stores secrets in Keychain without creating plaintext files")
     func roundTripsSecret() throws {
         let root = FileManager.default.temporaryDirectory
@@ -31,6 +41,23 @@ struct NativeConnectorSecretStoreTests {
 
         #expect(try store.load(account: "account") == Data("legacy".utf8))
         #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+    }
+
+    @Test("non-migrating reads leave legacy secrets untouched")
+    func leavesLegacySecretForDeferredMigration() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("connector-secret-deferred-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = NativeConnectorSecretStore(rootURL: root)
+        let account = "remote-connection-credentials-v1:connection"
+        let legacyURL = root.appendingPathComponent("remote-connection-credentials-v1_connection")
+        try store.save(Data("current".utf8), account: account)
+        try Data("legacy".utf8).write(to: legacyURL)
+        defer { try? store.delete(account: account) }
+
+        #expect(try store.load(account: account, migrateLegacy: false) == Data("current".utf8))
+        #expect(FileManager.default.fileExists(atPath: legacyURL.path))
     }
 
     @Test("migrates the previous Keychain service and deletes the old item")
