@@ -545,6 +545,10 @@ Windows 产品版本：`3.0.9`
 
   - 2026-11-19 Plugin 应用安全图标回归：Windows 原生 catalog 只从受信安装根读取最多 5 MiB、1600 万像素的 PNG/JPEG/GIF/WebP/SVG，全部规范化为最大 `256 × 256`、512 KiB 的 PNG；SVG 的本地、网络和 data URL 图片解析均被禁用。PNG 只通过随机、可撤销的 `chatos-plugin-icon` UUID URL 发布，GET 响应带 `nosniff`/`no-store`，账号或 Host reset 后旧 URL 失效；React 拒绝 `file:`、任意 HTTP 和格式不符的 URL，加载失败回退占位图。Rust 与 React 的恶意输入、路径边界、会话撤销、方法限制和 UI 回退测试均进入全量门禁；结果为 Rust `638 passed / 7 ignored / 0 failed`、React `149` 个测试文件 / `590 passed`，TypeScript、Rustfmt、Clippy `-D warnings`、production build、architecture audit、Bundle audit 与 `git diff --check` 全部通过。正式 Release `target-shared/release/chatos-windows-react.exe` 为 `61,838,848` bytes，SHA-256 `BFBB1C3B9E1C5856D1539E9158E64BB5C3138D673D5DEBCF9C34DCAB9F83482C`。真实“应用”页显示 Diagram Studio 0.4.8 的紫色 Diagram 图标、名称、说明和“本地服务”，点击“刷新”后图标仍正常；本轮未点击卡片启动新安装软件。该证据关闭第 05 页非空卡片图标差距，不替代 Diagram Studio 启动、完整缩放或屏幕阅读器验收。
 
+  - 2026-11-19 Windows 单实例与主窗口重新唤醒回归：对照 macOS `applicationShouldHandleReopen`，Windows 将 single-instance Plugin 置于插件链首位；后续进程只通知首实例，arguments/cwd 被忽略，不再初始化第二套 Host 或宠物。主窗口关闭请求改为隐藏而不销毁；收到后续启动通知时会取消最小化，在不足 `160 × 120` 可见区域时重新居中，然后显示并聚焦现有 `main`。几何定向测试 `3 passed`，Rust 全量 `641 passed / 7 ignored / 0 failed`，Clippy/Rustfmt 通过；React `149` 个测试文件 / `590 passed`，TypeScript production build、architecture audit、Bundle audit、Skill 示例审计与 `git diff --check` 全部通过。正式 Release `target-shared/release/chatos-windows-react.exe` 为 `62,054,912` bytes，SHA-256 `ED79E867B67A38B0CE3782C8CD5F5DB6857E24DA91B95F6CA3A1A2A4FFB8B45A`。真实账号与 Host ready 后，首次只有主窗口、一个宠物窗口和一个宠物活动窗口；关闭主窗口并再次启动、最小化并第三次启动都恢复同一主窗口句柄 `4853678` 与焦点。最终进程核验始终为 1 个 ChatOS、1 个 Local Agent Host，宠物窗口集合没有增加。该证据关闭此前多实例造成 Host `early eof` 和重复宠物的客户端根因，不替代安装包升级/Restart Manager 场景。
+
+  - 2026-11-19 单实例发布退出补验：在无现存实例时以 `CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP=1` 启动同一正式 Release，进程在约 3 秒内以退出码 0 正常结束；主窗口 CloseRequested 的隐藏处理没有拦截应用级 `exit(0)`，既有安装/CI smoke 退出语义保持。
+
 ## C. 仍存在的真实功能差距
 
 ### P1：用户能直接感知

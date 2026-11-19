@@ -52,6 +52,7 @@ mod remote_connection;
 mod requirement_survey;
 mod resource_pressure;
 mod run_inspector;
+mod single_instance;
 mod story_studio;
 mod system_permissions;
 mod terminal_runtime;
@@ -278,6 +279,11 @@ pub fn run() {
     let machine_resource_governor = MachineResourceGovernor::default();
     let drop_resource_governor = machine_resource_governor.clone();
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(
+            |app, _arguments, _cwd| {
+                single_instance::present_main_window(app);
+            },
+        ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(authentication)
         .manage(attachment_manager)
@@ -411,6 +417,7 @@ pub fn run() {
         .register_uri_scheme_protocol("chatos-clipboard", move |_context, request| {
             clipboard_history_protocol(protocol_clipboard_history_manager.clone(), request)
         })
+        .on_window_event(single_instance::handle_main_window_event)
         .on_webview_event(move |webview, event| {
             let emit_drag_state = |targeted| {
                 let _ = webview.emit(
