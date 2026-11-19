@@ -217,7 +217,7 @@ impl CloudSummaryPipelineState {
                 message,
                 retry_kind,
                 backoff_ms,
-            }) if model_attempt <= ai.max_transient_retries() => Ok((
+            }) if model_attempt <= ai.transient_retry_limit(message.as_str()) => Ok((
                 AiSingleStepOutcome::Retry {
                     error: message,
                     retry_kind,
@@ -234,7 +234,7 @@ impl CloudSummaryPipelineState {
                     AiSingleStepOutcome::Failed {
                         error: format!(
                             "model request exhausted {} transient retries: {message}",
-                            ai.max_transient_retries()
+                            ai.transient_retry_limit(message.as_str())
                         ),
                     }
                 },
@@ -751,6 +751,28 @@ mod tests {
             ),
             "unexpected empty-stream outcome: {outcome:?}"
         );
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn repeated_empty_upstream_stream_splits_large_input_after_one_retry() {
+        let ai = test_ai(
+            vec![TestResponse {
+                status: StatusCode::OK,
+                body: String::new(),
+            }],
+            5,
+        )
+        .await;
+        let state = test_state(spec(vec!["x".repeat(1_800)], 512), contract())
+            .expect("pipeline state");
+        let (outcome, state, result) = state.execute_one(&ai, 2).await.expect("model step");
+
+        assert!(
+            matches!(outcome, AiSingleStepOutcome::Continue { ref reason, .. } if reason == "summary_transient_split")
+        );
+        assert_eq!(state.effective_token_limit, 256);
+        assert!(state.chunk_count > 1);
         assert!(result.is_none());
     }
 

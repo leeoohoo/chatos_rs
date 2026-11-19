@@ -3,20 +3,23 @@
 
 use crate::db::Db;
 use crate::models::{CreateEngineJobRunRequest, FinishEngineJobRunRequest};
-use crate::repositories::control_plane as cp_repo;
+use crate::repositories::{control_plane as cp_repo, thread_partitions};
 
 pub(crate) const SCHEDULER_TRIGGER: &str = "scheduler";
 
-pub(super) async fn create_rollup_job_run(
+pub(super) async fn create_claimed_rollup_job_run(
     db: &Db,
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
     subject_id: &str,
+    project_partition_key: &str,
+    lease_seconds: i64,
     trigger_type: &str,
-) -> Result<crate::models::EngineJobRun, String> {
-    cp_repo::create_job_run(
-        db,
+) -> Result<Option<crate::models::EngineJobRun>, String> {
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let job = cp_repo::create_job_run_in_tx(
+        &mut tx,
         CreateEngineJobRunRequest {
             job_type: "rollup".to_string(),
             trigger_type: trigger_type.to_string(),
@@ -29,6 +32,23 @@ pub(super) async fn create_rollup_job_run(
         },
     )
     .await
+    ?;
+    let claim = thread_partitions::try_claim_rollup_in_tx(
+        &mut tx,
+        tenant_id,
+        source_id,
+        thread_id,
+        project_partition_key,
+        job.id.as_str(),
+        lease_seconds,
+    )
+    .await?;
+    if claim.is_none() {
+        tx.rollback().await.map_err(|error| error.to_string())?;
+        return Ok(None);
+    }
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(Some(job))
 }
 
 pub(super) async fn finish_rollup_job_run(

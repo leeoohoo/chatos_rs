@@ -17,7 +17,7 @@ use super::super::{
     PreparedThreadRollup, RollupSettings, ThreadRollupDrainError, ThreadRollupResult,
 };
 use super::job::{
-    create_rollup_job_run, done_metadata, failed_metadata, finish_rollup_job_run,
+    create_claimed_rollup_job_run, done_metadata, failed_metadata, finish_rollup_job_run,
     partition_claim_deferred_job,
 };
 
@@ -133,15 +133,21 @@ pub(crate) async fn run_prepared_thread_rollup(
             .await?
             .ok_or_else(|| format!("rollup job run not found: {job_run_id}"))?
     } else {
-        create_rollup_job_run(
+        let Some(job_run) = create_claimed_rollup_job_run(
             db,
             tenant_id,
             source_id,
             thread.id.as_str(),
             thread.subject_id.as_str(),
+            project_partition_key.as_str(),
+            config.rollup_lock_timeout_secs,
             trigger_type,
         )
         .await?
+        else {
+            return Ok(empty_rollup_result());
+        };
+        job_run
     };
     if job_run.status == "done" {
         return Ok(ThreadRollupResult {
@@ -166,17 +172,7 @@ pub(crate) async fn run_prepared_thread_rollup(
         )
         .await?
     } else {
-        thread_partitions::try_claim_rollup(
-            db,
-            tenant_id,
-            source_id,
-            thread_id,
-            project_partition_key.as_str(),
-            job_run.id.as_str(),
-            config.rollup_lock_timeout_secs,
-        )
-        .await?
-        .is_some()
+        true
     };
     if !owns_claim {
         finish_rollup_job_run(

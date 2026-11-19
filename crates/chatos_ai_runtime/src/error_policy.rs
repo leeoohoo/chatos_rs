@@ -369,7 +369,11 @@ pub fn classify_transient_retry(
 }
 
 pub fn effective_transient_retry_limit(err: &str, configured_limit: usize) -> usize {
-    if is_ai_request_timeout_error(err) {
+    let message = err.to_lowercase();
+    if is_ai_request_timeout_error(err)
+        || message.contains("ai empty content")
+        || message.contains("upstream terminated with incomplete empty response")
+    {
         configured_limit.min(1)
     } else {
         configured_limit

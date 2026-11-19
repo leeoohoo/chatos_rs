@@ -108,6 +108,10 @@ impl AiClient {
         self.max_transient_retries
     }
 
+    pub(crate) fn transient_retry_limit(&self, error: &str) -> usize {
+        chatos_ai_runtime::effective_transient_retry_limit(error, self.max_transient_retries)
+    }
+
     pub(crate) async fn generate_memory_payload_once(
         &self,
         system_prompt: &str,
