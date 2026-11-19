@@ -1,3 +1,4 @@
+import ChatOSCore
 import Darwin
 import Foundation
 
@@ -27,7 +28,6 @@ struct GlobalUtilityContextSnapshotInput: Equatable, Sendable {
 
 enum GlobalUtilityContextSnapshotStore {
     static let maximumBytes = 4 * 1_024 * 1_024
-    private static let chunkSize = 256 * 1_024
 
     static func write(_ input: GlobalUtilityContextSnapshotInput, to url: URL) async -> Bool {
         do {
@@ -45,7 +45,8 @@ enum GlobalUtilityContextSnapshotStore {
     static func read(from url: URL) async -> GlobalUtilityContextSnapshot? {
         do {
             return try await AppCancellableDetachedWork.run(priority: .utility) {
-                let data = try readBounded(from: url)
+                let data = try BoundedFileReader.read(url, maximumBytes: maximumBytes)
+                guard !data.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
                 return try JSONDecoder().decode(GlobalUtilityContextSnapshot.self, from: data)
             }
         } catch {
@@ -107,42 +108,6 @@ enum GlobalUtilityContextSnapshotStore {
         installed = true
     }
 
-    private nonisolated static func readBounded(from url: URL) throws -> Data {
-        guard url.isFileURL else { throw CocoaError(.fileReadUnsupportedScheme) }
-        try Task.checkCancellation()
-        let descriptor = url.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return -1 }
-            return Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-        }
-        guard descriptor >= 0 else { throw CocoaError(.fileReadNoSuchFile) }
-        defer { Darwin.close(descriptor) }
-        var status = stat()
-        guard fstat(descriptor, &status) == 0,
-              (status.st_mode & S_IFMT) == S_IFREG,
-              status.st_size > 0,
-              status.st_size <= maximumBytes else {
-            throw CocoaError(.fileReadCorruptFile)
-        }
-
-        var data = Data()
-        data.reserveCapacity(Int(status.st_size))
-        var buffer = [UInt8](repeating: 0, count: chunkSize)
-        while data.count <= maximumBytes {
-            try Task.checkCancellation()
-            let count = buffer.withUnsafeMutableBytes { bytes in
-                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
-            }
-            if count < 0, errno == EINTR { continue }
-            guard count >= 0 else { throw CocoaError(.fileReadUnknown) }
-            if count == 0 { break }
-            guard data.count <= maximumBytes - count else {
-                throw CocoaError(.fileReadTooLarge)
-            }
-            data.append(buffer, count: count)
-        }
-        guard data.count == status.st_size else { throw CocoaError(.fileReadCorruptFile) }
-        return data
-    }
 }
 
 actor GlobalUtilityContextSnapshotPersistence {

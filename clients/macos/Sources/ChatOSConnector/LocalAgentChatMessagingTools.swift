@@ -149,14 +149,7 @@ extension LocalAgentChatToolProvider {
     private static func boundedAttachmentData(at url: URL, expectedBytes: Int) throws -> Data {
         guard expectedBytes > 0,
               expectedBytes <= maximumReadableAttachmentBytes,
-              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-              values.isRegularFile == true,
-              values.fileSize == expectedBytes,
-              let handle = try? FileHandle(forReadingFrom: url) else {
-            throw AgentGroupChatError.invalidField("attachment.data")
-        }
-        defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: maximumReadableAttachmentBytes + 1),
+              let data = try? BoundedFileReader.read(url, maximumBytes: expectedBytes),
               data.count == expectedBytes else {
             throw AgentGroupChatError.invalidField("attachment.data")
         }

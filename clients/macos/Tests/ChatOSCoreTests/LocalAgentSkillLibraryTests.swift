@@ -20,6 +20,32 @@ final class LocalAgentSkillLibraryTests: XCTestCase {
         XCTAssertEqual(library.projectTypes(ownerUserID: "alice").count, 27)
     }
 
+    func testSymbolicLinkPayloadIsNotLoaded() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-skill-library-link-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let targetURL = folder.appendingPathComponent("target.json")
+        let linkedURL = folder.appendingPathComponent("overrides.json")
+        let key = "backend_engineer"
+        let target = LocalAgentSkillLibrary(fileURL: targetURL)
+        try target.updateProfession(
+            ownerUserID: "alice",
+            key: key,
+            label: "不应加载",
+            description: "符号链接目标",
+            skillMarkdown: "# 不应加载"
+        )
+        try FileManager.default.createSymbolicLink(at: linkedURL, withDestinationURL: targetURL)
+
+        let library = LocalAgentSkillLibrary(fileURL: linkedURL)
+
+        XCTAssertEqual(
+            library.profession(ownerUserID: "alice", key: key),
+            LocalAgentSkillCatalog.profession(key: key)
+        )
+    }
+
     func testOverridesAreAccountScopedPersistedAndResettable() throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-skill-library-\(UUID().uuidString)")

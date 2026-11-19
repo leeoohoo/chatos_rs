@@ -123,11 +123,6 @@ struct NativeApprovalAgentTools: Sendable {
     }
 
     private func boundedData(_ file: URL) throws -> Data {
-        let values = try file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        guard values.isRegularFile == true,
-              (values.fileSize ?? maximumReadBytes + 1) <= maximumReadBytes else {
-            throw NativeApprovalToolError.fileTooLarge
-        }
         do {
             return try NativeBoundedFileReader.read(
                 file,

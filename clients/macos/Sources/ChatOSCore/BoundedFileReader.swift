@@ -1,27 +1,30 @@
+import Darwin
 import Foundation
 
 public enum BoundedFileReader {
     private static let chunkSize = 256 * 1_024
 
     public static func read(_ url: URL, maximumBytes: Int) throws -> Data {
+        guard url.isFileURL else { throw BoundedFileReadError.notRegularFile }
         guard maximumBytes > 0 else { throw BoundedFileReadError.invalidLimit }
         try Task.checkCancellation()
-        let values = try url.resourceValues(forKeys: [
-            .isRegularFileKey,
-            .isSymbolicLinkKey,
-            .fileSizeKey,
-        ])
-        guard values.isRegularFile == true,
-              values.isSymbolicLink != true,
-              let fileSize = values.fileSize,
-              fileSize >= 0 else {
+        let descriptor = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else { throw BoundedFileReadError.notRegularFile }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var status = stat()
+        guard fstat(descriptor, &status) == 0,
+              (status.st_mode & S_IFMT) == S_IFREG,
+              status.st_size >= 0 else {
             throw BoundedFileReadError.notRegularFile
         }
+        let fileSize = Int(status.st_size)
         guard fileSize <= maximumBytes else {
             throw BoundedFileReadError.fileTooLarge(maximumBytes: maximumBytes)
         }
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
 
         let readLimit = maximumBytes == Int.max ? Int.max : maximumBytes + 1
         var data = Data()
@@ -39,6 +42,7 @@ public enum BoundedFileReader {
             }
         }
         try Task.checkCancellation()
+        guard data.count == fileSize else { throw BoundedFileReadError.notRegularFile }
         return data
     }
 }

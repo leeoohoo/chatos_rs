@@ -53,7 +53,10 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
 
     public init(fileURL: URL) {
         self.fileURL = fileURL
-        if let data = try? Self.boundedData(at: fileURL),
+        if let data = try? BoundedFileReader.read(
+            fileURL,
+            maximumBytes: Self.maximumPayloadBytes
+        ),
            var decoded = try? JSONDecoder().decode(Payload.self, from: data),
            (1...2).contains(decoded.schemaVersion) {
             decoded.schemaVersion = 2
@@ -314,21 +317,5 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return body()
-    }
-
-    private static func boundedData(at url: URL) throws -> Data {
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        guard values.isRegularFile == true,
-              let size = values.fileSize,
-              size <= maximumPayloadBytes else {
-            throw LocalAgentSkillLibraryError.storage("Skill 配置不是普通文件或超过本地存储上限")
-        }
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        let data = try handle.read(upToCount: maximumPayloadBytes + 1) ?? Data()
-        guard data.count <= maximumPayloadBytes else {
-            throw LocalAgentSkillLibraryError.storage("Skill 配置超过本地存储上限")
-        }
-        return data
     }
 }
