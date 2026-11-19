@@ -42,6 +42,16 @@ pub(crate) fn is_canonical_agent_subject_id(value: &str) -> bool {
 
 pub async fn ensure_thread_identity_scopes(db: &Db, thread: &EngineThread) -> Result<(), String> {
     for (scope_key, request) in thread_identity_scope_requests(thread)? {
+        if request.memory_type == "project_summary" {
+            ensure_project_identity_scope(
+                db,
+                request.tenant_id.as_str(),
+                request.source_id.as_str(),
+                request.subject_id.as_str(),
+            )
+            .await?;
+            continue;
+        }
         if get_subject_memory_scope(db, &request.tenant_id, &request.source_id, &scope_key)
             .await?
             .as_ref()
@@ -75,15 +85,42 @@ pub async fn ensure_project_identity_scope(
         "project_summary",
         "Project shared summary",
     );
-    if get_subject_memory_scope(db, tenant_id, source_id, scope_key.as_str())
+    let current = get_subject_memory_scope(db, tenant_id, source_id, scope_key.as_str())
         .await?
         .as_ref()
-        .is_some_and(|existing| identity_scope_is_current(existing, &request))
-    {
-        return Ok(());
+        .is_some_and(|existing| identity_scope_is_current(existing, &request));
+    if !current {
+        upsert_subject_memory_scope(db, scope_key.as_str(), request).await?;
     }
-    upsert_subject_memory_scope(db, scope_key.as_str(), request).await?;
-    Ok(())
+    deactivate_legacy_project_scope(db, tenant_id, source_id, project_subject_id).await
+}
+
+async fn deactivate_legacy_project_scope(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    project_subject_id: &str,
+) -> Result<(), String> {
+    let now = now_rfc3339();
+    sqlx::query(
+        "UPDATE engine_subject_memory_scopes SET status='inactive',subject_memory_status='idle', \
+         subject_memory_dispatch_pending=false,subject_memory_dispatch_consumed_version= \
+         GREATEST(subject_memory_dispatch_consumed_version,subject_memory_dispatch_version), \
+         subject_memory_dispatch_consumed_at=$5,lock_owner=NULL,lock_expires_at=NULL,updated_at=$5, \
+         data=jsonb_set(jsonb_set(data,'{status}',to_jsonb('inactive'::text),true), \
+           '{updated_at}',to_jsonb($6::text),true) \
+         WHERE tenant_id=$1 AND source_id=$2 AND subject_id=$3 AND scope_key=$4 AND status='active'",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(project_subject_id)
+    .bind(format!("project_memory:{project_subject_id}"))
+    .bind(timestamp(&now)?)
+    .bind(&now)
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }
 
 pub async fn ensure_agent_identity_scope(

@@ -8,8 +8,8 @@ mod state;
 
 pub(crate) use generated::generated_subject_memory_request;
 pub(crate) use job_run::{
-    build_outer_failed_job_run, build_success_job_run, create_subject_memory_job_run,
-    finish_subject_memory_job_run,
+    build_outer_failed_job_run, build_scope_busy_job_run, build_success_job_run,
+    create_subject_memory_job_run, finish_subject_memory_job_run,
 };
 pub(crate) use prepare::{empty_subject_memory_response, log_noop, prepare_subject_memory_job};
 pub(crate) use state::SubjectMemoryJobProgress;

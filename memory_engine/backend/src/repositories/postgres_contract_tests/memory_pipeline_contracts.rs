@@ -4,6 +4,77 @@
 use super::*;
 
 #[tokio::test]
+async fn canonical_project_scope_deactivates_its_legacy_duplicate() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let subject = format!("project:{suffix}");
+    let legacy_key = format!("project_memory:{subject}");
+    crate::repositories::subject_memory_scopes::upsert_subject_memory_scope(
+        &pool,
+        legacy_key.as_str(),
+        crate::models::UpsertSubjectMemoryScopeRequest {
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            subject_id: subject.clone(),
+            memory_type: "project_memory".to_string(),
+            source_thread_label: subject.clone(),
+            relation_subject_id: Some(legacy_key.clone()),
+            source_summary_type: Some("thread_incremental".to_string()),
+            prompt_title: None,
+            memory_metadata: None,
+            status: Some("active".to_string()),
+        },
+    )
+    .await
+    .expect("create legacy project scope");
+    assert!(
+        crate::repositories::subject_memory_scopes::try_acquire_subject_memory_scope_slot(
+            &pool,
+            &tenant,
+            &source,
+            &legacy_key,
+            "legacy-owner",
+            300,
+        )
+        .await
+        .expect("lock legacy project scope")
+    );
+
+    crate::repositories::subject_memory_scopes::ensure_project_identity_scope(
+        &pool, &tenant, &source, &subject,
+    )
+    .await
+    .expect("ensure canonical project scope");
+
+    let legacy = crate::repositories::subject_memory_scopes::get_subject_memory_scope(
+        &pool,
+        &tenant,
+        &source,
+        &legacy_key,
+    )
+    .await
+    .expect("load legacy project scope")
+    .expect("legacy project scope remains auditable");
+    let state = sqlx::query_as::<_, (String, bool, Option<String>)>(
+        "SELECT subject_memory_status,subject_memory_dispatch_pending,lock_owner \
+         FROM engine_subject_memory_scopes WHERE tenant_id=$1 AND source_id=$2 AND scope_key=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&legacy_key)
+    .fetch_one(&pool)
+    .await
+    .expect("load legacy coordination state");
+
+    assert_eq!(legacy.status, "inactive");
+    assert_eq!(state, ("idle".to_string(), false, None));
+}
+
+#[tokio::test]
 async fn thread_summary_dispatches_rollup_and_both_identity_memories() {
     let Some(pool) = pool().await else {
         return;

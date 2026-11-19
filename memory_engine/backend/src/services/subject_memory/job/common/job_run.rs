@@ -105,6 +105,28 @@ pub(crate) fn build_outer_failed_job_run(
     }
 }
 
+pub(crate) fn build_scope_busy_job_run(
+    req: &RunSubjectMemoryJobRequest,
+    relation_subject_id: &str,
+    input_count: usize,
+) -> FinishEngineJobRunRequest {
+    FinishEngineJobRunRequest {
+        status: "done".to_string(),
+        input_count: input_count as i64,
+        output_count: 0,
+        processed_count: 0,
+        success_count: 0,
+        error_count: 0,
+        metadata: Some(serde_json::json!({
+            "scope_runner": true,
+            "memory_type": req.memory_type,
+            "relation_subject_id": relation_subject_id,
+            "deferred_reason": "scope_slot_occupied",
+        })),
+        error_message: None,
+    }
+}
+
 fn base_metadata(
     from_scope_runner: bool,
     memory_type: &str,
@@ -116,4 +138,36 @@ fn base_metadata(
         "memory_type": memory_type,
         "relation_subject_id": relation_subject_id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_scope_busy_job_run;
+    use crate::models::RunSubjectMemoryJobRequest;
+
+    #[test]
+    fn occupied_scope_is_deferred_without_recording_a_failure() {
+        let req = RunSubjectMemoryJobRequest {
+            tenant_id: "tenant".into(),
+            source_id: "source".into(),
+            subject_id: "project:1".into(),
+            memory_type: "project_summary".into(),
+            source_thread_label: "project:1".into(),
+            relation_subject_id: None,
+            source_summary_type: None,
+            prompt_title: None,
+            memory_metadata: None,
+            scope_key: Some("identity:project:1".into()),
+        };
+
+        let result = build_scope_busy_job_run(&req, "project_memory:project:1", 264);
+
+        assert_eq!(result.status, "done");
+        assert_eq!(result.error_count, 0);
+        assert_eq!(result.error_message, None);
+        assert_eq!(
+            result.metadata.unwrap()["deferred_reason"],
+            "scope_slot_occupied"
+        );
+    }
 }
