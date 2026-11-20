@@ -89,7 +89,6 @@ clients/windows-react/src-tauri/src/requirement_survey.rs	897	2027-02-28	Split e
 clients/local_agent_host/layers/infrastructure/database/src/schema.rs	887	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/remote_connection/mod.rs	886	2027-02-28	Split remote connection management, command, and credential orchestration responsibilities
 clients/windows-react/src-tauri/src/media_studio/video_provider.rs	885	2027-02-28	Split existing owned source by responsibility before expiry
-clients/windows-react/src-tauri/src/plugin_repository.rs	883	2027-02-28	Split existing owned source by responsibility before expiry
 clients/local_agent_host/src/application/coordinator_worker_tests.rs	882	2027-02-28	Split existing owned source by responsibility before expiry
 memory_engine/backend/src/services/memory_cloud_agent.rs	878	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Tests/ChatOSConnectorTests/NativeConnectorStateStoreTests.swift	865	2027-02-28	Split existing owned source by responsibility before expiry
