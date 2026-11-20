@@ -2,14 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub mod arguments;
-pub mod builder;
 pub mod builtin_catalog;
 pub mod builtin_prompt;
 pub mod execution;
-pub mod executor;
 pub mod naming;
 pub mod parallelism;
-pub mod registry;
 pub mod rpc;
 pub mod schema;
 pub mod stdio_policy;
@@ -18,7 +15,6 @@ pub mod tool_call;
 pub mod types;
 
 pub use arguments::{parse_json_loose, parse_json_tool_args, parse_tool_args};
-pub use builder::McpExecutorBuilder;
 pub use builtin_catalog::{
     builtin_kind_by_any, builtin_kind_by_command, builtin_kind_by_config_id,
     builtin_kind_by_kind_name, builtin_kind_by_server_name, BuiltinMcpKind, AGENT_BUILDER_COMMAND,
@@ -34,9 +30,7 @@ pub use builtin_catalog::{
 };
 pub use builtin_prompt::{builtin_mcp_provider_skill_instructions, BuiltinMcpPromptLocale};
 pub use execution::{execute_tool_calls_parallel, execute_tool_calls_stream};
-pub use executor::McpExecutor;
 pub use naming::{canonical_name_segment, canonical_prefixed_tool_name, legacy_prefixed_tool_name};
-pub use registry::{BuiltinToolProvider, BuiltinToolRegistry};
 pub use rpc::{
     extract_tools, invalidate_stdio_session, jsonrpc_http_call, jsonrpc_http_call_with_client,
     jsonrpc_http_notification, jsonrpc_http_tool_call_cancellable,
