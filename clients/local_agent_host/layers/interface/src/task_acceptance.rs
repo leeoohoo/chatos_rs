@@ -3,6 +3,7 @@
 
 use crate::LocalAgentRunRecord;
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 
 /// Explicit, frozen constraints only; never infer a limit from natural-language criteria.
 pub fn validate_task_final_response_limit(input: &Value) -> Result<(), String> {
@@ -27,12 +28,13 @@ pub fn validate_task_acceptance_report(input: &Value, report: &Value) -> Result<
         return Ok(()); // Already-created Tasks and their retries retain their old contract.
     }
     validate_task_final_response_limit(input)?;
-    let _result_status = report
+    let result_status = report
         .get("result_status")
         .or_else(|| report.get("status"))
         .and_then(Value::as_str)
         .filter(|s| matches!(*s, "succeeded" | "failed" | "blocked"))
         .ok_or("Task acceptance report has an invalid result_status")?;
+    validate_verification_report(input, report, result_status)?;
     let final_response = report
         .get("final_response")
         .and_then(Value::as_str)
@@ -83,6 +85,180 @@ pub fn validate_task_acceptance_report(input: &Value, report: &Value) -> Result<
         // Per-criterion verdicts remain independent findings: a verification
         // Task may finish normally and prove that the inspected artifact does
         // not meet acceptance without turning the Run into an execution error.
+    }
+    Ok(())
+}
+
+fn validate_verification_report(
+    input: &Value,
+    report: &Value,
+    result_status: &str,
+) -> Result<(), String> {
+    let Some(contract) = input
+        .get("verification_contract")
+        .filter(|value| !value.is_null())
+    else {
+        if report
+            .get("verification_report")
+            .is_some_and(|value| !value.is_null())
+        {
+            return Err(
+                "verification_report is allowed only for a Task with verification_contract"
+                    .to_string(),
+            );
+        }
+        return Ok(());
+    };
+    let verification = report
+        .get("verification_report")
+        .filter(|value| !value.is_null())
+        .ok_or("verification_report is required for this Task")?;
+    let subject = verification
+        .get("subject_identity")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or("verification_report.subject_identity is required")?;
+    if contract
+        .get("subject_identity")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        != Some(subject)
+    {
+        return Err(
+            "verification_report subject_identity does not match the frozen verification subject"
+                .to_string(),
+        );
+    }
+    let full_rerun = verification
+        .get("full_rerun")
+        .and_then(Value::as_bool)
+        .ok_or("verification_report.full_rerun is required")?;
+    if contract
+        .get("require_full_rerun")
+        .and_then(Value::as_bool)
+        .ok_or("verification_contract.require_full_rerun is required")?
+        && !full_rerun
+    {
+        return Err("verification_report.full_rerun must be true for this Task".to_string());
+    }
+
+    let contract_checks = contract
+        .get("checks")
+        .and_then(Value::as_array)
+        .filter(|checks| !checks.is_empty())
+        .ok_or("verification_contract.checks is required")?;
+    let mut dependencies_by_check = HashMap::with_capacity(contract_checks.len());
+    for check in contract_checks {
+        let check_id = check
+            .get("check_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or("verification_contract contains an invalid check_id")?;
+        let dependencies = check
+            .get("depends_on")
+            .and_then(Value::as_array)
+            .ok_or("verification_contract check is missing depends_on")?
+            .iter()
+            .map(|dependency| {
+                dependency
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+                    .ok_or("verification_contract contains an invalid dependency")
+            })
+            .collect::<Result<HashSet<_>, _>>()?;
+        if dependencies_by_check
+            .insert(check_id.to_string(), dependencies)
+            .is_some()
+        {
+            return Err(format!(
+                "verification_contract check_id is duplicated: {check_id}"
+            ));
+        }
+    }
+
+    let checks = verification
+        .get("checks")
+        .and_then(Value::as_array)
+        .ok_or("verification_report.checks is required")?;
+    if checks.len() != dependencies_by_check.len() {
+        return Err(format!(
+            "verification_report must report all {} checks exactly once",
+            dependencies_by_check.len()
+        ));
+    }
+    let mut reported = HashMap::with_capacity(checks.len());
+    for check in checks {
+        let check_id = check
+            .get("check_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| dependencies_by_check.contains_key(*value))
+            .ok_or("verification_report contains an unknown check_id")?;
+        let status = check
+            .get("status")
+            .and_then(Value::as_str)
+            .filter(|value| matches!(*value, "passed" | "failed" | "skipped_due_to"))
+            .ok_or("verification check status must be passed, failed, or skipped_due_to")?;
+        if reported
+            .insert(check_id.to_string(), (status, check))
+            .is_some()
+        {
+            return Err(format!(
+                "verification_report check_id is duplicated: {check_id}"
+            ));
+        }
+        if status != "skipped_due_to" {
+            check
+                .get("evidence")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty() && value.chars().count() <= 2_000)
+                .ok_or("a passed or failed verification check needs concrete evidence")?;
+        }
+    }
+    for (check_id, (status, check)) in &reported {
+        if *status == "skipped_due_to" {
+            let skipped_due_to = check
+                .get("skipped_due_to")
+                .and_then(Value::as_array)
+                .filter(|dependencies| !dependencies.is_empty())
+                .ok_or("a skipped verification check must name at least one dependency")?;
+            let declared = &dependencies_by_check[check_id];
+            let mut seen = HashSet::new();
+            for dependency in skipped_due_to {
+                let dependency = dependency
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty() && declared.contains(*value))
+                    .ok_or_else(|| {
+                        format!(
+                            "verification check {check_id} may skip only for a declared direct dependency"
+                        )
+                    })?;
+                if !seen.insert(dependency) {
+                    return Err(format!(
+                        "verification check {check_id} repeats skipped dependency {dependency}"
+                    ));
+                }
+                if !reported
+                    .get(dependency)
+                    .is_some_and(|(dependency_status, _)| {
+                        matches!(*dependency_status, "failed" | "skipped_due_to")
+                    })
+                {
+                    return Err(format!(
+                        "verification check {check_id} cannot skip because dependency {dependency} did not fail or skip"
+                    ));
+                }
+            }
+        }
+        if result_status == "succeeded" && *status != "passed" {
+            return Err("a succeeded Task requires every verification check to pass".to_string());
+        }
     }
     Ok(())
 }
@@ -298,5 +474,104 @@ mod tests {
             );
             assert!(!task_acceptance_report_is_terminal(&input, &report).unwrap());
         }
+    }
+
+    #[test]
+    fn verification_report_matches_the_frozen_subject_and_rerun_policy() {
+        let input = json!({
+            "acceptance_report_version": 1,
+            "acceptance_criteria": ["[R1] Complete checks"],
+            "verification_contract": {
+                "subject_identity":"artifact:abc123",
+                "workflow_entry":"./verify",
+                "checks":[{"check_id":"custom-check","depends_on":[]}],
+                "require_full_rerun":true
+            }
+        });
+        let mut report = json!({
+            "result_status":"succeeded",
+            "reason":"verification passed",
+            "final_response":"Ready",
+            "acceptance_checks":[{"criterion_index":0,"status":"passed","evidence":"All checks passed"}],
+            "verification_report":{
+                "subject_identity":"artifact:abc123",
+                "full_rerun":true,
+                "checks":[{"check_id":"custom-check","status":"passed","evidence":"checked"}]
+            }
+        });
+        assert!(validate_task_acceptance_report(&input, &report).is_ok());
+        report["verification_report"]["subject_identity"] = json!("different");
+        assert!(validate_task_acceptance_report(&input, &report)
+            .unwrap_err()
+            .contains("frozen verification subject"));
+        report["verification_report"]["subject_identity"] = json!("artifact:abc123");
+        report["verification_report"]["full_rerun"] = json!(false);
+        assert!(validate_task_acceptance_report(&input, &report)
+            .unwrap_err()
+            .contains("full_rerun"));
+
+        let mut without_contract = input;
+        without_contract
+            .as_object_mut()
+            .unwrap()
+            .remove("verification_contract");
+        assert!(validate_task_acceptance_report(&without_contract, &report)
+            .unwrap_err()
+            .contains("only for a Task with verification_contract"));
+    }
+
+    #[test]
+    fn verification_report_allows_only_real_dependency_skips_and_complete_coverage() {
+        let input = json!({
+            "acceptance_report_version": 1,
+            "acceptance_criteria": ["[R1] Complete checks"],
+            "verification_contract": {
+                "subject_identity":"document:v7",
+                "workflow_entry":"project-skill:review",
+                "checks":[
+                    {"check_id":"lint","depends_on":[]},
+                    {"check_id":"integration","depends_on":["lint"]},
+                    {"check_id":"docs","depends_on":[]}
+                ],
+                "require_full_rerun":false
+            }
+        });
+        let mut report = json!({
+            "result_status":"failed",
+            "reason":"lint failed",
+            "final_response":"Not ready",
+            "acceptance_checks":[{"criterion_index":0,"status":"failed","evidence":"Lint failed; integration depends on it"}],
+            "verification_report":{
+                "subject_identity":"document:v7",
+                "full_rerun":false,
+                "checks":[
+                    {"check_id":"lint","status":"failed","evidence":"lint error"},
+                    {"check_id":"integration","status":"skipped_due_to","skipped_due_to":["lint"]},
+                    {"check_id":"docs","status":"passed","evidence":"links checked"}
+                ]
+            }
+        });
+        assert!(validate_task_acceptance_report(&input, &report).is_ok());
+        report["result_status"] = json!("succeeded");
+        assert!(validate_task_acceptance_report(&input, &report)
+            .unwrap_err()
+            .contains("every verification check"));
+        report["result_status"] = json!("failed");
+        report["verification_report"]["checks"][2] = json!({
+            "check_id":"docs","status":"skipped_due_to","skipped_due_to":["lint"]
+        });
+        assert!(validate_task_acceptance_report(&input, &report)
+            .unwrap_err()
+            .contains("declared direct dependency"));
+
+        report["verification_report"]["checks"][2] =
+            json!({"check_id":"docs","status":"passed","evidence":"links checked"});
+        report["verification_report"]["checks"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        assert!(validate_task_acceptance_report(&input, &report)
+            .unwrap_err()
+            .contains("all 3 checks"));
     }
 }

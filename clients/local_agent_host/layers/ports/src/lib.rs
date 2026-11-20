@@ -262,6 +262,17 @@ pub trait LocalAgentToolStore: Send + Sync {
         call_id: &str,
     ) -> Result<Option<LocalAgentToolInvocationRecord>, ClientStorageError>;
 
+    /// Finds the newest semantically identical completed call inside one owner-scoped Run.
+    /// File reads can require invalidation after any later uncertain or successful mutation.
+    async fn latest_equivalent_tool_invocation(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        tool_name: &str,
+        arguments: &Value,
+        invalidate_after_side_effect: bool,
+    ) -> Result<Option<LocalAgentToolInvocationRecord>, ClientStorageError>;
+
     async fn successful_tool_invocation_count(
         &self,
         run_id: &str,

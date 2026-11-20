@@ -121,6 +121,47 @@ impl LocalAgentToolStore for SqliteClientStorage {
         row.map(decode_invocation).transpose()
     }
 
+    async fn latest_equivalent_tool_invocation(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        tool_name: &str,
+        arguments: &Value,
+        invalidate_after_side_effect: bool,
+    ) -> Result<Option<LocalAgentToolInvocationRecord>, ClientStorageError> {
+        let rows = sqlx::query(
+            "SELECT i.invocation_id, i.run_id, i.batch_id, i.call_id, i.tool_name, \
+             i.execution_route, i.arguments_json, i.side_effecting, i.requires_approval, \
+             i.approval_status, i.approval_decided_by, i.approval_reason, \
+             i.approval_decided_at_unix_ms, i.status, i.result_json, i.error_text, \
+             i.version, i.claim_token, i.claim_until_unix_ms, i.created_at_unix_ms, \
+             i.updated_at_unix_ms FROM local_agent_tool_invocations i \
+             INNER JOIN local_agent_runs r ON r.run_id = i.run_id \
+             WHERE r.owner_user_id = ? AND i.run_id = ? AND i.tool_name = ? \
+               AND i.status IN ('succeeded', 'failed') \
+               AND (? = 0 OR NOT EXISTS ( \
+                   SELECT 1 FROM local_agent_tool_invocations newer \
+                   WHERE newer.run_id = i.run_id AND newer.rowid > i.rowid \
+                     AND newer.side_effecting = 1 \
+                     AND newer.status IN ('succeeded', 'needs_review') \
+               )) ORDER BY i.rowid DESC",
+        )
+        .bind(owner_user_id)
+        .bind(run_id)
+        .bind(tool_name)
+        .bind(invalidate_after_side_effect)
+        .fetch_all(&self.pool)
+        .await
+        .db()?;
+        for row in rows {
+            let invocation = decode_invocation(row)?;
+            if invocation.arguments == *arguments {
+                return Ok(Some(invocation));
+            }
+        }
+        Ok(None)
+    }
+
     async fn successful_tool_invocation_count(
         &self,
         run_id: &str,

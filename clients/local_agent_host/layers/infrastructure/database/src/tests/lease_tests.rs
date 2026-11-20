@@ -114,6 +114,101 @@ async fn returned_tool_errors_are_not_durable_success_facts() {
 }
 
 #[tokio::test]
+async fn equivalent_read_reuse_is_owner_scoped_and_invalidated_by_later_mutation() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    storage
+        .create_run(&command("create-reuse", "create"), &run(1_000), "created")
+        .await
+        .expect("create");
+    for (id, tool, arguments, side_effecting, created_at) in [
+        (
+            "read-before-write",
+            "read_file_range",
+            serde_json::json!({"path":"src/lib.rs","start":1}),
+            false,
+            1_000,
+        ),
+        (
+            "write",
+            "commit_edit_session",
+            serde_json::json!({"session_id":"edit-1"}),
+            true,
+            1_001,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO local_agent_tool_invocations(\
+             invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
+             side_effecting, requires_approval, approval_status, status, result_json, \
+             version, created_at_unix_ms, updated_at_unix_ms) \
+             VALUES(?, 'run-1', 'batch', ?, ?, ?, ?, 0, 'not_required', 'succeeded', ?, 1, ?, ?)",
+        )
+        .bind(id)
+        .bind(format!("call-{id}"))
+        .bind(tool)
+        .bind(arguments.to_string())
+        .bind(side_effecting)
+        .bind(serde_json::json!({"content":"evidence"}).to_string())
+        .bind(created_at)
+        .bind(created_at)
+        .execute(&storage.pool)
+        .await
+        .expect("insert invocation");
+    }
+    let equivalent_arguments = serde_json::json!({"start":1,"path":"src/lib.rs"});
+    assert!(storage
+        .latest_equivalent_tool_invocation(
+            "user-1",
+            "run-1",
+            "read_file_range",
+            &equivalent_arguments,
+            true,
+        )
+        .await
+        .expect("invalidated lookup")
+        .is_none());
+    assert!(storage
+        .latest_equivalent_tool_invocation(
+            "user-2",
+            "run-1",
+            "read_file_range",
+            &equivalent_arguments,
+            false,
+        )
+        .await
+        .expect("foreign lookup")
+        .is_none());
+
+    sqlx::query(
+        "INSERT INTO local_agent_tool_invocations(\
+         invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
+         side_effecting, requires_approval, approval_status, status, result_json, \
+         version, created_at_unix_ms, updated_at_unix_ms) \
+         VALUES('read-after-write', 'run-1', 'batch', 'call-read-after', 'read_file_range', ?, \
+         0, 0, 'not_required', 'succeeded', ?, 1, 1002, 1002)",
+    )
+    .bind(serde_json::json!({"path":"src/lib.rs","start":1}).to_string())
+    .bind(serde_json::json!({"content":"fresh evidence"}).to_string())
+    .execute(&storage.pool)
+    .await
+    .expect("insert fresh read");
+    let reusable = storage
+        .latest_equivalent_tool_invocation(
+            "user-1",
+            "run-1",
+            "read_file_range",
+            &equivalent_arguments,
+            true,
+        )
+        .await
+        .expect("fresh lookup")
+        .expect("fresh read");
+    assert_eq!(reusable.invocation_id, "read-after-write");
+}
+
+#[tokio::test]
 async fn expired_claim_cannot_commit_a_late_step() {
     let storage = SqliteClientStorage::connect_memory()
         .await

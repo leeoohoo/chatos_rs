@@ -6,7 +6,7 @@ use chatos_local_agent_protocol::{
     PutModelConfigSnapshotCommand,
 };
 
-async fn runtime_with_parent() -> Arc<LocalAgentRuntime> {
+pub(super) async fn runtime_with_parent() -> Arc<LocalAgentRuntime> {
     let storage = Arc::new(
         SqliteClientStorage::connect_memory()
             .await
@@ -35,6 +35,7 @@ async fn initialize_parent(runtime: Arc<LocalAgentRuntime>) -> Arc<LocalAgentRun
                     "agent_name": "叽咕狸",
                     "conversation_id": "conversation-1",
                     "turn_id": "turn-1",
+                    "message_id": "message-1",
                     "message": "plan this",
                     "runtime_settings": {
                         "remote_connection_id": "connection-1",
@@ -58,16 +59,35 @@ async fn initialize_parent(runtime: Arc<LocalAgentRuntime>) -> Arc<LocalAgentRun
     runtime
 }
 
-fn invocation(mut arguments: Value) -> LocalAgentToolInvocationRecord {
+pub(super) fn invocation(mut arguments: Value) -> LocalAgentToolInvocationRecord {
+    if arguments.get("tasks").is_some() || arguments.get("objective").is_some() {
+        arguments
+            .as_object_mut()
+            .expect("task arguments object")
+            .entry("requirements")
+            .or_insert_with(|| {
+                json!([{
+                    "requirement_id": "R1",
+                    "source_message_id": "message-1",
+                    "source_quote": "plan this",
+                    "interpreted_requirement": "Complete the requested test work",
+                    "requires_change": false
+                }])
+            });
+    }
     if let Some(tasks) = arguments.get_mut("tasks").and_then(Value::as_array_mut) {
         for task in tasks {
             if let Some(task) = task.as_object_mut() {
+                task.entry("requirement_refs")
+                    .or_insert_with(|| json!(["R1"]));
                 task.entry("context_summary").or_insert_with(|| {
                     json!(
                         "No additional prior conversation context is required for this test Task."
                     )
                 });
                 task.entry("attachment_refs").or_insert_with(|| json!([]));
+                add_requirement_markers(task.get_mut("expected_outputs"));
+                add_requirement_markers(task.get_mut("acceptance_criteria"));
             }
         }
     } else if arguments.get("objective").is_some() {
@@ -78,6 +98,8 @@ fn invocation(mut arguments: Value) -> LocalAgentToolInvocationRecord {
         arguments
             .entry("attachment_refs")
             .or_insert_with(|| json!([]));
+        add_requirement_markers(arguments.get_mut("expected_outputs"));
+        add_requirement_markers(arguments.get_mut("acceptance_criteria"));
     }
     LocalAgentToolInvocationRecord {
         invocation_id: "invocation-1".to_string(),
@@ -101,6 +123,14 @@ fn invocation(mut arguments: Value) -> LocalAgentToolInvocationRecord {
         claim_until_unix_ms: Some(i64::MAX),
         created_at_unix_ms: 1_000,
         updated_at_unix_ms: 1_000,
+    }
+}
+
+fn add_requirement_markers(value: Option<&mut Value>) {
+    for entry in value.and_then(Value::as_array_mut).into_iter().flatten() {
+        if let Some(text) = entry.as_str().filter(|text| !text.contains("[R1]")) {
+            *entry = json!(format!("[R1] {text}"));
+        }
     }
 }
 
@@ -256,11 +286,12 @@ async fn single_task_inherits_the_real_agent_and_project_identity() {
     let mut call = invocation(json!({}));
     call.tool_name = CREATE_TASK_TOOL.into();
     let args: CreateTaskArgs = serde_json::from_value(json!({
+        "requirements": [{"requirement_id":"R1","source_message_id":"message-1","source_quote":"plan this","interpreted_requirement":"Inspect the requested configuration","requires_change":false}],
         "title": "Inspect",
         "objective": "Inspect configuration",
         "context_summary": "Inspect only the supplied task context.",
-        "expected_outputs": ["Report"],
-        "acceptance_criteria": ["Source-backed"],
+        "expected_outputs": ["[R1] Report"],
+        "acceptance_criteria": ["[R1] Source-backed"],
         "requires_execution": false,
         "enabled_builtin_kinds": ["CodeMaintainerRead"]
     }))
@@ -298,11 +329,12 @@ async fn task_creation_rejects_conflicting_explicit_agent_identity() {
     let mut call = invocation(json!({}));
     call.tool_name = CREATE_TASK_TOOL.into();
     let args: CreateTaskArgs = serde_json::from_value(json!({
+        "requirements": [{"requirement_id":"R1","source_message_id":"message-1","source_quote":"plan this","interpreted_requirement":"Inspect the requested configuration","requires_change":false}],
         "title": "Inspect",
         "objective": "Inspect configuration",
         "context_summary": "Inspect only the supplied task context.",
-        "expected_outputs": ["Report"],
-        "acceptance_criteria": ["Source-backed"],
+        "expected_outputs": ["[R1] Report"],
+        "acceptance_criteria": ["[R1] Source-backed"],
         "requires_execution": false,
         "enabled_builtin_kinds": ["CodeMaintainerRead"]
     }))
@@ -459,7 +491,7 @@ async fn cancel_preparation_rejections_preserve_old_task_until_valid_cancel() {
     let runtime = super::super::task_tool_scope_tests::runtime_with_project_conversations().await;
     let executor = LocalTaskToolExecutor::new(runtime.clone(), "user-1").unwrap();
     let mut create = invocation(
-        json!({"title": "Inspect", "objective": "Inspect configuration", "expected_outputs": ["Report"],
+        json!({"requirements":[{"requirement_id":"R1","source_message_id":"message-turn-1","source_quote":"Inspect the bound project","interpreted_requirement":"Inspect the requested project configuration","requires_change":false}],"title": "Inspect", "objective": "Inspect configuration", "expected_outputs": ["Report"],
         "acceptance_criteria": ["Source-backed"], "requires_execution": false, "enabled_builtin_kinds": ["CodeMaintainerRead"]}),
     );
     create.tool_name = CREATE_TASK_TOOL.into();
@@ -791,6 +823,7 @@ async fn composer_selected_plugin_is_mandatory_and_complementary_plugins_are_add
                     "agent_name": "叽咕狸",
                     "conversation_id": "conversation-1",
                     "turn_id": "turn-1",
+                    "message_id": "message-1",
                     "message": "帮我整理成正式文档",
                     "explicit_capability_selection": {
                         "kind": "plugin",
@@ -844,6 +877,7 @@ async fn composer_selected_plugin_is_mandatory_and_complementary_plugins_are_add
         .expect("publish Plugin catalog");
     let executor = LocalTaskToolExecutor::new(runtime, "user-1").expect("executor");
     let base = json!({
+        "requirements": [{"requirement_id":"R1","source_message_id":"message-1","source_quote":"帮我整理成正式文档","interpreted_requirement":"Create and persist the requested formal document","requires_change":true}],
         "title": "Document Task",
         "objective": "Create the requested document",
         "expected_outputs": ["Document artifact"],
@@ -1113,12 +1147,27 @@ fn task_model_definitions_are_host_owned_and_closed() {
     );
     assert_eq!(tools[3]["parameters"]["properties"]["tasks"]["minItems"], 2);
     assert_eq!(
+        tools[2]["parameters"]["properties"]["verification_contract"],
+        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]
+            ["verification_contract"]
+    );
+    assert_eq!(
+        tools[2]["parameters"]["properties"]["verification_contract"]["properties"]["checks"]
+            ["maxItems"],
+        50
+    );
+    assert_eq!(
         tools[3]["parameters"]["properties"]["tasks"]["items"]["additionalProperties"],
         false
     );
     assert_eq!(
         tools[3]["parameters"]["required"],
-        json!(["graph_goal", "decomposition_rationale", "tasks"])
+        json!([
+            "requirements",
+            "graph_goal",
+            "decomposition_rationale",
+            "tasks"
+        ])
     );
     assert_eq!(
         tools[3]["parameters"]["properties"]["tasks"]["items"]["required"],
@@ -1130,6 +1179,7 @@ fn task_model_definitions_are_host_owned_and_closed() {
             "attachment_refs",
             "expected_outputs",
             "acceptance_criteria",
+            "requirement_refs",
             "requires_execution",
             "enabled_builtin_kinds"
         ])
@@ -1183,6 +1233,7 @@ fn task_model_definitions_are_host_owned_and_closed() {
     assert_eq!(
         tools[2]["parameters"]["required"],
         json!([
+            "requirements",
             "title",
             "objective",
             "context_summary",

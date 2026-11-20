@@ -9,9 +9,11 @@ use self::task_creation::{
     validate_optional_notepad_selection, validate_task_context_package, TaskPluginReleaseSnapshot,
 };
 pub(super) use self::task_creation::{
-    CreateTaskItem, RequiredTaskPolicy, TaskPluginHint, TaskScheduleArgs,
+    CreateTaskItem, RequiredTaskPolicy, TaskPluginHint, TaskRequirement, TaskScheduleArgs,
+    TaskVerificationContract,
 };
 use super::{
+    task_contract::{validate_task_contracts, TaskContractView},
     task_model_policy::resolve_task_model,
     task_tool_definitions::*,
     task_tool_source_context::{source_conversation_context, source_user_message},
@@ -312,6 +314,26 @@ impl LocalTaskToolExecutor {
                     .await?;
                 let task_policy = self.required_task_policy(&parent).await?;
                 task_policy.apply_single(&mut args)?;
+                validate_task_contracts(
+                    self,
+                    &parent,
+                    conversation_id,
+                    &args.requirements,
+                    &[TaskContractView {
+                        requirement_refs: args
+                            .requirements
+                            .iter()
+                            .map(|requirement| requirement.requirement_id.as_str())
+                            .collect(),
+                        expected_outputs: &args.expected_outputs,
+                        acceptance_criteria: &args.acceptance_criteria,
+                        requires_execution: args.requires_execution,
+                        enabled_builtin_kinds: &args.enabled_builtin_kinds,
+                        plugin_hints: &args.plugin_hints,
+                        verification_contract: args.verification_contract.as_ref(),
+                    }],
+                )
+                .await?;
                 self.validate_existing_prerequisites(
                     &parent,
                     conversation_id,
@@ -405,6 +427,31 @@ impl LocalTaskToolExecutor {
                     .await?;
                 let task_policy = self.required_task_policy(&parent).await?;
                 task_policy.apply_batch(&mut args)?;
+                let contract_views = args
+                    .tasks
+                    .iter()
+                    .map(|task| TaskContractView {
+                        requirement_refs: task
+                            .requirement_refs
+                            .iter()
+                            .map(String::as_str)
+                            .collect(),
+                        expected_outputs: &task.expected_outputs,
+                        acceptance_criteria: &task.acceptance_criteria,
+                        requires_execution: task.requires_execution,
+                        enabled_builtin_kinds: &task.enabled_builtin_kinds,
+                        plugin_hints: &task.plugin_hints,
+                        verification_contract: task.verification_contract.as_ref(),
+                    })
+                    .collect::<Vec<_>>();
+                validate_task_contracts(
+                    self,
+                    &parent,
+                    conversation_id,
+                    &args.requirements,
+                    &contract_views,
+                )
+                .await?;
                 for task in &args.tasks {
                     self.validate_existing_prerequisites(
                         &parent,
@@ -624,6 +671,7 @@ struct EmptyArgs {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateTaskArgs {
+    requirements: Vec<TaskRequirement>,
     title: String,
     objective: String,
     expected_outputs: Vec<String>,
@@ -645,6 +693,8 @@ struct CreateTaskArgs {
     #[serde(default)]
     thinking_level: Option<String>,
     requires_execution: bool,
+    #[serde(default)]
+    verification_contract: Option<TaskVerificationContract>,
     enabled_builtin_kinds: Vec<String>,
     #[serde(default)]
     notepad_user_request_quote: Option<String>,
@@ -671,6 +721,7 @@ struct CreateTaskArgs {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateTasksArgs {
+    requirements: Vec<TaskRequirement>,
     graph_goal: String,
     decomposition_rationale: String,
     #[serde(default)]
@@ -702,3 +753,7 @@ pub(super) fn preparation_error(outcome: LocalAgentToolOutcome) -> String {
 #[cfg(test)]
 #[path = "task_tools_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "task_contract_tests.rs"]
+mod contract_tests;

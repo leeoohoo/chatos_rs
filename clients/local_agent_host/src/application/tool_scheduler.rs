@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     ClaimNextToolCommand, CommitToolCommand, HostCommand, HostRequestEnvelope, HostResult,
     LocalAgentToolCommitResult, LocalAgentToolExecutionRoute, LocalAgentToolInvocationRecord,
-    LocalAgentToolOutcome, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalAgentToolOutcome, LocalAgentToolStatus, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{LocalAgentRuntime, LocalAgentRuntimeError};
 use serde_json::json;
@@ -227,24 +227,28 @@ impl LocalToolScheduler {
         };
         let outcome = match claim.preflight_outcome.clone().or(hook_preflight) {
             Some(outcome) => outcome,
-            None => match self.tools.executor_for(&claim.invocation.tool_name) {
-                Some(executor) => match self.execute_with_heartbeat(executor, &claim).await? {
-                    None => return Ok(ToolSchedulerTick::Idle),
-                    Some(Ok(outcome)) => outcome,
-                    Some(Err(error)) if claim.invocation.side_effecting => {
-                        LocalAgentToolOutcome::NeedsReview {
-                            reason: "side-effecting tool returned an unknown result".to_string(),
-                            detail: json!({"error": error}),
+            None => match self.reused_outcome(&claim.invocation).await? {
+                Some(outcome) => outcome,
+                None => match self.tools.executor_for(&claim.invocation.tool_name) {
+                    Some(executor) => match self.execute_with_heartbeat(executor, &claim).await? {
+                        None => return Ok(ToolSchedulerTick::Idle),
+                        Some(Ok(outcome)) => outcome,
+                        Some(Err(error)) if claim.invocation.side_effecting => {
+                            LocalAgentToolOutcome::NeedsReview {
+                                reason: "side-effecting tool returned an unknown result"
+                                    .to_string(),
+                                detail: json!({"error": error}),
+                            }
                         }
-                    }
-                    Some(Err(error)) => LocalAgentToolOutcome::Failed {
-                        error,
-                        detail: json!({"phase": "local_tool_execution"}),
+                        Some(Err(error)) => LocalAgentToolOutcome::Failed {
+                            error,
+                            detail: json!({"phase": "local_tool_execution"}),
+                        },
                     },
-                },
-                None => LocalAgentToolOutcome::NeedsReview {
-                    reason: "local tool executor is not registered".to_string(),
-                    detail: json!({"tool_name": claim.invocation.tool_name}),
+                    None => LocalAgentToolOutcome::NeedsReview {
+                        reason: "local tool executor is not registered".to_string(),
+                        detail: json!({"tool_name": claim.invocation.tool_name}),
+                    },
                 },
             },
         };
@@ -264,6 +268,60 @@ impl LocalToolScheduler {
         match committed {
             HostResult::ToolCommit { result } => Ok(ToolSchedulerTick::Committed(result)),
             _ => Err(LocalToolSchedulerError::UnexpectedResult("commit")),
+        }
+    }
+
+    async fn reused_outcome(
+        &self,
+        invocation: &LocalAgentToolInvocationRecord,
+    ) -> Result<Option<LocalAgentToolOutcome>, LocalAgentRuntimeError> {
+        let Some(invalidate_after_side_effect) = reusable_tool_policy(&invocation.tool_name) else {
+            return Ok(None);
+        };
+        let Some(previous) = self
+            .runtime
+            .latest_equivalent_tool_invocation_for_host_worker(
+                &self.owner_user_id,
+                &invocation.run_id,
+                &invocation.tool_name,
+                &invocation.arguments,
+                invalidate_after_side_effect,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        match previous.status {
+            LocalAgentToolStatus::Succeeded => {
+                let Some(mut output) = previous.result else {
+                    return Ok(None);
+                };
+                if output.get("is_error").and_then(serde_json::Value::as_bool) == Some(true)
+                    || output.get("isError").and_then(serde_json::Value::as_bool) == Some(true)
+                {
+                    return Ok(None);
+                }
+                let Some(object) = output.as_object_mut() else {
+                    return Ok(None);
+                };
+                object.insert(
+                    "reused_from_invocation_id".to_string(),
+                    json!(previous.invocation_id),
+                );
+                Ok(Some(LocalAgentToolOutcome::Succeeded { output }))
+            }
+            LocalAgentToolStatus::Failed => Ok(Some(LocalAgentToolOutcome::Failed {
+                error: "duplicate unchanged tool call refused; change the arguments or approach"
+                    .to_string(),
+                detail: json!({
+                    "phase": "run_convergence",
+                    "duplicate_call_refused": true,
+                    "previous_invocation_id": previous.invocation_id,
+                    "previous_error": previous.error,
+                    "guidance": "Summarize confirmed facts, remaining acceptance checks, and the next different minimal operation. Do not retry the same tool with identical arguments unless new evidence first changes its inputs."
+                }),
+            })),
+            _ => Ok(None),
         }
     }
 
@@ -304,6 +362,14 @@ impl LocalToolScheduler {
                 }
             }
         }
+    }
+}
+
+fn reusable_tool_policy(tool_name: &str) -> Option<bool> {
+    match tool_name {
+        "read_file_raw" | "read_file_range" | "read_file" => Some(true),
+        "capability_search" | "capability_describe" | "agent_skill_activate" => Some(false),
+        _ => None,
     }
 }
 
@@ -438,6 +504,25 @@ mod tests {
                 "path": "README.md",
                 "content": "hello"
             }))
+        );
+        let mut duplicate = result.invocation.clone();
+        duplicate.invocation_id = "duplicate-read".to_string();
+        duplicate.call_id = "duplicate-call".to_string();
+        duplicate.status = LocalAgentToolStatus::Running;
+        duplicate.result = None;
+        duplicate.error = None;
+        let LocalAgentToolOutcome::Succeeded { output } = scheduler
+            .reused_outcome(&duplicate)
+            .await
+            .expect("reuse lookup")
+            .expect("duplicate read should reuse")
+        else {
+            panic!("duplicate read did not reuse its successful result")
+        };
+        assert_eq!(output["content"], "hello");
+        assert_eq!(
+            output["reused_from_invocation_id"],
+            result.invocation.invocation_id
         );
         assert_eq!(
             scheduler.run_once().await.expect("idle"),

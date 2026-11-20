@@ -95,6 +95,7 @@ pub fn task_model_tools() -> Vec<Value> {
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "requirements": task_requirements_schema(),
                     "title": {"type": "string", "minLength": 1},
                     "objective": {"type": "string", "minLength": 1},
                     "expected_outputs": task_contract_list_schema("Concrete artifacts, decisions, reports, or verified changes this Task must return."),
@@ -120,6 +121,7 @@ pub fn task_model_tools() -> Vec<Value> {
                         "type": "boolean",
                         "description": "Whether this Task needs command execution, tests, builds, Git operations, or file mutation. Project reads remain available without an execution workspace."
                     },
+                    "verification_contract": verification_contract_schema(),
                     "enabled_builtin_kinds": builtin_kind_selection_schema(),
                     "notepad_user_request_quote": notepad_user_request_quote_schema(),
                     "external_mcp_config_ids": {
@@ -134,7 +136,7 @@ pub fn task_model_tools() -> Vec<Value> {
                     "supersedes_task_ids": supersedes_task_ids_schema(),
                     "schedule": task_schedule_schema()
                 },
-                "required": ["title", "objective", "context_summary", "attachment_refs", "expected_outputs", "acceptance_criteria", "requires_execution", "enabled_builtin_kinds"],
+                "required": ["requirements", "title", "objective", "context_summary", "attachment_refs", "expected_outputs", "acceptance_criteria", "requires_execution", "enabled_builtin_kinds"],
                 "additionalProperties": false
             }
         }),
@@ -145,6 +147,7 @@ pub fn task_model_tools() -> Vec<Value> {
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "requirements": task_requirements_schema(),
                     "supersedes_task_ids": supersedes_task_ids_schema(),
                     "graph_goal": {"type": "string", "minLength": 1, "maxLength": 8000},
                     "decomposition_rationale": {
@@ -165,7 +168,7 @@ pub fn task_model_tools() -> Vec<Value> {
                         "items": create_task_item_schema()
                     }
                 },
-                "required": ["graph_goal", "decomposition_rationale", "tasks"],
+                "required": ["requirements", "graph_goal", "decomposition_rationale", "tasks"],
                 "additionalProperties": false
             }
         }),
@@ -217,6 +220,60 @@ fn task_contract_list_schema(description: &str) -> Value {
         "maxItems": 50,
         "items": {"type": "string", "minLength": 1, "maxLength": 4000},
         "description": description
+    })
+}
+
+fn task_requirements_schema() -> Value {
+    json!({
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 50,
+        "items": {
+            "type": "object",
+            "properties": {
+                "requirement_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                "source_message_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                "source_quote": {"type": "string", "minLength": 1, "maxLength": 4000},
+                "interpreted_requirement": {"type": "string", "minLength": 4, "maxLength": 4000, "description": "Observable result, not a referential phrase such as handle it or follow above."},
+                "requires_change": {"type": "boolean"}
+            },
+            "required": ["requirement_id", "source_message_id", "source_quote", "interpreted_requirement", "requires_change"],
+            "additionalProperties": false
+        },
+        "description": "Trace every requested outcome to an exact excerpt of an authoritative user message. Prefix every expected_outputs and acceptance_criteria entry with one or more bound markers such as [R1]."
+    })
+}
+
+fn verification_contract_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "subject_identity": {"type": "string", "minLength": 1, "maxLength": 512},
+            "workflow_entry": {"type": "string", "minLength": 1, "maxLength": 4096},
+            "checks": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 50,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "check_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                        "depends_on": {
+                            "type": "array",
+                            "maxItems": 49,
+                            "items": {"type": "string", "minLength": 1, "maxLength": 128},
+                            "uniqueItems": true
+                        }
+                    },
+                    "required": ["check_id", "depends_on"],
+                    "additionalProperties": false
+                }
+            },
+            "require_full_rerun": {"type": "boolean"}
+        },
+        "required": ["subject_identity", "workflow_entry", "checks", "require_full_rerun"],
+        "additionalProperties": false,
+        "description": "Optional frozen multi-check workflow. The project Skill, Plugin, or configuration supplies the authoritative workflow entry and check graph; do not invent a universal check list."
     })
 }
 
@@ -311,6 +368,13 @@ fn create_task_item_schema() -> Value {
             "objective": {"type": "string", "minLength": 1},
             "expected_outputs": task_contract_list_schema("Concrete artifacts, decisions, reports, or verified changes owned by this Task."),
             "acceptance_criteria": task_contract_list_schema("Observable, evidence-based completion conditions for this Task."),
+            "requirement_refs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string", "minLength": 1, "maxLength": 128},
+                "uniqueItems": true,
+                "description": "Requirement ids owned or verified by this Task. A change requirement must also be referenced by an execution Task with write capability."
+            },
             "final_response_max_chars": {"type":"integer", "minimum":1, "maximum":32000, "description":"Optional explicit maximum for the entire final user-facing response, counted in Unicode scalar values including whitespace, punctuation and Markdown. Set this when the user requires a bounded textual delivery; not a file-content limit."},
             "description": {"type": "string"},
             "context_summary": task_context_summary_schema(),
@@ -329,6 +393,7 @@ fn create_task_item_schema() -> Value {
             },
             "thinking_level": thinking_level_override_schema(),
             "requires_execution": {"type": "boolean"},
+            "verification_contract": verification_contract_schema(),
             "enabled_builtin_kinds": builtin_kind_selection_schema(),
             "notepad_user_request_quote": notepad_user_request_quote_schema(),
             "external_mcp_config_ids": {
@@ -354,7 +419,7 @@ fn create_task_item_schema() -> Value {
             "prerequisite_task_ids": prerequisite_task_ids_schema(),
             "schedule": task_schedule_schema()
         },
-        "required": ["client_ref", "title", "objective", "context_summary", "attachment_refs", "expected_outputs", "acceptance_criteria", "requires_execution", "enabled_builtin_kinds"],
+        "required": ["client_ref", "title", "objective", "context_summary", "attachment_refs", "expected_outputs", "acceptance_criteria", "requirement_refs", "requires_execution", "enabled_builtin_kinds"],
         "additionalProperties": false
     })
 }

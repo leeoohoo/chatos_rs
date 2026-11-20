@@ -19,6 +19,19 @@ use std::collections::{HashMap, HashSet};
 const JIGULI_AGENT_ID: &str = "jiguli";
 
 impl LocalAgentRuntime {
+    /// Trusted Task-contract lookup. Native callers use the owner-scoped IPC command.
+    #[doc(hidden)]
+    pub async fn conversation_for_host_worker(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+    ) -> Result<Option<LocalConversationDetail>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .get_conversation(owner_user_id, conversation_id)
+            .await?)
+    }
+
     /// Returns only recent attachment metadata and opaque authorization references.
     /// Main Chat uses this catalog to select the minimum inputs for a Task; attachment
     /// bytes and base64 are never copied into the model-owned Task arguments.

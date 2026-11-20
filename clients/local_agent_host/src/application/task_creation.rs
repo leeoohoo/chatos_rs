@@ -11,6 +11,33 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::application) struct TaskRequirement {
+    pub(in crate::application) requirement_id: String,
+    pub(in crate::application) source_message_id: String,
+    pub(in crate::application) source_quote: String,
+    pub(in crate::application) interpreted_requirement: String,
+    pub(in crate::application) requires_change: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::application) struct TaskVerificationCheck {
+    pub(in crate::application) check_id: String,
+    #[serde(default)]
+    pub(in crate::application) depends_on: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::application) struct TaskVerificationContract {
+    pub(in crate::application) subject_identity: String,
+    pub(in crate::application) workflow_entry: String,
+    pub(in crate::application) checks: Vec<TaskVerificationCheck>,
+    pub(in crate::application) require_full_rerun: bool,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::application) struct RequiredTaskPolicy {
@@ -157,8 +184,10 @@ pub(in crate::application) struct CreateTaskItem {
     pub(in crate::application) client_ref: String,
     title: String,
     objective: String,
-    expected_outputs: Vec<String>,
-    acceptance_criteria: Vec<String>,
+    pub(in crate::application) expected_outputs: Vec<String>,
+    pub(in crate::application) acceptance_criteria: Vec<String>,
+    #[serde(default)]
+    pub(in crate::application) requirement_refs: Vec<String>,
     #[serde(default)]
     final_response_max_chars: Option<u64>,
     #[serde(default)]
@@ -175,14 +204,16 @@ pub(in crate::application) struct CreateTaskItem {
     default_model_config_id: Option<String>,
     #[serde(default)]
     thinking_level: Option<String>,
-    requires_execution: bool,
+    pub(in crate::application) requires_execution: bool,
+    #[serde(default)]
+    pub(in crate::application) verification_contract: Option<TaskVerificationContract>,
     pub(in crate::application) enabled_builtin_kinds: Vec<String>,
     #[serde(default)]
     pub(in crate::application) notepad_user_request_quote: Option<String>,
     #[serde(default)]
     external_mcp_config_ids: Vec<String>,
     #[serde(default)]
-    plugin_hints: Vec<TaskPluginHint>,
+    pub(in crate::application) plugin_hints: Vec<TaskPluginHint>,
     #[serde(skip)]
     plugin_release_snapshots: Option<Vec<TaskPluginReleaseSnapshot>>,
     #[serde(default)]

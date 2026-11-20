@@ -20,6 +20,7 @@ mod notepad_tools;
 mod requirement_survey_tools;
 mod scheduler;
 mod skill_tools;
+mod task_contract;
 mod task_followup_tool;
 mod task_model_policy;
 mod task_process_tools;

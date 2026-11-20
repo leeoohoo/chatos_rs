@@ -540,13 +540,39 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                         "expected_outputs":claim.run.input.get("expected_outputs"),
                         "acceptance_criteria":claim.run.input.get("acceptance_criteria"),
                         "final_response_max_chars":claim.run.input.get("final_response_max_chars"),
-                        "source_user_message":claim.run.input.get("source_user_message")
+                        "source_user_message":claim.run.input.get("source_user_message"),
+                        "requirements":claim.run.input.get("requirements"),
+                        "requirement_refs":claim.run.input.get("requirement_refs"),
+                        "unassigned_requirement_refs":claim.run.input.get("unassigned_requirement_refs"),
+                        "guidance":"Implement and verify only the bound requirement_refs. Compare each interpreted requirement with its exact source_quote before writing. If they materially conflict, stop mutation and report a contract_conflict naming the requirement_id; do not silently choose one. Unassigned requirements are explicitly outside this Task."
                     })
                     .to_string(),
                 ),
             ));
         }
         if self.profile_key == TASK_EXECUTION_PROFILE_KEY {
+            capabilities.prefixed_input_items.push(message_item(
+                "system",
+                Value::String(json!({
+                    "type": "task_run_convergence_contract",
+                    "guidance": "Keep this Run compact. Reuse successful file reads and capability discovery already returned in this Run unless a later mutation invalidated them. Finish necessary reads and decide the change before opening an edit session; batch related files in one session and commit once per logical change. Reopen a committed file only for new evidence or a concrete verification failure. Use process_wait for a waitable long-running process; use polling only for incremental logs or interaction. If a tool returns duplicate_call_refused, summarize confirmed facts, remaining acceptance checks, and the next different minimal operation instead of retrying unchanged arguments."
+                }).to_string()),
+            ));
+            if let Some(verification_contract) = claim
+                .run
+                .input
+                .get("verification_contract")
+                .filter(|value| !value.is_null())
+            {
+                capabilities.prefixed_input_items.push(message_item(
+                    "system",
+                    Value::String(json!({
+                        "type": "task_verification_contract",
+                        "verification_contract": verification_contract,
+                        "guidance": "Verify the frozen subject_identity through the declared workflow_entry. Run every check whose declared dependencies have not failed or been skipped, even when another independent check fails. Skip only checks with failed or skipped direct dependencies and name those exact check_ids. Return every frozen check exactly once in verification_report. When require_full_rerun is true, rerun the entire declared workflow after any mutation before reporting success. Do not add project-specific checks that are absent from this contract."
+                    }).to_string()),
+                ));
+            }
             if let Some(selected_plugins) = claim
                 .run
                 .input
@@ -605,7 +631,7 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 Value::String(
                     json!({
                         "type": "task_context_compilation_contract",
-                        "guidance": "Main Chat is the context curator for every Task. Before creating a Task, select only the prior facts, decisions, constraints, identifiers, paths, URLs, and verified results that the Task actually needs, then rewrite them as a self-contained context_summary. Never say 'see above', 'use prior chat', 'read Memory', or assume the Task can inspect Main Chat history. Do not dump the conversation or all retained Memory. Select only necessary attachments through attachment_refs using the opaque authorized_local_ref values in available_attachments; explain each selected attachment's purpose in context_summary. Never copy attachment bytes, base64, passwords, tokens, Authorization headers, or other secret values into Task arguments. If a required fact or safe reference is unavailable, resolve that gap before dispatch instead of creating an impossible Task.",
+                        "guidance": "Main Chat is the context curator for every Task. Before creating work, turn each requested outcome into a requirement with a stable id, the authoritative user message id, an exact source_quote, an observable interpretation, and whether it requires change. Bind every Task, expected output, and acceptance criterion to those ids. A change requirement must have an implementation Task with write capability; a read-only verification Task cannot be its only owner. If the contract would add a business default, keep/delete choice, automatic/manual behavior, or data-overwrite policy absent from the user's words, clarify before dispatch; ordinary technical implementation choices do not require approval. Select only the prior facts, decisions, constraints, identifiers, paths, URLs, and verified results that the Task actually needs, then rewrite them as a self-contained context_summary. Never say 'see above', 'use prior chat', 'read Memory', or assume the Task can inspect Main Chat history. Do not dump the conversation or all retained Memory. Select only necessary attachments through attachment_refs using the opaque authorized_local_ref values in available_attachments; explain each selected attachment's purpose in context_summary. Never copy attachment bytes, base64, passwords, tokens, Authorization headers, or other secret values into Task arguments. If a required fact or safe reference is unavailable, resolve that gap before dispatch instead of creating an impossible Task.",
                         "available_attachments": attachment_catalog,
                         "attachment_catalog_scope": "recent_source_conversation_history",
                     })

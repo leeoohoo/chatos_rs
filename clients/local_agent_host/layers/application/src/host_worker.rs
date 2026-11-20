@@ -3,6 +3,7 @@
 
 use crate::{LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalAgentToolInvocationRecord};
+use serde_json::Value;
 
 impl LocalAgentRuntime {
     /// Trusted in-process worker lookup. Native callers must use the
@@ -37,6 +38,27 @@ impl LocalAgentRuntime {
         Ok(self
             .store
             .get_completed_tool_invocation_for_run_call(owner_user_id, run_id, call_id)
+            .await?)
+    }
+
+    #[doc(hidden)]
+    pub async fn latest_equivalent_tool_invocation_for_host_worker(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        tool_name: &str,
+        arguments: &Value,
+        invalidate_after_side_effect: bool,
+    ) -> Result<Option<LocalAgentToolInvocationRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .latest_equivalent_tool_invocation(
+                owner_user_id,
+                run_id,
+                tool_name,
+                arguments,
+                invalidate_after_side_effect,
+            )
             .await?)
     }
 

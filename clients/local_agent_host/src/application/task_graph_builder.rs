@@ -22,6 +22,11 @@ pub(in crate::application::task_tools) fn create_single_graph(
     model: (String, String),
     max_iterations: u32,
 ) -> Result<CreateTaskGraphCommand, String> {
+    let requirement_refs = args
+        .requirements
+        .iter()
+        .map(|requirement| requirement.requirement_id.clone())
+        .collect::<Vec<_>>();
     let enabled_builtin_kinds =
         validated_builtin_kinds(args.requires_execution, args.enabled_builtin_kinds)?;
     let external_mcp_config_ids = validate_external_mcp_ids(&args.external_mcp_config_ids)?;
@@ -57,6 +62,9 @@ pub(in crate::application::task_tools) fn create_single_graph(
                 "objective": args.objective,
                 "expected_outputs": args.expected_outputs,
                 "acceptance_criteria": args.acceptance_criteria,
+                "requirements": args.requirements,
+                "requirement_refs": requirement_refs,
+                "unassigned_requirement_refs": [],
                 "acceptance_report_version": 1,
                 "final_response_max_chars": args.final_response_max_chars,
                 "description": args.description,
@@ -72,6 +80,7 @@ pub(in crate::application::task_tools) fn create_single_graph(
                     "plugin_hints": args.plugin_hints,
                     "plugin_release_snapshots": args.plugin_release_snapshots,
                 },
+                "verification_contract": args.verification_contract,
                 "source_conversation_id": source_context.conversation_id.clone(),
                 "source_turn_id": source_context.turn_id.clone(),
                 "source_user_message": source_user_message,
@@ -106,6 +115,11 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
     }
     validate_nonempty_text(&args.graph_goal, "graph_goal")?;
     validate_nonempty_text(&args.decomposition_rationale, "decomposition_rationale")?;
+    let requirements = args.requirements;
+    let all_requirement_refs = requirements
+        .iter()
+        .map(|requirement| requirement.requirement_id.clone())
+        .collect::<Vec<_>>();
     let mut items = args.tasks;
     let mut ref_to_id = HashMap::new();
     for (index, item) in items.iter().enumerate() {
@@ -152,6 +166,16 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
     let mut tasks = Vec::with_capacity(items.len());
     let mut dependencies = Vec::new();
     for item in items {
+        let task_requirements = requirements
+            .iter()
+            .filter(|requirement| item.requirement_refs.contains(&requirement.requirement_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let unassigned_requirement_refs = all_requirement_refs
+            .iter()
+            .filter(|reference| !item.requirement_refs.contains(reference))
+            .cloned()
+            .collect::<Vec<_>>();
         let model = resolve_task_model(
             runtime,
             parent,
@@ -204,6 +228,9 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
                 "objective": item.objective,
                 "expected_outputs": item.expected_outputs,
                 "acceptance_criteria": item.acceptance_criteria,
+                "requirements": task_requirements,
+                "requirement_refs": item.requirement_refs,
+                "unassigned_requirement_refs": unassigned_requirement_refs,
                 "acceptance_report_version": 1,
                 "final_response_max_chars": item.final_response_max_chars,
                 "graph_goal": args.graph_goal,
@@ -225,6 +252,7 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
                     "plugin_hints": item.plugin_hints,
                     "plugin_release_snapshots": item.plugin_release_snapshots,
                 },
+                "verification_contract": item.verification_contract,
                 "source_conversation_id": source_context.conversation_id.clone(),
                 "source_turn_id": source_context.turn_id.clone(),
                 "source_user_message": source_user_message.clone(),

@@ -108,6 +108,33 @@ pub fn task_process_model_tools() -> Vec<Value> {
                         "type": "string",
                         "minLength": 1,
                         "maxLength": OUTCOME_REASON_MAX_CHARS
+                    },
+                    "verification_report": {
+                        "type": "object",
+                        "properties": {
+                            "subject_identity": {"type":"string", "minLength":1, "maxLength":512},
+                            "full_rerun": {"type":"boolean"},
+                            "checks": {
+                                "type":"array", "minItems":1, "maxItems":50,
+                                "items": {
+                                    "type":"object",
+                                    "properties": {
+                                        "check_id": {"type":"string", "minLength":1, "maxLength":128},
+                                        "status": {"type":"string", "enum":["passed","failed","skipped_due_to"]},
+                                        "evidence": {"type":"string", "maxLength":2000},
+                                        "skipped_due_to": {
+                                            "type":"array", "maxItems":49, "uniqueItems":true,
+                                            "items":{"type":"string", "minLength":1, "maxLength":128}
+                                        }
+                                    },
+                                    "required":["check_id","status"],
+                                    "additionalProperties":false
+                                }
+                            }
+                        },
+                        "required":["subject_identity","full_rerun","checks"],
+                        "additionalProperties":false,
+                        "description":"Required only when the Task has a verification_contract. Report every frozen check exactly once; skipped checks must name their failed or skipped direct dependencies."
                     }
                 },
                 "required": ["result_status", "reason"],
@@ -322,6 +349,8 @@ struct ReportOutcomeArgs {
     final_response: Option<String>,
     #[serde(default)]
     acceptance_checks: Option<Vec<AcceptanceCheck>>,
+    #[serde(default)]
+    verification_report: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -468,6 +497,7 @@ impl LocalToolExecutor for LocalTaskProcessToolExecutor {
                     "acceptance_checks": checks,
                     "final_response_chars": args.final_response.as_ref().map(|text| text.chars().count()),
                     "final_response": args.final_response,
+                    "verification_report": args.verification_report,
                     "acceptance_report_version": run.input.get("acceptance_report_version")
                 })
             }
@@ -584,6 +614,11 @@ mod tests {
         assert_eq!(
             tools[2]["parameters"]["properties"]["final_response"]["maxLength"],
             32000
+        );
+        assert_eq!(
+            tools[2]["parameters"]["properties"]["verification_report"]["properties"]["checks"]
+                ["maxItems"],
+            50
         );
         let prompt = task_process_prompt_item().to_string();
         assert!(prompt.contains("meaningful milestones"));

@@ -112,17 +112,33 @@ fn invocation(
 ) -> LocalAgentToolInvocationRecord {
     if let Some(object) = arguments.as_object_mut() {
         if tool_name == CREATE_TASK_TOOL {
+            object.entry("requirements").or_insert_with(|| json!([{
+                "requirement_id":"R1",
+                "source_message_id": if run_id == "other-parent-run" { "message-turn-2" } else { "message-turn-1" },
+                "source_quote":"Inspect the bound project",
+                "interpreted_requirement":"Complete the requested bound-project test work",
+                "requires_change":false
+            }]));
             object
                 .entry("expected_outputs")
-                .or_insert_with(|| json!(["Test output"]));
+                .or_insert_with(|| json!(["[R1] Test output"]));
             object
                 .entry("acceptance_criteria")
-                .or_insert_with(|| json!(["Test expectation is satisfied"]));
+                .or_insert_with(|| json!(["[R1] Test expectation is satisfied"]));
+            add_requirement_markers(object.get_mut("expected_outputs"));
+            add_requirement_markers(object.get_mut("acceptance_criteria"));
             object.entry("context_summary").or_insert_with(|| {
                 json!("Execute the stated Task objective within its bound project. The Task needs no additional conversation history or attachments.")
             });
             object.entry("attachment_refs").or_insert_with(|| json!([]));
         } else if tool_name == CREATE_TASKS_TOOL {
+            object.entry("requirements").or_insert_with(|| json!([{
+                "requirement_id":"R1",
+                "source_message_id": if run_id == "other-parent-run" { "message-turn-2" } else { "message-turn-1" },
+                "source_quote":"Inspect the bound project",
+                "interpreted_requirement":"Complete the requested bound-project test work",
+                "requires_change":false
+            }]));
             object
                 .entry("graph_goal")
                 .or_insert_with(|| json!("Complete the test graph"));
@@ -133,9 +149,13 @@ fn invocation(
                 for task in tasks {
                     if let Some(task) = task.as_object_mut() {
                         task.entry("expected_outputs")
-                            .or_insert_with(|| json!(["Task output"]));
+                            .or_insert_with(|| json!(["[R1] Task output"]));
                         task.entry("acceptance_criteria")
-                            .or_insert_with(|| json!(["Task expectation is satisfied"]));
+                            .or_insert_with(|| json!(["[R1] Task expectation is satisfied"]));
+                        task.entry("requirement_refs")
+                            .or_insert_with(|| json!(["R1"]));
+                        add_requirement_markers(task.get_mut("expected_outputs"));
+                        add_requirement_markers(task.get_mut("acceptance_criteria"));
                         task.entry("context_summary").or_insert_with(|| {
                             json!("Execute this Task's stated objective within its bound project. The Task needs no additional conversation history or attachments.")
                         });
@@ -167,6 +187,14 @@ fn invocation(
         claim_until_unix_ms: Some(i64::MAX),
         created_at_unix_ms: 1_000,
         updated_at_unix_ms: 1_000,
+    }
+}
+
+fn add_requirement_markers(value: Option<&mut Value>) {
+    for entry in value.and_then(Value::as_array_mut).into_iter().flatten() {
+        if let Some(text) = entry.as_str().filter(|text| !text.contains("[R1]")) {
+            *entry = json!(format!("[R1] {text}"));
+        }
     }
 }
 

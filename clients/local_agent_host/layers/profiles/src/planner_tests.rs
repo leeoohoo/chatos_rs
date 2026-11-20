@@ -165,6 +165,9 @@ async fn main_chat_receives_the_task_context_compilation_contract() {
     assert_eq!(contract["available_attachments"], json!([]));
     let guidance = contract["guidance"].as_str().expect("contract guidance");
     assert!(guidance.contains("context curator"));
+    assert!(guidance.contains("exact source_quote"));
+    assert!(guidance.contains("read-only verification Task cannot be its only owner"));
+    assert!(guidance.contains("business default"));
     assert!(guidance.contains("Do not dump the conversation or all retained Memory"));
     assert!(guidance.contains("opaque authorized_local_ref"));
     assert!(guidance.contains("Never copy attachment bytes, base64"));
@@ -300,8 +303,23 @@ async fn requirement_plan_is_sent_each_step_outside_truncated_memory_for_main_an
             current.run.input["requirement_plan"] = plan.clone();
             let prepared = planner.prepare_ai_step(&current).await.unwrap();
             if task {
-                assert!(prepared.request.prefixed_input_items.iter().any(|item| item["content"].as_str().and_then(|text| serde_json::from_str::<Value>(text).ok())
-                    == Some(json!({"type":"task_acceptance_contract","acceptance_report_version":1,"acceptance_criteria":["Compare evidence"],"expected_outputs":["Review"],"final_response_max_chars":400,"source_user_message":"Review the original three checklist items verbatim."}))));
+                let contract = prepared
+                    .request
+                    .prefixed_input_items
+                    .iter()
+                    .filter_map(|item| item["content"].as_str())
+                    .filter_map(|text| serde_json::from_str::<Value>(text).ok())
+                    .find(|item| item["type"] == "task_acceptance_contract")
+                    .expect("task acceptance contract");
+                assert_eq!(contract["acceptance_criteria"], json!(["Compare evidence"]));
+                assert_eq!(
+                    contract["source_user_message"],
+                    "Review the original three checklist items verbatim."
+                );
+                assert!(contract["guidance"]
+                    .as_str()
+                    .unwrap()
+                    .contains("exact source_quote"));
             }
             assert!(prepared
                 .request
@@ -348,6 +366,41 @@ async fn task_execution_keeps_the_bound_workspace_root_authoritative() {
 
     assert!(instructions.contains("path `.` is the authoritative root"));
     assert!(instructions.contains("Never replace that root with a child directory"));
+}
+
+#[tokio::test]
+async fn multi_check_task_receives_verification_and_run_convergence_contracts() {
+    let planner = ControlPlaneLocalAiStepPlanner::task_execution(
+        OwnerCheckingModelResolver,
+        OwnerCheckingCapabilityResolver,
+    );
+    let mut task_claim = claim(Value::Null, None);
+    task_claim.run.profile_key = TASK_EXECUTION_PROFILE_KEY.to_string();
+    task_claim.run.owner_entity_type = "task".to_string();
+    task_claim.run.input = json!({
+        "prompt":"verify",
+        "acceptance_report_version":1,
+        "acceptance_criteria":["[R1] Complete project checks"],
+        "expected_outputs":["[R1] Verification report"],
+        "verification_contract":{
+            "subject_identity":"artifact:abc123",
+            "workflow_entry":"./verify",
+            "checks":[{"check_id":"compile","depends_on":[]}],
+            "require_full_rerun":true
+        },
+        "tool_options":{"requires_execution":true,"enabled_builtin_kinds":["TerminalController"],"plugin_hints":[],"external_mcp_config_ids":[]}
+    });
+    let prepared = planner.prepare_ai_step(&task_claim).await.unwrap();
+    let contracts = prepared
+        .request
+        .prefixed_input_items
+        .iter()
+        .filter_map(|item| item["content"].as_str())
+        .filter_map(|text| serde_json::from_str::<Value>(text).ok())
+        .map(|item| item["type"].as_str().unwrap_or_default().to_string())
+        .collect::<Vec<_>>();
+    assert!(contracts.contains(&"task_run_convergence_contract".to_string()));
+    assert!(contracts.contains(&"task_verification_contract".to_string()));
 }
 
 #[tokio::test]
