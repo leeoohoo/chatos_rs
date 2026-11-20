@@ -1,31 +1,147 @@
 # path	max_lines	expires_on	reason
-# First-party source at or above 800 lines must have a bounded budget and an expiry.
-config_center_service/backend/src/state/tests.rs	2557	2026-12-31	Split state read/write, publish, and recovery scenarios
-clients/local_agent_host/layers/infrastructure/database/src/task_conversation_writeback_tests.rs	2361	2026-12-31	Split conversation writeback scenarios by recovery and terminal state
-config_center_service/backend/src/catalog/tests.rs	2335	2026-12-31	Split catalog parsing, version, and permission scenarios
-clients/windows-react/src-tauri/src/remote_connection/ssh.rs	2212	2026-12-31	Split SSH process, askpass, transfer, and connection preparation responsibilities
-clients/macos/Tests/ChatOSConnectorTests/LocalAgentChatToolProviderTests.swift	1999	2026-12-31	Split local agent tool-provider tests by tool family
-clients/macos/Tests/ChatOSAppTests/ConversationSessionViewModelTests.swift	1825	2026-12-31	Split conversation session tests by history, sending, and realtime behavior
-clients/windows-react/src-tauri/src/project_git.rs	1665	2026-12-31	Split Git query, mutation, process, and projection responsibilities
-clients/windows-react/src-tauri/src/remote_connection/files.rs	1635	2026-12-31	Split remote file listing, mutation, transfer, and local selection responsibilities
-clients/local_agent_host/layers/infrastructure/database/src/task_lifecycle_tests.rs	1571	2026-12-31	Split task lifecycle tests by scheduling and recovery phase
-clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentPlatformToolWorkerTests.swift	1491	2026-12-31	Split platform worker tests by tool family and lifecycle behavior
-crates/chatos_ai_runtime/src/runtime/tests.rs	1479	2026-12-31	Split AI runtime tests by execution phase
-clients/local_agent_host/src/application/task_tools_tests.rs	1404	2026-12-31	Split task tool tests by command and state transition
-clients/windows-react/src-tauri/src/project_creation.rs	1295	2026-12-31	Split project selection, recovery journal, and registry commit responsibilities
-clients/local_agent_host/layers/profiles/src/planner_tests.rs	1287	2026-12-31	Split planner tests by profile and continuation behavior
-clients/macos/Tests/ChatOSConnectorTests/NativeAgentPluginToolProviderTests.swift	1264	2026-12-31	Split plugin tool provider tests by discovery and invocation behavior
-clients/windows-react/src-tauri/src/project_filesystem.rs	1222	2026-12-31	Split project query, search, preview, and mutation responsibilities
-clients/macos/Sources/ChatOSApp/Features/Chat/ConversationSessionViewModel.swift	1213	2026-12-31	Extract conversation feature state and orchestration responsibilities
-crates/chatos_cloud_agent_runtime/src/lib_inline_tests.rs	1128	2026-12-31	Move cloud runtime inline tests into layered test modules
-mcp/src/implementations/builtin/code_maintainer/tests.rs	1082	2026-12-31	Split code maintainer read, edit, and verification scenarios
-clients/local_agent_host/layers/infrastructure/database/src/conversation_store_tests.rs	940	2026-12-31	Split conversation store tests by query and mutation behavior
-clients/windows-react/src-tauri/src/remote_connection/tests.rs	902	2026-12-31	Split remote connection tests by credential, lifecycle, and jump-host behavior
-clients/windows-react/src-tauri/src/remote_connection/mod.rs	882	2026-12-31	Split remote connection management, command, and credential orchestration responsibilities
-clients/macos/Sources/ChatOSApp/Features/MediaStudio/MediaStudioViewModel.swift	877	2026-12-31	Extract Media Studio operation and persistence state
-clients/windows-react/src-tauri/src/project_run/analyzer.rs	865	2026-12-31	Split project manifest analyzers by runtime family
-clients/macos/Tests/ChatOSConnectorTests/NativePluginProcessTests.swift	864	2026-12-31	Split plugin process tests by launch and transport behavior
-clients/macos/Tests/ChatOSAppTests/MessageTaskWorkspaceViewModelTests.swift	837	2026-12-31	Split task workspace tests by presentation section
-clients/local_agent_host/src/application/requirement_survey_tools.rs	813	2026-12-31	Extract requirement survey schemas and response mapping
-clients/local_agent_host/layers/application/src/skill_runtime.rs	807	2026-12-31	Extract skill runtime activation and resource loading paths
-clients/macos/Sources/ChatOSConnector/NativeAgentPluginToolProvider.swift	802	2026-12-31	Extract plugin tool discovery and invocation adapters
+# First-party source at or above 800 lines; exact budgets block further growth.
+# Remove entries as files are split below the hard limit.
+clients/windows-react/src-tauri/src/agent_conversation.rs	10971	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/agent_conversation/team_todo.rs	5527	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/plugin_installer.rs	5077	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/src/application/hook_coordinator.rs	4480	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src/features/agent-management/ui/AgentManagementView.tsx	4016	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/attachment_tool_worker.rs	3608	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/windows_appcontainer.rs	3575	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/plugin_settings.rs	3488	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/plugin_application/runtime.rs	3293	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/agent_plugin_runtime.rs	3112	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/media_studio/mod.rs	2922	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/story_studio/tests.rs	2891	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/application/src/conversation_runtime.rs	2643	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSConnectorTests/LocalAgentChatToolProviderTests.swift	2606	2027-02-28	Split local agent tool-provider tests by tool family
+clients/local_agent_host/layers/infrastructure/database/src/task_conversation_writeback_tests.rs	2478	2027-02-28	Split conversation writeback scenarios by recovery and terminal state
+clients/windows-react/src-tauri/src/remote_connection/ssh.rs	2388	2027-02-28	Split SSH process, askpass, transfer, and connection preparation responsibilities
+clients/windows-react/src-tauri/src/story_studio/media.rs	2205	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSAppTests/ConversationSessionViewModelTests.swift	2029	2027-02-28	Split conversation session tests by history, sending, and realtime behavior
+clients/macos/Tests/ChatOSAppTests/MediaStudioVideoJobStoreTests.swift	1960	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/story_studio/commands.rs	1900	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/infrastructure/database/src/hook_event_store.rs	1777	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/plugin_application/mod.rs	1760	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/remote_connection/files.rs	1749	2027-02-28	Split remote file listing, mutation, transfer, and local selection responsibilities
+memory_engine/backend/src/repositories/generation_output_commits.rs	1725	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/project_git.rs	1720	2027-02-28	Split Git query, mutation, process, and projection responsibilities
+clients/macos/Sources/ChatOSApp/Features/MediaStudio/MediaStudioVideoJobStore.swift	1714	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/src/application/task_tools_tests.rs	1705	2027-02-28	Split task tool tests by command and state transition
+clients/windows-react/src-tauri/src/story_studio/tools.rs	1661	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/infrastructure/database/src/task_lifecycle_tests.rs	1657	2027-02-28	Split task lifecycle tests by scheduling and recovery phase
+clients/local_agent_host/layers/profiles/src/planner_tests.rs	1638	2027-02-28	Split planner tests by profile and continuation behavior
+clients/local_agent_host/layers/infrastructure/database/src/memory_outbox_store.rs	1590	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSAppTests/StoryStudioTests.swift	1550	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentPlatformToolWorkerTests.swift	1548	2027-02-28	Split platform worker tests by tool family and lifecycle behavior
+clients/local_agent_host/layers/infrastructure/database/src/conversation_store_tests.rs	1545	2027-02-28	Split conversation store tests by query and mutation behavior
+clients/windows-react/src-tauri/src/story_studio/store.rs	1540	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/quick_search.rs	1502	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSConnectorTests/NativeCustomPluginInstallationTests.swift	1477	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src/features/media-studio/application/mediaStudioStore.ts	1472	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/plugin_installer_tool_worker.rs	1467	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSApp/Features/MediaStudio/MediaStudioViewModel.swift	1459	2027-02-28	Extract Media Studio operation and persistence state
+clients/windows-react/src-tauri/src/agent_conversation/proposals.rs	1441	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/terminal_tool_worker/code_write.rs	1426	2027-02-28	Split existing owned source by responsibility before expiry
+config_center_service/backend/src/state/tests.rs	1419	2027-02-28	Split state read/write, publish, and recovery scenarios
+clients/macos/Tests/ChatOSConnectorTests/NativeAgentPluginToolProviderTests.swift	1397	2027-02-28	Split plugin tool provider tests by discovery and invocation behavior
+clients/windows-react/src-tauri/src/agent_management.rs	1394	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/media_studio/workflow.rs	1392	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src/features/agent-management/ui/AgentManagementView.test.tsx	1367	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGraphService.swift	1346	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/project_creation.rs	1344	2027-02-28	Split project selection, recovery journal, and registry commit responsibilities
+clients/macos/Tests/ChatOSAppTests/StoryStudioPipelineTests.swift	1338	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSConnectorTests/AgentWorkerProcessClientTests.swift	1324	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/story_studio/application.rs	1322	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSApp/Features/Chat/ConversationSessionViewModel.swift	1302	2027-02-28	Extract conversation feature state and orchestration responsibilities
+clients/windows-react/src/features/story-studio/application/storyStudioStore.ts	1298	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSConnectorTests/NativeRemoteConnectionServiceTests.swift	1280	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/story_studio/runtime.rs	1274	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/project_filesystem.rs	1269	2027-02-28	Split project query, search, preview, and mutation responsibilities
+clients/macos/Tests/ChatOSConnectorTests/LocalAgentGroupChatSchedulerConcurrencyTests.swift	1222	2027-02-28	Split existing owned source by responsibility before expiry
+memory_engine/backend/src/repositories/postgres_contract_tests/summary_generation_contracts.rs	1179	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/profiles/src/ai_step.rs	1171	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/src/application/coordinator.rs	1171	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSCodeReadWorkerCore/CodeReadWorkerEngine.swift	1162	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSAPITests/ChatOSMediaGenerationServiceTests.swift	1145	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/story_studio/batch.rs	1143	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSConnector/NativeOpenSSHClient.swift	1139	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/story_studio/domain.rs	1131	2027-02-28	Split existing owned source by responsibility before expiry
+crates/chatos_cloud_agent_runtime/src/lib_inline_tests.rs	1128	2027-02-28	Move cloud runtime inline tests into layered test modules
+clients/windows-react/src/features/media-studio/ui/MediaStudioView.tsx	1125	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/agent_conversation/documents.rs	1120	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/agent_skill_management.rs	1118	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentMessageTaskGraphServiceTests.swift	1088	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentHostLifecycleTests.swift	1080	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/pet.rs	1077	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/ports/src/lib.rs	1073	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/src/application/coordinator_tests.rs	1073	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src/features/agent-management/domain/agentManagement.ts	1071	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/authentication/client.rs	1070	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryProjectStore.swift	1061	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/plugin_application/tests.rs	1053	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/infrastructure/database/src/migration_tests.rs	1052	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostProcess.swift	1049	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/notepad.rs	1049	2027-02-28	Split existing owned source by responsibility before expiry
+config_center_service/backend/src/catalog/tests.rs	1044	2027-02-28	Split catalog parsing, version, and permission scenarios
+clients/macos/Sources/ChatOSConnector/LocalAgentGroupChatSchedulerDrain.swift	1036	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src/app/AppShell.tsx	1030	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryStudioViewModel.swift	1028	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/src/application/task_process_tools.rs	1023	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSApp/Features/Execution/MessageTaskDetailSections.swift	1022	2027-02-28	Split existing owned source by responsibility before expiry
+memory_engine/backend/src/repositories/postgres_contract_tests/subject_memory_generation_contracts.rs	1016	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostLifecycle.swift	1014	2027-02-28	Split existing owned source by responsibility before expiry
+memory_engine/backend/src/services/ai_pipeline/cloud_agent.rs	1001	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/control_plane.rs	999	2027-02-28	Split existing owned source by responsibility before expiry
+crates/chatos_ai_runtime/src/memory_context/tests.rs	999	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/profiles/src/memory.rs	998	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSAppTests/MessageTaskWorkspaceViewModelTests.swift	972	2027-02-28	Split task workspace tests by presentation section
+clients/local_agent_host/src/infrastructure/hook_runner.rs	970	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/conversation_attachments.rs	968	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/src/application/requirement_survey_tools.rs	958	2027-02-28	Extract requirement survey schemas and response mapping
+clients/windows-react/src-tauri/src/clipboard_history.rs	958	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSConnectorTests/NativePluginProcessTests.swift	957	2027-02-28	Split plugin process tests by launch and transport behavior
+clients/macos/Tests/ChatOSAppTests/StoryStudioGenerationTests.swift	954	2027-02-28	Split existing owned source by responsibility before expiry
+scripts/deploy-production.sh	949	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSConnector/NativeMCPCodeWriteTools.swift	947	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSConnectorTests/CodeReadWorkerProcessIsolationTests.swift	940	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src/features/story-studio/ui/StoryStudioView.tsx	938	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/application/src/skill_runtime.rs	920	2027-02-28	Extract skill runtime activation and resource loading paths
+clients/local_agent_host/layers/profiles/src/planner.rs	920	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSCore/AgentGroupChat/LocalAgentTodo.swift	916	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/story_studio/batch_execution.rs	904	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/remote_connection/tests.rs	902	2027-02-28	Split remote connection tests by credential, lifecycle, and jump-host behavior
+clients/windows-react/src-tauri/src/requirement_survey.rs	897	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/infrastructure/database/src/schema.rs	887	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/remote_connection/mod.rs	886	2027-02-28	Split remote connection management, command, and credential orchestration responsibilities
+clients/windows-react/src-tauri/src/media_studio/video_provider.rs	885	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/plugin_repository.rs	883	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/src/application/coordinator_worker_tests.rs	882	2027-02-28	Split existing owned source by responsibility before expiry
+memory_engine/backend/src/services/memory_cloud_agent.rs	878	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/infrastructure/database/src/task_conversation_writeback.rs	876	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/project_run/analyzer.rs	871	2027-02-28	Split project manifest analyzers by runtime family
+clients/local_agent_host/layers/infrastructure/database/src/conversation_store.rs	866	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSConnectorTests/NativeConnectorStateStoreTests.swift	865	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/story_studio/memory.rs	863	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/media_studio/reference.rs	861	2027-02-28	Split existing owned source by responsibility before expiry
+memory_engine/backend/src/api/admin_api/reliability.rs	861	2027-02-28	Split existing owned source by responsibility before expiry
+plugins/browser/crates/browser-cdp-core/src/runtime.rs	861	2027-02-28	Split existing owned source by responsibility before expiry
+memory_engine/backend/src/repositories/subject_memory_scopes.rs	854	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/infrastructure/database/src/conversation_commands.rs	853	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/interface/src/lib.rs	853	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src/features/story-studio/ui/StoryStudioView.test.tsx	845	2027-02-28	Split existing owned source by responsibility before expiry
+crates/chatos_config_sdk/src/lib.rs	844	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSApp/Features/Pet/PetQuickChatView.swift	842	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/infrastructure/database/src/task_lifecycle.rs	841	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSConnector/NativeAgentPluginToolProvider.swift	840	2027-02-28	Extract plugin tool discovery and invocation adapters
+clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+Plugins.swift	837	2027-02-28	Split existing owned source by responsibility before expiry
+plugins/document/test/mcp.test.mjs	827	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/infrastructure/database/src/tests/run_lifecycle_tests.rs	816	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSConnector/NativeSSHConnectionTester.swift	812	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryVideoGenerationAdapter.swift	806	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/interface/src/conversation.rs	805	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSAppTests/MediaWorkerProcessClientTests.swift	803	2027-02-28	Split existing owned source by responsibility before expiry
+clients/windows-react/src-tauri/src/project_run/runtime.rs	802	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/layers/infrastructure/database/src/migration_crash_tests.rs	800	2027-02-28	Split existing owned source by responsibility before expiry
+clients/local_agent_host/src/application/task_tool_support.rs	800	2027-02-28	Split existing owned source by responsibility before expiry
+clients/macos/Tests/ChatOSAppTests/TaskReplyInspectorViewModelTests.swift	800	2027-02-28	Split existing owned source by responsibility before expiry
