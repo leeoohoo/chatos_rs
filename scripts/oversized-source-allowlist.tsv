@@ -87,7 +87,6 @@ memory_engine/backend/src/repositories/postgres_contract_tests/subject_memory_ge
 clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostLifecycle.swift	1014	2027-02-28	Split existing owned source by responsibility before expiry
 memory_engine/backend/src/services/ai_pipeline/cloud_agent.rs	1001	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/control_plane.rs	999	2027-02-28	Split existing owned source by responsibility before expiry
-crates/chatos_ai_runtime/src/memory_context/tests.rs	999	2027-02-28	Split existing owned source by responsibility before expiry
 clients/local_agent_host/layers/profiles/src/memory.rs	998	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Tests/ChatOSAppTests/MessageTaskWorkspaceViewModelTests.swift	972	2027-02-28	Split task workspace tests by presentation section
 clients/local_agent_host/src/infrastructure/hook_runner.rs	970	2027-02-28	Split existing owned source by responsibility before expiry
