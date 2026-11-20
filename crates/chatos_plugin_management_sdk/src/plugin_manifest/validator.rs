@@ -176,28 +176,20 @@ pub fn validate_plugin_manifest(
             &command.source,
             &mut issues,
         );
-        if command
-            .description
-            .as_ref()
-            .is_some_and(|value| value.len() > 4096)
-        {
-            issue(
-                &mut issues,
-                format!("commands[{index}].description").as_str(),
-                "description exceeds 4096 bytes",
-            );
-        }
-        if command
-            .argument_hint
-            .as_ref()
-            .is_some_and(|value| value.len() > 1024)
-        {
-            issue(
-                &mut issues,
-                format!("commands[{index}].argument_hint").as_str(),
-                "argument hint exceeds 1024 bytes",
-            );
-        }
+        validate_optional_max_bytes(
+            format!("commands[{index}].description").as_str(),
+            command.description.as_deref(),
+            4096,
+            "description",
+            &mut issues,
+        );
+        validate_optional_max_bytes(
+            format!("commands[{index}].argument_hint").as_str(),
+            command.argument_hint.as_deref(),
+            1024,
+            "argument hint",
+            &mut issues,
+        );
         if let Some(target_agent) = command.target_agent.as_deref() {
             if target_agent != SystemAgentKey::LocalAgentExecutionAgent.as_str() {
                 issue(
@@ -207,36 +199,11 @@ pub fn validate_plugin_manifest(
                 );
             }
         }
-        if command.allowed_tools.len() > PLUGIN_COMMAND_MAX_ALLOWED_TOOLS {
-            issue(
-                &mut issues,
-                format!("commands[{index}].allowed_tools").as_str(),
-                format!(
-                    "allowed tools must contain at most {PLUGIN_COMMAND_MAX_ALLOWED_TOOLS} items"
-                ),
-            );
-        }
-        let mut allowed_tools = HashSet::new();
-        for (tool_index, tool_name) in command.allowed_tools.iter().enumerate() {
-            let valid = !tool_name.is_empty()
-                && tool_name.len() <= PLUGIN_COMMAND_MAX_TOOL_NAME_BYTES
-                && tool_name
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'));
-            if !valid {
-                issue(
-                    &mut issues,
-                    format!("commands[{index}].allowed_tools[{tool_index}]").as_str(),
-                    "allowed tool must be a 1-256 byte canonical public tool name",
-                );
-            } else if !allowed_tools.insert(tool_name.as_str()) {
-                issue(
-                    &mut issues,
-                    format!("commands[{index}].allowed_tools[{tool_index}]").as_str(),
-                    "duplicate allowed tool",
-                );
-            }
-        }
+        validate_allowed_tools(
+            format!("commands[{index}].allowed_tools").as_str(),
+            &command.allowed_tools,
+            &mut issues,
+        );
     }
     for (index, agent) in manifest.agents.iter().enumerate() {
         validate_component_key(
@@ -250,17 +217,13 @@ pub fn validate_plugin_manifest(
             &agent.source,
             &mut issues,
         );
-        if agent
-            .description
-            .as_ref()
-            .is_some_and(|value| value.len() > 4096)
-        {
-            issue(
-                &mut issues,
-                format!("agents[{index}].description").as_str(),
-                "description exceeds 4096 bytes",
-            );
-        }
+        validate_optional_max_bytes(
+            format!("agents[{index}].description").as_str(),
+            agent.description.as_deref(),
+            4096,
+            "description",
+            &mut issues,
+        );
         if agent.base_agent != SystemAgentKey::LocalAgentExecutionAgent.as_str() {
             issue(
                 &mut issues,
@@ -692,6 +655,18 @@ fn validate_allowed_tools(
                 "duplicate allowed tool",
             );
         }
+    }
+}
+
+fn validate_optional_max_bytes(
+    field: &str,
+    value: Option<&str>,
+    max_bytes: usize,
+    label: &str,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    if value.is_some_and(|value| value.len() > max_bytes) {
+        issue(issues, field, format!("{label} exceeds {max_bytes} bytes"));
     }
 }
 
