@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -258,40 +258,6 @@ pub fn normalized_plugin_hook_set_sha256(
     hook_set: &PluginHookSet,
 ) -> Result<String, serde_json::Error> {
     serde_json::to_vec(hook_set).map(|bytes| hex::encode(Sha256::digest(bytes)))
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn plugin_hook_snapshot_sha256(
-    plugin_id: &str,
-    release_id: &str,
-    component_key: &str,
-    source_path: &str,
-    content_sha256: &str,
-    hook_set_sha256: &str,
-    command_sha256_by_hook: &BTreeMap<String, String>,
-) -> Result<String, serde_json::Error> {
-    #[derive(Serialize)]
-    struct Snapshot<'a> {
-        purpose: &'static str,
-        plugin_id: &'a str,
-        release_id: &'a str,
-        component_key: &'a str,
-        source_path: &'a str,
-        content_sha256: &'a str,
-        hook_set_sha256: &'a str,
-        command_sha256_by_hook: &'a BTreeMap<String, String>,
-    }
-    serde_json::to_vec(&Snapshot {
-        purpose: "chatos.plugin.hook-set.snapshot.v1",
-        plugin_id,
-        release_id,
-        component_key,
-        source_path,
-        content_sha256,
-        hook_set_sha256,
-        command_sha256_by_hook,
-    })
-    .map(|bytes| hex::encode(Sha256::digest(bytes)))
 }
 
 fn normalize_matcher(matcher: &mut PluginHookMatcher) {

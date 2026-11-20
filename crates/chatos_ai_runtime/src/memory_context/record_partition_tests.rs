@@ -52,7 +52,7 @@ async fn writer() -> (
         MemoryRecordScope::per_record_tenant("tenant_id"),
     )
     .unwrap()
-    .with_runtime_context_assertion_issuer(test_assertion_issuer());
+    .with_runtime_context_assertion_provider(test_assertion_issuer());
     (writer, batches, server)
 }
 

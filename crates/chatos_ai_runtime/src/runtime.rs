@@ -40,7 +40,7 @@ pub struct AiRuntime {
 const EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT: &str = "上一轮响应没有返回任何可展示的最终结果。请先检查当前任务是否已经真实完成：如果已经满足目标且不需要更多验证，直接输出最终结果；如果仍有未完成工作、未处理的任务状态/门禁反馈、缺少关键事实或缺少验证，请继续使用必要工具完成工作或记录明确阻塞。不要把未完成工作包装成最终结果。";
 impl AiRuntime {
     pub fn builder() -> crate::builder::AiRuntimeBuilder {
-        crate::builder::AiRuntimeBuilder::new()
+        crate::builder::AiRuntimeBuilder::default()
     }
 
     pub fn with_max_iterations(mut self, max_iterations: usize) -> Self {

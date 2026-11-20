@@ -44,11 +44,6 @@ impl RuntimeBeforeModelRequest {
         self.tools_enabled = tools_enabled;
         self
     }
-
-    pub fn with_output_format(mut self, output_format: JsonSchemaOutputFormat) -> Self {
-        self.output_format = Some(output_format);
-        self
-    }
 }
 
 impl Default for RuntimeBeforeModelRequest {

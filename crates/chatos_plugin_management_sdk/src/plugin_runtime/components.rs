@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use crate::plugin_manifest::{
     component_key_from_path, PluginComponentKind, PluginManifest, PluginMcpServer, PluginPathRef,
@@ -237,100 +236,6 @@ pub fn plugin_component_descriptors(manifest: &PluginManifest) -> Vec<PluginComp
         descriptors.push(descriptor);
     }
     descriptors
-}
-
-#[derive(Serialize)]
-struct PluginCommandSnapshotHashInput<'a> {
-    purpose: &'static str,
-    plugin_id: &'a str,
-    release_id: &'a str,
-    component_key: &'a str,
-    source_path: &'a str,
-    description: Option<&'a str>,
-    argument_hint: Option<&'a str>,
-    requires_confirmation: bool,
-    target_agent: Option<&'a str>,
-    allowed_tools: &'a [String],
-    content_sha256: &'a str,
-    prompt_sha256: String,
-    arguments_sha256: &'a str,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn plugin_command_snapshot_sha256(
-    plugin_id: &str,
-    release_id: &str,
-    component_key: &str,
-    source_path: &str,
-    description: Option<&str>,
-    argument_hint: Option<&str>,
-    requires_confirmation: bool,
-    target_agent: Option<&str>,
-    allowed_tools: &[String],
-    content_sha256: &str,
-    prompt: &str,
-    arguments_sha256: &str,
-) -> Result<String, serde_json::Error> {
-    let payload = PluginCommandSnapshotHashInput {
-        purpose: "chatos.plugin.command.snapshot.v4",
-        plugin_id,
-        release_id,
-        component_key,
-        source_path,
-        description,
-        argument_hint,
-        requires_confirmation,
-        target_agent,
-        allowed_tools,
-        content_sha256,
-        prompt_sha256: hex::encode(Sha256::digest(prompt.as_bytes())),
-        arguments_sha256,
-    };
-    serde_json::to_vec(&payload).map(|bytes| hex::encode(Sha256::digest(bytes)))
-}
-
-#[derive(Serialize)]
-struct PluginAgentSnapshotHashInput<'a> {
-    purpose: &'static str,
-    plugin_id: &'a str,
-    release_id: &'a str,
-    component_key: &'a str,
-    source_path: &'a str,
-    description: Option<&'a str>,
-    base_agent: &'a str,
-    allowed_tools: &'a [String],
-    max_iterations: usize,
-    content_sha256: &'a str,
-    prompt_sha256: String,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn plugin_agent_snapshot_sha256(
-    plugin_id: &str,
-    release_id: &str,
-    component_key: &str,
-    source_path: &str,
-    description: Option<&str>,
-    base_agent: &str,
-    allowed_tools: &[String],
-    max_iterations: usize,
-    content_sha256: &str,
-    prompt: &str,
-) -> Result<String, serde_json::Error> {
-    let payload = PluginAgentSnapshotHashInput {
-        purpose: "chatos.plugin.agent.snapshot.v2",
-        plugin_id,
-        release_id,
-        component_key,
-        source_path,
-        description,
-        base_agent,
-        allowed_tools,
-        max_iterations,
-        content_sha256,
-        prompt_sha256: hex::encode(Sha256::digest(prompt.as_bytes())),
-    };
-    serde_json::to_vec(&payload).map(|bytes| hex::encode(Sha256::digest(bytes)))
 }
 
 fn component_descriptor(

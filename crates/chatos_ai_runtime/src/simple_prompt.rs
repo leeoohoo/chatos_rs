@@ -4,7 +4,7 @@
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::error_policy::{handle_transient_retry, is_transient_transport_or_parse_error};
+use crate::error_policy::handle_transient_retry;
 use crate::{
     AiRequestHandler, AiRequestOptions, AiResponse, ModelRuntimeConfig, StreamCallbacks,
     DEFAULT_MODEL_REQUEST_MAX_RETRIES,
@@ -16,9 +16,6 @@ pub struct SimplePromptOptions {
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
     pub max_transient_retries: Option<usize>,
-    /// Deprecated compatibility field. Prefer `max_transient_retries`, whose
-    /// value is the number of retries after the initial request.
-    pub max_attempts: Option<usize>,
     pub callbacks: StreamCallbacks,
     pub abort_token: Option<CancellationToken>,
 }
@@ -44,7 +41,6 @@ where
     let max_transient_retries = options
         .max_transient_retries
         .or(config.max_transient_retries)
-        .or_else(|| options.max_attempts.map(|attempts| attempts.max(1) - 1))
         .unwrap_or(DEFAULT_MODEL_REQUEST_MAX_RETRIES);
     let mut transient_retry_count = 0usize;
 
@@ -171,10 +167,6 @@ pub fn is_input_must_be_list_error(err: &str) -> bool {
     err.to_lowercase().contains("input must be a list")
 }
 
-pub fn should_retry_transport_error(err: &str) -> bool {
-    is_transient_transport_or_parse_error(err)
-}
-
 pub fn select_preferred_response_text<'a>(
     content: &'a str,
     reasoning: Option<&'a str>,
@@ -222,7 +214,7 @@ mod tests {
     use super::{
         base_url_disallows_system_messages, build_responses_text_input,
         is_input_must_be_list_error, is_system_messages_not_allowed_error,
-        run_compatible_prompt_with, select_preferred_response_text, should_retry_transport_error,
+        run_compatible_prompt_with, select_preferred_response_text,
         wrap_prompt_with_system_context, SimplePromptOptions,
     };
     use crate::{AiRequestHandler, ModelRuntimeConfig};
@@ -336,20 +328,6 @@ mod tests {
         ));
         assert!(is_system_messages_not_allowed_error(
             "{\"detail\":\"System messages are not allowed\"}"
-        ));
-        assert!(should_retry_transport_error("request timed out"));
-        assert!(should_retry_transport_error(
-            "error sending request for url (https://newapi.example/v1/responses)"
-        ));
-        assert!(should_retry_transport_error(
-            "status 503: service unavailable"
-        ));
-        assert!(!should_retry_transport_error("status 401: invalid api key"));
-        assert!(!should_retry_transport_error(
-            "status 400: invalid_request_error"
-        ));
-        assert!(!should_retry_transport_error(
-            "insufficient_quota: credit balance exhausted"
         ));
     }
 

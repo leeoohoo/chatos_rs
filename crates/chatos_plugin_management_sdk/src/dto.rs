@@ -19,6 +19,19 @@ pub const LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID: &str = "system_mcp_local_con
 pub const SYSTEM_MCP_RUNTIME_KIND: &str = "system";
 pub const LEGACY_BUILTIN_MCP_RUNTIME_KIND: &str = "builtin";
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpProviderSkill {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub instructions: String,
+    #[serde(default)]
+    pub locale: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_profiles: Vec<String>,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentToolPlane {
@@ -244,11 +257,6 @@ impl ResolveAgentCapabilitiesRequest {
         self.task_profile = task_profile;
         self.runtime_provider = runtime_provider;
         self.schedule_mode = schedule_mode;
-        self
-    }
-
-    pub fn with_device_id(mut self, device_id: Option<String>) -> Self {
-        self.device_id = device_id;
         self
     }
 }

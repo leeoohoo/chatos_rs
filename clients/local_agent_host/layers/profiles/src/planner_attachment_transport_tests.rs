@@ -23,8 +23,8 @@ impl LocalModelRuntimeResolver for LoopbackModel {
             "gpt",
         )
         .with_responses_support(self.responses)
-        .with_images_support(Some(true))
         .with_max_transient_retries(Some(0));
+        model_config.supports_images = Some(true);
         model_config.model_capability_revision = "test-capability-v1".to_string();
         model_config.context_window_tokens = 200_000;
         model_config.output_reserve_tokens = 16_000;

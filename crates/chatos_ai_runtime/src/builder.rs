@@ -18,10 +18,6 @@ pub struct AiRuntimeBuilder {
 }
 
 impl AiRuntimeBuilder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn with_record_writer<T>(mut self, record_writer: T) -> Self
     where
         T: MemoryRecordWriter + 'static,

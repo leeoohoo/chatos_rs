@@ -95,21 +95,6 @@ macro_rules! impl_model_request_builders {
             self
         }
 
-        pub fn with_prompt_cache_key(mut self, prompt_cache_key: Option<String>) -> Self {
-            self.prompt_cache_key = prompt_cache_key;
-            self
-        }
-
-        pub fn with_request_cwd(mut self, request_cwd: Option<String>) -> Self {
-            self.request_cwd = request_cwd;
-            self
-        }
-
-        pub fn with_prompt_cache_retention(mut self, include_prompt_cache_retention: bool) -> Self {
-            self.include_prompt_cache_retention = include_prompt_cache_retention;
-            self
-        }
-
         pub fn with_request_body_limit_bytes(
             mut self,
             request_body_limit_bytes: Option<usize>,
@@ -120,11 +105,6 @@ macro_rules! impl_model_request_builders {
 
         pub fn with_max_transient_retries(mut self, max_transient_retries: Option<usize>) -> Self {
             self.max_transient_retries = max_transient_retries;
-            self
-        }
-
-        pub fn with_output_format(mut self, output_format: Option<JsonSchemaOutputFormat>) -> Self {
-            self.output_format = output_format;
             self
         }
     };
@@ -165,11 +145,6 @@ impl ModelRuntimeConfig {
     }
 
     impl_model_request_builders!();
-
-    pub fn with_images_support(mut self, supports_images: Option<bool>) -> Self {
-        self.supports_images = supports_images;
-        self
-    }
 
     pub fn to_model_request(&self, input: Value, tools: Vec<Value>) -> ModelRequest {
         let supports_responses = crate::model_config::effective_responses_support(

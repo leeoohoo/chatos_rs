@@ -21,10 +21,6 @@ pub struct McpExecutorBuilder {
 }
 
 impl McpExecutorBuilder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn with_http_server(mut self, server: McpHttpServer) -> Self {
         self.http_servers.push(server);
         self
@@ -347,7 +343,7 @@ mod tests {
 
     #[tokio::test]
     async fn required_http_server_unavailability_fails_initialization() {
-        let result = McpExecutorBuilder::new()
+        let result = McpExecutorBuilder::default()
             .with_http_server(
                 McpHttpServer::new("gateway", "not a valid MCP URL").with_fail_on_unavailable(),
             )
@@ -363,7 +359,7 @@ mod tests {
 
     #[tokio::test]
     async fn optional_http_server_unavailability_remains_compatible() {
-        let executor = McpExecutorBuilder::new()
+        let executor = McpExecutorBuilder::default()
             .with_http_server(McpHttpServer::new("optional", "not a valid MCP URL"))
             .build_initialized()
             .await

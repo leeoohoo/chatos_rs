@@ -36,7 +36,7 @@ mod registration;
 
 impl McpExecutor {
     pub fn builder() -> crate::builder::McpExecutorBuilder {
-        crate::builder::McpExecutorBuilder::new()
+        crate::builder::McpExecutorBuilder::default()
     }
 
     pub fn new(

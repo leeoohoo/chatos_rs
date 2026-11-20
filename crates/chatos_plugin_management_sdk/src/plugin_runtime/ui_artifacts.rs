@@ -3,7 +3,6 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 pub const PLUGIN_UI_BRIDGE_PROTOCOL_VERSION_V1: u32 = 1;
 pub const PLUGIN_UI_MAX_BRIDGE_PAYLOAD_BYTES: usize = 256 * 1024;
@@ -270,57 +269,4 @@ pub struct PluginArtifactWriteResponse {
     pub access: PluginArtifactUiAccess,
     pub operation: PluginArtifactWriteOperation,
     pub artifact: PluginArtifactDescriptor,
-}
-
-#[derive(Serialize)]
-struct PluginUiSnapshotHashInput<'a> {
-    purpose: &'static str,
-    plugin_id: &'a str,
-    release_id: &'a str,
-    component_key: &'a str,
-    title: &'a str,
-    surface: &'a str,
-    source_path: &'a str,
-    content_sha256: &'a str,
-    assets: &'a [PluginUiAssetSnapshot],
-    bridge_protocol_version: u32,
-    bridge_capabilities: &'a [String],
-    artifact_mime_types: &'a [String],
-    content_security_policy: &'a str,
-    iframe_sandbox: &'a str,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn plugin_ui_snapshot_sha256(
-    plugin_id: &str,
-    release_id: &str,
-    component_key: &str,
-    title: &str,
-    surface: &str,
-    source_path: &str,
-    content_sha256: &str,
-    assets: &[PluginUiAssetSnapshot],
-    bridge_protocol_version: u32,
-    bridge_capabilities: &[String],
-    artifact_mime_types: &[String],
-    content_security_policy: &str,
-    iframe_sandbox: &str,
-) -> Result<String, serde_json::Error> {
-    let payload = PluginUiSnapshotHashInput {
-        purpose: "chatos.plugin.ui.snapshot.v1",
-        plugin_id,
-        release_id,
-        component_key,
-        title,
-        surface,
-        source_path,
-        content_sha256,
-        assets,
-        bridge_protocol_version,
-        bridge_capabilities,
-        artifact_mime_types,
-        content_security_policy,
-        iframe_sandbox,
-    };
-    serde_json::to_vec(&payload).map(|bytes| hex::encode(Sha256::digest(bytes)))
 }

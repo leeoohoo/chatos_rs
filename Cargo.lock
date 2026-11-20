@@ -597,7 +597,6 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
- "chatos_service_runtime",
  "hex",
  "libc",
  "reqwest",
@@ -625,7 +624,6 @@ dependencies = [
  "serde_yaml",
  "sha2 0.11.0",
  "thiserror",
- "tokio",
  "urlencoding",
 ]
 
@@ -636,7 +634,6 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
- "tracing",
 ]
 
 [[package]]

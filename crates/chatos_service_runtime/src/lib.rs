@@ -51,7 +51,7 @@ pub use request_id::{
 };
 pub use runtime::{
     apply_config_center_env, register_current_service, resolve_service_base_url,
-    resolve_service_url, ChatosServiceRuntime,
+    ChatosServiceRuntime,
 };
 pub use security::{is_production_environment, validate_production_secret};
 pub use user_service_auth::{

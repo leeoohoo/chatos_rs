@@ -42,16 +42,6 @@ pub async fn read_response_preview_text_limited(
     Ok(String::from_utf8_lossy(bytes.as_slice()).into_owned())
 }
 
-pub async fn read_response_text_limited_or_message(
-    response: reqwest::Response,
-    limit_bytes: usize,
-) -> String {
-    match read_response_text_limited(response, limit_bytes).await {
-        Ok(text) => text,
-        Err(err) => format!("[response body unavailable: {err}]"),
-    }
-}
-
 pub async fn read_response_preview_text_limited_or_message(
     response: reqwest::Response,
     limit_bytes: usize,

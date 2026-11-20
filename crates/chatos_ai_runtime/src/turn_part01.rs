@@ -96,7 +96,7 @@ mod tests {
             "task_execution",
         )
         .expect("memory composer")
-        .with_runtime_context_assertion_issuer(test_issuer());
+        .with_runtime_context_assertion_provider(test_issuer());
         let scope = test_scope();
         (composer, scope, server)
     }
@@ -439,7 +439,7 @@ mod tests {
             "task_execution",
         )
         .expect("memory composer")
-        .with_runtime_context_assertion_issuer(test_issuer());
+        .with_runtime_context_assertion_provider(test_issuer());
         let scope = test_scope();
 
         let first = build_contextual_input(
@@ -517,7 +517,7 @@ mod tests {
             "task_execution",
         )
         .expect("memory composer")
-        .with_runtime_context_assertion_issuer(test_issuer());
+        .with_runtime_context_assertion_provider(test_issuer());
 
         let provider_payload = Arc::new(std::sync::Mutex::new(None));
         let provider_listener = tokio::net::TcpListener::bind("127.0.0.1:0")

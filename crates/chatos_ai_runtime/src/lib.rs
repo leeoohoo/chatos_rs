@@ -60,8 +60,8 @@ pub use runtime::{
 pub use simple_prompt::{
     base_url_disallows_system_messages, base_url_requires_responses_input_list,
     build_responses_text_input, is_input_must_be_list_error, is_system_messages_not_allowed_error,
-    run_compatible_prompt_with, select_preferred_response_text, should_retry_transport_error,
-    wrap_prompt_with_system_context, SimplePromptOptions,
+    run_compatible_prompt_with, select_preferred_response_text, wrap_prompt_with_system_context,
+    SimplePromptOptions,
 };
 pub use stateless_history::{
     append_responses_history_items, build_stateless_history_items_with_output_cap,

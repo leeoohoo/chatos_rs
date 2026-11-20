@@ -15,10 +15,7 @@ use crate::plugin_signing::{PluginReleaseSignature, SigningKeyRef};
 mod components;
 mod ui_artifacts;
 
-pub use components::{
-    plugin_agent_snapshot_sha256, plugin_command_snapshot_sha256, plugin_component_descriptors,
-    PluginComponentDescriptor,
-};
+pub use components::{plugin_component_descriptors, PluginComponentDescriptor};
 pub use ui_artifacts::*;
 
 pub const PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY: &str = "admin_registry";

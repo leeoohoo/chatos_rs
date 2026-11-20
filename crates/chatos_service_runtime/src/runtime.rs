@@ -117,28 +117,6 @@ impl ChatosServiceRuntime {
         )))
     }
 
-    pub async fn deregister_self(&self) -> Result<(), ServiceRuntimeError> {
-        if !self.config.enabled || self.config.discovery_mode == DiscoveryMode::StaticOnly {
-            return Ok(());
-        }
-        let Some(consul) = self.config.consul_http_addr.as_deref() else {
-            return Ok(());
-        };
-        let endpoint = format!(
-            "{}/v1/agent/service/deregister/{}",
-            consul.trim_end_matches('/'),
-            urlencoding::encode(self.config.service_id.as_str())
-        );
-        let response = self.client.put(endpoint).send().await?;
-        if response.status().is_success() {
-            return Ok(());
-        }
-        Err(ServiceRuntimeError::Message(format!(
-            "consul service deregistration failed: {}",
-            response.status().as_u16()
-        )))
-    }
-
     pub async fn discover(
         &self,
         service_name: &str,
@@ -413,35 +391,6 @@ pub async fn resolve_service_base_url(service_name: &str, fallback_base_url: &st
     client_runtime()
         .resolve_base_url(service_name, Some(fallback_base_url))
         .await
-}
-
-pub async fn resolve_service_url(
-    service_name: &str,
-    fallback_url: &str,
-    path_suffix: &str,
-) -> String {
-    let runtime = client_runtime();
-    if runtime.config.discovery_mode != DiscoveryMode::StaticOnly {
-        match runtime.discover(service_name).await {
-            Ok(endpoints) if !endpoints.is_empty() => {
-                let endpoint = runtime.select_endpoint(service_name, &endpoints).await;
-                return format!(
-                    "{}{}",
-                    endpoint.base_url().trim_end_matches('/'),
-                    normalize_path(path_suffix)
-                );
-            }
-            Ok(_) => {}
-            Err(err) => {
-                tracing::warn!(
-                    service = service_name,
-                    error = %err,
-                    "service URL discovery failed; falling back to static URL"
-                );
-            }
-        }
-    }
-    fallback_url.trim().trim_end_matches('/').to_string()
 }
 
 pub async fn apply_config_center_env(service_name: &str) -> Result<usize, String> {

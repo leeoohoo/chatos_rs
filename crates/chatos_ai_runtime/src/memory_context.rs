@@ -191,13 +191,6 @@ impl MemoryContextComposer {
         }
     }
 
-    pub fn with_runtime_context_assertion_issuer(
-        self,
-        assertion_issuer: RuntimeContextAssertionIssuer,
-    ) -> Self {
-        self.with_runtime_context_assertion_provider(assertion_issuer)
-    }
-
     pub fn with_runtime_context_assertion_provider<P>(mut self, assertion_provider: P) -> Self
     where
         P: RuntimeContextAssertionProvider + 'static,

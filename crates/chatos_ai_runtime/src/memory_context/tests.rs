@@ -200,7 +200,7 @@ fn memory_record_writer_resolves_multi_user_tenant_from_record_metadata() {
         client,
         MemoryRecordScope::per_record_tenant("tenant_id"),
     )
-    .with_runtime_context_assertion_issuer(test_assertion_issuer());
+    .with_runtime_context_assertion_provider(test_assertion_issuer());
     let record = SaveRecordInput::user_message("conversation-1", "hello")
         .with_metadata(json!({"tenant_id": "user-1"}));
 
@@ -251,7 +251,7 @@ async fn memory_record_writer_creates_each_thread_before_syncing_records() {
         client,
         MemoryRecordScope::per_record_tenant("tenant_id"),
     )
-    .with_runtime_context_assertion_issuer(test_assertion_issuer());
+    .with_runtime_context_assertion_provider(test_assertion_issuer());
     writer
         .save_record(
             SaveRecordInput::user_message("conversation-1", "hello")
@@ -432,7 +432,7 @@ async fn composer_uses_fresh_cache_when_remote_is_temporarily_unavailable() {
         "local_agent",
     )
     .expect("composer")
-    .with_runtime_context_assertion_issuer(test_assertion_issuer())
+    .with_runtime_context_assertion_provider(test_assertion_issuer())
     .with_resilient_cache(TestContextCache(Some(cached)));
     let response = composer.compose(&scope).await.expect("cached fallback");
     assert_eq!(response.blocks[0].text, "cached context");
@@ -443,7 +443,7 @@ async fn composer_uses_fresh_cache_when_remote_is_temporarily_unavailable() {
         "local_agent",
     )
     .expect("composer")
-    .with_runtime_context_assertion_issuer(test_assertion_issuer())
+    .with_runtime_context_assertion_provider(test_assertion_issuer())
     .with_resilient_cache(TestContextCache(None));
     let response = composer.compose(&scope).await.expect("empty fallback");
     assert!(response.blocks.is_empty());
@@ -499,7 +499,7 @@ async fn composer_returns_budgeted_context_without_waiting_for_background_compac
         "local_agent",
     )
     .expect("composer")
-    .with_runtime_context_assertion_issuer(test_assertion_issuer());
+    .with_runtime_context_assertion_provider(test_assertion_issuer());
     let scope = MemoryScope::thread("user-1", "local_agent", "conversation-1")
         .with_subject_id("agent:test-agent")
         .with_policy(ComposeContextPolicy {

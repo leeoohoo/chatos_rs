@@ -16,15 +16,3 @@ pub enum PluginManagementClientError {
     #[error("plugin management request was rejected with status {status}: {message}")]
     Rejected { status: u16, message: String },
 }
-
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum PolicyError {
-    #[error("required capability is unavailable: {resource_id} ({reason})")]
-    RequiredUnavailable { resource_id: String, reason: String },
-    #[error("required capability is missing from policy: {0}")]
-    RequiredMissing(String),
-    #[error("required capability is not supported by this runtime: {0}")]
-    RequiredUnsupported(String),
-    #[error("capability is not selectable: {0}")]
-    NotSelectable(String),
-}

@@ -66,7 +66,7 @@ fn responses_defaults_compaction_to_the_published_input_limit() {
 
 #[test]
 fn model_runtime_config_builds_model_request() {
-    let config = ModelRuntimeConfig::openai_compatible(
+    let mut config = ModelRuntimeConfig::openai_compatible(
         "http://127.0.0.1:8080/v1",
         "secret",
         "gpt-test",
@@ -77,11 +77,11 @@ fn model_runtime_config_builds_model_request() {
     .with_temperature(Some(0.2))
     .with_max_output_tokens(Some(1024))
     .with_thinking_level(Some("medium".to_string()))
-    .with_prompt_cache_key(Some("task-1".to_string()))
-    .with_request_cwd(Some("/tmp/work".to_string()))
-    .with_prompt_cache_retention(true)
     .with_request_body_limit_bytes(Some(2048))
     .with_max_transient_retries(Some(7));
+    config.prompt_cache_key = Some("task-1".to_string());
+    config.request_cwd = Some("/tmp/work".to_string());
+    config.include_prompt_cache_retention = true;
 
     let request = config.to_model_request(json!("hello"), vec![json!({"name":"t"})]);
 

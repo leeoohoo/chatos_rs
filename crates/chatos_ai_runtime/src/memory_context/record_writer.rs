@@ -6,10 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use memory_engine_sdk::{
-    MemoryEngineClient, RuntimeContextAssertionIssuer, SdkBatchSyncRecordsRequest,
-    UpsertRecordInput,
-};
+use memory_engine_sdk::{MemoryEngineClient, SdkBatchSyncRecordsRequest, UpsertRecordInput};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -103,13 +100,6 @@ impl MemoryEngineRecordWriter {
             assertion_provider: None,
             ensured_threads: Arc::new(Mutex::new(HashMap::new())),
         }
-    }
-
-    pub fn with_runtime_context_assertion_issuer(
-        self,
-        assertion_issuer: RuntimeContextAssertionIssuer,
-    ) -> Self {
-        self.with_runtime_context_assertion_provider(assertion_issuer)
     }
 
     pub fn with_runtime_context_assertion_provider<P>(mut self, assertion_provider: P) -> Self
