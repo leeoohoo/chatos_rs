@@ -18,4 +18,3 @@ describe("settings accessibility focus contract", () => {
       .toEqual(["first", "second", "third"]);
   });
 });
-
