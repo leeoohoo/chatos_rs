@@ -80,24 +80,22 @@ pub(super) async fn dispatch_model_request(
             request.base_url.as_str(),
             request.api_key.as_str(),
             request.input.clone(),
-            request.supports_responses,
             request.model.clone(),
             request.instructions.clone(),
             Some(request.tools.clone()),
             request.temperature,
             request.max_output_tokens,
-            StreamCallbacks {
-                on_chunk: stream_output
-                    .then(|| options.callbacks.on_chunk.clone())
-                    .flatten(),
-                on_thinking: stream_output
-                    .then(|| options.callbacks.on_thinking.clone())
-                    .flatten(),
-            },
             Some(request.provider.clone()),
             request.thinking_level.clone(),
-            on_before_send_model_request,
             AiRequestOptions {
+                callbacks: StreamCallbacks {
+                    on_chunk: stream_output
+                        .then(|| options.callbacks.on_chunk.clone())
+                        .flatten(),
+                    on_thinking: stream_output
+                        .then(|| options.callbacks.on_thinking.clone())
+                        .flatten(),
+                },
                 prompt_cache_key,
                 previous_response_id: None,
                 request_cwd: request.request_cwd.clone(),
@@ -105,6 +103,7 @@ pub(super) async fn dispatch_model_request(
                 request_body_limit_bytes: request.request_body_limit_bytes,
                 abort_token: options.abort_token.clone(),
                 force_identity_encoding,
+                on_before_send_model_request,
                 stream: provider_stream,
                 output_format: request.output_format.clone(),
                 responses_compaction_threshold: request

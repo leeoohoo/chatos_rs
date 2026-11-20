@@ -65,13 +65,13 @@ impl CloudAgentProfile for MemoryCloudAgentProfile {
                 "terminal_context": next_input.terminal_context,
             })
         });
-        Ok(CloudAgentSingleStepExecution::Apply(
+        Ok(CloudAgentSingleStepExecution::Apply(Box::new(
             CloudAgentSingleStepOutput::new(outcome)
                 .with_next_input(
                     serde_json::to_value(next_input).map_err(|error| error.to_string())?,
                 )
                 .with_terminal_outcome_overlay(overlay),
-        ))
+        )))
     }
 
     async fn finalize_terminal(&self, run: &CloudAgentRunRecord) -> Result<(), String> {

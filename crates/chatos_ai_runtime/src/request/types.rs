@@ -44,8 +44,7 @@ pub struct AiResponse {
     ///
     /// Cloud event-driven callers persist these items verbatim and append
     /// tool outputs before the next request, as required by the official
-    /// stateless Responses function-calling protocol. Chat Completions leaves
-    /// this empty.
+    /// stateless Responses function-calling protocol.
     #[serde(default)]
     pub response_output_items: Vec<Value>,
 }
@@ -56,14 +55,9 @@ pub struct StreamCallbacks {
     pub on_thinking: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AiTransport {
-    Responses,
-    ChatCompletions,
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AiRequestOptions {
+    pub callbacks: StreamCallbacks,
     pub prompt_cache_key: Option<String>,
     pub previous_response_id: Option<String>,
     pub request_cwd: Option<String>,
@@ -76,6 +70,7 @@ pub struct AiRequestOptions {
     /// streaming for OpenAI-compatible gateways that truncate SSE bodies.
     pub stream: bool,
     pub output_format: Option<JsonSchemaOutputFormat>,
+    pub on_before_send_model_request: Option<Arc<dyn Fn(Value) + Send + Sync>>,
     /// Enables Responses server-side compaction at this rendered-token
     /// threshold. This is only sent to the official OpenAI API.
     pub responses_compaction_threshold: Option<usize>,
@@ -84,6 +79,7 @@ pub struct AiRequestOptions {
 impl Default for AiRequestOptions {
     fn default() -> Self {
         Self {
+            callbacks: StreamCallbacks::default(),
             prompt_cache_key: None,
             previous_response_id: None,
             request_cwd: None,
@@ -93,6 +89,7 @@ impl Default for AiRequestOptions {
             force_identity_encoding: false,
             stream: true,
             output_format: None,
+            on_before_send_model_request: None,
             responses_compaction_threshold: None,
         }
     }

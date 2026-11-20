@@ -3,7 +3,7 @@
 
 use serde_json::{json, Value};
 
-use crate::response_parse::{extract_reasoning_from_response, text_value_or_json};
+use crate::response_parse::extract_reasoning_from_response;
 
 pub(super) fn extract_text_delta(delta: &Value) -> Option<String> {
     extract_non_empty_text_value(delta, &["text", "value", "content", "output_text", "delta"])
@@ -19,21 +19,6 @@ pub(super) fn extract_text_from_fields(value: &Value, fields: &[&str]) -> Option
     }
 
     None
-}
-
-pub(super) fn extract_chat_delta_text(delta: &Value) -> Option<String> {
-    delta
-        .get("content")
-        .and_then(|value| text_value_or_json(value, &["text", "value", "content", "delta"]))
-        .filter(|value| !value.is_empty())
-}
-
-pub(super) fn extract_chat_reasoning_text(delta: &Value) -> Option<String> {
-    delta
-        .get("reasoning_content")
-        .or_else(|| delta.get("reasoning"))
-        .and_then(|value| text_value_or_json(value, &["text", "value", "content", "delta"]))
-        .filter(|value| !value.is_empty())
 }
 
 pub(super) fn extract_reasoning_event_text(event_type: &str, event: &Value) -> Option<String> {

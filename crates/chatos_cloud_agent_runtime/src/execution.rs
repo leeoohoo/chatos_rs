@@ -71,9 +71,8 @@ impl CloudAgentSingleStepOutput {
 }
 
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
 pub enum CloudAgentSingleStepExecution {
-    Apply(CloudAgentSingleStepOutput),
+    Apply(Box<CloudAgentSingleStepOutput>),
     AckWithoutTransition,
 }
 
@@ -285,8 +284,8 @@ where
         };
         let execution = match execution_result {
             Ok(execution) => execution,
-            Err(error) => CloudAgentSingleStepExecution::Apply(CloudAgentSingleStepOutput::new(
-                AiSingleStepOutcome::Failed { error },
+            Err(error) => CloudAgentSingleStepExecution::Apply(Box::new(
+                CloudAgentSingleStepOutput::new(AiSingleStepOutcome::Failed { error }),
             )),
         };
         let CloudAgentSingleStepExecution::Apply(output) = execution else {

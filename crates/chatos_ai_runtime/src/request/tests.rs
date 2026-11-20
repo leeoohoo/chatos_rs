@@ -7,10 +7,9 @@ use axum::{routing::post, Json, Router};
 use serde_json::{json, Value};
 
 use super::{
-    build_chat_completions_request_payload, build_request_payload, build_responses_request_payload,
-    effective_provider_for_request, emit_finalized_stream_callbacks, parse_timeout_seconds,
-    response_items_to_chat_messages, validate_request_payload_size, AiRequestHandler,
-    AiRequestOptions, AiTransport, StreamCallbacks,
+    build_request_payload, build_responses_request_payload, effective_provider_for_request,
+    emit_finalized_stream_callbacks, parse_timeout_seconds, validate_request_payload_size,
+    AiRequestHandler, AiRequestOptions, StreamCallbacks,
 };
 use crate::stream_parse::FinalizedStreamState;
 
@@ -28,7 +27,6 @@ fn responses_effort_respects_model_contract_for_every_provider_and_preserves_max
                 ("max", "max"),
             ] {
                 let payload = build_request_payload(
-                    AiTransport::Responses,
                     json!([{"role": "user", "content": "你好"}]),
                     model.into(),
                     None,
@@ -48,7 +46,6 @@ fn responses_effort_respects_model_contract_for_every_provider_and_preserves_max
 #[test]
 fn responses_payload_can_enable_server_side_compaction() {
     let payload = build_request_payload(
-        AiTransport::Responses,
         json!([{"role": "user", "content": "hello"}]),
         "gpt-5.6-sol".to_string(),
         None,
@@ -112,7 +109,6 @@ async fn read_timeout_interrupts_a_provider_that_makes_no_progress() {
             base_url.as_str(),
             "test-key",
             json!([{"role": "user", "content": "hello"}]),
-            true,
             "gpt-test".to_string(),
             None,
             None,
@@ -120,7 +116,6 @@ async fn read_timeout_interrupts_a_provider_that_makes_no_progress() {
             None,
             StreamCallbacks::default(),
             Some("openai".to_string()),
-            None,
             None,
         )
         .await
@@ -149,15 +144,12 @@ async fn cancellation_interrupts_a_pending_provider_request_immediately() {
             base_url.as_str(),
             "test-key",
             json!("hello"),
-            true,
             "gpt-test".to_string(),
             None,
             None,
             None,
             None,
-            StreamCallbacks::default(),
             Some("openai".to_string()),
-            None,
             None,
             AiRequestOptions {
                 abort_token: Some(abort_token),
@@ -173,196 +165,9 @@ async fn cancellation_interrupts_a_pending_provider_request_immediately() {
 }
 
 #[test]
-fn response_items_to_chat_messages_keeps_complete_tool_exchange() {
-    let messages = response_items_to_chat_messages(vec![
-        json!({
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type": "output_text", "text": "checking"}]
-        }),
-        json!({
-            "type": "function_call",
-            "call_id": "call_1",
-            "name": "memory_search",
-            "arguments": "{\"q\":\"rust\"}"
-        }),
-        json!({
-            "type": "function_call_output",
-            "call_id": "call_1",
-            "output": "done"
-        }),
-    ]);
-
-    assert_eq!(messages.len(), 2);
-    assert_eq!(
-        messages[0]
-            .get("tool_calls")
-            .and_then(Value::as_array)
-            .map(Vec::len),
-        Some(1)
-    );
-    assert_eq!(
-        messages[1].get("role").and_then(Value::as_str),
-        Some("tool")
-    );
-}
-
-#[test]
-fn response_items_to_chat_messages_drops_incomplete_tool_exchange() {
-    let messages = response_items_to_chat_messages(vec![
-        json!({
-            "type": "function_call",
-            "call_id": "call_1",
-            "name": "memory_search",
-            "arguments": "{}"
-        }),
-        json!({
-            "type": "message",
-            "role": "user",
-            "content": "next"
-        }),
-    ]);
-
-    assert_eq!(messages.len(), 1);
-    assert_eq!(
-        messages[0].get("role").and_then(Value::as_str),
-        Some("user")
-    );
-}
-
-#[test]
-fn deepseek_thinking_chat_payload_skips_temperature() {
-    let payload = build_chat_completions_request_payload(
-        json!("hello"),
-        "deepseek-reasoner".to_string(),
-        None,
-        None,
-        Some(0.7),
-        None,
-        Some("deepseek".to_string()),
-        Some("high".to_string()),
-        true,
-        None,
-    );
-
-    assert!(payload.get("temperature").is_none());
-    assert_eq!(
-        payload.get("thinking").and_then(|value| value.get("type")),
-        Some(&Value::String("enabled".to_string()))
-    );
-    assert_eq!(
-        payload.get("reasoning_effort"),
-        Some(&Value::String("high".to_string()))
-    );
-}
-
-#[test]
-fn kimi_uses_model_specific_thinking_and_output_token_parameters() {
-    let k3 = build_chat_completions_request_payload(
-        json!("hello"),
-        "kimi-k3".to_string(),
-        None,
-        None,
-        Some(0.6),
-        Some(4096),
-        Some("kimi".to_string()),
-        Some("high".to_string()),
-        true,
-        None,
-    );
-    assert_eq!(
-        k3.get("reasoning_effort").and_then(Value::as_str),
-        Some("high")
-    );
-    assert!(k3.get("thinking").is_none());
-    assert_eq!(
-        k3.get("max_completion_tokens").and_then(Value::as_i64),
-        Some(4096)
-    );
-    assert!(k3.get("max_tokens").is_none());
-
-    let k27 = build_chat_completions_request_payload(
-        json!("hello"),
-        "kimi-k2.7-code".to_string(),
-        None,
-        None,
-        None,
-        None,
-        Some("kimi".to_string()),
-        Some("none".to_string()),
-        true,
-        None,
-    );
-    assert_eq!(
-        k27.get("thinking").and_then(|value| value.get("type")),
-        Some(&Value::String("enabled".to_string()))
-    );
-    assert!(k27.get("reasoning_effort").is_none());
-
-    let k26 = build_chat_completions_request_payload(
-        json!("hello"),
-        "kimi-k2.6".to_string(),
-        None,
-        None,
-        None,
-        None,
-        Some("kimi".to_string()),
-        Some("none".to_string()),
-        true,
-        None,
-    );
-    assert_eq!(
-        k26.get("thinking").and_then(|value| value.get("type")),
-        Some(&Value::String("disabled".to_string()))
-    );
-}
-
-#[test]
-fn glm_uses_chat_thinking_dialect_without_openai_stream_options() {
-    let glm_45 = build_chat_completions_request_payload(
-        json!("hello"),
-        "glm-4.5-air".to_string(),
-        None,
-        None,
-        Some(0.6),
-        Some(4096),
-        Some("glm".to_string()),
-        Some("none".to_string()),
-        true,
-        None,
-    );
-    assert_eq!(
-        glm_45.get("thinking").and_then(|value| value.get("type")),
-        Some(&Value::String("disabled".to_string()))
-    );
-    assert!(glm_45.get("reasoning_effort").is_none());
-    assert!(glm_45.get("stream_options").is_none());
-
-    let glm_52 = build_chat_completions_request_payload(
-        json!("hello"),
-        "glm-5.2".to_string(),
-        None,
-        None,
-        None,
-        None,
-        Some("glm".to_string()),
-        Some("xhigh".to_string()),
-        true,
-        None,
-    );
-    assert_eq!(
-        glm_52.get("reasoning_effort").and_then(Value::as_str),
-        Some("xhigh")
-    );
-    assert_eq!(
-        glm_52.get("thinking").and_then(|value| value.get("type")),
-        Some(&Value::String("enabled".to_string()))
-    );
-}
-
-#[test]
 fn responses_payload_supports_prompt_cache_and_cwd() {
     let options = AiRequestOptions {
+        callbacks: StreamCallbacks::default(),
         prompt_cache_key: Some("session_1".to_string()),
         previous_response_id: Some("resp_1".to_string()),
         request_cwd: Some("/workspace".to_string()),
@@ -370,6 +175,7 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
         request_body_limit_bytes: None,
         abort_token: None,
         force_identity_encoding: false,
+        on_before_send_model_request: None,
         stream: true,
         output_format: None,
         responses_compaction_threshold: None,
@@ -378,17 +184,12 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
         json!([]),
         "gpt-4.1".to_string(),
         Some("system".to_string()),
-        options.prompt_cache_key,
-        options.previous_response_id,
         None,
-        options.request_cwd,
         None,
         None,
         Some("gpt".to_string()),
         Some("medium".to_string()),
-        true,
-        options.include_prompt_cache_retention,
-        options.output_format,
+        &options,
     );
 
     assert_eq!(
@@ -441,14 +242,9 @@ fn responses_payload_normalizes_legacy_text_parts_by_message_role() {
         None,
         None,
         None,
-        None,
-        None,
-        None,
         Some("openai".to_string()),
         None,
-        true,
-        false,
-        None,
+        &AiRequestOptions::default(),
     );
 
     assert_eq!(
@@ -474,14 +270,9 @@ fn responses_payload_requests_summary_for_gpt_model_on_compatible_provider() {
         None,
         None,
         None,
-        None,
-        None,
-        None,
         Some("openai_compatible".to_string()),
         Some("xhigh".to_string()),
-        true,
-        false,
-        None,
+        &AiRequestOptions::default(),
     );
 
     assert_eq!(
@@ -503,14 +294,9 @@ fn responses_payload_omits_summary_for_generic_compatible_model() {
         None,
         None,
         None,
-        None,
-        None,
-        None,
         Some("openai_compatible".to_string()),
         Some("high".to_string()),
-        true,
-        false,
-        None,
+        &AiRequestOptions::default(),
     );
 
     assert_eq!(
@@ -563,7 +349,6 @@ async fn transport_errors_preserve_error_kind_and_source_chain() {
             format!("http://{address}").as_str(),
             "test-key",
             json!({"messages": []}),
-            false,
             "test-model".to_string(),
             None,
             None,
@@ -571,7 +356,6 @@ async fn transport_errors_preserve_error_kind_and_source_chain() {
             None,
             StreamCallbacks::default(),
             Some("openai_compatible".to_string()),
-            None,
             None,
         )
         .await

@@ -148,9 +148,9 @@ async fn owner_input_update_commits_with_the_same_model_step() {
             else {
                 unreachable!();
             };
-            Ok(CloudAgentSingleStepExecution::Apply(
-                output.with_next_input(serde_json::json!({"lifecycle_round": 2})),
-            ))
+            Ok(CloudAgentSingleStepExecution::Apply(Box::new(
+                (*output).with_next_input(serde_json::json!({"lifecycle_round": 2})),
+            )))
         }
     }
 
@@ -219,7 +219,7 @@ impl CloudAgentSingleStepExecutor for SlowSingleStepExecutor {
         _trigger: &CloudAgentModelTrigger,
     ) -> Result<CloudAgentSingleStepExecution, String> {
         tokio::time::sleep(self.delay).await;
-        Ok(CloudAgentSingleStepExecution::Apply(
+        Ok(CloudAgentSingleStepExecution::Apply(Box::new(
             CloudAgentSingleStepOutput::new(AiSingleStepOutcome::Final(AiRuntimeResult {
                 content: "done".to_string(),
                 reasoning: None,
@@ -230,7 +230,7 @@ impl CloudAgentSingleStepExecutor for SlowSingleStepExecutor {
                 response_output_items: Vec::new(),
                 request_input_items: Vec::new(),
             })),
-        ))
+        )))
     }
 }
 
@@ -242,7 +242,7 @@ impl CloudAgentProfile for TestProfile {
         _trigger: &CloudAgentModelTrigger,
     ) -> Result<CloudAgentSingleStepExecution, String> {
         self.executions.lock().unwrap().push(run.agent_key.clone());
-        Ok(CloudAgentSingleStepExecution::Apply(
+        Ok(CloudAgentSingleStepExecution::Apply(Box::new(
             CloudAgentSingleStepOutput::new(AiSingleStepOutcome::Final(AiRuntimeResult {
                 content: "done".to_string(),
                 reasoning: None,
@@ -253,7 +253,7 @@ impl CloudAgentProfile for TestProfile {
                 response_output_items: Vec::new(),
                 request_input_items: Vec::new(),
             })),
-        ))
+        )))
     }
 
     async fn finalize_terminal(&self, run: &CloudAgentRunRecord) -> Result<(), String> {

@@ -50,7 +50,7 @@ pub use memory_context::{
     MemoryScope, RuntimeContextAssertionProvider, RuntimeContextAssertionRequest,
 };
 pub use memory_engine_sdk::ComposeContextPolicy;
-pub use request::{AiRequestHandler, AiRequestOptions, AiResponse, AiTransport, StreamCallbacks};
+pub use request::{AiRequestHandler, AiRequestOptions, AiResponse, StreamCallbacks};
 pub use runtime::{
     AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiSingleStepOutcome, AiSingleStepRequest,
 };

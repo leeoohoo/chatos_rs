@@ -15,11 +15,11 @@ impl CloudAgentSingleStepExecutor for TestSingleStepExecutor {
         trigger: &CloudAgentModelTrigger,
     ) -> Result<CloudAgentSingleStepExecution, String> {
         self.seen_triggers.lock().unwrap().push(trigger.clone());
-        Ok(CloudAgentSingleStepExecution::Apply(
+        Ok(CloudAgentSingleStepExecution::Apply(Box::new(
             CloudAgentSingleStepOutput::new(self.outcome.clone())
                 .with_mcp_runtime("session-1", "mcp.commands")
                 .with_retry_input_items(vec![serde_json::json!({"type": "message"})]),
-        ))
+        )))
     }
 }
 
@@ -300,9 +300,9 @@ fn struct_with_retry_items(
             else {
                 unreachable!();
             };
-            Ok(CloudAgentSingleStepExecution::Apply(
-                output.with_retry_input_items(self.retry_input_items.clone()),
-            ))
+            Ok(CloudAgentSingleStepExecution::Apply(Box::new(
+                (*output).with_retry_input_items(self.retry_input_items.clone()),
+            )))
         }
     }
 

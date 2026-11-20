@@ -62,17 +62,15 @@ where
                 config.base_url.as_str(),
                 config.api_key.as_str(),
                 input,
-                config.supports_responses,
                 config.model.clone(),
                 instructions,
                 None,
                 options.temperature.or(config.temperature),
                 options.max_output_tokens.or(config.max_output_tokens),
-                options.callbacks.clone(),
                 Some(config.provider.clone()),
                 config.thinking_level.clone(),
-                None,
                 AiRequestOptions {
+                    callbacks: options.callbacks.clone(),
                     abort_token: options.abort_token.clone(),
                     ..Default::default()
                 },

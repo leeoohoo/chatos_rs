@@ -102,39 +102,11 @@ pub fn reasoning_effort_for_provider(
     }
 }
 
-pub fn thinking_mode_for_provider(
-    provider: Option<&str>,
-    level: Option<&str>,
-) -> Option<&'static str> {
-    let provider = normalize_provider(provider.unwrap_or("gpt"));
-    let normalized = normalize_thinking_level(provider.as_str(), level)
-        .ok()
-        .flatten()?;
-    match provider.as_str() {
-        "deepseek" => {
-            if normalized == "none" {
-                Some("disabled")
-            } else {
-                Some("enabled")
-            }
-        }
-        "kimi" => {
-            if normalized == "none" {
-                Some("disabled")
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         default_base_url_for_provider, effective_responses_support, normalize_provider,
         normalize_thinking_level, reasoning_effort_for_provider, supported_thinking_levels,
-        thinking_mode_for_provider,
     };
 
     #[test]
@@ -186,16 +158,8 @@ mod tests {
             Some("high")
         );
         assert_eq!(
-            thinking_mode_for_provider(Some("deepseek"), Some("none")),
-            Some("disabled")
-        );
-        assert_eq!(
             reasoning_effort_for_provider(Some("deepseek"), Some("none")).as_deref(),
             Some("none")
-        );
-        assert_eq!(
-            thinking_mode_for_provider(Some("deepseek"), Some("max")),
-            Some("enabled")
         );
     }
 
@@ -208,10 +172,6 @@ mod tests {
         assert_eq!(
             reasoning_effort_for_provider(Some("kimi"), Some("auto")),
             None
-        );
-        assert_eq!(
-            thinking_mode_for_provider(Some("kimi"), Some("none")),
-            Some("disabled")
         );
     }
 

@@ -16,12 +16,11 @@ mod text;
 mod tool_calls;
 
 use self::text::{
-    extract_chat_delta_text, extract_chat_reasoning_text, extract_reasoning_event_text,
-    extract_text_delta, extract_text_from_fields, non_empty_trimmed,
+    extract_reasoning_event_text, extract_text_delta, extract_text_from_fields, non_empty_trimmed,
 };
 pub use self::tool_calls::{collect_stream_tool_calls, extract_responses_tool_calls};
 use self::tool_calls::{
-    ingest_tool_call_item, ingest_tool_calls_from_response_output, merge_chat_tool_call_delta,
+    ingest_tool_call_item, ingest_tool_calls_from_response_output,
     merge_function_call_arguments_delta, merge_function_call_done,
 };
 
@@ -290,67 +289,6 @@ fn capture_response_lifecycle(state: &mut StreamState, response: &Value) {
         .filter(|value| !value.is_null());
 }
 
-pub fn apply_chat_completions_stream_event(
-    state: &mut StreamState,
-    event: &Value,
-    reasoning_enabled: bool,
-) -> StreamPayload {
-    if state.response_id.is_none() {
-        state.response_id = event
-            .get("id")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned);
-    }
-    if let Some(usage) = event.get("usage") {
-        state.usage = Some(usage.clone());
-    }
-
-    let mut payload = StreamPayload::default();
-    let Some(choice) = event
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-    else {
-        return payload;
-    };
-    if let Some(finish_reason) = choice.get("finish_reason").and_then(Value::as_str) {
-        state.finish_reason = Some(finish_reason.to_string());
-    }
-
-    let delta = choice.get("delta").or_else(|| choice.get("message"));
-    let is_incremental_delta = choice.get("delta").is_some();
-    if let Some(delta) = delta {
-        if let Some(content) = extract_chat_delta_text(delta) {
-            if is_incremental_delta {
-                append_stream_text(&mut state.full_content, content.as_str());
-            } else {
-                state.full_content =
-                    join_stream_text(state.full_content.as_str(), content.as_str());
-            }
-            state.sent_any_chunk = true;
-            payload.chunk = Some(content);
-        }
-        if reasoning_enabled {
-            if let Some(reasoning) = extract_chat_reasoning_text(delta) {
-                if is_incremental_delta {
-                    append_stream_text(&mut state.reasoning, reasoning.as_str());
-                } else {
-                    state.reasoning =
-                        join_stream_text(state.reasoning.as_str(), reasoning.as_str());
-                }
-                payload.thinking = Some(reasoning);
-            }
-        }
-        if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
-            for (fallback_index, tool_call) in tool_calls.iter().enumerate() {
-                merge_chat_tool_call_delta(state, fallback_index, tool_call);
-            }
-        }
-    }
-
-    payload
-}
-
 pub fn finalize_responses_stream_state(state: &mut StreamState) -> FinalizedStreamState {
     if state.full_content.is_empty() {
         if let Some(response_obj) = &state.response_obj {
@@ -422,28 +360,11 @@ pub fn finalize_responses_stream_state(state: &mut StreamState) -> FinalizedStre
     }
 }
 
-pub fn finalize_chat_completions_stream_state(state: &mut StreamState) -> FinalizedStreamState {
-    FinalizedStreamState {
-        content: state.full_content.clone(),
-        reasoning: non_empty_trimmed(state.reasoning.as_str()),
-        tool_calls: collect_stream_tool_calls(&state.tool_calls_map),
-        finish_reason: state.finish_reason.clone(),
-        provider_error: state.provider_error.clone(),
-        usage: state.usage.clone(),
-        response_id: state.response_id.clone(),
-        response_output_items: Vec::new(),
-        response_status: state.finish_reason.clone(),
-        incomplete_details: None,
-        terminal_event_type: None,
-        terminal_event_seen: state.finish_reason.is_some(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{apply_chat_completions_stream_event, apply_responses_stream_event, StreamState};
+    use super::{apply_responses_stream_event, StreamState};
 
     #[test]
     fn responses_text_deltas_keep_repeated_boundary_characters() {
@@ -456,28 +377,6 @@ mod tests {
         apply_responses_stream_event(
             &mut state,
             &json!({"type": "response.output_text.delta", "delta": "a"}),
-        );
-
-        assert_eq!(state.full_content, "aa");
-    }
-
-    #[test]
-    fn chat_completion_deltas_keep_repeated_boundary_characters() {
-        let mut state = StreamState::default();
-
-        apply_chat_completions_stream_event(
-            &mut state,
-            &json!({
-                "choices": [{"delta": {"content": "a"}, "finish_reason": null}]
-            }),
-            false,
-        );
-        apply_chat_completions_stream_event(
-            &mut state,
-            &json!({
-                "choices": [{"delta": {"content": "a"}, "finish_reason": null}]
-            }),
-            false,
         );
 
         assert_eq!(state.full_content, "aa");

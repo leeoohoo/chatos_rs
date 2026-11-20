@@ -1,18 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-#[cfg(test)]
-use crate::request_payload::response_items_to_chat_messages;
-use crate::request_payload::{
-    build_chat_completions_request_payload, build_responses_request_payload,
-};
+use crate::request_payload::build_responses_request_payload;
 use http::{
     log_preview, read_error_response_text_limited, retry_after_delay_ms, send_json_request,
     serialize_request_payload, validate_request_payload_size,
@@ -34,7 +28,7 @@ mod streaming;
 mod tests;
 mod types;
 
-pub use types::{AiRequestOptions, AiResponse, AiTransport, StreamCallbacks};
+pub use types::{AiRequestOptions, AiResponse, StreamCallbacks};
 
 #[cfg(test)]
 use streaming::emit_finalized_stream_callbacks;
@@ -79,13 +73,11 @@ impl AiRequestHandler {
         self.read_timeout.map(|value| value.as_secs())
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn handle_request(
         &self,
         base_url: &str,
         api_key: &str,
         input: Value,
-        supports_responses: bool,
         model: String,
         instructions: Option<String>,
         tools: Option<Vec<Value>>,
@@ -94,51 +86,43 @@ impl AiRequestHandler {
         callbacks: StreamCallbacks,
         provider: Option<String>,
         thinking_level: Option<String>,
-        on_before_send_model_request: Option<Arc<dyn Fn(Value) + Send + Sync>>,
     ) -> Result<AiResponse, String> {
         self.handle_request_with_options(
             base_url,
             api_key,
             input,
-            supports_responses,
             model,
             instructions,
             tools,
             temperature,
             max_output_tokens,
-            callbacks,
             provider,
             thinking_level,
-            on_before_send_model_request,
-            AiRequestOptions::default(),
+            AiRequestOptions {
+                callbacks,
+                ..Default::default()
+            },
         )
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn handle_request_with_options(
         &self,
         base_url: &str,
         api_key: &str,
         input: Value,
-        _supports_responses: bool,
         model: String,
         instructions: Option<String>,
         tools: Option<Vec<Value>>,
         temperature: Option<f64>,
         max_output_tokens: Option<i64>,
-        callbacks: StreamCallbacks,
         provider: Option<String>,
         thinking_level: Option<String>,
-        on_before_send_model_request: Option<Arc<dyn Fn(Value) + Send + Sync>>,
         mut options: AiRequestOptions,
     ) -> Result<AiResponse, String> {
         let provider = effective_provider_for_request(base_url, provider);
         options.previous_response_id = None;
-        let transport = AiTransport::Responses;
-
         let first_payload = build_request_payload(
-            transport,
             input.clone(),
             model.clone(),
             instructions.clone(),
@@ -149,55 +133,29 @@ impl AiRequestHandler {
             thinking_level.clone(),
             &options,
         );
-        self.send_payload(
-            base_url,
-            api_key,
-            transport,
-            first_payload.clone(),
-            callbacks.clone(),
-            provider.clone(),
-            thinking_level.clone(),
-            on_before_send_model_request.clone(),
-            options.request_body_limit_bytes,
-            options.abort_token.clone(),
-            options.force_identity_encoding,
-            options.stream,
-        )
-        .await
+        self.send_payload(base_url, api_key, first_payload.clone(), options)
+            .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn send_payload(
         &self,
         base_url: &str,
         api_key: &str,
-        transport: AiTransport,
         payload: Value,
-        callbacks: StreamCallbacks,
-        provider: Option<String>,
-        thinking_level: Option<String>,
-        on_before_send_model_request: Option<Arc<dyn Fn(Value) + Send + Sync>>,
-        request_body_limit_bytes: Option<usize>,
-        abort_token: Option<CancellationToken>,
-        force_identity_encoding: bool,
-        stream: bool,
+        options: AiRequestOptions,
     ) -> Result<AiResponse, String> {
+        let callbacks = options.callbacks.clone();
         let payload_body = serialize_request_payload(&payload)?;
-        validate_request_payload_size(payload_body.len(), request_body_limit_bytes)?;
-        if let Some(cb) = on_before_send_model_request {
+        validate_request_payload_size(payload_body.len(), options.request_body_limit_bytes)?;
+        if let Some(cb) = options.on_before_send_model_request {
             cb(payload.clone());
         }
-        let url = match transport {
-            AiTransport::Responses => format!("{}/responses", base_url.trim_end_matches('/')),
-            AiTransport::ChatCompletions => {
-                format!("{}/chat/completions", base_url.trim_end_matches('/'))
-            }
-        };
+        let url = format!("{}/responses", base_url.trim_end_matches('/'));
         info!(
-            transport = transport_label(transport),
+            transport = "responses",
             url = url.as_str(),
             payload_bytes = payload_body.len(),
-            stream,
+            stream = options.stream,
             "dispatching ai provider request"
         );
         let request_started_at = Instant::now();
@@ -206,13 +164,13 @@ impl AiRequestHandler {
             url.as_str(),
             api_key,
             payload_body,
-            abort_token.clone(),
-            force_identity_encoding,
+            options.abort_token.clone(),
+            options.force_identity_encoding,
         )
         .await?;
         let response_headers_ms = request_started_at.elapsed().as_millis();
         info!(
-            transport = transport_label(transport),
+            transport = "responses",
             url = url.as_str(),
             response_headers_ms,
             "ai provider response headers received"
@@ -230,7 +188,7 @@ impl AiRequestHandler {
             let body = read_error_response_text_limited(response).await;
             let body_preview = log_preview(body.as_str());
             warn!(
-                transport = transport_label(transport),
+                transport = "responses",
                 url = url.as_str(),
                 status = status.as_u16(),
                 retry_after_ms,
@@ -246,20 +204,13 @@ impl AiRequestHandler {
             ));
         }
 
-        let parsed = parse_stream_response(
-            response,
-            transport,
-            callbacks,
-            provider.as_deref(),
-            thinking_level.as_deref(),
-            abort_token,
-            self.read_timeout,
-        )
-        .await;
+        let parsed =
+            parse_stream_response(response, callbacks, options.abort_token, self.read_timeout)
+                .await;
         match &parsed {
             Ok(ai_response) => {
                 info!(
-                    transport = transport_label(transport),
+                    transport = "responses",
                     url = url.as_str(),
                     response_id = ai_response.response_id.as_deref().unwrap_or(""),
                     provider_request_id = ai_response.provider_request_id.as_deref().unwrap_or(""),
@@ -275,16 +226,16 @@ impl AiRequestHandler {
                     has_provider_error = ai_response.provider_error.is_some(),
                     has_usage = ai_response.usage.is_some(),
                     ai_provider_request_ms = request_started_at.elapsed().as_millis(),
-                    stream,
+                    stream = options.stream,
                     "received ai provider response"
                 );
             }
             Err(err) => {
                 warn!(
-                    transport = transport_label(transport),
+                    transport = "responses",
                     url = url.as_str(),
                     error = err.as_str(),
-                    stream,
+                    stream = options.stream,
                     "failed to parse ai provider response"
                 );
             }
@@ -300,7 +251,6 @@ impl Default for AiRequestHandler {
 }
 
 fn build_request_payload(
-    transport: AiTransport,
     input: Value,
     model: String,
     instructions: Option<String>,
@@ -311,45 +261,24 @@ fn build_request_payload(
     thinking_level: Option<String>,
     options: &AiRequestOptions,
 ) -> Value {
-    match transport {
-        AiTransport::Responses => {
-            let mut payload = build_responses_request_payload(
-                input,
-                model,
-                instructions,
-                options.prompt_cache_key.clone(),
-                options.previous_response_id.clone(),
-                tools,
-                options.request_cwd.clone(),
-                temperature,
-                max_output_tokens,
-                provider,
-                thinking_level,
-                options.stream,
-                options.include_prompt_cache_retention,
-                options.output_format.clone(),
-            );
-            if let Some(threshold) = options.responses_compaction_threshold {
-                payload["context_management"] = serde_json::json!([{
-                    "type": "compaction",
-                    "compact_threshold": threshold,
-                }]);
-            }
-            payload
-        }
-        AiTransport::ChatCompletions => build_chat_completions_request_payload(
-            input,
-            model,
-            instructions,
-            tools,
-            temperature,
-            max_output_tokens,
-            provider,
-            thinking_level,
-            options.stream,
-            options.output_format.clone(),
-        ),
+    let mut payload = build_responses_request_payload(
+        input,
+        model,
+        instructions,
+        tools,
+        temperature,
+        max_output_tokens,
+        provider,
+        thinking_level,
+        options,
+    );
+    if let Some(threshold) = options.responses_compaction_threshold {
+        payload["context_management"] = serde_json::json!([{
+            "type": "compaction",
+            "compact_threshold": threshold,
+        }]);
     }
+    payload
 }
 
 fn configured_timeout(env_key: &str, default_seconds: u64) -> Duration {
@@ -381,13 +310,6 @@ fn parse_timeout_seconds(value: Option<&str>, default_seconds: u64) -> u64 {
 fn effective_provider_for_request(base_url: &str, provider: Option<String>) -> Option<String> {
     let _ = base_url;
     provider
-}
-
-fn transport_label(transport: AiTransport) -> &'static str {
-    match transport {
-        AiTransport::Responses => "responses",
-        AiTransport::ChatCompletions => "chat_completions",
-    }
 }
 
 fn ai_response_tool_call_count(response: &AiResponse) -> usize {
