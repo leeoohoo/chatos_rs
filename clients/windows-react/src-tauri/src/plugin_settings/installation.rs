@@ -5,17 +5,23 @@ use super::{
 use crate::{
     host_command_client::HostCommandClient,
     host_lifecycle::HostManager,
+    plugin_credentials::environment_secret_references,
     plugin_installation_metadata::{
         canonical_plugin_root, get_installation, list_installation_summaries,
         record_matches_summary,
     },
-    plugin_integrity::{requires_installation_integrity, verify_installation_integrity},
+    plugin_installer::{resolve_executable, CommittedPluginPackage},
+    plugin_integrity::{
+        requires_installation_integrity, secure_component_revision, verify_installation_integrity,
+    },
 };
 use chatos_local_agent_protocol::{
-    HostCommand, HostResult, LocalPluginInstallationRecord, LocalPluginInstallationSummary,
-    PutPluginInstallationCommand,
+    HostCommand, HostResult, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
+    LocalPluginInstallationSummary, PutPluginInstallationCommand, RemovePluginInstallationCommand,
 };
-use chatos_plugin_management_sdk::{parse_plugin_manifest, PluginManifest};
+use chatos_plugin_management_sdk::{
+    parse_plugin_manifest, PluginInstallSource, PluginManifest, PluginMcpServer,
+};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -150,6 +156,253 @@ pub(super) async fn set_records_enabled(
         }
     }
     Ok(())
+}
+
+pub(super) fn marketplace_installation_specs(
+    owner_user_id: &str,
+    source: &PluginInstallSource,
+    package: &CommittedPluginPackage,
+    previous: &[LocalPluginInstallationRecord],
+) -> Result<Vec<LocalPluginInstallationSpec>, String> {
+    let mut previous_by_component = BTreeMap::<String, &LocalPluginInstallationRecord>::new();
+    for record in previous {
+        match previous_by_component.get(&record.spec.server_id) {
+            Some(current)
+                if (current.updated_at_unix_ms, current.version)
+                    >= (record.updated_at_unix_ms, record.version) => {}
+            _ => {
+                previous_by_component.insert(record.spec.server_id.clone(), record);
+            }
+        }
+    }
+    package_installation_specs(
+        owner_user_id,
+        &source.catalog.id,
+        &source.release.id,
+        &source.release.artifact_sha256,
+        source
+            .preference
+            .as_ref()
+            .is_none_or(|preference| preference.enabled),
+        package,
+        previous_by_component,
+    )
+}
+
+pub(super) fn local_installation_specs(
+    owner_user_id: &str,
+    plugin_id: &str,
+    release_id: &str,
+    package: &CommittedPluginPackage,
+    previous: &[LocalPluginInstallationRecord],
+) -> Result<Vec<LocalPluginInstallationSpec>, String> {
+    package_installation_specs(
+        owner_user_id,
+        plugin_id,
+        release_id,
+        &package.artifact_sha256,
+        true,
+        package,
+        previous
+            .iter()
+            .map(|record| (record.spec.server_id.clone(), record))
+            .collect(),
+    )
+}
+
+fn package_installation_specs(
+    owner_user_id: &str,
+    plugin_id: &str,
+    release_id: &str,
+    artifact_sha256: &str,
+    enabled: bool,
+    package: &CommittedPluginPackage,
+    previous_by_component: BTreeMap<String, &LocalPluginInstallationRecord>,
+) -> Result<Vec<LocalPluginInstallationSpec>, String> {
+    let component_revision = secure_component_revision(artifact_sha256)?;
+    let release_digest = format!("sha256:{artifact_sha256}");
+    let installation_id = |component_key: &str| {
+        previous_by_component
+            .get(component_key)
+            .map(|record| record.spec.installation_id.clone())
+            .unwrap_or_else(|| format!("plugin-install-{}", uuid::Uuid::new_v4().simple()))
+    };
+    let mut specs = Vec::new();
+    for server in &package.manifest.mcp_servers {
+        let PluginMcpServer::Stdio {
+            component_key,
+            bin,
+            args,
+            env,
+            ..
+        } = server
+        else {
+            continue;
+        };
+        let spec = LocalPluginInstallationSpec {
+            installation_id: installation_id(component_key),
+            owner_user_id: owner_user_id.to_owned(),
+            plugin_id: plugin_id.to_owned(),
+            release_id: release_id.to_owned(),
+            release_digest: release_digest.clone(),
+            component_id: component_key.clone(),
+            component_revision: component_revision.clone(),
+            server_id: component_key.clone(),
+            executable_path: resolve_executable(&package.installation_root, bin)?
+                .to_string_lossy()
+                .into_owned(),
+            args: args.clone(),
+            working_directory: Some(package.installation_root.to_string_lossy().into_owned()),
+            environment_secret_refs: environment_secret_references(owner_user_id, plugin_id, env)?,
+            tool_prefix: None,
+            allowed_tools: None,
+            enabled,
+        };
+        spec.validate()
+            .map_err(|_| "Plugin 安装记录无效。".to_owned())?;
+        specs.push(spec);
+    }
+    if specs.is_empty()
+        && package.manifest.mcp_servers.is_empty()
+        && (!package.manifest.skills.is_empty() || !package.manifest.hooks.is_empty())
+    {
+        let component_key = if package.manifest.skills.is_empty() {
+            "hooks-only"
+        } else {
+            "skills-only"
+        };
+        let spec = LocalPluginInstallationSpec {
+            installation_id: installation_id(component_key),
+            owner_user_id: owner_user_id.to_owned(),
+            plugin_id: plugin_id.to_owned(),
+            release_id: release_id.to_owned(),
+            release_digest,
+            component_id: component_key.into(),
+            component_revision,
+            server_id: component_key.into(),
+            executable_path: package
+                .installation_root
+                .join("chatos.plugin.json")
+                .to_string_lossy()
+                .into_owned(),
+            args: Vec::new(),
+            working_directory: Some(package.installation_root.to_string_lossy().into_owned()),
+            environment_secret_refs: BTreeMap::new(),
+            tool_prefix: None,
+            allowed_tools: None,
+            enabled,
+        };
+        spec.validate()
+            .map_err(|_| "Plugin Skill 安装记录无效。".to_owned())?;
+        specs.push(spec);
+    }
+    if specs.is_empty() {
+        return Err("Plugin 没有 Windows 可运行的 stdio MCP 或有效 Skill。".into());
+    }
+    Ok(specs)
+}
+
+pub(super) async fn replace_installation_records(
+    host: &dyn HostCommandClient,
+    previous: Vec<LocalPluginInstallationRecord>,
+    specs: Vec<LocalPluginInstallationSpec>,
+) -> Result<(), String> {
+    let mut previous_by_id = previous
+        .into_iter()
+        .map(|record| (record.spec.installation_id.clone(), record))
+        .collect::<BTreeMap<_, _>>();
+    let mut applied = Vec::<(
+        Option<LocalPluginInstallationRecord>,
+        LocalPluginInstallationRecord,
+    )>::new();
+    let mut removed = Vec::<LocalPluginInstallationRecord>::new();
+    for spec in specs {
+        let before = previous_by_id.remove(&spec.installation_id);
+        let expected_version = before.as_ref().map(|record| record.version);
+        let result = host
+            .execute(HostCommand::PutPluginInstallation(
+                PutPluginInstallationCommand {
+                    installation: spec.clone(),
+                    expected_version,
+                },
+            ))
+            .await;
+        match result {
+            Ok(HostResult::PluginInstallation { installation })
+                if installation.spec == spec && installation.version > 0 =>
+            {
+                applied.push((before, installation));
+            }
+            _ => {
+                rollback_installation_records(host, &applied, &removed).await;
+                return Err("Plugin 安装记录写入失败，已尝试恢复原状态。".into());
+            }
+        }
+    }
+    for record in previous_by_id.into_values() {
+        let result = host
+            .execute(HostCommand::RemovePluginInstallation(
+                RemovePluginInstallationCommand {
+                    owner_user_id: record.spec.owner_user_id.clone(),
+                    installation_id: record.spec.installation_id.clone(),
+                    expected_version: record.version,
+                },
+            ))
+            .await;
+        match result {
+            Ok(HostResult::PluginInstallation { .. }) => removed.push(record),
+            _ => {
+                rollback_installation_records(host, &applied, &removed).await;
+                return Err("Plugin 旧版本记录清理失败，已尝试恢复原状态。".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn rollback_installation_records(
+    host: &dyn HostCommandClient,
+    applied: &[(
+        Option<LocalPluginInstallationRecord>,
+        LocalPluginInstallationRecord,
+    )],
+    removed: &[LocalPluginInstallationRecord],
+) {
+    for record in removed.iter().rev() {
+        let _ = host
+            .execute(HostCommand::PutPluginInstallation(
+                PutPluginInstallationCommand {
+                    installation: record.spec.clone(),
+                    expected_version: None,
+                },
+            ))
+            .await;
+    }
+    for (before, after) in applied.iter().rev() {
+        match before {
+            Some(before) => {
+                let _ = host
+                    .execute(HostCommand::PutPluginInstallation(
+                        PutPluginInstallationCommand {
+                            installation: before.spec.clone(),
+                            expected_version: Some(after.version),
+                        },
+                    ))
+                    .await;
+            }
+            None => {
+                let _ = host
+                    .execute(HostCommand::RemovePluginInstallation(
+                        RemovePluginInstallationCommand {
+                            owner_user_id: after.spec.owner_user_id.clone(),
+                            installation_id: after.spec.installation_id.clone(),
+                            expected_version: after.version,
+                        },
+                    ))
+                    .await;
+            }
+        }
+    }
 }
 
 pub(super) fn load_installed_manifest(

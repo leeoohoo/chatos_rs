@@ -3,10 +3,12 @@ use super::{
         deactivate_hook_bundles, list_hook_bundle_records, publish_inactive_hook_bundles,
         reconcile_active_hook_bundles,
     },
-    installation::{installation_roots, list_installation_records, remove_installation_roots},
-    local_installation_specs,
+    installation::{
+        installation_roots, list_installation_records, local_installation_specs,
+        remove_installation_roots, replace_installation_records,
+    },
     presentation::safe_text,
-    replace_installation_records, PluginSettingsManager,
+    PluginSettingsManager,
 };
 use crate::{
     authentication::AuthenticationManager,
