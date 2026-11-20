@@ -26,9 +26,9 @@ DB schema 32 增加 `local_requirement_plans` 和项目索引，沿用现有迁�
 
 ## 程序绑定，不依赖历史长度
 
-当前实现把**项目最新方案作为该项目后续工作的 baseline**。启动新项目 Main Chat Turn 时，同事务将完整最新方案放入 `run.input.requirement_plan`，每个模型 step 单独投递方案上下文，独立于聊天历史裁剪。新增方案本身不启动工作。
+当前实现把**项目最新、尚未消费的方案作为下一次实施工作的 baseline**。启动新项目 Main Chat Turn 时，同事务将完整方案放入 `run.input.requirement_plan`，每个模型 step 单独投递方案上下文，独立于聊天历史裁剪。新增方案本身不启动工作。
 
-Task graph 创建同事务再次校验：当前项目最新版本必须已确认，Main 绑定的 plan ID、revision、确认事实必须一致，否则拒绝并要求在新 Turn 查看当前方案。即使同项目的新工作与方案无关，当前也会应用该 baseline；暂未提供按业务范围选择/绕过 baseline 的机制。
+Task graph 创建同事务再次校验：当前项目最新版本必须已确认，Main 绑定的 plan ID、revision、确认事实必须一致，否则拒绝并要求在新 Turn 查看当前方案。首个 Task graph 冻结方案的同时将该版本标记为已消费；事务失败不会消费。后续新 Turn 和无关 Task 不再引用它，已有 Task 与重试仍使用自身冻结版本。升级迁移会根据既有 Task 快照回填消费时间，不让历史方案继续污染新工作。
 
 Task 冻结结构：
 

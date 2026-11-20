@@ -98,8 +98,12 @@ impl LocalAgentTaskStore for SqliteClientStorage {
             super::task_replacement_validation::validate_stopped_sources(&mut connection, graph)
                 .await?;
             let mut frozen_graph = graph.clone();
-            super::requirement_plan_store::freeze_for_graph(&mut connection, &mut frozen_graph)
-                .await?;
+            super::requirement_plan_store::freeze_for_graph(
+                &mut connection,
+                &mut frozen_graph,
+                now_unix_ms,
+            )
+            .await?;
             frozen_graph
                 .validate()
                 .map_err(ClientStorageError::InvalidState)?;

@@ -866,3 +866,22 @@ pub(super) const SCHEMA_V50: &[&str] = &[
        owner_user_id, resource_id\
      ) WHERE resource_kind = 'project' AND resource_id IS NOT NULL",
 ];
+
+/// A confirmed proposal is consumed by its first Task Graph. Historical Tasks keep
+/// their frozen snapshot, while unrelated future work no longer inherits it.
+pub(super) const SCHEMA_V51: &[&str] = &[
+    "ALTER TABLE local_requirement_plans ADD COLUMN consumed_at_unix_ms INTEGER",
+    "UPDATE local_requirement_plans SET consumed_at_unix_ms = (\
+       SELECT MIN(task.created_at_unix_ms) FROM local_tasks task \
+       WHERE json_extract(task.input_json, '$.requirement_plan.snapshot.plan_id') = \
+             local_requirement_plans.plan_id \
+         AND json_extract(task.input_json, '$.requirement_plan.snapshot.revision') = \
+             local_requirement_plans.revision\
+     ) WHERE EXISTS (\
+       SELECT 1 FROM local_tasks task \
+       WHERE json_extract(task.input_json, '$.requirement_plan.snapshot.plan_id') = \
+             local_requirement_plans.plan_id \
+         AND json_extract(task.input_json, '$.requirement_plan.snapshot.revision') = \
+             local_requirement_plans.revision\
+     )",
+];

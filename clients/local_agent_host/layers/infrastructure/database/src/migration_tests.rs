@@ -7,6 +7,66 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 #[tokio::test]
+async fn version_fifty_one_marks_plans_already_frozen_into_tasks_as_consumed() {
+    let mut connection = SqliteConnection::connect_with(
+        &SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .foreign_keys(true),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TABLE local_requirement_plans(\
+           owner_user_id TEXT NOT NULL, plan_id TEXT NOT NULL, revision INTEGER NOT NULL)",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TABLE local_tasks(input_json TEXT NOT NULL, created_at_unix_ms INTEGER NOT NULL)",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO local_requirement_plans VALUES\
+           ('user-1', 'consumed-plan', 1), ('user-1', 'unused-plan', 1)",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO local_tasks VALUES(\
+           '{\"requirement_plan\":{\"snapshot\":{\"plan_id\":\"consumed-plan\",\"revision\":1}}}',\
+           1234)",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+
+    for statement in schema::SCHEMA_V51 {
+        sqlx::query(sqlx::AssertSqlSafe(*statement))
+            .execute(&mut connection)
+            .await
+            .unwrap();
+    }
+
+    let rows = sqlx::query(
+        "SELECT plan_id, consumed_at_unix_ms FROM local_requirement_plans ORDER BY plan_id",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .unwrap();
+    assert_eq!(rows[0].get::<String, _>("plan_id"), "consumed-plan");
+    assert_eq!(
+        rows[0].get::<Option<i64>, _>("consumed_at_unix_ms"),
+        Some(1234)
+    );
+    assert_eq!(rows[1].get::<String, _>("plan_id"), "unused-plan");
+    assert_eq!(rows[1].get::<Option<i64>, _>("consumed_at_unix_ms"), None);
+}
+
+#[tokio::test]
 async fn version_fifty_allows_team_conversations_to_share_contact_identity() {
     let mut connection = SqliteConnection::connect_with(
         &SqliteConnectOptions::from_str("sqlite::memory:")
@@ -780,6 +840,8 @@ async fn version_forty_two_accepts_legacy_hook_events_without_recovery_payloads(
     .expect("legacy Hook invocation");
     let mut connection = storage.pool.acquire().await.expect("connection");
     for statement in [
+        "ALTER TABLE local_requirement_plans DROP COLUMN consumed_at_unix_ms",
+        "DELETE FROM client_schema_migrations WHERE version = 51",
         "DELETE FROM client_schema_migrations WHERE version = 50",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN tokenizer_id",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN protocol_overhead_estimator_id",
@@ -871,6 +933,8 @@ pub(super) async fn rewind_receipt_v36(connection: &mut SqliteConnection) {
 
 pub(super) async fn rewind_receipt_v37(connection: &mut SqliteConnection) {
     for statement in [
+        "ALTER TABLE local_requirement_plans DROP COLUMN consumed_at_unix_ms",
+        "DELETE FROM client_schema_migrations WHERE version = 51",
         "DELETE FROM client_schema_migrations WHERE version = 50",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN tokenizer_id",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN protocol_overhead_estimator_id",

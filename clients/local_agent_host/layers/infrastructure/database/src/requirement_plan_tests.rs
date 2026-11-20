@@ -310,6 +310,18 @@ async fn unconfirmed_plan_rejects_graph_atomically_and_confirmed_body_is_program
         .await
         .unwrap();
     assert_eq!(replay, created);
+
+    finish(
+        &storage,
+        claim(&storage, &started.run.run_id, "execute", 12_000).await,
+        true,
+        "Task arranged",
+        "execute",
+        13_000,
+    )
+    .await;
+    let unrelated = start_project_turn(&storage, "project-chat", "unrelated", 14_000).await;
+    assert!(unrelated.run.input.get("requirement_plan").is_none());
 }
 
 #[tokio::test]

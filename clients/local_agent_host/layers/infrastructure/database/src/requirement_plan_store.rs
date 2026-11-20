@@ -13,7 +13,8 @@ use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 
 const SELECT: &str = "SELECT owner_user_id, plan_id, revision, project_resource_id, \
     source_conversation_id, source_survey_id, source_run_id, title, markdown, \
-    created_at_unix_ms, confirmed_at_unix_ms FROM local_requirement_plans";
+    created_at_unix_ms, confirmed_at_unix_ms, consumed_at_unix_ms \
+    FROM local_requirement_plans";
 
 pub(super) async fn get(
     connection: &mut SqliteConnection,
@@ -49,10 +50,11 @@ pub(super) async fn latest_for_project(
     owner: &str,
     project: &str,
 ) -> Result<Option<LocalRequirementPlan>, ClientStorageError> {
-    let query = format!("{SELECT} WHERE owner_user_id = ? AND project_resource_id = ? \
+    let query = format!("SELECT * FROM ({SELECT} WHERE owner_user_id = ? AND project_resource_id = ? \
         AND revision = (SELECT MAX(p.revision) FROM local_requirement_plans p \
             WHERE p.owner_user_id = local_requirement_plans.owner_user_id AND p.plan_id = local_requirement_plans.plan_id) \
-        ORDER BY created_at_unix_ms DESC, revision DESC, plan_id DESC LIMIT 1");
+        ORDER BY created_at_unix_ms DESC, revision DESC, plan_id DESC LIMIT 1) \
+        WHERE consumed_at_unix_ms IS NULL");
     sqlx::query(sqlx::AssertSqlSafe(query))
         .bind(owner)
         .bind(project)
@@ -242,6 +244,7 @@ pub(super) async fn capture_source_reply(
 pub(super) async fn freeze_for_graph(
     connection: &mut SqliteConnection,
     graph: &mut CreateTaskGraphCommand,
+    now: i64,
 ) -> Result<(), ClientStorageError> {
     if graph.source_entity_type != "conversation_turn" {
         return reject_unbound_snapshot(graph);
@@ -304,6 +307,26 @@ pub(super) async fn freeze_for_graph(
                     "Task input with frozen plan exceeds its byte limit".into(),
                 ));
             }
+        }
+        let consumed = sqlx::query(
+            "UPDATE local_requirement_plans SET consumed_at_unix_ms = ? \
+             WHERE owner_user_id = ? AND plan_id = ? AND revision = ? \
+               AND consumed_at_unix_ms IS NULL",
+        )
+        .bind(now)
+        .bind(&plan.owner_user_id)
+        .bind(&plan.plan_id)
+        .bind(
+            i64::try_from(plan.revision)
+                .map_err(|_| ClientStorageError::InvalidState("plan revision overflow".into()))?,
+        )
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        if consumed.rows_affected() != 1 {
+            return Err(ClientStorageError::Conflict(
+                "requirement plan was already consumed by another Task Graph".into(),
+            ));
         }
     } else {
         let count: i64 = sqlx::query_scalar(
