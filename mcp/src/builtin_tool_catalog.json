@@ -1,0 +1,1450 @@
+{
+  "AgentBuilder": [
+    {
+      "description": "Analyze user intent and propose an agent profile (server: agent_builder).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "requirement": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "requirement"
+        ],
+        "type": "object"
+      },
+      "name": "recommend_agent_profile"
+    },
+    {
+      "description": "Update an existing Memory agent configuration.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "default_skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_policy": {
+            "type": "object"
+          },
+          "role_definition": {
+            "type": "string"
+          },
+          "skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "skills": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "content"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "agent_id"
+        ],
+        "type": "object"
+      },
+      "name": "update_memory_agent"
+    },
+    {
+      "description": "Preview final runtime context text from role and skills.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "role_definition": {
+            "type": "string"
+          },
+          "skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "skills": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "content"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "role_definition"
+        ],
+        "type": "object"
+      },
+      "name": "preview_agent_context"
+    },
+    {
+      "description": "Create a Memory agent with role definition and skills.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "default_skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_policy": {
+            "type": "object"
+          },
+          "role_definition": {
+            "type": "string"
+          },
+          "skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "skills": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "content"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "role_definition"
+        ],
+        "type": "object"
+      },
+      "name": "create_memory_agent"
+    }
+  ],
+  "AskUser": [
+    {
+      "description": "Prompt user with mixed form fields and optional choice selection in one interaction. Use this when a decision also needs structured fields, such as selecting a remote connection while collecting a secret password/token/passphrase field with secret=true.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_cancel": {
+            "type": "boolean"
+          },
+          "choice": {
+            "additionalProperties": false,
+            "properties": {
+              "default": {
+                "type": "string"
+              },
+              "max_selections": {
+                "maximum": 60,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "min_selections": {
+                "maximum": 60,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "multiple": {
+                "type": "boolean"
+              },
+              "options": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 60,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "options"
+            ],
+            "type": "object"
+          },
+          "fields": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "default": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "key": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "multiline": {
+                  "type": "boolean"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "placeholder": {
+                  "type": "string"
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "secret": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "prompt_mixed_form"
+    },
+    {
+      "description": "Prompt user for structured key/value input fields and wait for submission (server: ask_user). Use this for missing connection details, credentials, config values, paths, parameters, or other required facts. Mark password/token/key/passphrase fields with secret=true and never echo submitted secrets.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_cancel": {
+            "type": "boolean"
+          },
+          "fields": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "default": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "key": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "multiline": {
+                  "type": "boolean"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "placeholder": {
+                  "type": "string"
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "secret": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "fields"
+        ],
+        "type": "object"
+      },
+      "name": "prompt_key_values"
+    },
+    {
+      "description": "Prompt user for a single or multi-choice selection and wait for submission. Use this before major choices, risky actions, unclear goal/scope/success criteria, target environment selection, or when choosing among available connections/accounts/options.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_cancel": {
+            "type": "boolean"
+          },
+          "default": {
+            "type": "string"
+          },
+          "max_selections": {
+            "maximum": 60,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          },
+          "min_selections": {
+            "maximum": 60,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "multiple": {
+            "type": "boolean"
+          },
+          "options": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "value": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "type": "object"
+            },
+            "maxItems": 60,
+            "minItems": 1,
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "options"
+        ],
+        "type": "object"
+      },
+      "name": "prompt_choices"
+    }
+  ],
+  "CodeMaintainerRead": [
+    {
+      "description": "Search text recursively under a directory in the current project workspace.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "max_results": {
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          },
+          "pattern": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      },
+      "name": "search_text"
+    },
+    {
+      "description": "Return UTF-8 content from start_line to end_line (1-based, inclusive) from the current project workspace.\nFile size limit: 256 KB.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "end_line": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          },
+          "start_line": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "with_line_numbers": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "start_line",
+          "end_line"
+        ],
+        "type": "object"
+      },
+      "name": "read_file_range"
+    },
+    {
+      "description": "List directory entries from the current project workspace.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "max_entries": {
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_dir"
+    },
+    {
+      "description": "Return UTF-8 file content from the current project workspace.\nwith_line_numbers defaults to true; set false to skip structured numbered lines.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "with_line_numbers": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "read_file_raw"
+    },
+    {
+      "description": "Compatibility alias for read_file_raw. Reads from the current project workspace; when start_line + end_line are both provided, reads a line range.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "end_line": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          },
+          "start_line": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "with_line_numbers": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "read_file"
+    },
+    {
+      "description": "Compatibility alias for search_text in the current project workspace. query maps to search_text.pattern.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "max_results": {
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          },
+          "query": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "search_files"
+    }
+  ],
+  "CodeMaintainerWrite": [
+    {
+      "description": "Open a write session for the current project workspace. Use one session, stage one or more edit batches against its in-memory snapshot, then finish with commit_edit_session or abort_edit_session. Set fresh=true after a stale-context or expected-match recovery when the previous session must be discarded and rebased from the latest workspace state.\nWrites enabled.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "fresh": {
+            "description": "Discard the reusable session for this run/conversation and create a new baseline from the current workspace.",
+            "type": "boolean"
+          },
+          "purpose": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "open_edit_session"
+    },
+    {
+      "description": "Atomically commit the staged session snapshot to the current project workspace. The commit revalidates every touched path against the session baseline before making any change, so stale paths fail together instead of cascading. Writes enabled\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "name": "commit_edit_session"
+    },
+    {
+      "description": "Abort a write session and discard its staged in-memory snapshot without touching the file system.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "name": "abort_edit_session"
+    },
+    {
+      "description": "Stage one or more ordered edit operations into an existing write session without touching the file system yet. Multiple operations may target the same file; they will be applied sequentially to the session snapshot. For the first operation that touches a path, expected_sha256 must match the latest successful read of the current file, or be null only when the path is confirmed absent (and for directory deletes).\nSupported operation kinds: write, replace_text, append, delete.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "operations": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "after_context": {
+                  "description": "Optional exact anchor expected immediately after old_text or within the following 12 lines.",
+                  "type": "string"
+                },
+                "before_context": {
+                  "description": "Optional exact anchor expected immediately before old_text or within the preceding 12 lines.",
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                },
+                "end_line": {
+                  "description": "Optional inclusive upper bound for the first line where old_text may start; multi-line old_text may extend beyond it.",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "expected_matches": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "expected_sha256": {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "kind": {
+                  "enum": [
+                    "write",
+                    "replace_text",
+                    "append",
+                    "delete"
+                  ],
+                  "type": "string"
+                },
+                "new_text": {
+                  "type": "string"
+                },
+                "old_text": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "start_line": {
+                  "description": "Optional inclusive lower bound for the first line where old_text may start.",
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "type": "object"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "session_id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "operations"
+        ],
+        "type": "object"
+      },
+      "name": "stage_edit_batch"
+    }
+  ],
+  "MemoryCommandReader": [
+    {
+      "description": "Read the full content of a command that belongs to the current contact agent (server: memory_command_reader).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "command_ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_ref"
+        ],
+        "type": "object"
+      },
+      "name": "get_command_detail"
+    }
+  ],
+  "MemoryPluginReader": [
+    {
+      "description": "Read the full content of a plugin that belongs to the current contact agent (server: memory_plugin_reader).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "plugin_ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "plugin_ref"
+        ],
+        "type": "object"
+      },
+      "name": "get_plugin_detail"
+    }
+  ],
+  "MemorySkillReader": [
+    {
+      "description": "Read the full content of a skill that belongs to the current contact agent (server: memory_skill_reader).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "skill_ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_ref"
+        ],
+        "type": "object"
+      },
+      "name": "get_skill_detail"
+    }
+  ],
+  "Notepad": [
+    {
+      "description": "Update a note by id. You can change title/content/folder/tags.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "update_note"
+    },
+    {
+      "description": "Initialize notepad storage (server: notepad).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "init"
+    },
+    {
+      "description": "List notepad tags and usage counts.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_tags"
+    },
+    {
+      "description": "Search notes by keyword with optional folder/tag filters.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "folder": {
+            "type": "string"
+          },
+          "includeContent": {
+            "type": "boolean"
+          },
+          "limit": {
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "match": {
+            "enum": [
+              "all",
+              "any"
+            ],
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "recursive": {
+            "type": "boolean"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "search_notes"
+    },
+    {
+      "description": "Delete a notepad folder. Use recursive=true to remove all notes under it.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "folder": {
+            "type": "string"
+          },
+          "recursive": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "folder"
+        ],
+        "type": "object"
+      },
+      "name": "delete_folder"
+    },
+    {
+      "description": "Delete a note by id.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_note"
+    },
+    {
+      "description": "List all notepad folders.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_folders"
+    },
+    {
+      "description": "List notes with optional folder/tag/query filters.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "folder": {
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "match": {
+            "enum": [
+              "all",
+              "any"
+            ],
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "recursive": {
+            "type": "boolean"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_notes"
+    },
+    {
+      "description": "Rename or move a notepad folder.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "name": "rename_folder"
+    },
+    {
+      "description": "Create a markdown note.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "create_note"
+    },
+    {
+      "description": "Create a notepad folder. Supports nested paths like work/ideas.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "folder": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "folder"
+        ],
+        "type": "object"
+      },
+      "name": "create_folder"
+    },
+    {
+      "description": "Read a note by id. Up to two ChatOS Markdown images are supplied as visual input per call. When imagePage.hasMore is true, call again with imageOffset set to imagePage.nextOffset.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "imageOffset": {
+            "description": "Zero-based image offset for reading the next image batch. Defaults to 0.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "read_note"
+    }
+  ],
+  "RemoteConnectionController": [
+    {
+      "description": "List entries under a directory on the selected remote host.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_directory"
+    },
+    {
+      "description": "Upload content to a file on selected SSH server remote_connection_controller. Use encoding=base64 for binary content.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "create_parent_dirs": {
+            "type": "boolean"
+          },
+          "encoding": {
+            "enum": [
+              "text",
+              "base64"
+            ],
+            "type": "string"
+          },
+          "overwrite": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "type": "object"
+      },
+      "name": "upload_file"
+    },
+    {
+      "description": "Read UTF-8 text file content on selected SSH server remote_connection_controller.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "max_bytes": {
+            "maximum": 262144,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "read_file"
+    },
+    {
+      "description": "Download file content from selected SSH server remote_connection_controller. Use encoding=base64 for binary files.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "encoding": {
+            "enum": [
+              "text",
+              "base64"
+            ],
+            "type": "string"
+          },
+          "max_bytes": {
+            "maximum": 262144,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "download_file"
+    },
+    {
+      "description": "Run one SSH command on the selected remote host. Dangerous commands require allow_dangerous=true.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_dangerous": {
+            "type": "boolean"
+          },
+          "command": {
+            "type": "string"
+          },
+          "max_output_chars": {
+            "maximum": 20000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeout_seconds": {
+            "maximum": 120,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "name": "run_command"
+    },
+    {
+      "description": "Test SSH connectivity for the selected remote connection.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "test_connection"
+    }
+  ],
+  "TerminalController": [
+    {
+      "description": "Poll one project workspace command process, including status and buffered output logs.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "description": "Max logs to fetch.",
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Optional absolute log offset for incremental polling.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "terminal_id": {
+            "description": "Command process id from process_list or execute_command result.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "terminal_id"
+        ],
+        "type": "object"
+      },
+      "name": "process_poll"
+    },
+    {
+      "description": "Wait until a project workspace command process exits or becomes idle.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "terminal_id": {
+            "description": "Command process id.",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "Alias of timeout_ms in seconds.",
+            "maximum": 7200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeout_ms": {
+            "description": "Maximum wait time in milliseconds.",
+            "maximum": 7200000,
+            "minimum": 1000,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "terminal_id"
+        ],
+        "type": "object"
+      },
+      "name": "process_wait"
+    },
+    {
+      "description": "Manage project workspace command processes. Actions: list/poll/log/wait/kill/write/submit/close.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "list",
+              "poll",
+              "log",
+              "wait",
+              "kill",
+              "write",
+              "submit",
+              "close"
+            ],
+            "type": "string"
+          },
+          "data": {
+            "type": "string"
+          },
+          "include_exited": {
+            "default": false,
+            "type": "boolean"
+          },
+          "limit": {
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "terminal_id": {
+            "description": "Process id.",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "Alias of timeout_ms in seconds.",
+            "maximum": 7200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeout_ms": {
+            "maximum": 7200000,
+            "minimum": 1000,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "process"
+    },
+    {
+      "description": "List command processes started in the current project workspace.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "include_exited": {
+            "default": false,
+            "type": "boolean"
+          },
+          "limit": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "process_list"
+    },
+    {
+      "description": "Run a shell command in the current project workspace with path switching. `purpose` is required and must briefly explain the command's user-visible goal without repeating the command. Use `path` as a project-root-relative directory; omit it to run at the project root. Change project file content with the dedicated file modification tools, not Python/Node scripts, shell redirection, tee, in-place editors, or patch utilities. Node.js test, build, lint, and package-exec commands require an installed dependency state and may not mask failures with `|| true`; install dependencies first when the structured preflight result requires it. Use background=true for long-running commands and track them with process_poll/process_wait.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "common"
+            ]
+          },
+          {
+            "required": [
+              "command"
+            ]
+          }
+        ],
+        "properties": {
+          "background": {
+            "default": false,
+            "description": "When true, return immediately and use process_poll/process_wait to track progress.",
+            "type": "boolean"
+          },
+          "command": {
+            "description": "Alias of common. Shell command to run in the current project workspace.",
+            "type": "string"
+          },
+          "common": {
+            "description": "Shell command to run in the current project workspace.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Directory path inside the current project workspace. Defaults to the workspace root when omitted.",
+            "type": "string"
+          },
+          "purpose": {
+            "description": "Short user-facing explanation of why this command is needed and what result it should produce. Do not copy the shell command.",
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "purpose"
+        ],
+        "type": "object"
+      },
+      "name": "execute_command"
+    },
+    {
+      "description": "Get recent command logs grouped by process for the current project workspace.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "per_terminal_limit": {
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "terminal_limit": {
+            "maximum": 20,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_recent_logs"
+    },
+    {
+      "description": "Terminate a project workspace command process session.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "terminal_id": {
+            "description": "Command process id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "terminal_id"
+        ],
+        "type": "object"
+      },
+      "name": "process_kill"
+    },
+    {
+      "description": "Read project workspace command process logs with optional offset pagination.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "description": "Maximum lines to return.",
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Optional line offset for pagination.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "terminal_id": {
+            "description": "Command process id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "terminal_id"
+        ],
+        "type": "object"
+      },
+      "name": "process_log"
+    },
+    {
+      "description": "Write stdin content to a project workspace command process.\nPaths are relative to the current project workspace root.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "description": "Raw stdin content to send.",
+            "type": "string"
+          },
+          "submit": {
+            "default": false,
+            "description": "Append one newline (Enter key) after data.",
+            "type": "boolean"
+          },
+          "terminal_id": {
+            "description": "Command process id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "terminal_id",
+          "data"
+        ],
+        "type": "object"
+      },
+      "name": "process_write"
+    }
+  ]
+}

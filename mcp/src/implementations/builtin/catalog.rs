@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::Arc;
+use std::collections::HashMap;
 
+#[cfg(test)]
 use async_trait::async_trait;
 use chatos_mcp_runtime::BuiltinMcpKind;
 use serde_json::Value;
+#[cfg(test)]
+use std::sync::Arc;
 
+#[cfg(test)]
 use crate::{
     build_shared_builtin_tool_service, AgentBuilderOptions, AgentBuilderService, AskUserDecision,
     AskUserOptions, AskUserPromptPayload, AskUserService, AskUserStore, AskUserStoreRef,
@@ -22,14 +26,26 @@ use crate::{
     DEFAULT_MAX_READ_FILE_BYTES, MAX_COMMAND_TIMEOUT_SECONDS,
 };
 
+pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> {
+    serde_json::from_str::<HashMap<String, Vec<Value>>>(include_str!(
+        "../../builtin_tool_catalog.json"
+    ))
+    .map_err(|error| format!("decode builtin tool catalog failed: {error}"))?
+    .remove(kind.kind_name())
+    .ok_or_else(|| format!("builtin tool catalog is unavailable: {}", kind.kind_name()))
+}
+
+#[cfg(test)]
 #[derive(Debug, Default)]
 struct SchemaOnlyStore;
 
+#[cfg(test)]
 fn schema_only_error() -> String {
     "schema-only tool catalog cannot execute tools".to_string()
 }
 
-pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> {
+#[cfg(test)]
+fn runtime_builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> {
     let store = Arc::new(SchemaOnlyStore);
     let server_name = kind.server_name().to_string();
     match kind {
@@ -119,6 +135,7 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
     }
 }
 
+#[cfg(test)]
 fn location_neutral_workspace_catalog(mut tools: Vec<Value>) -> Vec<Value> {
     const RUNTIME_WORKSPACE_NOTE: &str =
         "Paths are relative to the current project workspace root.";
@@ -145,6 +162,7 @@ fn location_neutral_workspace_catalog(mut tools: Vec<Value>) -> Vec<Value> {
     tools
 }
 
+#[cfg(test)]
 #[async_trait]
 impl TerminalControllerStore for SchemaOnlyStore {
     async fn execute_command(
@@ -225,6 +243,7 @@ impl TerminalControllerStore for SchemaOnlyStore {
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl NotepadStore for SchemaOnlyStore {
     async fn init(&self) -> Result<Value, String> {
@@ -265,6 +284,7 @@ impl NotepadStore for SchemaOnlyStore {
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl AskUserStore for SchemaOnlyStore {
     async fn execute_prompt(
@@ -276,6 +296,7 @@ impl AskUserStore for SchemaOnlyStore {
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl RemoteConnectionControllerStore for SchemaOnlyStore {
     async fn test_connection(
@@ -332,6 +353,7 @@ impl RemoteConnectionControllerStore for SchemaOnlyStore {
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl MemoryReaderStore for SchemaOnlyStore {
     async fn get_agent_runtime_context(
@@ -377,6 +399,12 @@ mod tests {
         ] {
             let tools = builtin_tool_catalog(kind)
                 .unwrap_or_else(|err| panic!("{}: {err}", kind.kind_name()));
+            let mut generated = runtime_builtin_tool_catalog(kind)
+                .unwrap_or_else(|err| panic!("{} runtime: {err}", kind.kind_name()));
+            let mut snapshot = tools.clone();
+            generated.sort_by_key(|tool| tool["name"].as_str().unwrap_or_default().to_string());
+            snapshot.sort_by_key(|tool| tool["name"].as_str().unwrap_or_default().to_string());
+            assert_eq!(snapshot, generated, "{}", kind.kind_name());
             assert!(!tools.is_empty(), "{}", kind.kind_name());
             assert!(tools
                 .iter()
