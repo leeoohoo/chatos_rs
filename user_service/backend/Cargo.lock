@@ -386,7 +386,6 @@ dependencies = [
  "serde_yaml",
  "sha2 0.11.0",
  "thiserror",
- "tokio",
  "urlencoding",
 ]
 
@@ -396,7 +395,6 @@ version = "0.1.0"
 dependencies = [
  "sqlx",
  "thiserror",
- "tracing",
 ]
 
 [[package]]
