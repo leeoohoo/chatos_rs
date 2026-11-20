@@ -50,7 +50,6 @@ clients/windows-react/src-tauri/src/story_studio/runtime.rs	1274	2027-02-28	Spli
 clients/windows-react/src-tauri/src/project_filesystem.rs	1269	2027-02-28	Split project query, search, preview, and mutation responsibilities
 clients/macos/Tests/ChatOSConnectorTests/LocalAgentGroupChatSchedulerConcurrencyTests.swift	1222	2027-02-28	Split existing owned source by responsibility before expiry
 memory_engine/backend/src/repositories/postgres_contract_tests/summary_generation_contracts.rs	1179	2027-02-28	Split existing owned source by responsibility before expiry
-clients/local_agent_host/src/application/coordinator.rs	1171	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Sources/ChatOSCodeReadWorkerCore/CodeReadWorkerEngine.swift	1162	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Tests/ChatOSAPITests/ChatOSMediaGenerationServiceTests.swift	1145	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/story_studio/batch.rs	1143	2027-02-28	Split existing owned source by responsibility before expiry
