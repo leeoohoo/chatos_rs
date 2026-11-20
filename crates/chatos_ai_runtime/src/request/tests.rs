@@ -103,8 +103,9 @@ async fn read_timeout_interrupts_a_provider_that_makes_no_progress() {
         Router::new().route("/responses", post(delayed_provider_response)),
     )
     .await;
+    let handler = AiRequestHandler::new_with_read_timeout(std::time::Duration::from_millis(50));
     let started_at = std::time::Instant::now();
-    let error = AiRequestHandler::new_with_read_timeout(std::time::Duration::from_millis(50))
+    let error = handler
         .handle_request(
             base_url.as_str(),
             "test-key",
@@ -132,6 +133,7 @@ async fn cancellation_interrupts_a_pending_provider_request_immediately() {
         Router::new().route("/responses", post(delayed_provider_response)),
     )
     .await;
+    let handler = AiRequestHandler::new_with_read_timeout(std::time::Duration::from_secs(30));
     let abort_token = tokio_util::sync::CancellationToken::new();
     let cancellation = abort_token.clone();
     tokio::spawn(async move {
@@ -139,7 +141,7 @@ async fn cancellation_interrupts_a_pending_provider_request_immediately() {
         cancellation.cancel();
     });
     let started_at = std::time::Instant::now();
-    let error = AiRequestHandler::new_with_read_timeout(std::time::Duration::from_secs(30))
+    let error = handler
         .handle_request_with_options(
             base_url.as_str(),
             "test-key",
