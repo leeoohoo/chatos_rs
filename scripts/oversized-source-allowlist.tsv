@@ -62,7 +62,6 @@ clients/macos/Tests/ChatOSAPITests/ChatOSMediaGenerationServiceTests.swift	1145	
 clients/windows-react/src-tauri/src/story_studio/batch.rs	1143	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Sources/ChatOSConnector/NativeOpenSSHClient.swift	1139	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/story_studio/domain.rs	1131	2027-02-28	Split existing owned source by responsibility before expiry
-crates/chatos_cloud_agent_runtime/src/lib_inline_tests.rs	1128	2027-02-28	Move cloud runtime inline tests into layered test modules
 clients/windows-react/src/features/media-studio/ui/MediaStudioView.tsx	1125	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/agent_conversation/documents.rs	1120	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/agent_skill_management.rs	1118	2027-02-28	Split existing owned source by responsibility before expiry
