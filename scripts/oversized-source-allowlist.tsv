@@ -6,7 +6,6 @@ clients/windows-react/src-tauri/src/plugin_settings.rs	3488	2027-02-28	Split exi
 clients/windows-react/src-tauri/src/plugin_application/runtime.rs	3293	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/agent_plugin_runtime.rs	3112	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/media_studio/mod.rs	2922	2027-02-28	Split existing owned source by responsibility before expiry
-clients/windows-react/src-tauri/src/story_studio/tests.rs	2891	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Tests/ChatOSConnectorTests/LocalAgentChatToolProviderTests.swift	2606	2027-02-28	Split local agent tool-provider tests by tool family
 clients/local_agent_host/layers/infrastructure/database/src/task_conversation_writeback_tests.rs	2478	2027-02-28	Split conversation writeback scenarios by recovery and terminal state
 clients/windows-react/src-tauri/src/remote_connection/ssh.rs	2388	2027-02-28	Split SSH process, askpass, transfer, and connection preparation responsibilities
