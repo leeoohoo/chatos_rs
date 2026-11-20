@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use chatos_local_agent_protocol::{
     ClaimNextToolCommand, CommitToolCommand, GetConversationAttachmentCommand, GetRunCommand,
-    HostCommand, HostResult, LocalAgentToolClaim, LocalAgentToolOutcome,
+    HostCommand, HostResult, LocalAgentRunRecord, LocalAgentToolClaim, LocalAgentToolOutcome,
 };
 use image::metadata::Orientation;
 use image::{
@@ -780,31 +780,10 @@ async fn execute_todo_planning_read_tool(
         .arguments
         .as_object()
         .ok_or_else(|| "The Todo planning arguments are invalid.".to_owned())?;
-    let result = app
-        .state::<HostManager>()
-        .execute(HostCommand::GetRun(GetRunCommand {
-            owner_user_id: owner_user_id.to_owned(),
-            run_id: claim.invocation.run_id.clone(),
-        }))
-        .await?;
-    let HostResult::Run { run } = result else {
-        return Err("The Todo planning Run context is invalid.".into());
-    };
-    if run.owner_user_id != owner_user_id || run.run_id != claim.invocation.run_id {
-        return Err("The Todo planning Run context is invalid.".into());
-    }
+    let (run, expected_binding) = load_todo_planning_run_context(app, owner_user_id, claim).await?;
     let store = app.state::<AgentConversationStore>().inner().clone();
     let owner = owner_user_id.to_owned();
     let run_id = run.run_id.clone();
-    let validation_store = store.clone();
-    let validation_owner = owner.clone();
-    let validation_run = run_id.clone();
-    let (expected_binding, _) = tauri::async_runtime::spawn_blocking(move || {
-        validation_store.load_agent_asset_tool_records(&validation_owner, &validation_run)
-    })
-    .await
-    .map_err(|_| "The Todo planning binding task exited unexpectedly.".to_owned())??;
-    validate_asset_run_context(&run.profile_key, &run.input, &expected_binding)?;
     if expected_binding.todo_id.is_some() {
         return Err("Todo planning tools are unavailable in an executor Run.".into());
     }
@@ -919,31 +898,10 @@ async fn execute_todo_planning_write_tool(
         .arguments
         .as_object()
         .ok_or_else(|| "The Todo planning arguments are invalid.".to_owned())?;
-    let result = app
-        .state::<HostManager>()
-        .execute(HostCommand::GetRun(GetRunCommand {
-            owner_user_id: owner_user_id.to_owned(),
-            run_id: claim.invocation.run_id.clone(),
-        }))
-        .await?;
-    let HostResult::Run { run } = result else {
-        return Err("The Todo planning Run context is invalid.".into());
-    };
-    if run.owner_user_id != owner_user_id || run.run_id != claim.invocation.run_id {
-        return Err("The Todo planning Run context is invalid.".into());
-    }
+    let (run, expected_binding) = load_todo_planning_run_context(app, owner_user_id, claim).await?;
     let store = app.state::<AgentConversationStore>().inner().clone();
     let owner = owner_user_id.to_owned();
     let run_id = run.run_id.clone();
-    let validation_store = store.clone();
-    let validation_owner = owner.clone();
-    let validation_run = run_id.clone();
-    let (expected_binding, _) = tauri::async_runtime::spawn_blocking(move || {
-        validation_store.load_agent_asset_tool_records(&validation_owner, &validation_run)
-    })
-    .await
-    .map_err(|_| "The Todo planning binding task exited unexpectedly.".to_owned())??;
-    validate_asset_run_context(&run.profile_key, &run.input, &expected_binding)?;
     require_todo_planning_manager(&expected_binding)?;
     let now = now_unix_ms();
     let (binding, output) = match claim.invocation.tool_name.as_str() {
@@ -1061,6 +1019,36 @@ async fn execute_todo_planning_write_tool(
         return Err("The Todo planning binding changed during the operation.".into());
     }
     Ok(LocalAgentToolOutcome::Succeeded { output })
+}
+
+async fn load_todo_planning_run_context(
+    app: &AppHandle,
+    owner_user_id: &str,
+    claim: &LocalAgentToolClaim,
+) -> Result<(LocalAgentRunRecord, AgentAssetToolBinding), String> {
+    let result = app
+        .state::<HostManager>()
+        .execute(HostCommand::GetRun(GetRunCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            run_id: claim.invocation.run_id.clone(),
+        }))
+        .await?;
+    let HostResult::Run { run } = result else {
+        return Err("The Todo planning Run context is invalid.".into());
+    };
+    if run.owner_user_id != owner_user_id || run.run_id != claim.invocation.run_id {
+        return Err("The Todo planning Run context is invalid.".into());
+    }
+    let store = app.state::<AgentConversationStore>().inner().clone();
+    let owner = owner_user_id.to_owned();
+    let run_id = run.run_id.clone();
+    let (binding, _) = tauri::async_runtime::spawn_blocking(move || {
+        store.load_agent_asset_tool_records(&owner, &run_id)
+    })
+    .await
+    .map_err(|_| "The Todo planning binding task exited unexpectedly.".to_owned())??;
+    validate_asset_run_context(&run.profile_key, &run.input, &binding)?;
+    Ok((run, binding))
 }
 
 async fn resolve_todo_plugin_hints(
