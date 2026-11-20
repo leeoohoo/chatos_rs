@@ -243,7 +243,7 @@ pub trait LocalAgentRunStore: Send + Sync {
 }
 
 mod task_store_port;
-pub use task_store_port::LocalAgentTaskStore;
+pub use task_store_port::{LocalAgentTaskStore, LocalTaskListFilter};
 
 #[async_trait]
 pub trait LocalAgentToolStore: Send + Sync {

@@ -21,6 +21,7 @@ use super::{
 };
 use crate::LocalToolExecutor;
 use async_trait::async_trait;
+use chatos_local_agent_ports::LocalTaskListFilter;
 use chatos_local_agent_protocol::{
     HostCommand, HostRequestEnvelope, LocalAgentRunRecord, LocalAgentToolInvocationRecord,
     LocalAgentToolOutcome, LocalConversationAttachmentSpec, LocalTaskGraphNotificationPolicy,
@@ -200,23 +201,8 @@ impl LocalTaskToolExecutor {
                     .map_err(|error| format!("invalid list_tasks input: {error}"))?;
                 let limit = args.limit.unwrap_or(50);
                 let offset = args.offset.unwrap_or(0);
-                let (storage_status, post_filter) = match args.status {
-                    None => (None, None),
-                    Some(TaskListStatus::Ready) => (None, Some(TaskListStatus::Ready)),
-                    Some(TaskListStatus::Running) => (Some(LocalTaskStatus::Running), None),
-                    Some(TaskListStatus::Succeeded) => (Some(LocalTaskStatus::Succeeded), None),
-                    Some(TaskListStatus::Failed) => (Some(LocalTaskStatus::Failed), None),
-                    Some(TaskListStatus::Blocked) => (Some(LocalTaskStatus::Blocked), None),
-                    Some(TaskListStatus::Cancelled) => (Some(LocalTaskStatus::Cancelled), None),
-                    Some(
-                        status @ (TaskListStatus::Draft
-                        | TaskListStatus::Queued
-                        | TaskListStatus::Archived),
-                    ) => (None, Some(status)),
-                };
-                let query_limit = if post_filter.is_some() { 500 } else { limit };
-                let query_offset = if post_filter.is_some() { 0 } else { offset };
-                let mut tasks = self
+                let storage_status = args.status.map(TaskListStatus::storage_filter);
+                let tasks = self
                     .runtime
                     .list_tasks_for_conversation(
                         &parent.owner_user_id,
@@ -227,19 +213,11 @@ impl LocalTaskToolExecutor {
                         args.scheduled_only,
                         args.parent_task_id.as_deref(),
                         args.source_run_id.as_deref(),
-                        query_limit,
-                        query_offset,
+                        limit,
+                        offset,
                     )
                     .await
                     .map_err(|error| error.to_string())?;
-                if let Some(status) = post_filter {
-                    tasks.retain(|task| status.matches(task));
-                    tasks = tasks
-                        .into_iter()
-                        .skip(offset as usize)
-                        .take(limit as usize)
-                        .collect();
-                }
                 tasks_for_agent_tool(&tasks)
             }
             GET_TASK_TOOL => {
@@ -631,19 +609,16 @@ enum TaskListStatus {
 }
 
 impl TaskListStatus {
-    fn matches(self, task: &LocalTaskRecord) -> bool {
+    fn storage_filter(self) -> LocalTaskListFilter {
         match self {
-            Self::Ready => {
-                task.status == LocalTaskStatus::Pending
-                    || (task.status == LocalTaskStatus::Ready && task.active_run_id.is_none())
-            }
-            Self::Queued => task.status == LocalTaskStatus::Ready && task.active_run_id.is_some(),
-            Self::Running => task.status == LocalTaskStatus::Running,
-            Self::Succeeded => task.status == LocalTaskStatus::Succeeded,
-            Self::Failed => task.status == LocalTaskStatus::Failed,
-            Self::Blocked => task.status == LocalTaskStatus::Blocked,
-            Self::Cancelled => task.status == LocalTaskStatus::Cancelled,
-            Self::Draft | Self::Archived => false,
+            Self::Ready => LocalTaskListFilter::Ready,
+            Self::Queued => LocalTaskListFilter::Queued,
+            Self::Running => LocalTaskListFilter::Status(LocalTaskStatus::Running),
+            Self::Succeeded => LocalTaskListFilter::Status(LocalTaskStatus::Succeeded),
+            Self::Failed => LocalTaskListFilter::Status(LocalTaskStatus::Failed),
+            Self::Blocked => LocalTaskListFilter::Status(LocalTaskStatus::Blocked),
+            Self::Cancelled => LocalTaskListFilter::Status(LocalTaskStatus::Cancelled),
+            Self::Draft | Self::Archived => LocalTaskListFilter::Never,
         }
     }
 }

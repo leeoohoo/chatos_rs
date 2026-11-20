@@ -7,6 +7,7 @@ use super::{
     SqliteResultExt,
 };
 use async_trait::async_trait;
+use chatos_local_agent_ports::LocalTaskListFilter;
 use chatos_local_agent_protocol::{
     validate_identifier, CreateTaskGraphCommand, LocalAgentRunRecord,
     LocalMessageTaskGraphRunSummary, LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage,
@@ -290,7 +291,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         &self,
         owner_user_id: &str,
         conversation_id: &str,
-        status: Option<LocalTaskStatus>,
+        status: Option<LocalTaskListFilter>,
         keyword: Option<&str>,
         tag: Option<&str>,
         scheduled_only: Option<bool>,
@@ -313,7 +314,25 @@ impl LocalAgentTaskStore for SqliteClientStorage {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(escaped_like_pattern);
-        let status = status.map(LocalTaskStatus::as_str);
+        let status_clause = match status {
+            None => "",
+            Some(LocalTaskListFilter::Ready) => {
+                " AND (t.status = 'pending' OR (t.status = 'ready' AND t.active_run_id IS NULL))"
+            }
+            Some(LocalTaskListFilter::Queued) => {
+                " AND t.status = 'ready' AND t.active_run_id IS NOT NULL"
+            }
+            Some(LocalTaskListFilter::Never) => " AND 0",
+            Some(LocalTaskListFilter::Status(status)) => match status {
+                LocalTaskStatus::Pending => " AND t.status = 'pending'",
+                LocalTaskStatus::Ready => " AND t.status = 'ready'",
+                LocalTaskStatus::Running => " AND t.status = 'running'",
+                LocalTaskStatus::Succeeded => " AND t.status = 'succeeded'",
+                LocalTaskStatus::Failed => " AND t.status = 'failed'",
+                LocalTaskStatus::Cancelled => " AND t.status = 'cancelled'",
+                LocalTaskStatus::Blocked => " AND t.status = 'blocked'",
+            },
+        };
         let tag = tag.map(str::trim).filter(|value| !value.is_empty());
         let scheduled_only = scheduled_only.unwrap_or(false);
         let parent_task_id = parent_task_id
@@ -323,8 +342,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
             .map(str::trim)
             .filter(|value| !value.is_empty());
         let sql = format!(
-            "{SCOPED_TASK_SELECT} \
-             AND (? IS NULL OR t.status = ?) \
+            "{SCOPED_TASK_SELECT}{status_clause} \
              AND (? IS NULL OR LOWER(t.task_id || ' ' || t.title || ' ' || t.input_json) \
                   LIKE ? ESCAPE '\\') \
              AND (? IS NULL OR EXISTS (SELECT 1 FROM json_each(t.input_json, '$.tags') tag_item \
@@ -340,8 +358,6 @@ impl LocalAgentTaskStore for SqliteClientStorage {
             .bind(owner_user_id)
             .bind(owner_user_id)
             .bind(owner_user_id)
-            .bind(status)
-            .bind(status)
             .bind(normalized_keyword.as_deref())
             .bind(normalized_keyword.as_deref())
             .bind(tag)

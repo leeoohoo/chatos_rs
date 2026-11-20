@@ -9,10 +9,11 @@ use super::{
 };
 use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
-    CreateConversationCommand, HostCommand, HostRequestEnvelope, HostResult,
-    LocalAgentToolApprovalStatus, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
-    LocalAgentToolStatus, LocalConversationResourceBinding, LocalConversationResourceKind,
-    StartConversationTurnCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    CreateConversationCommand, CreateTaskGraphCommand, HostCommand, HostRequestEnvelope,
+    HostResult, LocalAgentToolApprovalStatus, LocalAgentToolInvocationRecord,
+    LocalAgentToolOutcome, LocalAgentToolStatus, LocalConversationResourceBinding,
+    LocalConversationResourceKind, LocalTaskSpec, StartConversationTurnCommand,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -350,6 +351,56 @@ async fn task_query_rejects_invalid_paging_before_touching_storage() {
         .expect("oversized query is a known rejection");
     let error = preparation_error(error);
     assert!(error.contains("invalid task query"));
+}
+
+#[tokio::test]
+async fn ready_task_query_pages_beyond_the_first_five_hundred_matches() {
+    let runtime = runtime_with_project_conversations().await;
+    for graph_index in 0..4 {
+        let tasks = (0..128)
+            .map(|task_index| {
+                let task_id = format!("task-{graph_index:02}-{task_index:03}");
+                LocalTaskSpec {
+                    title: format!("Task {task_id}"),
+                    task_id: task_id.clone(),
+                    profile_key: "task_execution".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"prompt": task_id}),
+                    max_iterations: 6,
+                }
+            })
+            .collect();
+        runtime
+            .try_handle(envelope(
+                &format!("create-page-graph-{graph_index}"),
+                HostCommand::CreateTaskGraph(CreateTaskGraphCommand {
+                    graph_id: format!("page-graph-{graph_index}"),
+                    owner_user_id: "user-1".to_string(),
+                    source_entity_type: "conversation_turn".to_string(),
+                    source_entity_id: "turn-1".to_string(),
+                    tasks,
+                    dependencies: Vec::new(),
+                }),
+            ))
+            .await
+            .expect("create page graph");
+    }
+    let executor = LocalTaskToolExecutor::new(runtime, "user-1").expect("executor");
+
+    let listed = succeeded_output(
+        &executor,
+        invocation(
+            "list-ready-page",
+            "parent-run",
+            LIST_TASKS_TOOL,
+            json!({"status": "ready", "limit": 10, "offset": 500}),
+        ),
+    )
+    .await;
+
+    assert_eq!(listed.as_array().map(Vec::len), Some(10));
 }
 
 #[tokio::test]

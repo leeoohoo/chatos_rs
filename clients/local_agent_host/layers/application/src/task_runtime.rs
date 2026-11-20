@@ -2,11 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{LocalAgentRuntime, LocalAgentRuntimeError};
-use chatos_local_agent_ports::{ClientStorageError, IdempotentCommand};
+use chatos_local_agent_ports::{ClientStorageError, IdempotentCommand, LocalTaskListFilter};
 use chatos_local_agent_protocol::{
     CancelTaskCommand, CreateTaskGraphCommand, GetTaskRunsCommand, HostCommand, HostResult,
     ListTaskGraphsCommand, LocalAgentRunRecord, LocalTaskGraph, LocalTaskGraphPage,
-    LocalTaskRecord, LocalTaskStatus, RestartTaskCommand, RetryTaskCommand,
+    LocalTaskRecord, RestartTaskCommand, RetryTaskCommand,
 };
 use uuid::Uuid;
 
@@ -104,7 +104,7 @@ impl LocalAgentRuntime {
         &self,
         owner_user_id: &str,
         conversation_id: &str,
-        status: Option<LocalTaskStatus>,
+        status: Option<LocalTaskListFilter>,
         keyword: Option<&str>,
         tag: Option<&str>,
         scheduled_only: Option<bool>,

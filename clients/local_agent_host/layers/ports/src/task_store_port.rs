@@ -3,6 +3,14 @@
 
 use super::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalTaskListFilter {
+    Status(LocalTaskStatus),
+    Ready,
+    Queued,
+    Never,
+}
+
 #[async_trait]
 pub trait LocalAgentTaskStore: Send + Sync {
     async fn resolve_task_followup(
@@ -57,7 +65,7 @@ pub trait LocalAgentTaskStore: Send + Sync {
         &self,
         owner_user_id: &str,
         conversation_id: &str,
-        status: Option<LocalTaskStatus>,
+        status: Option<LocalTaskListFilter>,
         keyword: Option<&str>,
         tag: Option<&str>,
         scheduled_only: Option<bool>,
