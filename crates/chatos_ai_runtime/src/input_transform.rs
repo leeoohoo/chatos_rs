@@ -5,26 +5,6 @@ use serde_json::{json, Value};
 
 use crate::response_parse::text_value_or_json;
 
-pub fn extract_raw_input(messages: &[Value]) -> Value {
-    if let Some(last_user) = messages
-        .iter()
-        .rev()
-        .find(|message| message.get("role").and_then(|value| value.as_str()) == Some("user"))
-    {
-        if let Some(content) = last_user.get("content") {
-            return convert_parts_to_response_input(content);
-        }
-    }
-
-    if let Some(last) = messages.last() {
-        if let Some(content) = last.get("content") {
-            return convert_parts_to_response_input(content);
-        }
-    }
-
-    Value::String(String::new())
-}
-
 pub fn convert_parts_to_response_input(content: &Value) -> Value {
     if let Some(text) = content.as_str() {
         return Value::String(text.to_string());
@@ -240,19 +220,6 @@ pub fn response_content_has_image_part(content: &Value) -> bool {
             })
         })
         .unwrap_or(false)
-}
-
-pub fn prepend_input_items(
-    input: &Value,
-    prefixed_items: &[Value],
-    force_text_content: bool,
-) -> Value {
-    if prefixed_items.is_empty() {
-        return input.clone();
-    }
-    let mut merged = normalize_explicit_input_items(prefixed_items, force_text_content);
-    merged.extend(build_current_input_items(input, force_text_content));
-    Value::Array(merged)
 }
 
 pub fn append_input_items(

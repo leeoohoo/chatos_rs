@@ -49,27 +49,6 @@ pub fn prune_items_before_latest_compaction(mut items: Vec<Value>) -> Vec<Value>
     items
 }
 
-pub fn build_stateless_history_items(
-    leading_prefixed_input_items: &[Value],
-    trailing_prefixed_input_items: &[Value],
-    summary_text: Option<&str>,
-    history: &[StatelessHistoryMessage],
-    current_input_items: &[Value],
-    include_tool_items: bool,
-    force_text: bool,
-) -> Vec<Value> {
-    build_stateless_history_items_with_output_cap(
-        leading_prefixed_input_items,
-        trailing_prefixed_input_items,
-        summary_text,
-        history,
-        current_input_items,
-        include_tool_items,
-        force_text,
-        |raw| raw.to_string(),
-    )
-}
-
 pub fn build_stateless_history_items_with_output_cap<F>(
     leading_prefixed_input_items: &[Value],
     trailing_prefixed_input_items: &[Value],

@@ -145,11 +145,16 @@ async fn cancellation_interrupts_a_pending_provider_request_immediately() {
     });
     let started_at = std::time::Instant::now();
     let error = AiRequestHandler::new_with_read_timeout(std::time::Duration::from_secs(30))
-        .send_prebuilt_payload_with_options(
+        .handle_request_with_options(
             base_url.as_str(),
             "test-key",
-            AiTransport::Responses,
-            json!({"model": "gpt-test", "input": "hello", "stream": true}),
+            json!("hello"),
+            true,
+            "gpt-test".to_string(),
+            None,
+            None,
+            None,
+            None,
             StreamCallbacks::default(),
             Some("openai".to_string()),
             None,

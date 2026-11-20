@@ -179,24 +179,7 @@ fn memory_scope_builder_keeps_runtime_source_key() {
 }
 
 #[test]
-fn memory_record_scope_builder_defaults_to_pending_message_records() {
-    let scope = MemoryRecordScope::new("tenant_1")
-        .with_thread_id("thread_1")
-        .with_record_type("task_message")
-        .with_default_summary_status(None);
-
-    assert_eq!(scope.tenant_id, "tenant_1");
-    assert_eq!(scope.thread_id.as_deref(), Some("thread_1"));
-    assert_eq!(scope.record_type, "task_message");
-    assert!(scope.default_summary_status.is_none());
-
-    let message_scope = MemoryRecordScope::message_thread("tenant_1", "thread_2");
-    assert_eq!(message_scope.record_type, "message");
-    assert_eq!(
-        message_scope.default_summary_status.as_deref(),
-        Some("pending")
-    );
-
+fn memory_record_scope_routes_tenant_from_record_metadata() {
     let routed_scope = MemoryRecordScope::per_record_tenant("tenant_id");
     assert!(routed_scope.tenant_id.is_empty());
     assert_eq!(
@@ -1013,63 +996,4 @@ fn compose_response_to_input_items_expires_run_scoped_references_from_memory() {
     assert!(encoded.matches("[expired_run_scoped_reference]").count() >= 4);
     assert!(encoded.contains("\"call_id\":\"call_1\""));
     assert!(encoded.contains("Decision"));
-}
-
-fn summary_status(
-    running: bool,
-    failed: bool,
-) -> memory_engine_sdk::RunThreadActiveSummaryResponse {
-    serde_json::from_value(json!({
-        "thread_id": "thread-1", "accepted": true, "running": running,
-        "completed": !running, "failed": failed, "job_run_id": "summary-job-1",
-        "generated": !running && !failed, "source_record_count": 9
-    }))
-    .unwrap()
-}
-
-#[tokio::test(start_paused = true)]
-async fn summary_wait_survives_multiple_minutes_until_the_service_completes_the_same_job() {
-    let started = tokio::time::Instant::now();
-    let mut polls = 0;
-    let result = super::wait_for_summary_job(
-        summary_status(true, false),
-        Duration::from_secs(60),
-        |job| {
-            assert_eq!(job.as_deref(), Some("summary-job-1"));
-            polls += 1;
-            std::future::ready(Ok(summary_status(polls < 5, false)))
-        },
-    )
-    .await
-    .unwrap();
-    assert!(result.completed && result.generated);
-    assert_eq!(polls, 5);
-    assert_eq!(started.elapsed(), Duration::from_secs(300));
-}
-
-#[tokio::test(start_paused = true)]
-async fn summary_wait_propagates_service_failure_and_can_be_cancelled_while_running() {
-    let status =
-        super::wait_for_summary_job(summary_status(true, false), Duration::from_secs(1), |_| {
-            std::future::ready(Ok(summary_status(false, true)))
-        })
-        .await
-        .unwrap();
-    assert!(status.failed);
-    let error =
-        super::wait_for_summary_job(summary_status(true, false), Duration::from_secs(1), |_| {
-            std::future::ready(Err("summary service unavailable".to_string()))
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(error, "summary service unavailable");
-    let wait =
-        super::wait_for_summary_job(summary_status(true, false), Duration::from_secs(10), |_| {
-            std::future::ready(Ok(summary_status(true, false)))
-        });
-    tokio::pin!(wait);
-    tokio::select! {
-        _ = &mut wait => panic!("a running job must keep waiting"),
-        _ = tokio::time::sleep(Duration::from_secs(200)) => {}
-    }
 }

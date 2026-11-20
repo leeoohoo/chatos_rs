@@ -10,7 +10,7 @@ use super::{
 };
 use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalConversationMessageRole};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 pub(super) struct TaskContractView<'a> {
     pub(super) requirement_refs: Vec<&'a str>,
@@ -39,12 +39,10 @@ pub(super) async fn validate_task_contracts(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    let mut source_messages = HashMap::new();
-    if let Some(message_id) = current_message_id.as_deref() {
-        if let Some(message) = source_user_message(parent) {
-            source_messages.insert(message_id.to_string(), message);
-        }
-    }
+    let current_message = current_message_id
+        .as_deref()
+        .zip(source_user_message(parent));
+    let mut source_messages = Vec::new();
     if let Some(conversation) = executor
         .runtime
         .conversation_for_host_worker(&parent.owner_user_id, conversation_id)
@@ -57,8 +55,13 @@ pub(super) async fn validate_task_contracts(
             .filter(|message| message.role == LocalConversationMessageRole::User)
         {
             if let Some(text) = conversation_message_text(&message.content) {
-                source_messages.insert(message.message_id, text);
+                source_messages.push((message.message_id, text));
             }
+        }
+    }
+    if let Some((message_id, message)) = current_message {
+        if !source_messages.iter().any(|(id, _)| id == message_id) {
+            source_messages.push((message_id.to_string(), message));
         }
     }
 
@@ -150,25 +153,25 @@ fn resolve_source_message_id(
     requirement_id: &str,
     quote: &str,
     current_message_id: Option<&str>,
-    source_messages: &HashMap<String, String>,
+    source_messages: &[(String, String)],
 ) -> Result<String, String> {
     if let Some(message_id) = current_message_id.filter(|message_id| {
         source_messages
-            .get(*message_id)
-            .is_some_and(|message| message.contains(quote))
+            .iter()
+            .any(|(id, message)| id == *message_id && message.contains(quote))
     }) {
         return Ok(message_id.to_string());
     }
     let mut matches = source_messages
         .iter()
-        .filter(|(_, message)| message.contains(quote))
-        .map(|(message_id, _)| message_id);
-    let Some(message_id) = matches.next() else {
+        .rev()
+        .filter(|(_, message)| message.contains(quote));
+    let Some((message_id, message)) = matches.next() else {
         return Err(format!(
             "requirement {requirement_id} source_quote is not an exact excerpt of an authoritative user message"
         ));
     };
-    if matches.next().is_some() {
+    if matches.any(|(_, candidate)| candidate != message) {
         return Err(format!(
             "requirement {requirement_id} source_quote matches multiple authoritative user messages; provide a longer unique excerpt"
         ));
@@ -182,14 +185,14 @@ mod source_binding_tests {
 
     #[test]
     fn source_message_identity_is_resolved_without_model_owned_ids() {
-        let messages = HashMap::from([
+        let messages = vec![
             (
                 "current".to_string(),
                 "continue the shared work".to_string(),
             ),
             ("older-1".to_string(), "inspect the project".to_string()),
             ("older-2".to_string(), "continue the old work".to_string()),
-        ]);
+        ];
 
         assert_eq!(
             resolve_source_message_id("R1", "continue", Some("current"), &messages).unwrap(),
@@ -207,6 +210,19 @@ mod source_binding_tests {
             resolve_source_message_id("R1", "missing", Some("current"), &messages)
                 .unwrap_err()
                 .contains("not an exact excerpt")
+        );
+    }
+
+    #[test]
+    fn repeated_identical_source_messages_bind_to_the_latest_one() {
+        let messages = vec![
+            ("older".to_string(), "download this video".to_string()),
+            ("latest".to_string(), "download this video".to_string()),
+        ];
+
+        assert_eq!(
+            resolve_source_message_id("R1", "download this video", None, &messages).unwrap(),
+            "latest"
         );
     }
 }

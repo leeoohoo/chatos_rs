@@ -46,11 +46,6 @@ impl BuiltinToolRegistry {
             .insert(provider.server_name().to_string(), Arc::new(provider));
     }
 
-    pub fn register_arc(&mut self, provider: Arc<dyn BuiltinToolProvider>) {
-        self.providers
-            .insert(provider.server_name().to_string(), provider);
-    }
-
     pub fn get(&self, server_name: &str) -> Option<Arc<dyn BuiltinToolProvider>> {
         self.providers.get(server_name).cloned()
     }

@@ -788,7 +788,6 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 max_agent_memory_tokens: available,
             });
         }
-        let caller_model = transient.model_config.model.clone();
         let conversation_id = memory
             .as_ref()
             .map(|memory| memory.thread_id.clone())
@@ -799,7 +798,6 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
             .unwrap_or_else(|| claim.run.run_id.clone());
         let mut spec = RuntimeTurnSpec::new(transient.model_config, conversation_id)
             .with_conversation_turn_id(conversation_turn_id)
-            .with_caller_model(caller_model)
             .with_prefixed_input_items(capabilities.prefixed_input_items)
             .with_current_input_items(current_input_items)
             .with_tools(capabilities.tools);

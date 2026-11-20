@@ -40,23 +40,8 @@ impl RuntimeBeforeModelRequest {
         self
     }
 
-    pub fn with_stream_output(mut self, stream_output: bool) -> Self {
-        self.stream_output = stream_output;
-        self
-    }
-
     pub fn with_tools_enabled(mut self, tools_enabled: bool) -> Self {
         self.tools_enabled = tools_enabled;
-        self
-    }
-
-    pub fn with_disabled_tool_names<I, S>(mut self, names: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.disabled_tool_names
-            .extend(names.into_iter().map(Into::into));
         self
     }
 

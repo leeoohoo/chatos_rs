@@ -31,7 +31,7 @@ impl LocalModelRuntimeResolver for LoopbackModel {
         model_config.protocol_overhead_estimator_id = "responses-json-v1".to_string();
         model_config.tokenizer_id = Some("o200k_base".to_string());
         Ok(TransientLocalModelRuntime {
-            runner: Arc::new(ContextualTurnRunner::new(AiRuntime::new(None), None)),
+            runner: Arc::new(ContextualTurnRunner::new(AiRuntime::default(), None)),
             model_config,
         })
     }

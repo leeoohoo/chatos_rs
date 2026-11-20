@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde_json::Value;
-use tracing::info;
 
 use crate::input_transform::{content_parts_to_text, to_message_item};
 use crate::response_parse::text_value_or_json;
@@ -94,18 +93,6 @@ pub fn extract_usage_snapshot(usage: &Value) -> UsageSnapshot {
         cached_tokens,
         output_tokens,
     }
-}
-
-pub fn log_usage_snapshot(purpose: &str, usage: Option<&Value>) {
-    let Some(usage) = usage else {
-        return;
-    };
-    let snapshot = extract_usage_snapshot(usage);
-
-    info!(
-        "[Agent Runtime] usage snapshot: purpose={}, input_tokens={}, cached_tokens={}, output_tokens={}",
-        purpose, snapshot.input_tokens, snapshot.cached_tokens, snapshot.output_tokens
-    );
 }
 
 pub fn rewrite_system_messages_to_user(input: &Value, force_text_content: bool) -> Value {

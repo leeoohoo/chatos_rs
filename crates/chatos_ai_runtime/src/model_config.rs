@@ -11,10 +11,6 @@ pub fn normalize_provider(provider: &str) -> String {
     }
 }
 
-pub fn is_gpt_provider(provider: &str) -> bool {
-    normalize_provider(provider) == "gpt"
-}
-
 pub fn effective_responses_support(_provider: &str, _base_url: &str, _configured: bool) -> bool {
     // ChatOS has one model protocol. NewAPI translates this OpenAI Responses
     // contract to the selected downstream vendor when necessary.

@@ -6,7 +6,6 @@ pub mod compat;
 pub mod error_policy;
 pub mod input_transform;
 pub mod lifecycle;
-pub mod mcp_executor;
 pub mod memory_context;
 pub mod model_config;
 pub mod model_reasoning;
@@ -25,14 +24,14 @@ pub mod turn;
 
 pub use builder::AiRuntimeBuilder;
 pub use compat::{
-    cap_tool_output_for_input, extract_usage_snapshot, log_usage_snapshot,
-    rewrite_system_messages_to_user, truncate_function_call_outputs_in_input, UsageSnapshot,
+    cap_tool_output_for_input, extract_usage_snapshot, rewrite_system_messages_to_user,
+    truncate_function_call_outputs_in_input, UsageSnapshot,
 };
 pub use error_policy::{
     classify_transient_retry, classify_user_facing_ai_error, effective_transient_retry_limit,
     exhausted_transient_retry_message, handle_transient_retry, handle_transient_retry_with_abort,
-    is_context_length_exceeded_error, is_invalid_input_text_error, is_missing_tool_call_error,
-    is_rate_limited_provider_error, is_request_body_too_large_error, is_response_parse_error,
+    is_context_length_exceeded_error, is_missing_tool_call_error, is_rate_limited_provider_error,
+    is_request_body_too_large_error, is_response_parse_error,
     is_retryable_provider_backpressure_error, is_retryable_provider_overload_error,
     is_transient_network_error, is_transient_transport_or_parse_error,
     is_upstream_auth_unavailable_error, is_upstream_connection_interrupted_error,
@@ -41,15 +40,13 @@ pub use error_policy::{
 };
 pub use input_transform::{
     append_input_items, assistant_visible_text, build_current_input_items, content_parts_to_text,
-    convert_parts_to_response_input, extract_raw_input, normalize_input_for_provider,
-    normalize_input_to_text_value, prepend_input_items, response_content_has_image_part,
-    to_message_item, to_message_item_with_reasoning,
+    convert_parts_to_response_input, normalize_input_for_provider, normalize_input_to_text_value,
+    response_content_has_image_part, to_message_item, to_message_item_with_reasoning,
 };
 pub use lifecycle::{
     RuntimeBeforeModelRequest, RuntimeFinalResponseAction, RuntimeFinalResponseContext,
     RuntimeIterationContext, RuntimeLifecycleHook, TaskFinalizationLifecycleHook,
 };
-pub use mcp_executor::McpRuntimeToolExecutor;
 pub use memory_context::{
     compose_response_to_input_items, compose_response_to_input_items_with_budget,
     MemoryContextCache, MemoryContextComposer, MemoryEngineRecordWriter, MemoryRecordScope,
@@ -67,9 +64,8 @@ pub use simple_prompt::{
     wrap_prompt_with_system_context, SimplePromptOptions,
 };
 pub use stateless_history::{
-    append_responses_history_items, build_stateless_history_items,
-    build_stateless_history_items_with_output_cap, prune_items_before_latest_compaction,
-    splice_current_input_items, StatelessHistoryMessage,
+    append_responses_history_items, build_stateless_history_items_with_output_cap,
+    prune_items_before_latest_compaction, splice_current_input_items, StatelessHistoryMessage,
 };
 pub use tool_runtime::{
     append_responses_tool_results, append_tool_results, append_tool_results_with_budget,
@@ -83,7 +79,7 @@ pub use tool_runtime::{
 pub use traits::{
     JsonSchemaOutputFormat, MemoryRecordWriter, ModelRequest, ModelRuntimeConfig, RuntimeCallbacks,
     RuntimeMessage, RuntimeRecordOptions, SaveAssistantRecordInput, SaveRecordInput,
-    SaveToolRecordInput, ToolExecutor, DEFAULT_MODEL_REQUEST_MAX_RETRIES,
+    SaveToolRecordInput, DEFAULT_MODEL_REQUEST_MAX_RETRIES,
 };
 pub use turn::{
     build_contextual_input, input_value_to_items, message_item, user_text_item,

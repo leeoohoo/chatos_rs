@@ -4,8 +4,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use chatos_mcp_runtime::ToolCallerModelRuntime;
-
 pub const DEFAULT_MODEL_REQUEST_MAX_RETRIES: usize = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -30,11 +28,6 @@ impl JsonSchemaOutputFormat {
             schema,
             strict: true,
         }
-    }
-
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
     }
 }
 
@@ -107,11 +100,6 @@ macro_rules! impl_model_request_builders {
             self
         }
 
-        pub fn with_previous_response_id(mut self, previous_response_id: Option<String>) -> Self {
-            self.previous_response_id = previous_response_id;
-            self
-        }
-
         pub fn with_request_cwd(mut self, request_cwd: Option<String>) -> Self {
             self.request_cwd = request_cwd;
             self
@@ -132,14 +120,6 @@ macro_rules! impl_model_request_builders {
 
         pub fn with_max_transient_retries(mut self, max_transient_retries: Option<usize>) -> Self {
             self.max_transient_retries = max_transient_retries;
-            self
-        }
-
-        pub fn with_responses_compaction_threshold(
-            mut self,
-            responses_compaction_threshold: Option<usize>,
-        ) -> Self {
-            self.responses_compaction_threshold = responses_compaction_threshold;
             self
         }
 
@@ -241,32 +221,6 @@ impl ModelRuntimeConfig {
             output_format: self.output_format.clone(),
         }
     }
-
-    pub fn to_tool_caller_model_runtime(&self) -> ToolCallerModelRuntime {
-        let supports_responses = crate::model_config::effective_responses_support(
-            self.provider.as_str(),
-            self.base_url.as_str(),
-            self.supports_responses,
-        );
-        ToolCallerModelRuntime::openai_compatible(
-            self.base_url.clone(),
-            self.api_key.clone(),
-            self.model.clone(),
-            self.provider.clone(),
-        )
-        .with_responses_support(supports_responses)
-        .with_images_support(self.supports_images)
-        .with_thinking_level(self.thinking_level.clone())
-        .with_temperature(self.temperature)
-        .with_instructions(self.instructions.clone())
-        .with_max_output_tokens(self.max_output_tokens.or_else(|| {
-            i64::try_from(self.output_reserve_tokens)
-                .ok()
-                .filter(|output| *output > 0)
-        }))
-        .with_request_body_limit_bytes(self.request_body_limit_bytes)
-        .with_max_transient_retries(self.max_transient_retries)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -299,14 +253,6 @@ pub struct ModelRequest {
 
 impl ModelRequest {
     impl_model_request_builders!();
-
-    pub fn from_runtime_config(
-        config: &ModelRuntimeConfig,
-        input: Value,
-        tools: Vec<Value>,
-    ) -> Self {
-        config.to_model_request(input, tools)
-    }
 
     pub fn openai_compatible(
         base_url: impl Into<String>,

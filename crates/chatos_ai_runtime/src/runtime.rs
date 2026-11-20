@@ -11,9 +11,7 @@ use chatos_mcp_runtime::ToolResult;
 use crate::request::AiRequestHandler;
 use crate::tool_call::tool_calls_value_has_items;
 use crate::traits::SaveToolRecordInput;
-use crate::traits::{
-    MemoryRecordWriter, ModelRequest, SaveAssistantRecordInput, SaveRecordInput, ToolExecutor,
-};
+use crate::traits::{MemoryRecordWriter, ModelRequest, SaveAssistantRecordInput, SaveRecordInput};
 use crate::{RuntimeBeforeModelRequest, RuntimeIterationContext};
 
 mod final_response;
@@ -35,7 +33,6 @@ use self::persistence::should_persist_tool_result;
 
 pub struct AiRuntime {
     request_handler: AiRequestHandler,
-    tool_executor: Option<Arc<dyn ToolExecutor>>,
     record_writer: Option<Arc<dyn MemoryRecordWriter>>,
     max_iterations: usize,
 }
@@ -44,21 +41,6 @@ const EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT: &str = "上一轮响应没有返回�
 impl AiRuntime {
     pub fn builder() -> crate::builder::AiRuntimeBuilder {
         crate::builder::AiRuntimeBuilder::new()
-    }
-
-    pub fn new(tool_executor: Option<Arc<dyn ToolExecutor>>) -> Self {
-        Self {
-            request_handler: AiRequestHandler::new(),
-            tool_executor,
-            record_writer: None,
-            max_iterations: 600,
-        }
-    }
-
-    pub fn from_mcp_executor(executor: chatos_mcp_runtime::McpExecutor) -> Self {
-        Self::new(Some(Arc::new(
-            crate::mcp_executor::McpRuntimeToolExecutor::new(executor),
-        )))
     }
 
     pub fn with_max_iterations(mut self, max_iterations: usize) -> Self {
@@ -77,10 +59,6 @@ impl AiRuntime {
     ) -> Self {
         self.record_writer = record_writer;
         self
-    }
-
-    pub fn has_record_writer(&self) -> bool {
-        self.record_writer.is_some()
     }
 
     pub async fn save_record(&self, input: SaveRecordInput) -> Result<(), String> {
@@ -203,6 +181,16 @@ impl AiRuntime {
             return Ok(());
         }
         writer.save_tool_records(records).await
+    }
+}
+
+impl Default for AiRuntime {
+    fn default() -> Self {
+        Self {
+            request_handler: AiRequestHandler::new(),
+            record_writer: None,
+            max_iterations: 600,
+        }
     }
 }
 

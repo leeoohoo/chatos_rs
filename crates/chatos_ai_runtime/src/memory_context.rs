@@ -12,7 +12,6 @@ use memory_engine_sdk::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::time::sleep;
 use tracing::warn;
 
 use crate::tool_runtime::ToolResultModelBudgetLimits;
@@ -333,21 +332,6 @@ impl MemoryContextComposer {
         .await
     }
 
-    pub async fn compose_input_items(&self, scope: &MemoryScope) -> Result<Vec<Value>, String> {
-        self.compose_input_items_with_budget(scope, None).await
-    }
-
-    pub async fn compose_input_items_with_budget(
-        &self,
-        scope: &MemoryScope,
-        limits: Option<ToolResultModelBudgetLimits>,
-    ) -> Result<Vec<Value>, String> {
-        let response = self.compose(scope).await?;
-        Ok(compose_response_to_input_items_with_budget(
-            &response, limits,
-        ))
-    }
-
     pub async fn compose_input_items_excluding_turn(
         &self,
         scope: &MemoryScope,
@@ -390,40 +374,6 @@ impl MemoryContextComposer {
                 trigger_reason,
             )
             .await
-    }
-
-    pub async fn get_active_summary_status(
-        &self,
-        scope: &MemoryScope,
-        job_run_id: Option<&str>,
-    ) -> Result<RunThreadActiveSummaryResponse, String> {
-        self.validate_scope_source(scope)?;
-        let project_partition_key = scope.project_partition_key()?;
-        let runtime_context_assertion = self.issue_assertion(scope, "summarize").await?;
-        self.client
-            .get_thread_active_summary_status(
-                scope.thread_id.as_str(),
-                scope.tenant_id.as_str(),
-                project_partition_key.as_str(),
-                runtime_context_assertion.as_str(),
-                job_run_id,
-            )
-            .await
-    }
-
-    pub async fn wait_for_active_summary_completion(
-        &self,
-        scope: &MemoryScope,
-        initial: RunThreadActiveSummaryResponse,
-        poll_interval: Duration,
-    ) -> Result<RunThreadActiveSummaryResponse, String> {
-        // The Memory service owns the job deadline and lease recovery. A successful status
-        // response with running=true is progress, even when summarization takes minutes.
-        wait_for_summary_job(initial, poll_interval, |job_run_id| async move {
-            self.get_active_summary_status(scope, job_run_id.as_deref())
-                .await
-        })
-        .await
     }
 
     fn validate_scope_source(&self, scope: &MemoryScope) -> Result<(), String> {
@@ -548,23 +498,6 @@ fn empty_context(scope: &MemoryScope) -> ComposeContextResponse {
         recent_records: Vec::new(),
         meta: ComposeContextMeta::default(),
     }
-}
-
-async fn wait_for_summary_job<F, Fut>(
-    mut status: RunThreadActiveSummaryResponse,
-    poll_interval: Duration,
-    mut poll: F,
-) -> Result<RunThreadActiveSummaryResponse, String>
-where
-    F: FnMut(Option<String>) -> Fut,
-    Fut: std::future::Future<Output = Result<RunThreadActiveSummaryResponse, String>>,
-{
-    let job_run_id = status.job_run_id.clone();
-    while status.running && !status.completed && !status.failed {
-        sleep(poll_interval).await;
-        status = poll(job_run_id.clone()).await?;
-    }
-    Ok(status)
 }
 
 #[cfg(test)]

@@ -163,7 +163,7 @@ async fn model_config_rehydrates_from_sqlite_and_resolves_secret_only_on_demand(
             .await
             .expect("storage"),
     );
-    let runner = Arc::new(ContextualTurnRunner::new(AiRuntime::new(None), None));
+    let runner = Arc::new(ContextualTurnRunner::new(AiRuntime::default(), None));
     let credentials = Arc::new(Credentials {
         resolutions: AtomicUsize::new(0),
     });
@@ -213,7 +213,7 @@ async fn model_config_without_an_output_limit_uses_the_local_agent_safety_defaul
             .await
             .expect("storage"),
     );
-    let runner = Arc::new(ContextualTurnRunner::new(AiRuntime::new(None), None));
+    let runner = Arc::new(ContextualTurnRunner::new(AiRuntime::default(), None));
     let credentials = Arc::new(Credentials {
         resolutions: AtomicUsize::new(0),
     });
@@ -265,7 +265,7 @@ fn model_snapshot() -> LocalModelConfigSnapshot {
 #[tokio::test]
 async fn old_runs_use_current_published_capacity_without_changing_the_frozen_model() {
     let storage = Arc::new(SqliteClientStorage::connect_memory().await.unwrap());
-    let runner = Arc::new(ContextualTurnRunner::new(AiRuntime::new(None), None));
+    let runner = Arc::new(ContextualTurnRunner::new(AiRuntime::default(), None));
     let credentials = Arc::new(Credentials {
         resolutions: AtomicUsize::new(0),
     });

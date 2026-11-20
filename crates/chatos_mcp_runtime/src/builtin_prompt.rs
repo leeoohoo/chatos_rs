@@ -24,20 +24,6 @@ pub enum BuiltinMcpPromptLocale {
 }
 
 impl BuiltinMcpPromptLocale {
-    pub const DEFAULT_KEY: &'static str = "zh-CN";
-    pub const ENGLISH_KEY: &'static str = "en-US";
-
-    pub fn from_key(value: Option<&str>) -> Self {
-        match value
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-            .unwrap_or(Self::DEFAULT_KEY)
-        {
-            Self::ENGLISH_KEY => Self::EnUs,
-            _ => Self::ZhCn,
-        }
-    }
-
     pub fn is_english(self) -> bool {
         matches!(self, Self::EnUs)
     }

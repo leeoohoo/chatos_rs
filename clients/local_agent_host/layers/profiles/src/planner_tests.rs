@@ -65,7 +65,7 @@ impl LocalModelRuntimeResolver for OwnerCheckingModelResolver {
             return Err("wrong model owner".to_string());
         }
         Ok(TransientLocalModelRuntime {
-            runner: Arc::new(ContextualTurnRunner::new(AiRuntime::new(None), None)),
+            runner: Arc::new(ContextualTurnRunner::new(AiRuntime::default(), None)),
             model_config: ModelRuntimeConfig {
                 model_capability_revision: "test-capability-v1".to_string(),
                 context_window_tokens: 200_000,
@@ -138,10 +138,7 @@ async fn planner_resolves_control_plane_state_for_the_run_owner() {
         .prepare_ai_step(&claim(Value::Null, None))
         .await
         .expect("prepare owner-scoped step");
-    assert_eq!(
-        prepared.request.runtime_options.caller_model.as_deref(),
-        Some("test-model")
-    );
+    assert_eq!(prepared.request.model_request.model, "test-model");
 }
 
 #[tokio::test]

@@ -27,12 +27,6 @@ pub enum TransientRetryAction {
     },
 }
 
-pub fn is_invalid_input_text_error(err: &str) -> bool {
-    let message = err.to_lowercase();
-    message.contains("input_text")
-        && (message.contains("invalid value") || message.contains("invalid_value"))
-}
-
 pub fn is_missing_tool_call_error(err: &str) -> bool {
     let message = err.to_lowercase();
     (message.contains("no tool call found")

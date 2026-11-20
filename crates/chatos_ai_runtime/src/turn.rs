@@ -32,7 +32,6 @@ pub struct RuntimeTurnSpec {
     pub model_config: ModelRuntimeConfig,
     pub conversation_id: String,
     pub conversation_turn_id: Option<String>,
-    pub caller_model: Option<String>,
     pub record_options: RuntimeRecordOptions,
     pub memory_scope: Option<MemoryScope>,
     pub prefixed_input_items: Vec<Value>,
@@ -169,7 +168,6 @@ impl RuntimeTurnSpec {
             model_config,
             conversation_id: conversation_id.into(),
             conversation_turn_id: None,
-            caller_model: None,
             record_options: RuntimeRecordOptions::default(),
             memory_scope: None,
             prefixed_input_items: Vec::new(),
@@ -190,11 +188,6 @@ impl RuntimeTurnSpec {
 
     pub fn with_conversation_turn_id(mut self, conversation_turn_id: impl Into<String>) -> Self {
         self.conversation_turn_id = Some(conversation_turn_id.into());
-        self
-    }
-
-    pub fn with_caller_model(mut self, caller_model: impl Into<String>) -> Self {
-        self.caller_model = Some(caller_model.into());
         self
     }
 
@@ -233,8 +226,6 @@ impl RuntimeTurnSpec {
             Some(self.conversation_id.clone()),
             self.conversation_turn_id.clone(),
         )
-        .with_caller_model(self.caller_model.clone())
-        .with_caller_model_runtime(Some(self.model_config.to_tool_caller_model_runtime()))
         .with_record_options(self.record_options.clone())
     }
 

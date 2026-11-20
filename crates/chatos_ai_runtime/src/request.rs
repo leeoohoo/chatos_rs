@@ -167,36 +167,6 @@ impl AiRequestHandler {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn send_prebuilt_payload_with_options(
-        &self,
-        base_url: &str,
-        api_key: &str,
-        transport: AiTransport,
-        payload: Value,
-        callbacks: StreamCallbacks,
-        provider: Option<String>,
-        thinking_level: Option<String>,
-        on_before_send_model_request: Option<Arc<dyn Fn(Value) + Send + Sync>>,
-        options: AiRequestOptions,
-    ) -> Result<AiResponse, String> {
-        self.send_payload(
-            base_url,
-            api_key,
-            transport,
-            payload,
-            callbacks,
-            provider,
-            thinking_level,
-            on_before_send_model_request,
-            options.request_body_limit_bytes,
-            options.abort_token,
-            options.force_identity_encoding,
-            options.stream,
-        )
-        .await
-    }
-
-    #[allow(clippy::too_many_arguments)]
     async fn send_payload(
         &self,
         base_url: &str,

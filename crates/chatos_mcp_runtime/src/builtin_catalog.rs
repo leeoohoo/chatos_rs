@@ -91,19 +91,6 @@ impl BuiltinMcpKind {
         }
     }
 
-    pub fn config_id(self) -> Option<&'static str> {
-        match self {
-            Self::CodeMaintainerRead => Some(CODE_MAINTAINER_READ_MCP_ID),
-            Self::CodeMaintainerWrite => Some(CODE_MAINTAINER_WRITE_MCP_ID),
-            Self::TerminalController => Some(TERMINAL_CONTROLLER_MCP_ID),
-            Self::Notepad => Some(NOTEPAD_MCP_ID),
-            Self::AgentBuilder => Some(AGENT_BUILDER_MCP_ID),
-            Self::AskUser => Some(ASK_USER_MCP_ID),
-            Self::RemoteConnectionController => Some(REMOTE_CONNECTION_CONTROLLER_MCP_ID),
-            Self::MemorySkillReader | Self::MemoryCommandReader | Self::MemoryPluginReader => None,
-        }
-    }
-
     pub fn command(self) -> Option<&'static str> {
         match self {
             Self::CodeMaintainerRead => Some(CODE_MAINTAINER_READ_COMMAND),

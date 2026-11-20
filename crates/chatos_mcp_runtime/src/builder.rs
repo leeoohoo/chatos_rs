@@ -30,37 +30,8 @@ impl McpExecutorBuilder {
         self
     }
 
-    pub fn with_http_servers<I>(mut self, servers: I) -> Self
-    where
-        I: IntoIterator<Item = McpHttpServer>,
-    {
-        self.http_servers.extend(servers);
-        self
-    }
-
-    pub fn with_stdio_server(mut self, server: McpStdioServer) -> Self {
-        self.stdio_servers.push(server);
-        self
-    }
-
-    pub fn with_stdio_servers<I>(mut self, servers: I) -> Self
-    where
-        I: IntoIterator<Item = McpStdioServer>,
-    {
-        self.stdio_servers.extend(servers);
-        self
-    }
-
     pub fn with_builtin_server(mut self, server: McpBuiltinServer) -> Self {
         self.builtin_servers.push(server);
-        self
-    }
-
-    pub fn with_builtin_servers<I>(mut self, servers: I) -> Self
-    where
-        I: IntoIterator<Item = McpBuiltinServer>,
-    {
-        self.builtin_servers.extend(servers);
         self
     }
 
@@ -69,16 +40,6 @@ impl McpExecutorBuilder {
         P: BuiltinToolProvider + 'static,
     {
         self.builtin_registry.register(provider);
-        self
-    }
-
-    pub fn with_builtin_provider_arc(mut self, provider: Arc<dyn BuiltinToolProvider>) -> Self {
-        self.builtin_registry.register_arc(provider);
-        self
-    }
-
-    pub fn with_builtin_registry(mut self, registry: BuiltinToolRegistry) -> Self {
-        self.builtin_registry = registry;
         self
     }
 

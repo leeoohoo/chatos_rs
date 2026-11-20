@@ -99,12 +99,6 @@ pub(super) async fn execute_once(
     } = request;
     model_request.supports_responses = true;
     model_request.previous_response_id = None;
-    if let Some(executor) = &runtime.tool_executor {
-        let tools = executor.available_tools();
-        if !tools.is_empty() {
-            model_request.tools = tools;
-        }
-    }
     let (mut iteration_request, lifecycle_before) =
         prepare_iteration_request(&model_request, &runtime_options, iteration, reason.as_str())
             .await?;

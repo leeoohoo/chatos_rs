@@ -4,8 +4,8 @@
 use serde_json::json;
 
 use super::{
-    ModelRequest, ModelRuntimeConfig, RuntimeRecordOptions, SaveAssistantRecordInput,
-    SaveRecordInput, SaveToolRecordInput,
+    ModelRuntimeConfig, RuntimeRecordOptions, SaveAssistantRecordInput, SaveRecordInput,
+    SaveToolRecordInput,
 };
 
 #[test]
@@ -83,8 +83,7 @@ fn model_runtime_config_builds_model_request() {
     .with_request_body_limit_bytes(Some(2048))
     .with_max_transient_retries(Some(7));
 
-    let request =
-        ModelRequest::from_runtime_config(&config, json!("hello"), vec![json!({"name":"t"})]);
+    let request = config.to_model_request(json!("hello"), vec![json!({"name":"t"})]);
 
     assert_eq!(request.base_url, "http://127.0.0.1:8080/v1");
     assert_eq!(request.api_key, "secret");
@@ -101,9 +100,6 @@ fn model_runtime_config_builds_model_request() {
     assert_eq!(request.request_body_limit_bytes, Some(2048));
     assert_eq!(request.max_transient_retries, Some(7));
     assert_eq!(request.tools.len(), 1);
-
-    let tool_runtime = config.to_tool_caller_model_runtime();
-    assert_eq!(tool_runtime.max_transient_retries, Some(7));
 }
 
 #[test]
@@ -151,18 +147,20 @@ fn save_record_input_builders_pack_runtime_metadata() {
 
 #[test]
 fn runtime_record_options_builders_configure_persistence() {
-    let options = RuntimeRecordOptions::default()
-        .with_persist_assistant_records(true)
-        .with_persist_tool_records(true)
-        .with_assistant_message_id("cloud-run:1:assistant")
-        .with_tool_message_id_prefix("cloud-run:1:tool")
-        .with_assistant_message_mode("task_assistant")
-        .with_assistant_message_source("task_execution")
-        .with_assistant_metadata(json!({"kind": "assistant"}))
-        .with_tool_message_mode("task_tool")
-        .with_tool_message_source("task_execution")
-        .with_tool_metadata(json!({"kind": "tool"}))
-        .with_summary_on_final_response(true);
+    let options = RuntimeRecordOptions {
+        persist_assistant_records: true,
+        persist_tool_records: true,
+        ..RuntimeRecordOptions::default()
+    }
+    .with_assistant_message_id("cloud-run:1:assistant")
+    .with_tool_message_id_prefix("cloud-run:1:tool")
+    .with_assistant_message_mode("task_assistant")
+    .with_assistant_message_source("task_execution")
+    .with_assistant_metadata(json!({"kind": "assistant"}))
+    .with_tool_message_mode("task_tool")
+    .with_tool_message_source("task_execution")
+    .with_tool_metadata(json!({"kind": "tool"}))
+    .with_summary_on_final_response(true);
 
     assert!(options.persist_assistant_records);
     assert!(options.persist_tool_records);

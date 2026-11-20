@@ -36,16 +36,6 @@ impl RuntimeRecordOptions {
         }
     }
 
-    pub fn with_persist_assistant_records(mut self, persist: bool) -> Self {
-        self.persist_assistant_records = persist;
-        self
-    }
-
-    pub fn with_persist_tool_records(mut self, persist: bool) -> Self {
-        self.persist_tool_records = persist;
-        self
-    }
-
     pub fn with_assistant_message_id(mut self, message_id: impl Into<String>) -> Self {
         self.assistant_message_id = Some(message_id.into());
         self
@@ -146,11 +136,6 @@ impl SaveRecordInput {
 
     pub fn with_message_id(mut self, message_id: impl Into<String>) -> Self {
         self.message_id = Some(message_id.into());
-        self
-    }
-
-    pub fn with_structured_payload(mut self, structured_payload: Value) -> Self {
-        self.structured_payload = Some(structured_payload);
         self
     }
 

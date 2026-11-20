@@ -159,11 +159,6 @@ impl McpToolCallCommand {
         Ok(())
     }
 
-    pub fn normalize_delivery_attempt(mut self) -> Self {
-        self.delivery_attempt = self.delivery_attempt.max(1);
-        self
-    }
-
     pub fn next_retry(&self, max_delivery_attempts: u32) -> Option<Self> {
         if self.delivery_attempt.max(1) >= max_delivery_attempts {
             return None;

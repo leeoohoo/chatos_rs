@@ -91,11 +91,6 @@ impl McpHttpServer {
         self
     }
 
-    pub fn with_http_client(mut self, client: reqwest::Client) -> Self {
-        self.http_client = Some(client);
-        self
-    }
-
     pub async fn resolved_headers(&self) -> Result<Option<HashMap<String, String>>, String> {
         let mut headers = self.headers.clone().unwrap_or_default();
         if let Some(provider) = self.header_provider.as_ref() {
@@ -229,11 +224,6 @@ impl McpStdioServer {
         self.env = Some(env);
         self
     }
-
-    pub fn with_user_id(mut self, user_id: impl Into<String>) -> Self {
-        self.user_id = Some(user_id.into());
-        self
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -314,112 +304,10 @@ impl std::fmt::Debug for TransientToolModelInput {
 }
 
 #[derive(Clone, Default)]
-pub struct ToolCallerModelRuntime {
-    pub model: String,
-    pub provider: String,
-    pub base_url: String,
-    pub api_key: String,
-    pub supports_responses: bool,
-    pub supports_images: Option<bool>,
-    pub thinking_level: Option<String>,
-    pub temperature: Option<f64>,
-    pub instructions: Option<String>,
-    pub max_output_tokens: Option<i64>,
-    pub request_body_limit_bytes: Option<usize>,
-    pub max_transient_retries: Option<usize>,
-}
-
-impl ToolCallerModelRuntime {
-    pub fn openai_compatible(
-        base_url: impl Into<String>,
-        api_key: impl Into<String>,
-        model: impl Into<String>,
-        provider: impl Into<String>,
-    ) -> Self {
-        Self {
-            base_url: base_url.into(),
-            api_key: api_key.into(),
-            model: model.into(),
-            provider: provider.into(),
-            ..Self::default()
-        }
-    }
-
-    pub fn with_responses_support(mut self, supports_responses: bool) -> Self {
-        self.supports_responses = supports_responses;
-        self
-    }
-
-    pub fn with_images_support(mut self, supports_images: Option<bool>) -> Self {
-        self.supports_images = supports_images;
-        self
-    }
-
-    pub fn with_thinking_level(mut self, thinking_level: Option<String>) -> Self {
-        self.thinking_level = thinking_level;
-        self
-    }
-
-    pub fn with_temperature(mut self, temperature: Option<f64>) -> Self {
-        self.temperature = temperature;
-        self
-    }
-
-    pub fn with_instructions(mut self, instructions: Option<String>) -> Self {
-        self.instructions = instructions;
-        self
-    }
-
-    pub fn with_max_output_tokens(mut self, max_output_tokens: Option<i64>) -> Self {
-        self.max_output_tokens = max_output_tokens;
-        self
-    }
-
-    pub fn with_request_body_limit_bytes(
-        mut self,
-        request_body_limit_bytes: Option<usize>,
-    ) -> Self {
-        self.request_body_limit_bytes = request_body_limit_bytes;
-        self
-    }
-
-    pub fn with_max_transient_retries(mut self, max_transient_retries: Option<usize>) -> Self {
-        self.max_transient_retries = max_transient_retries;
-        self
-    }
-
-    pub fn is_configured(&self) -> bool {
-        !self.model.trim().is_empty()
-            && !self.base_url.trim().is_empty()
-            && !self.api_key.trim().is_empty()
-    }
-}
-
-impl std::fmt::Debug for ToolCallerModelRuntime {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ToolCallerModelRuntime")
-            .field("model", &self.model)
-            .field("provider", &self.provider)
-            .field("base_url", &self.base_url)
-            .field("has_api_key", &(!self.api_key.trim().is_empty()))
-            .field("supports_responses", &self.supports_responses)
-            .field("supports_images", &self.supports_images)
-            .field("thinking_level", &self.thinking_level)
-            .field("temperature", &self.temperature)
-            .field("has_instructions", &self.instructions.is_some())
-            .field("max_output_tokens", &self.max_output_tokens)
-            .field("request_body_limit_bytes", &self.request_body_limit_bytes)
-            .field("max_transient_retries", &self.max_transient_retries)
-            .finish()
-    }
-}
-
-#[derive(Clone, Default)]
 pub struct ToolCallContext {
     pub conversation_id: Option<String>,
     pub conversation_turn_id: Option<String>,
     pub caller_model: Option<String>,
-    pub caller_model_runtime: Option<ToolCallerModelRuntime>,
     pub tool_result_max_chars: Option<usize>,
     pub is_aborted: Option<ToolAbortCheckCallback>,
 }
@@ -434,24 +322,9 @@ impl ToolCallContext {
             conversation_id,
             conversation_turn_id,
             caller_model,
-            caller_model_runtime: None,
             tool_result_max_chars: None,
             is_aborted: None,
         }
-    }
-
-    pub fn with_caller_model_runtime(
-        mut self,
-        caller_model_runtime: Option<ToolCallerModelRuntime>,
-    ) -> Self {
-        if self.caller_model.is_none() {
-            self.caller_model = caller_model_runtime
-                .as_ref()
-                .map(|runtime| runtime.model.clone())
-                .filter(|model| !model.trim().is_empty());
-        }
-        self.caller_model_runtime = caller_model_runtime;
-        self
     }
 
     pub fn with_abort_checker(mut self, is_aborted: ToolAbortCheckCallback) -> Self {
@@ -484,7 +357,6 @@ impl std::fmt::Debug for ToolCallContext {
             .field("conversation_id", &self.conversation_id)
             .field("conversation_turn_id", &self.conversation_turn_id)
             .field("caller_model", &self.caller_model)
-            .field("caller_model_runtime", &self.caller_model_runtime)
             .field("tool_result_max_chars", &self.tool_result_max_chars)
             .field("has_abort_checker", &self.is_aborted.is_some())
             .finish()
@@ -578,10 +450,7 @@ mod tests {
 
     use async_trait::async_trait;
 
-    use super::{
-        McpHttpHeaderProvider, McpHttpServer, McpStdioServer, McpToolNameAlias, ToolCallContext,
-        ToolCallerModelRuntime,
-    };
+    use super::{McpHttpHeaderProvider, McpHttpServer, McpStdioServer, McpToolNameAlias};
 
     #[derive(Debug)]
     struct TestHeaderProvider;
@@ -706,22 +575,5 @@ mod tests {
             server.tool_timeout_duration("another_tool"),
             Some(std::time::Duration::from_secs(30))
         );
-    }
-
-    #[test]
-    fn tool_context_debug_redacts_caller_runtime_api_key() {
-        let context = ToolCallContext::new(None, None, None).with_caller_model_runtime(Some(
-            ToolCallerModelRuntime::openai_compatible(
-                "https://example.com/v1",
-                "secret-key",
-                "gpt-vision",
-                "gpt",
-            ),
-        ));
-
-        let rendered = format!("{context:?}");
-        assert!(rendered.contains("has_api_key"));
-        assert!(rendered.contains("gpt-vision"));
-        assert!(!rendered.contains("secret-key"));
     }
 }

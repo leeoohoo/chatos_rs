@@ -556,7 +556,7 @@ mod tests {
             vec![user_text_item("x".repeat(320_000))],
         )
         .with_memory_scope(Some(test_scope()));
-        let runner = super::ContextualTurnRunner::new(AiRuntime::new(None), Some(composer));
+        let runner = super::ContextualTurnRunner::new(AiRuntime::default(), Some(composer));
 
         runner
             .execute_once(request, 1, "initial", 1)
@@ -657,7 +657,6 @@ mod tests {
         .with_responses_support(true);
         let spec = RuntimeTurnSpec::for_user_text(config, "task_1", "run this task")
             .with_conversation_turn_id("run_1")
-            .with_caller_model("gpt-test")
             .with_record_options(RuntimeRecordOptions::persist_all())
             .with_memory_scope(Some(
                 MemoryScope::thread("tenant_1", "task_execution", "task_1")

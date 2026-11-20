@@ -44,32 +44,6 @@ pub struct MemoryRecordScope {
 }
 
 impl MemoryRecordScope {
-    pub fn new(tenant_id: impl Into<String>) -> Self {
-        Self {
-            tenant_id: tenant_id.into(),
-            tenant_metadata_key: None,
-            thread_id: None,
-            record_type: "message".to_string(),
-            default_summary_status: Some("pending".to_string()),
-            agent_id: None,
-            project_aggregation_id: None,
-            thread_kind: None,
-        }
-    }
-
-    pub fn message_thread(tenant_id: impl Into<String>, thread_id: impl Into<String>) -> Self {
-        Self {
-            tenant_id: tenant_id.into(),
-            tenant_metadata_key: None,
-            thread_id: Some(thread_id.into()),
-            record_type: "message".to_string(),
-            default_summary_status: Some("pending".to_string()),
-            agent_id: None,
-            project_aggregation_id: None,
-            thread_kind: None,
-        }
-    }
-
     /// Routes each record to the tenant carried in its metadata. This is used
     /// by multi-user runtimes that share one process-local Memory client.
     pub fn per_record_tenant(metadata_key: impl Into<String>) -> Self {
@@ -83,33 +57,6 @@ impl MemoryRecordScope {
             project_aggregation_id: None,
             thread_kind: None,
         }
-    }
-
-    pub fn with_thread_id(mut self, thread_id: impl Into<String>) -> Self {
-        self.thread_id = Some(thread_id.into());
-        self
-    }
-
-    pub fn with_record_type(mut self, record_type: impl Into<String>) -> Self {
-        self.record_type = record_type.into();
-        self
-    }
-
-    pub fn with_default_summary_status(mut self, default_summary_status: Option<String>) -> Self {
-        self.default_summary_status = default_summary_status;
-        self
-    }
-
-    pub fn with_memory_identity(
-        mut self,
-        agent_id: impl Into<String>,
-        project_aggregation_id: Option<String>,
-        thread_kind: impl Into<String>,
-    ) -> Self {
-        self.agent_id = Some(agent_id.into());
-        self.project_aggregation_id = project_aggregation_id;
-        self.thread_kind = Some(thread_kind.into());
-        self
     }
 }
 
