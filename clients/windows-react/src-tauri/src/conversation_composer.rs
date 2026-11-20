@@ -14,11 +14,11 @@ use crate::{
     attachment_tool_worker::AttachmentToolWorker,
     conversation_attachments::{AttachmentManager, AttachmentScope},
     host_lifecycle::{HostExecutionError, HostManager},
+    model_selection::is_generation_only_model,
     plugin_installer_tool_worker::{
         plugin_installer_revision, plugin_installer_tool_schemas, PLUGIN_INSTALLER_CONTACT_ID,
         PLUGIN_INSTALLER_INSTRUCTIONS,
     },
-    model_selection::is_generation_only_model,
     terminal_tool_worker::TerminalToolWorker,
 };
 

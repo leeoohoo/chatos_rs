@@ -40,7 +40,9 @@ pub(crate) fn reject_link_or_non_directory(path: &Path) -> io::Result<()> {
     if metadata.is_dir() && !metadata.file_type().is_symlink() && !is_reparse_point(&metadata) {
         Ok(())
     } else {
-        Err(io::Error::other("connector directory is not a regular directory"))
+        Err(io::Error::other(
+            "connector directory is not a regular directory",
+        ))
     }
 }
 

@@ -3,12 +3,12 @@ use super::{LocalTerminalIdentity, LocalTerminalLaunch};
 pub(super) use crate::interactive_pty::{
     snapshot_state, trim_events, PtySessionState as LocalTerminalSessionState,
 };
+pub(super) use crate::interactive_pty::{
+    PtyEvent as LocalTerminalEvent, PtyPollSnapshot as LocalTerminalPollSnapshot,
+};
 use crate::{
     interactive_pty::{ManagedPtySession, PtyCommand, PtyMessages},
     machine_resource_governor::MachineResourcePermit,
-};
-pub(super) use crate::interactive_pty::{
-    PtyEvent as LocalTerminalEvent, PtyPollSnapshot as LocalTerminalPollSnapshot,
 };
 use std::{ffi::OsString, sync::Arc};
 
