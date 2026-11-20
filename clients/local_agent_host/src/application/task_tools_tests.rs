@@ -68,7 +68,6 @@ pub(super) fn invocation(mut arguments: Value) -> LocalAgentToolInvocationRecord
             .or_insert_with(|| {
                 json!([{
                     "requirement_id": "R1",
-                    "source_message_id": "message-1",
                     "source_quote": "plan this",
                     "interpreted_requirement": "Complete the requested test work",
                     "requires_change": false
@@ -427,7 +426,16 @@ async fn single_writer_ownership_is_persisted_and_uses_shared_runtime_scope() {
     );
     let tools = task_model_tools();
     assert_eq!(graph.tasks[0].input["acceptance_report_version"], 1);
+    assert_eq!(
+        graph.tasks[0].input["requirements"][0]["source_message_id"],
+        "message-1"
+    );
     assert_eq!(graph.tasks[0].input["final_response_max_chars"], 400);
+    assert!(
+        tools[2]["parameters"]["properties"]["requirements"]["items"]["properties"]
+            .get("source_message_id")
+            .is_none()
+    );
     assert_eq!(
         tools[2]["parameters"]["properties"]["final_response_max_chars"],
         tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]

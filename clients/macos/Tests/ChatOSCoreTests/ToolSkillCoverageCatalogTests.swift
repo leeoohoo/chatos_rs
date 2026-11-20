@@ -94,6 +94,12 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             "explicitly names an installed Plugin or MCP"
         ))
         XCTAssertTrue(taskOrchestration.instructions.contains(
+            "Task capability choices are authoritative"
+        ))
+        XCTAssertTrue(taskOrchestration.instructions.contains(
+            "external URL should use the selectable browser Plugin"
+        ))
+        XCTAssertTrue(taskOrchestration.instructions.contains(
             "Complementary capabilities are additive"
         ))
         XCTAssertTrue(taskOrchestration.instructions.contains(

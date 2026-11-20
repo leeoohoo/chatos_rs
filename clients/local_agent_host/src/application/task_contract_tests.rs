@@ -10,7 +10,6 @@ async fn requirement_quote_must_come_from_the_authoritative_user_message() {
     let mut call = invocation(json!({
         "requirements": [{
             "requirement_id":"R1",
-            "source_message_id":"message-1",
             "source_quote":"invented words",
             "interpreted_requirement":"Return an observable configuration report",
             "requires_change":false
@@ -28,11 +27,46 @@ async fn requirement_quote_must_come_from_the_authoritative_user_message() {
 }
 
 #[tokio::test]
+async fn model_supplied_source_message_id_is_ignored_and_rebound() {
+    let executor = LocalTaskToolExecutor::new(runtime_with_parent().await, "user-1").unwrap();
+    let mut call = invocation(json!({
+        "requirements": [{
+            "requirement_id":"R1",
+            "source_message_id":"forged-message",
+            "source_quote":"plan this",
+            "interpreted_requirement":"Return an observable configuration report",
+            "requires_change":false
+        }],
+        "title":"Inspect",
+        "objective":"Read configuration",
+        "expected_outputs":["[R1] Configuration report"],
+        "acceptance_criteria":["[R1] Report cites source evidence"],
+        "requires_execution":false,
+        "enabled_builtin_kinds":["CodeMaintainerRead"]
+    }));
+    call.tool_name = CREATE_TASK_TOOL.into();
+    assert!(matches!(
+        executor.execute_tool(&call).await.unwrap(),
+        LocalAgentToolOutcome::Succeeded { .. }
+    ));
+    let graph = executor
+        .runtime
+        .task_graph_by_id("user-1", "local-task-graph-invocation-1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        graph.tasks[0].input["requirements"][0]["source_message_id"],
+        "message-1"
+    );
+}
+
+#[tokio::test]
 async fn every_change_requirement_needs_an_implementation_owner() {
     let base = json!({
         "requirements": [
-            {"requirement_id":"R1","source_message_id":"message-1","source_quote":"plan this","interpreted_requirement":"Remove the obsolete menu entry","requires_change":true},
-            {"requirement_id":"R2","source_message_id":"message-1","source_quote":"plan this","interpreted_requirement":"Repair the business initialization behavior","requires_change":true}
+            {"requirement_id":"R1","source_quote":"plan this","interpreted_requirement":"Remove the obsolete menu entry","requires_change":true},
+            {"requirement_id":"R2","source_quote":"plan this","interpreted_requirement":"Repair the business initialization behavior","requires_change":true}
         ],
         "graph_goal":"Implement and verify both requested changes",
         "decomposition_rationale":"Implementation and independent verification have different responsibilities",
@@ -68,7 +102,7 @@ async fn every_change_requirement_needs_an_implementation_owner() {
 #[tokio::test]
 async fn verification_contract_requires_a_valid_executable_check_graph() {
     let base = json!({
-        "requirements":[{"requirement_id":"R1","source_message_id":"message-1","source_quote":"plan this","interpreted_requirement":"Run the project-defined checks for the frozen artifact","requires_change":false}],
+        "requirements":[{"requirement_id":"R1","source_quote":"plan this","interpreted_requirement":"Run the project-defined checks for the frozen artifact","requires_change":false}],
         "title":"Verify",
         "objective":"Verify the frozen artifact",
         "expected_outputs":["[R1] Complete verification report"],

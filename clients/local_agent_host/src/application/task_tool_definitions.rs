@@ -232,15 +232,14 @@ fn task_requirements_schema() -> Value {
             "type": "object",
             "properties": {
                 "requirement_id": {"type": "string", "minLength": 1, "maxLength": 128},
-                "source_message_id": {"type": "string", "minLength": 1, "maxLength": 256},
                 "source_quote": {"type": "string", "minLength": 1, "maxLength": 4000},
                 "interpreted_requirement": {"type": "string", "minLength": 4, "maxLength": 4000, "description": "Observable result, not a referential phrase such as handle it or follow above."},
                 "requires_change": {"type": "boolean"}
             },
-            "required": ["requirement_id", "source_message_id", "source_quote", "interpreted_requirement", "requires_change"],
+            "required": ["requirement_id", "source_quote", "interpreted_requirement", "requires_change"],
             "additionalProperties": false
         },
-        "description": "Trace every requested outcome to an exact excerpt of an authoritative user message. Prefix every expected_outputs and acceptance_criteria entry with one or more bound markers such as [R1]."
+        "description": "Trace every requested outcome to an exact excerpt of an authoritative user message. The Host binds the source message identity. Prefix every expected_outputs and acceptance_criteria entry with one or more bound markers such as [R1]."
     })
 }
 

@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 #[serde(deny_unknown_fields)]
 pub(in crate::application) struct TaskRequirement {
     pub(in crate::application) requirement_id: String,
+    #[serde(default)]
     pub(in crate::application) source_message_id: String,
     pub(in crate::application) source_quote: String,
     pub(in crate::application) interpreted_requirement: String,

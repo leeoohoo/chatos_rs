@@ -112,13 +112,14 @@ fn invocation(
 ) -> LocalAgentToolInvocationRecord {
     if let Some(object) = arguments.as_object_mut() {
         if tool_name == CREATE_TASK_TOOL {
-            object.entry("requirements").or_insert_with(|| json!([{
-                "requirement_id":"R1",
-                "source_message_id": if run_id == "other-parent-run" { "message-turn-2" } else { "message-turn-1" },
-                "source_quote":"Inspect the bound project",
-                "interpreted_requirement":"Complete the requested bound-project test work",
-                "requires_change":false
-            }]));
+            object.entry("requirements").or_insert_with(|| {
+                json!([{
+                    "requirement_id":"R1",
+                    "source_quote":"Inspect the bound project",
+                    "interpreted_requirement":"Complete the requested bound-project test work",
+                    "requires_change":false
+                }])
+            });
             object
                 .entry("expected_outputs")
                 .or_insert_with(|| json!(["[R1] Test output"]));
@@ -132,13 +133,14 @@ fn invocation(
             });
             object.entry("attachment_refs").or_insert_with(|| json!([]));
         } else if tool_name == CREATE_TASKS_TOOL {
-            object.entry("requirements").or_insert_with(|| json!([{
-                "requirement_id":"R1",
-                "source_message_id": if run_id == "other-parent-run" { "message-turn-2" } else { "message-turn-1" },
-                "source_quote":"Inspect the bound project",
-                "interpreted_requirement":"Complete the requested bound-project test work",
-                "requires_change":false
-            }]));
+            object.entry("requirements").or_insert_with(|| {
+                json!([{
+                    "requirement_id":"R1",
+                    "source_quote":"Inspect the bound project",
+                    "interpreted_requirement":"Complete the requested bound-project test work",
+                    "requires_change":false
+                }])
+            });
             object
                 .entry("graph_goal")
                 .or_insert_with(|| json!("Complete the test graph"));

@@ -367,6 +367,12 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
         XCTAssertTrue(mainChatPolicy.instructions.contains(
             "current-Run evidence proves that matching work is already active or was successfully created"
         ))
+        XCTAssertTrue(mainChatPolicy.instructions.contains(
+            "A capability offered only through the current `create_task`"
+        ))
+        XCTAssertTrue(mainChatPolicy.instructions.contains(
+            "external URL and a browser Plugin is selectable"
+        ))
 
         XCTAssertEqual(snapshot.bundle.schemaVersion, 1)
         XCTAssertEqual(snapshot.bundle.bundleRevision, snapshot.checksum)

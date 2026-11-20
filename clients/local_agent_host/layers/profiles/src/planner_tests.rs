@@ -166,6 +166,7 @@ async fn main_chat_receives_the_task_context_compilation_contract() {
     let guidance = contract["guidance"].as_str().expect("contract guidance");
     assert!(guidance.contains("context curator"));
     assert!(guidance.contains("exact source_quote"));
+    assert!(guidance.contains("Host binds source message identity programmatically"));
     assert!(guidance.contains("read-only verification Task cannot be its only owner"));
     assert!(guidance.contains("business default"));
     assert!(guidance.contains("Do not dump the conversation or all retained Memory"));

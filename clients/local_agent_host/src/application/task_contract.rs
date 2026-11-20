@@ -26,20 +26,21 @@ pub(super) async fn validate_task_contracts(
     executor: &LocalTaskToolExecutor,
     parent: &LocalAgentRunRecord,
     conversation_id: &str,
-    requirements: &[TaskRequirement],
+    requirements: &mut [TaskRequirement],
     tasks: &[TaskContractView<'_>],
 ) -> Result<(), String> {
     if requirements.is_empty() || requirements.len() > 50 {
         return Err("requirements must contain 1..=50 items".to_string());
     }
-    let mut source_messages = HashMap::new();
-    if let Some(message_id) = parent
+    let current_message_id = parent
         .input
         .get("message_id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
+        .map(str::to_string);
+    let mut source_messages = HashMap::new();
+    if let Some(message_id) = current_message_id.as_deref() {
         if let Some(message) = source_user_message(parent) {
             source_messages.insert(message_id.to_string(), message);
         }
@@ -63,24 +64,20 @@ pub(super) async fn validate_task_contracts(
 
     let mut ids = HashSet::new();
     let mut requires_change = HashSet::new();
-    for requirement in requirements {
+    for requirement in requirements.iter_mut() {
         let id = requirement.requirement_id.trim();
         validate_nonempty_text(id, "requirement_id")?;
         if !ids.insert(id.to_string()) {
             return Err(format!("requirement_id is duplicated: {id}"));
         }
-        let source_message_id = requirement.source_message_id.trim();
-        let source = source_messages.get(source_message_id).ok_or_else(|| {
-            format!(
-                "requirement {id} source_message_id is not an authoritative user message: {source_message_id}"
-            )
-        })?;
         let quote = requirement.source_quote.trim();
-        if quote.is_empty() || !source.contains(quote) {
+        if quote.is_empty() {
             return Err(format!(
-                "requirement {id} source_quote is not an exact excerpt of user message {source_message_id}"
+                "requirement {id} source_quote must be an exact excerpt of an authoritative user message"
             ));
         }
+        requirement.source_message_id =
+            resolve_source_message_id(id, quote, current_message_id.as_deref(), &source_messages)?;
         let interpreted = requirement.interpreted_requirement.trim();
         if interpreted.chars().count() < 4
             || matches!(
@@ -147,6 +144,71 @@ pub(super) async fn validate_task_contracts(
         ));
     }
     Ok(())
+}
+
+fn resolve_source_message_id(
+    requirement_id: &str,
+    quote: &str,
+    current_message_id: Option<&str>,
+    source_messages: &HashMap<String, String>,
+) -> Result<String, String> {
+    if let Some(message_id) = current_message_id.filter(|message_id| {
+        source_messages
+            .get(*message_id)
+            .is_some_and(|message| message.contains(quote))
+    }) {
+        return Ok(message_id.to_string());
+    }
+    let mut matches = source_messages
+        .iter()
+        .filter(|(_, message)| message.contains(quote))
+        .map(|(message_id, _)| message_id);
+    let Some(message_id) = matches.next() else {
+        return Err(format!(
+            "requirement {requirement_id} source_quote is not an exact excerpt of an authoritative user message"
+        ));
+    };
+    if matches.next().is_some() {
+        return Err(format!(
+            "requirement {requirement_id} source_quote matches multiple authoritative user messages; provide a longer unique excerpt"
+        ));
+    }
+    Ok(message_id.clone())
+}
+
+#[cfg(test)]
+mod source_binding_tests {
+    use super::*;
+
+    #[test]
+    fn source_message_identity_is_resolved_without_model_owned_ids() {
+        let messages = HashMap::from([
+            (
+                "current".to_string(),
+                "continue the shared work".to_string(),
+            ),
+            ("older-1".to_string(), "inspect the project".to_string()),
+            ("older-2".to_string(), "continue the old work".to_string()),
+        ]);
+
+        assert_eq!(
+            resolve_source_message_id("R1", "continue", Some("current"), &messages).unwrap(),
+            "current"
+        );
+        assert_eq!(
+            resolve_source_message_id("R1", "inspect the project", Some("current"), &messages)
+                .unwrap(),
+            "older-1"
+        );
+        assert!(resolve_source_message_id("R1", "work", None, &messages)
+            .unwrap_err()
+            .contains("multiple"));
+        assert!(
+            resolve_source_message_id("R1", "missing", Some("current"), &messages)
+                .unwrap_err()
+                .contains("not an exact excerpt")
+        );
+    }
 }
 
 fn conversation_message_text(content: &Value) -> Option<String> {

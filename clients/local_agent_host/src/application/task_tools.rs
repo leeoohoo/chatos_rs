@@ -314,17 +314,18 @@ impl LocalTaskToolExecutor {
                     .await?;
                 let task_policy = self.required_task_policy(&parent).await?;
                 task_policy.apply_single(&mut args)?;
+                let requirement_refs = args
+                    .requirements
+                    .iter()
+                    .map(|requirement| requirement.requirement_id.clone())
+                    .collect::<Vec<_>>();
                 validate_task_contracts(
                     self,
                     &parent,
                     conversation_id,
-                    &args.requirements,
+                    &mut args.requirements,
                     &[TaskContractView {
-                        requirement_refs: args
-                            .requirements
-                            .iter()
-                            .map(|requirement| requirement.requirement_id.as_str())
-                            .collect(),
+                        requirement_refs: requirement_refs.iter().map(String::as_str).collect(),
                         expected_outputs: &args.expected_outputs,
                         acceptance_criteria: &args.acceptance_criteria,
                         requires_execution: args.requires_execution,
@@ -448,7 +449,7 @@ impl LocalTaskToolExecutor {
                     self,
                     &parent,
                     conversation_id,
-                    &args.requirements,
+                    &mut args.requirements,
                     &contract_views,
                 )
                 .await?;
