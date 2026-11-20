@@ -24,7 +24,6 @@ clients/windows-react/src-tauri/src/story_studio/store.rs	1540	2027-02-28	Split 
 clients/windows-react/src-tauri/src/quick_search.rs	1502	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Tests/ChatOSConnectorTests/NativeCustomPluginInstallationTests.swift	1477	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src/features/media-studio/application/mediaStudioStore.ts	1472	2027-02-28	Split existing owned source by responsibility before expiry
-clients/windows-react/src-tauri/src/plugin_installer_tool_worker.rs	1467	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Sources/ChatOSApp/Features/MediaStudio/MediaStudioViewModel.swift	1459	2027-02-28	Extract Media Studio operation and persistence state
 clients/windows-react/src-tauri/src/agent_conversation/proposals.rs	1441	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/terminal_tool_worker/code_write.rs	1363	2027-02-28	Split existing owned source by responsibility before expiry
