@@ -540,11 +540,15 @@ impl CloudAgentStateStore {
         Self::Repository(Arc::new(store))
     }
 
-    pub async fn allocate_lane_seq(&self, ordering_lane_key: &str) -> Result<u64, String> {
+    fn repository(&self) -> &dyn CloudAgentStateRepository {
         match self {
-            Self::Memory(store) => store.allocate_lane_seq(ordering_lane_key).await,
-            Self::Repository(store) => store.allocate_lane_seq(ordering_lane_key).await,
+            Self::Memory(store) => store,
+            Self::Repository(store) => store.as_ref(),
         }
+    }
+
+    pub async fn allocate_lane_seq(&self, ordering_lane_key: &str) -> Result<u64, String> {
+        self.repository().allocate_lane_seq(ordering_lane_key).await
     }
 
     pub async fn insert_run(&self, record: CloudAgentRunRecord) -> Result<(), String> {
@@ -556,10 +560,9 @@ impl CloudAgentStateStore {
         record: CloudAgentRunRecord,
         outbox: Vec<CloudAgentOutboxIntent>,
     ) -> Result<(), String> {
-        match self {
-            Self::Memory(store) => store.insert_run_with_outbox(record, outbox).await,
-            Self::Repository(store) => store.insert_run_with_outbox(record, outbox).await,
-        }
+        self.repository()
+            .insert_run_with_outbox(record, outbox)
+            .await
     }
 
     pub async fn advance_lane_after_terminal(
@@ -567,18 +570,9 @@ impl CloudAgentStateStore {
         ordering_lane_key: &str,
         completed_lane_seq: u64,
     ) -> Result<Option<u64>, String> {
-        match self {
-            Self::Memory(store) => {
-                store
-                    .advance_lane_after_terminal(ordering_lane_key, completed_lane_seq)
-                    .await
-            }
-            Self::Repository(store) => {
-                store
-                    .advance_lane_after_terminal(ordering_lane_key, completed_lane_seq)
-                    .await
-            }
-        }
+        self.repository()
+            .advance_lane_after_terminal(ordering_lane_key, completed_lane_seq)
+            .await
     }
 
     pub async fn list_ready_outbox(
@@ -600,18 +594,9 @@ impl CloudAgentStateStore {
         claim_token: &str,
         claim_until: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<CloudAgentPendingOutboxIntent>, String> {
-        match self {
-            Self::Memory(store) => {
-                store
-                    .claim_ready_outbox_with_attempts(limit, claim_token, claim_until)
-                    .await
-            }
-            Self::Repository(store) => {
-                store
-                    .claim_ready_outbox_with_attempts(limit, claim_token, claim_until)
-                    .await
-            }
-        }
+        self.repository()
+            .claim_ready_outbox_with_attempts(limit, claim_token, claim_until)
+            .await
     }
 
     pub(crate) async fn mark_claimed_outbox_published(
@@ -619,18 +604,9 @@ impl CloudAgentStateStore {
         event_id: &str,
         claim_token: &str,
     ) -> Result<bool, String> {
-        match self {
-            Self::Memory(store) => {
-                store
-                    .mark_claimed_outbox_published(event_id, claim_token)
-                    .await
-            }
-            Self::Repository(store) => {
-                store
-                    .mark_claimed_outbox_published(event_id, claim_token)
-                    .await
-            }
-        }
+        self.repository()
+            .mark_claimed_outbox_published(event_id, claim_token)
+            .await
     }
 
     pub(crate) async fn mark_claimed_outbox_publish_failed(
@@ -641,30 +617,15 @@ impl CloudAgentStateStore {
         next_available_at: chrono::DateTime<chrono::Utc>,
         max_attempts: u32,
     ) -> Result<Option<CloudAgentOutboxPublishFailure>, String> {
-        match self {
-            Self::Memory(store) => {
-                store
-                    .mark_claimed_outbox_publish_failed(
-                        event_id,
-                        claim_token,
-                        error,
-                        next_available_at,
-                        max_attempts,
-                    )
-                    .await
-            }
-            Self::Repository(store) => {
-                store
-                    .mark_claimed_outbox_publish_failed(
-                        event_id,
-                        claim_token,
-                        error,
-                        next_available_at,
-                        max_attempts,
-                    )
-                    .await
-            }
-        }
+        self.repository()
+            .mark_claimed_outbox_publish_failed(
+                event_id,
+                claim_token,
+                error,
+                next_available_at,
+                max_attempts,
+            )
+            .await
     }
 
     pub async fn mark_outbox_published(&self, event_id: &str) -> Result<bool, String> {
@@ -690,13 +651,10 @@ impl CloudAgentStateStore {
                     .mark_outbox_publish_failed(event_id, error, next_available_at, max_attempts)
                     .await
             }
-            Self::Repository(store) => {
-                let _ = store;
-                Err(
-                    "unclaimed Cloud Agent outbox failure is only available for the in-memory store"
-                        .to_string(),
-                )
-            }
+            Self::Repository(_) => Err(
+                "unclaimed Cloud Agent outbox failure is only available for the in-memory store"
+                    .to_string(),
+            ),
         }
     }
 }
@@ -709,44 +667,29 @@ pub(super) fn bounded_outbox_publish_error(error: &str) -> String {
 #[async_trait]
 impl CloudAgentRunStore for CloudAgentStateStore {
     async fn load_run(&self, agent_run_id: &str) -> Result<Option<CloudAgentRunRecord>, String> {
-        match self {
-            Self::Memory(store) => store.load_run(agent_run_id).await,
-            Self::Repository(store) => store.load_run(agent_run_id).await,
-        }
+        self.repository().load_run(agent_run_id).await
     }
 
     async fn acquire_short_claim(
         &self,
         claim: &CloudAgentClaim,
     ) -> Result<CloudAgentClaimResult, String> {
-        match self {
-            Self::Memory(store) => store.acquire_short_claim(claim).await,
-            Self::Repository(store) => store.acquire_short_claim(claim).await,
-        }
+        self.repository().acquire_short_claim(claim).await
     }
 
     async fn renew_short_claim(&self, claim: &CloudAgentClaim) -> Result<bool, String> {
-        match self {
-            Self::Memory(store) => store.renew_short_claim(claim).await,
-            Self::Repository(store) => store.renew_short_claim(claim).await,
-        }
+        self.repository().renew_short_claim(claim).await
     }
 
     async fn commit_transition(
         &self,
         transition: CloudAgentAtomicTransition,
     ) -> Result<bool, String> {
-        match self {
-            Self::Memory(store) => store.commit_transition(transition).await,
-            Self::Repository(store) => store.commit_transition(transition).await,
-        }
+        self.repository().commit_transition(transition).await
     }
 
     async fn release_short_claim(&self, claim: &CloudAgentClaim) -> Result<(), String> {
-        match self {
-            Self::Memory(store) => store.release_short_claim(claim).await,
-            Self::Repository(store) => store.release_short_claim(claim).await,
-        }
+        self.repository().release_short_claim(claim).await
     }
 }
 
