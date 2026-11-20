@@ -5,10 +5,7 @@ mod manual_selection;
 mod presentation;
 mod source_installation;
 
-use chatos_local_agent_protocol::{
-    HostCommand, HostResult, LocalPluginInstallationRecord, RemovePluginInstallationCommand,
-};
-use chatos_plugin_management_sdk::{PluginManifest, PluginMcpServer};
+use chatos_local_agent_protocol::{HostCommand, HostResult, RemovePluginInstallationCommand};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -28,8 +25,7 @@ use crate::{
         MachineResourcePriority,
     },
     plugin_application::PluginApplicationManager,
-    plugin_credentials::{environment_secret_references, secret_name},
-    plugin_installer::{inspect_local_package_source, install_marketplace_package},
+    plugin_installer::inspect_local_package_source,
     plugin_integrity::{recover_interrupted_installations, requires_installation_integrity},
 };
 
@@ -41,26 +37,27 @@ use hooks::{
 };
 use installation::{
     installation_roots, is_local_plugin_installation, list_installation_records,
-    load_installed_manifest, marketplace_installation_specs, matching_records,
-    remove_installation_roots, replace_installation_records, set_records_enabled,
+    load_installed_manifest, matching_records, remove_installation_roots, set_records_enabled,
 };
 pub(crate) use installation::{installed_manifest_version, list_installation_records_for_owner};
 use manual_selection::{
     manual_plugin_components, prepare_manual_plugin_directory, validated_manual_selection_input,
     ManualPluginSelection,
 };
-use presentation::{project_snapshot, safe_text};
+use presentation::{declared_secret_names, project_snapshot, safe_text, validate_secret_bindings};
 pub(crate) use source_installation::{
     install_custom_npm_mcp, install_git_plugin_source, install_local_plugin_source,
-    install_npm_plugin_source, install_program_mcp_source,
+    install_marketplace_for_owner, install_npm_plugin_source, install_program_mcp_source,
 };
 
 #[cfg(test)]
 use crate::host_command_client::{HostCommandClient, HostCommandFuture};
 #[cfg(test)]
+use crate::plugin_credentials::environment_secret_references;
+#[cfg(test)]
 use chatos_local_agent_protocol::{
-    LocalPluginHookBundleRecord, LocalPluginHookBundleSpec, LocalPluginInstallationSpec,
-    SetActivePluginHookBundlesCommand,
+    LocalPluginHookBundleRecord, LocalPluginHookBundleSpec, LocalPluginInstallationRecord,
+    LocalPluginInstallationSpec, SetActivePluginHookBundlesCommand,
 };
 #[cfg(test)]
 use computer_use::{required_component_permission, PluginRuntimeHealthProjection};
@@ -722,72 +719,6 @@ pub async fn install_marketplace_plugin(
     .await
 }
 
-pub(crate) async fn install_marketplace_for_owner(
-    authentication: &AuthenticationManager,
-    host: &HostManager,
-    settings: &PluginSettingsManager,
-    applications: &PluginApplicationManager,
-    owner_user_id: &str,
-    plugin_id: &str,
-    expected_release_id: Option<&str>,
-) -> Result<PluginSettingsSnapshot, String> {
-    let generation = authentication
-        .session_generation_for_owner(owner_user_id)
-        .await?;
-    let _transaction = settings.installation_transactions.lock().await;
-    let sources = authentication
-        .plugin_install_sources_for_owner(owner_user_id)
-        .await
-        .map_err(|error| error.message)?;
-    let source = sources
-        .items
-        .iter()
-        .find(|source| source.catalog.id == plugin_id)
-        .cloned()
-        .ok_or_else(|| "Marketplace 中没有找到这个 Plugin。".to_owned())?;
-    if expected_release_id.is_some_and(|expected| expected != source.release.id) {
-        return Err("Marketplace Release 已变化，请重新搜索并确认后再安装。".into());
-    }
-    let records = list_installation_records(host, owner_user_id).await?;
-    let previous = records
-        .into_iter()
-        .filter(|record| record.spec.plugin_id == plugin_id)
-        .collect::<Vec<_>>();
-    // A reinstall is also the repair path for a missing or corrupted legacy installation.
-    // Do not let an unreadable old directory prevent a signed replacement from being staged.
-    let previous_roots = installation_roots(&settings.plugin_root, &previous).unwrap_or_default();
-    let response = authentication
-        .download_plugin_artifact_for_owner(owner_user_id, &source.catalog.id, &source.release.id)
-        .await
-        .map_err(|error| error.message)?;
-    let package =
-        install_marketplace_package(settings.plugin_root.clone(), source.clone(), response).await?;
-    let specs = match marketplace_installation_specs(owner_user_id, &source, &package, &previous) {
-        Ok(specs) => specs,
-        Err(error) => {
-            package.rollback();
-            return Err(error);
-        }
-    };
-    applications.reset().await;
-    if let Err(error) = replace_installation_records(host, previous, specs).await {
-        package.rollback();
-        return Err(error);
-    }
-    let installed_root = package.installation_root.clone();
-    let _ = package.finish();
-    let stale_roots = previous_roots
-        .into_iter()
-        .filter(|path| path != &installed_root)
-        .collect();
-    let _ = remove_installation_roots(&settings.plugin_root, stale_roots).await;
-    applications.reset().await;
-    authentication
-        .require_session_generation(owner_user_id, generation)
-        .await?;
-    load_snapshot(authentication, host, settings, owner_user_id, applications).await
-}
-
 async fn load_snapshot(
     authentication: &AuthenticationManager,
     host: &HostManager,
@@ -815,76 +746,6 @@ async fn load_snapshot(
     )?;
     apply_computer_use_runtime_health(&mut snapshot, runtime_health);
     Ok(snapshot)
-}
-
-fn presented_credentials(
-    manifest: &PluginManifest,
-    owner_user_id: &str,
-    plugin_id: &str,
-    applications: &PluginApplicationManager,
-) -> Result<Vec<PresentedPluginCredential>, String> {
-    declared_secret_names(manifest)?
-        .into_iter()
-        .map(|name| {
-            Ok(PresentedPluginCredential {
-                configured: applications.credential_is_configured(
-                    owner_user_id,
-                    plugin_id,
-                    &name,
-                )?,
-                name,
-            })
-        })
-        .collect()
-}
-
-fn declared_secret_names(manifest: &PluginManifest) -> Result<BTreeSet<String>, String> {
-    let mut names = BTreeSet::new();
-    for server in &manifest.mcp_servers {
-        let PluginMcpServer::Stdio { env, .. } = server else {
-            continue;
-        };
-        for template in env.values() {
-            names.insert(secret_name(template)?.to_owned());
-        }
-    }
-    Ok(names)
-}
-
-fn validate_secret_bindings(
-    owner_user_id: &str,
-    plugin_id: &str,
-    manifest: &PluginManifest,
-    records: &[LocalPluginInstallationRecord],
-) -> Result<(), String> {
-    for record in records {
-        let environment = manifest.mcp_servers.iter().find_map(|server| match server {
-            PluginMcpServer::Stdio {
-                component_key, env, ..
-            } if component_key == &record.spec.server_id => Some(env),
-            _ => None,
-        });
-        let expected = match environment {
-            Some(environment) => {
-                environment_secret_references(owner_user_id, plugin_id, environment)?
-            }
-            None if record.spec.server_id == "skills-only" => BTreeMap::new(),
-            None => return Err("Plugin 凭据绑定与已安装清单不一致。".into()),
-        };
-        if record.spec.owner_user_id != owner_user_id
-            || record.spec.plugin_id != plugin_id
-            || record.spec.environment_secret_refs != expected
-        {
-            return Err("Plugin 凭据绑定与已安装清单不一致。".into());
-        }
-    }
-    Ok(())
-}
-
-struct InstalledProjection {
-    manifest: Option<PluginManifest>,
-    enabled: bool,
-    issue: Option<&'static str>,
 }
 
 async fn load_device_id(app: &AppHandle, owner_user_id: &str) -> Result<String, String> {

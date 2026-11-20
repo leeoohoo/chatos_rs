@@ -5,20 +5,21 @@ use super::{
     },
     installation::{
         installation_roots, list_installation_records, local_installation_specs,
-        remove_installation_roots, replace_installation_records,
+        marketplace_installation_specs, remove_installation_roots, replace_installation_records,
     },
+    load_snapshot,
     presentation::safe_text,
-    PluginSettingsManager,
+    PluginSettingsManager, PluginSettingsSnapshot,
 };
 use crate::{
     authentication::AuthenticationManager,
     host_lifecycle::HostManager,
     plugin_application::PluginApplicationManager,
     plugin_installer::{
-        install_git_package, install_local_package, install_npm_mcp, install_npm_package_source,
-        install_program_mcp as install_program_mcp_package, trusted_local_hook_bundles,
-        CommittedPluginPackage, NpmMcpDraft, NpmMcpInspection, ProgramMcpDraft,
-        ProgramMcpInspection,
+        install_git_package, install_local_package, install_marketplace_package, install_npm_mcp,
+        install_npm_package_source, install_program_mcp as install_program_mcp_package,
+        trusted_local_hook_bundles, CommittedPluginPackage, NpmMcpDraft, NpmMcpInspection,
+        ProgramMcpDraft, ProgramMcpInspection,
     },
 };
 use chatos_local_agent_protocol::LocalPluginHookBundleRecord;
@@ -34,6 +35,72 @@ pub(crate) struct LocalPluginInstallResult {
     pub(crate) version: String,
     pub(crate) component_count: usize,
     pub(crate) fingerprint: String,
+}
+
+pub(crate) async fn install_marketplace_for_owner(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    plugin_id: &str,
+    expected_release_id: Option<&str>,
+) -> Result<PluginSettingsSnapshot, String> {
+    let generation = authentication
+        .session_generation_for_owner(owner_user_id)
+        .await?;
+    let _transaction = settings.installation_transactions.lock().await;
+    let sources = authentication
+        .plugin_install_sources_for_owner(owner_user_id)
+        .await
+        .map_err(|error| error.message)?;
+    let source = sources
+        .items
+        .iter()
+        .find(|source| source.catalog.id == plugin_id)
+        .cloned()
+        .ok_or_else(|| "Marketplace 中没有找到这个 Plugin。".to_owned())?;
+    if expected_release_id.is_some_and(|expected| expected != source.release.id) {
+        return Err("Marketplace Release 已变化，请重新搜索并确认后再安装。".into());
+    }
+    let records = list_installation_records(host, owner_user_id).await?;
+    let previous = records
+        .into_iter()
+        .filter(|record| record.spec.plugin_id == plugin_id)
+        .collect::<Vec<_>>();
+    // A reinstall is also the repair path for a missing or corrupted legacy installation.
+    // Do not let an unreadable old directory prevent a signed replacement from being staged.
+    let previous_roots = installation_roots(&settings.plugin_root, &previous).unwrap_or_default();
+    let response = authentication
+        .download_plugin_artifact_for_owner(owner_user_id, &source.catalog.id, &source.release.id)
+        .await
+        .map_err(|error| error.message)?;
+    let package =
+        install_marketplace_package(settings.plugin_root.clone(), source.clone(), response).await?;
+    let specs = match marketplace_installation_specs(owner_user_id, &source, &package, &previous) {
+        Ok(specs) => specs,
+        Err(error) => {
+            package.rollback();
+            return Err(error);
+        }
+    };
+    applications.reset().await;
+    if let Err(error) = replace_installation_records(host, previous, specs).await {
+        package.rollback();
+        return Err(error);
+    }
+    let installed_root = package.installation_root.clone();
+    let _ = package.finish();
+    let stale_roots = previous_roots
+        .into_iter()
+        .filter(|path| path != &installed_root)
+        .collect();
+    let _ = remove_installation_roots(&settings.plugin_root, stale_roots).await;
+    applications.reset().await;
+    authentication
+        .require_session_generation(owner_user_id, generation)
+        .await?;
+    load_snapshot(authentication, host, settings, owner_user_id, applications).await
 }
 
 pub(crate) async fn install_local_plugin_source(

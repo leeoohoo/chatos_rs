@@ -1,15 +1,21 @@
 use super::{
     installation::{group_records, load_installed_manifest},
-    presented_credentials, InstalledProjection, PluginSettingsSnapshot, PresentedPlugin,
-    PresentedPluginPermission, MAXIMUM_PRESENTED_TEXT_BYTES,
+    PluginSettingsSnapshot, PresentedPlugin, PresentedPluginCredential, PresentedPluginPermission,
+    MAXIMUM_PRESENTED_TEXT_BYTES,
 };
-use crate::plugin_application::PluginApplicationManager;
+use crate::{
+    plugin_application::PluginApplicationManager,
+    plugin_credentials::{environment_secret_references, secret_name},
+};
 use chatos_local_agent_protocol::LocalPluginInstallationRecord;
 use chatos_plugin_management_sdk::{
     validate_plugin_manifest, PluginInstallSource, PluginInstallSourceList, PluginManifest,
     PluginMcpServer, PluginPermissionRequirement,
 };
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 pub(super) fn project_snapshot(
     plugin_root: &Path,
@@ -199,6 +205,76 @@ fn project_local_plugin(
         install_action_available: false,
         credentials,
     })
+}
+
+fn presented_credentials(
+    manifest: &PluginManifest,
+    owner_user_id: &str,
+    plugin_id: &str,
+    applications: &PluginApplicationManager,
+) -> Result<Vec<PresentedPluginCredential>, String> {
+    declared_secret_names(manifest)?
+        .into_iter()
+        .map(|name| {
+            Ok(PresentedPluginCredential {
+                configured: applications.credential_is_configured(
+                    owner_user_id,
+                    plugin_id,
+                    &name,
+                )?,
+                name,
+            })
+        })
+        .collect()
+}
+
+pub(super) fn declared_secret_names(manifest: &PluginManifest) -> Result<BTreeSet<String>, String> {
+    let mut names = BTreeSet::new();
+    for server in &manifest.mcp_servers {
+        let PluginMcpServer::Stdio { env, .. } = server else {
+            continue;
+        };
+        for template in env.values() {
+            names.insert(secret_name(template)?.to_owned());
+        }
+    }
+    Ok(names)
+}
+
+pub(super) fn validate_secret_bindings(
+    owner_user_id: &str,
+    plugin_id: &str,
+    manifest: &PluginManifest,
+    records: &[LocalPluginInstallationRecord],
+) -> Result<(), String> {
+    for record in records {
+        let environment = manifest.mcp_servers.iter().find_map(|server| match server {
+            PluginMcpServer::Stdio {
+                component_key, env, ..
+            } if component_key == &record.spec.server_id => Some(env),
+            _ => None,
+        });
+        let expected = match environment {
+            Some(environment) => {
+                environment_secret_references(owner_user_id, plugin_id, environment)?
+            }
+            None if record.spec.server_id == "skills-only" => BTreeMap::new(),
+            None => return Err("Plugin 凭据绑定与已安装清单不一致。".into()),
+        };
+        if record.spec.owner_user_id != owner_user_id
+            || record.spec.plugin_id != plugin_id
+            || record.spec.environment_secret_refs != expected
+        {
+            return Err("Plugin 凭据绑定与已安装清单不一致。".into());
+        }
+    }
+    Ok(())
+}
+
+pub(super) struct InstalledProjection {
+    pub(super) manifest: Option<PluginManifest>,
+    pub(super) enabled: bool,
+    pub(super) issue: Option<&'static str>,
 }
 
 pub(super) fn installed_projection(
