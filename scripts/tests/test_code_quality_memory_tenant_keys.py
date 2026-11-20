@@ -56,7 +56,7 @@ class MemoryTenantKeyContractTests(unittest.TestCase):
         )
 
         for relative in (
-            "src/repositories/subject_memory_scopes.rs",
+            "src/repositories/subject_memory_scope_dispatch.rs",
             "src/repositories/summaries/dispatch.rs",
             "src/repositories/summaries/subject_dispatch.rs",
         ):
