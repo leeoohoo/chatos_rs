@@ -1,10 +1,9 @@
+mod hooks;
 mod installation;
 
 use chatos_local_agent_protocol::{
-    HostCommand, HostResult, ListPluginHookBundleRecordsCommand, ListPluginHookBundlesCommand,
-    LocalPluginHookBundleRecord, LocalPluginHookBundleSpec, LocalPluginInstallationRecord,
-    LocalPluginInstallationSpec, PutPluginHookBundleCommand, PutPluginInstallationCommand,
-    RemovePluginInstallationCommand, SetActivePluginHookBundlesCommand,
+    HostCommand, HostResult, LocalPluginHookBundleRecord, LocalPluginInstallationRecord,
+    LocalPluginInstallationSpec, PutPluginInstallationCommand, RemovePluginInstallationCommand,
 };
 use chatos_plugin_management_sdk::{
     validate_plugin_manifest, PluginInstallSource, PluginInstallSourceList, PluginManifest,
@@ -43,10 +42,14 @@ use crate::{
     },
     plugin_integrity::{
         recover_interrupted_installations, requires_installation_integrity,
-        secure_component_revision, verify_installation_integrity,
+        secure_component_revision,
     },
 };
 
+use hooks::{
+    deactivate_hook_bundles, list_all_hook_bundle_records, list_hook_bundle_records,
+    publish_inactive_hook_bundles, reconcile_active_hook_bundles, reconcile_current_hook_bundles,
+};
 use installation::{
     confined_plugin_root, group_records, installation_manifest_path, installation_roots,
     is_local_plugin_installation, list_installation_records, load_installed_manifest,
@@ -56,6 +59,8 @@ pub(crate) use installation::{installed_manifest_version, list_installation_reco
 
 #[cfg(test)]
 use crate::host_command_client::HostCommandFuture;
+#[cfg(test)]
+use chatos_local_agent_protocol::{LocalPluginHookBundleSpec, SetActivePluginHookBundlesCommand};
 
 const MAXIMUM_MANIFEST_BYTES: u64 = 2 * 1_024 * 1_024;
 const MAXIMUM_PRESENTED_TEXT_BYTES: usize = 16 * 1_024;
@@ -800,186 +805,6 @@ async fn finish_local_plugin_install(
     let _ = remove_installation_roots(&settings.plugin_root, stale_roots).await;
     applications.reset().await;
     Ok(result)
-}
-
-async fn publish_inactive_hook_bundles(
-    host: &dyn HostCommandClient,
-    owner_user_id: &str,
-    bundles: &[LocalPluginHookBundleSpec],
-) -> Result<(), String> {
-    let result = host
-        .execute(HostCommand::SetActivePluginHookBundles(
-            SetActivePluginHookBundlesCommand {
-                owner_user_id: owner_user_id.to_owned(),
-                bundle_ids: Vec::new(),
-            },
-        ))
-        .await?;
-    if !matches!(
-        result,
-        HostResult::ActivePluginHookBundlesUpdated { active_bundle_ids }
-            if active_bundle_ids.is_empty()
-    ) {
-        return Err("Local Agent Host 未确认 Hook Bundle 安全停用。".into());
-    }
-    for bundle in bundles {
-        let result = host
-            .execute(HostCommand::PutPluginHookBundle(
-                PutPluginHookBundleCommand {
-                    bundle: bundle.clone(),
-                },
-            ))
-            .await?;
-        if !matches!(
-            result,
-            HostResult::PluginHookBundle { bundle: record }
-                if record.spec == *bundle
-        ) {
-            return Err("Local Agent Host 返回了无效的 Hook Bundle 记录。".into());
-        }
-    }
-    Ok(())
-}
-
-async fn list_hook_bundle_records(
-    host: &dyn HostCommandClient,
-    owner_user_id: &str,
-) -> Result<Vec<LocalPluginHookBundleRecord>, String> {
-    match host
-        .execute(HostCommand::ListPluginHookBundles(
-            ListPluginHookBundlesCommand {
-                owner_user_id: owner_user_id.to_owned(),
-            },
-        ))
-        .await?
-    {
-        HostResult::PluginHookBundles { bundles } => Ok(bundles),
-        _ => Err("Local Agent Host 返回了无效的 Hook Bundle 清单。".into()),
-    }
-}
-
-async fn list_all_hook_bundle_records(
-    host: &dyn HostCommandClient,
-    owner_user_id: &str,
-) -> Result<Vec<LocalPluginHookBundleRecord>, String> {
-    match host
-        .execute(HostCommand::ListPluginHookBundleRecords(
-            ListPluginHookBundleRecordsCommand {
-                owner_user_id: owner_user_id.to_owned(),
-            },
-        ))
-        .await?
-    {
-        HostResult::PluginHookBundles { bundles } => Ok(bundles),
-        _ => Err("Local Agent Host 返回了无效的 Hook Bundle 记录清单。".into()),
-    }
-}
-
-async fn reconcile_current_hook_bundles(
-    host: &dyn HostCommandClient,
-    plugin_root: &Path,
-    owner_user_id: &str,
-) -> Result<(), String> {
-    let records = list_installation_records(host, owner_user_id).await?;
-    let bundles = list_all_hook_bundle_records(host, owner_user_id).await?;
-    reconcile_active_hook_bundles(host, owner_user_id, plugin_root, &records, &bundles).await
-}
-
-async fn reconcile_active_hook_bundles(
-    host: &dyn HostCommandClient,
-    owner_user_id: &str,
-    plugin_root: &Path,
-    records: &[LocalPluginInstallationRecord],
-    candidates: &[LocalPluginHookBundleRecord],
-) -> Result<(), String> {
-    let mut active_ids = BTreeSet::new();
-    for bundle in candidates {
-        if bundle.spec.owner_user_id != owner_user_id
-            || !bundle_matches_installation(plugin_root, records, &bundle.spec)
-        {
-            continue;
-        }
-        active_ids.insert(bundle.spec.bundle_id.clone());
-    }
-    let bundle_ids = active_ids.into_iter().collect::<Vec<_>>();
-    match host
-        .execute(HostCommand::SetActivePluginHookBundles(
-            SetActivePluginHookBundlesCommand {
-                owner_user_id: owner_user_id.to_owned(),
-                bundle_ids: bundle_ids.clone(),
-            },
-        ))
-        .await?
-    {
-        HostResult::ActivePluginHookBundlesUpdated { active_bundle_ids }
-            if active_bundle_ids == bundle_ids =>
-        {
-            Ok(())
-        }
-        _ => Err("Local Agent Host 未确认 Hook Bundle reconciliation。".into()),
-    }
-}
-
-async fn deactivate_hook_bundles(
-    host: &dyn HostCommandClient,
-    owner_user_id: &str,
-) -> Result<(), String> {
-    match host
-        .execute(HostCommand::SetActivePluginHookBundles(
-            SetActivePluginHookBundlesCommand {
-                owner_user_id: owner_user_id.to_owned(),
-                bundle_ids: Vec::new(),
-            },
-        ))
-        .await?
-    {
-        HostResult::ActivePluginHookBundlesUpdated { active_bundle_ids }
-            if active_bundle_ids.is_empty() =>
-        {
-            Ok(())
-        }
-        _ => Err("Local Agent Host 未确认 Hook Bundle 停用。".into()),
-    }
-}
-
-fn bundle_matches_installation(
-    plugin_root: &Path,
-    records: &[LocalPluginInstallationRecord],
-    bundle: &LocalPluginHookBundleSpec,
-) -> bool {
-    if !bundle.enabled || bundle.validate().is_err() {
-        return false;
-    }
-    let Ok(bundle_root) = Path::new(&bundle.installation_root).canonicalize() else {
-        return false;
-    };
-    let Some(record) = records.iter().find(|record| {
-        record.spec.owner_user_id == bundle.owner_user_id
-            && record.spec.plugin_id == bundle.plugin_id
-            && record.spec.release_id == bundle.release_id
-            && record.spec.enabled
-            && record.spec.release_digest == format!("sha256:{}", bundle.artifact_sha256)
-            && record
-                .spec
-                .working_directory
-                .as_deref()
-                .is_some_and(|path| {
-                    Path::new(path)
-                        .canonicalize()
-                        .ok()
-                        .is_some_and(|root| root == bundle_root)
-                })
-    }) else {
-        return false;
-    };
-    let Some(working_directory) = record.spec.working_directory.as_deref() else {
-        return false;
-    };
-    let Ok(installation_root) = Path::new(working_directory).canonicalize() else {
-        return false;
-    };
-    verify_installation_integrity(plugin_root, &installation_root, &record.spec.release_digest)
-        .is_ok()
 }
 
 #[tauri::command]
