@@ -72,7 +72,6 @@ clients/windows-react/src-tauri/src/media_studio/video_provider.rs	885	2027-02-2
 clients/windows-react/src-tauri/src/plugin_repository.rs	883	2027-02-28	Split existing production responsibilities before expiry
 memory_engine/backend/src/services/memory_cloud_agent.rs	878	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/project_run/analyzer.rs	871	2027-02-28	Split existing production responsibilities before expiry
-clients/local_agent_host/layers/infrastructure/database/src/conversation_store.rs	866	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/story_studio/memory.rs	863	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/media_studio/reference.rs	861	2027-02-28	Split existing production responsibilities before expiry
 memory_engine/backend/src/api/admin_api/reliability.rs	861	2027-02-28	Split existing production responsibilities before expiry
