@@ -5,6 +5,7 @@ mod models;
 mod ssh;
 mod terminal;
 
+use crate::host_command_client::HostCommandClient;
 use crate::machine_resource_governor::MachineResourceGovernor;
 use crate::{authentication::AuthenticationManager, connector_state, host_lifecycle::HostManager};
 use chatos_local_agent_protocol::{
@@ -30,7 +31,7 @@ pub use models::{
 };
 use models::{RemoteCredentialBundle, RemoteCredentialFlags};
 use ssh::{NativeOpenSshTester, RemoteConnectionTester, SshConnectionMaterial};
-use std::{collections::BTreeSet, future::Future, path::PathBuf, pin::Pin, sync::Arc};
+use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 use tauri::State;
 #[cfg(test)]
 use terminal::DisabledRemoteTerminalLauncher;
@@ -42,17 +43,8 @@ pub use terminal::{
 use terminal::{RemoteTerminalLauncher, RemoteTerminalRegistry};
 use tokio::sync::Mutex;
 
-type MetadataFuture<'a> = Pin<Box<dyn Future<Output = Result<HostResult, String>> + Send + 'a>>;
-
-trait RemoteConnectionMetadataClient: Send + Sync {
-    fn execute(&self, command: HostCommand) -> MetadataFuture<'_>;
-}
-
-impl RemoteConnectionMetadataClient for HostManager {
-    fn execute(&self, command: HostCommand) -> MetadataFuture<'_> {
-        Box::pin(HostManager::execute(self, command))
-    }
-}
+#[cfg(test)]
+use crate::host_command_client::HostCommandFuture;
 
 #[derive(Clone)]
 struct RemoteConnectorRoute {
@@ -155,7 +147,7 @@ impl RemoteConnectionManager {
 
     async fn list(
         &self,
-        client: &dyn RemoteConnectionMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
     ) -> Result<Vec<PresentedRemoteConnection>, String> {
         validate_owner(owner_user_id)?;
@@ -185,7 +177,7 @@ impl RemoteConnectionManager {
 
     async fn get(
         &self,
-        client: &dyn RemoteConnectionMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         connection_id: &str,
     ) -> Result<Option<PresentedRemoteConnection>, String> {
@@ -200,7 +192,7 @@ impl RemoteConnectionManager {
 
     async fn create(
         &self,
-        client: &dyn RemoteConnectionMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         presentation_id: Option<&str>,
         input: RemoteConnectionInput,
@@ -266,7 +258,7 @@ impl RemoteConnectionManager {
 
     async fn update(
         &self,
-        client: &dyn RemoteConnectionMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         connection_id: &str,
         expected_version: u64,
@@ -347,7 +339,7 @@ impl RemoteConnectionManager {
 
     async fn delete(
         &self,
-        client: &dyn RemoteConnectionMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         connection_id: &str,
         expected_version: u64,
@@ -401,7 +393,7 @@ impl RemoteConnectionManager {
 
     async fn spec(
         &self,
-        client: &dyn RemoteConnectionMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         current_connection_id: Option<&str>,
         input: &RemoteConnectionInput,
@@ -461,7 +453,7 @@ impl RemoteConnectionManager {
 
     async fn test_draft(
         &self,
-        client: &dyn RemoteConnectionMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         input: RemoteConnectionInput,
         presentation_id: Option<&str>,
@@ -516,7 +508,7 @@ impl RemoteConnectionManager {
 
     async fn test_saved(
         &self,
-        client: &dyn RemoteConnectionMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         connection_id: &str,
         verification_code: Option<String>,
@@ -530,7 +522,7 @@ impl RemoteConnectionManager {
 
     async fn saved_material(
         &self,
-        client: &dyn RemoteConnectionMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         connection_id: &str,
     ) -> Result<SshConnectionMaterial, String> {
@@ -751,7 +743,7 @@ pub fn run_ssh_askpass_helper_if_requested() -> bool {
 }
 
 async fn get_record(
-    client: &dyn RemoteConnectionMetadataClient,
+    client: &dyn HostCommandClient,
     owner_user_id: &str,
     connection_id: &str,
 ) -> Result<Option<LocalRemoteConnection>, String> {

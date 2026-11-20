@@ -1,9 +1,9 @@
 use chatos_local_agent_protocol::{
-    GetPluginInstallationCommand, HostCommand, HostResult, ListPluginHookBundleRecordsCommand,
-    ListPluginHookBundlesCommand, ListPluginInstallationsCommand, LocalPluginHookBundleRecord,
-    LocalPluginHookBundleSpec, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
-    LocalPluginInstallationSummary, PutPluginHookBundleCommand, PutPluginInstallationCommand,
-    RemovePluginInstallationCommand, SetActivePluginHookBundlesCommand,
+    HostCommand, HostResult, ListPluginHookBundleRecordsCommand, ListPluginHookBundlesCommand,
+    LocalPluginHookBundleRecord, LocalPluginHookBundleSpec, LocalPluginInstallationRecord,
+    LocalPluginInstallationSpec, LocalPluginInstallationSummary, PutPluginHookBundleCommand,
+    PutPluginInstallationCommand, RemovePluginInstallationCommand,
+    SetActivePluginHookBundlesCommand,
 };
 use chatos_plugin_management_sdk::{
     parse_plugin_manifest, validate_plugin_manifest, PluginInstallSource, PluginInstallSourceList,
@@ -15,20 +15,18 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    future::Future,
     io::Read,
     path::{Path, PathBuf},
-    pin::Pin,
     sync::{Arc, Mutex},
 };
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
-    app_data_transaction::ensure_owned_directory,
     authentication::AuthenticationManager,
     computer_use_worker::{diagnose as diagnose_computer_use, TrustedComputerUseLaunch},
     connector_state,
+    host_command_client::HostCommandClient,
     host_lifecycle::HostManager,
     machine_resource_governor::{
         MachineResourceGovernor, MachineResourceKind, MachineResourcePermit,
@@ -36,6 +34,10 @@ use crate::{
     },
     plugin_application::PluginApplicationManager,
     plugin_credentials::{environment_secret_references, secret_name},
+    plugin_installation_metadata::{
+        canonical_plugin_root, get_installation, list_installation_summaries,
+        record_matches_summary,
+    },
     plugin_installer::{
         inspect_local_package_source, install_git_package, install_local_package,
         install_marketplace_package, install_npm_mcp, install_npm_package_source,
@@ -49,21 +51,11 @@ use crate::{
     },
 };
 
-const MAXIMUM_INSTALLATIONS: usize = 1_000;
+#[cfg(test)]
+use crate::host_command_client::HostCommandFuture;
+
 const MAXIMUM_MANIFEST_BYTES: u64 = 2 * 1_024 * 1_024;
 const MAXIMUM_PRESENTED_TEXT_BYTES: usize = 16 * 1_024;
-
-type PluginHostFuture<'a> = Pin<Box<dyn Future<Output = Result<HostResult, String>> + Send + 'a>>;
-
-trait PluginSettingsHost: Send + Sync {
-    fn execute(&self, command: HostCommand) -> PluginHostFuture<'_>;
-}
-
-impl PluginSettingsHost for HostManager {
-    fn execute(&self, command: HostCommand) -> PluginHostFuture<'_> {
-        Box::pin(HostManager::execute(self, command))
-    }
-}
 
 #[derive(Clone)]
 pub(crate) struct PluginSettingsManager {
@@ -808,7 +800,7 @@ async fn finish_local_plugin_install(
 }
 
 async fn publish_inactive_hook_bundles(
-    host: &dyn PluginSettingsHost,
+    host: &dyn HostCommandClient,
     owner_user_id: &str,
     bundles: &[LocalPluginHookBundleSpec],
 ) -> Result<(), String> {
@@ -847,7 +839,7 @@ async fn publish_inactive_hook_bundles(
 }
 
 async fn list_hook_bundle_records(
-    host: &dyn PluginSettingsHost,
+    host: &dyn HostCommandClient,
     owner_user_id: &str,
 ) -> Result<Vec<LocalPluginHookBundleRecord>, String> {
     match host
@@ -864,7 +856,7 @@ async fn list_hook_bundle_records(
 }
 
 async fn list_all_hook_bundle_records(
-    host: &dyn PluginSettingsHost,
+    host: &dyn HostCommandClient,
     owner_user_id: &str,
 ) -> Result<Vec<LocalPluginHookBundleRecord>, String> {
     match host
@@ -881,7 +873,7 @@ async fn list_all_hook_bundle_records(
 }
 
 async fn reconcile_current_hook_bundles(
-    host: &dyn PluginSettingsHost,
+    host: &dyn HostCommandClient,
     plugin_root: &Path,
     owner_user_id: &str,
 ) -> Result<(), String> {
@@ -891,7 +883,7 @@ async fn reconcile_current_hook_bundles(
 }
 
 async fn reconcile_active_hook_bundles(
-    host: &dyn PluginSettingsHost,
+    host: &dyn HostCommandClient,
     owner_user_id: &str,
     plugin_root: &Path,
     records: &[LocalPluginInstallationRecord],
@@ -926,7 +918,7 @@ async fn reconcile_active_hook_bundles(
 }
 
 async fn deactivate_hook_bundles(
-    host: &dyn PluginSettingsHost,
+    host: &dyn HostCommandClient,
     owner_user_id: &str,
 ) -> Result<(), String> {
     match host
@@ -1721,7 +1713,7 @@ fn local_installation_specs(
 }
 
 async fn replace_installation_records(
-    host: &dyn PluginSettingsHost,
+    host: &dyn HostCommandClient,
     previous: Vec<LocalPluginInstallationRecord>,
     specs: Vec<LocalPluginInstallationSpec>,
 ) -> Result<(), String> {
@@ -1779,7 +1771,7 @@ async fn replace_installation_records(
 }
 
 async fn rollback_installation_records(
-    host: &dyn PluginSettingsHost,
+    host: &dyn HostCommandClient,
     applied: &[(
         Option<LocalPluginInstallationRecord>,
         LocalPluginInstallationRecord,
@@ -2329,69 +2321,16 @@ pub(crate) fn installed_manifest_version(
 }
 
 async fn list_installation_records(
-    host: &dyn PluginSettingsHost,
+    host: &dyn HostCommandClient,
     owner_user_id: &str,
 ) -> Result<Vec<LocalPluginInstallationRecord>, String> {
     let mut records = Vec::new();
     for summary in list_installation_summaries(host, owner_user_id).await? {
-        let result = host
-            .execute(HostCommand::GetPluginInstallation(
-                GetPluginInstallationCommand {
-                    owner_user_id: owner_user_id.to_owned(),
-                    installation_id: summary.installation_id.clone(),
-                },
-            ))
-            .await?;
-        let HostResult::PluginInstallation { installation } = result else {
-            return Err(metadata_response_error());
-        };
+        let installation = get_installation(host, owner_user_id, &summary.installation_id).await?;
         validate_record(&installation, &summary, owner_user_id)?;
         records.push(installation);
     }
     Ok(records)
-}
-
-async fn list_installation_summaries(
-    host: &dyn PluginSettingsHost,
-    owner_user_id: &str,
-) -> Result<Vec<LocalPluginInstallationSummary>, String> {
-    let mut installations = Vec::new();
-    let mut before_updated_at_unix_ms = None;
-    let mut before_installation_id = None;
-    let mut observed_cursors = BTreeSet::new();
-    loop {
-        let result = host
-            .execute(HostCommand::ListPluginInstallations(
-                ListPluginInstallationsCommand {
-                    owner_user_id: owner_user_id.to_owned(),
-                    before_updated_at_unix_ms,
-                    before_installation_id: before_installation_id.clone(),
-                    limit: 200,
-                },
-            ))
-            .await?;
-        let HostResult::PluginInstallations { page } = result else {
-            return Err(metadata_response_error());
-        };
-        if installations.len().saturating_add(page.installations.len()) > MAXIMUM_INSTALLATIONS {
-            return Err("已安装 Plugin 数量超过本机目录上限。".into());
-        }
-        installations.extend(page.installations);
-        match (
-            page.next_before_updated_at_unix_ms,
-            page.next_before_installation_id,
-        ) {
-            (Some(timestamp), Some(installation_id)) => {
-                if timestamp < 0 || !observed_cursors.insert((timestamp, installation_id.clone())) {
-                    return Err(metadata_response_error());
-                }
-                before_updated_at_unix_ms = Some(timestamp);
-                before_installation_id = Some(installation_id);
-            }
-            (None, None) => return Ok(installations),
-            _ => return Err(metadata_response_error()),
-        }
-    }
 }
 
 fn validate_record(
@@ -2399,25 +2338,9 @@ fn validate_record(
     summary: &LocalPluginInstallationSummary,
     owner_user_id: &str,
 ) -> Result<(), String> {
-    record
-        .spec
-        .validate()
-        .map_err(|_| metadata_response_error())?;
-    if record.spec.owner_user_id != owner_user_id
-        || record.spec.installation_id != summary.installation_id
-        || record.spec.plugin_id != summary.plugin_id
-        || record.spec.release_id != summary.release_id
-        || record.spec.component_id != summary.component_id
-        || record.spec.component_revision != summary.component_revision
-        || record.spec.server_id != summary.server_id
-        || record.spec.enabled != summary.enabled
-        || record.version != summary.version
-        || record.created_at_unix_ms != summary.created_at_unix_ms
-        || record.updated_at_unix_ms != summary.updated_at_unix_ms
-    {
-        return Err(metadata_response_error());
-    }
-    Ok(())
+    record_matches_summary(record, summary, owner_user_id)
+        .then_some(())
+        .ok_or_else(metadata_response_error)
 }
 
 fn matching_records(
@@ -2441,7 +2364,7 @@ fn is_local_plugin_installation(record: &LocalPluginInstallationRecord) -> bool 
 }
 
 async fn set_records_enabled(
-    host: &dyn PluginSettingsHost,
+    host: &dyn HostCommandClient,
     records: Vec<LocalPluginInstallationRecord>,
     enabled: bool,
 ) -> Result<(), String> {
@@ -2546,13 +2469,7 @@ fn installation_manifest_path(
 }
 
 fn confined_plugin_root(plugin_root: &Path) -> Result<PathBuf, String> {
-    ensure_owned_directory(plugin_root).map_err(|_| plugin_catalog_error())?;
-    let root = plugin_root
-        .canonicalize()
-        .map_err(|_| plugin_catalog_error())?;
-    root.is_dir()
-        .then_some(root)
-        .ok_or_else(plugin_catalog_error)
+    canonical_plugin_root(plugin_root).map_err(|_| plugin_catalog_error())
 }
 
 fn installation_roots(

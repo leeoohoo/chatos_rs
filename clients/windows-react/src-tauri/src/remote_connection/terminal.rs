@@ -1,6 +1,6 @@
 use super::{
     ssh::{InteractiveSshLaunch, NativeOpenSshTester, SshConnectionMaterial},
-    RemoteConnectionManager, RemoteConnectionMetadataClient,
+    HostCommandClient, RemoteConnectionManager,
 };
 use crate::interactive_pty::MAXIMUM_INPUT_BYTES;
 #[cfg(test)]
@@ -363,7 +363,7 @@ pub struct PresentedRemoteTerminalPoll {
 impl RemoteConnectionManager {
     async fn start_terminal(
         &self,
-        client: &dyn RemoteConnectionMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         presentation_id: &str,
         connection_id: &str,

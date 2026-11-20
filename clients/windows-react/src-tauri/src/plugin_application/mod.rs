@@ -1,7 +1,4 @@
-use chatos_local_agent_protocol::{
-    GetPluginInstallationCommand, HostCommand, HostResult, ListPluginInstallationsCommand,
-    LocalPluginInstallationRecord, LocalPluginInstallationSummary,
-};
+use chatos_local_agent_protocol::{LocalPluginInstallationRecord, LocalPluginInstallationSummary};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,10 +6,8 @@ use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fmt,
     fs::File,
-    future::Future,
     io::{Cursor, Read},
     path::{Path, PathBuf},
-    pin::Pin,
     sync::{Arc, Mutex},
 };
 use tauri::{http, State};
@@ -21,21 +16,27 @@ mod runtime;
 use crate::agent_plugin_runtime::{
     load_agent_plugin_skill_snapshot, AgentPluginRuntime, AgentPluginSkillSnapshot,
 };
-use crate::app_data_transaction::ensure_owned_directory;
+use crate::host_command_client::HostCommandClient;
+#[cfg(test)]
+use crate::host_command_client::HostCommandFuture;
 use crate::machine_resource_governor::MachineResourceGovernor;
 use crate::plugin_credentials::{
     environment_secret_references, platform_plugin_credential_store, secret_name, secret_reference,
     validate_secret, PluginCredentialStore,
 };
+use crate::plugin_installation_metadata::{
+    canonical_plugin_root, get_installation, list_installation_summaries, record_matches_summary,
+};
 use crate::plugin_integrity::{requires_installation_integrity, verify_installation_integrity};
 #[cfg(target_os = "windows")]
 use crate::windows_appcontainer::WorkspaceLeaseManager;
+#[cfg(test)]
+use chatos_local_agent_protocol::{HostCommand, HostResult};
 use runtime::{
     PluginApplicationBridgeRequest, PluginApplicationLaunchRequest, PluginApplicationRuntime,
     PresentedPluginApplicationBridgeResponse, PresentedPluginApplicationLaunch,
 };
 
-const MAXIMUM_INSTALLATIONS: usize = 1_000;
 const MAXIMUM_MANIFEST_BYTES: u64 = 2 * 1_024 * 1_024;
 const MAXIMUM_UI_CONTRIBUTIONS: usize = 64;
 const MAXIMUM_UI_ASSETS: usize = 256;
@@ -48,18 +49,6 @@ const MAXIMUM_ICON_PNG_BYTES: usize = 512 * 1_024;
 const MAXIMUM_ICON_SESSIONS: usize = 8;
 const SKILLS_ONLY_COMPONENT_KEY: &str = "skills-only";
 const HOOKS_ONLY_COMPONENT_KEY: &str = "hooks-only";
-
-type MetadataFuture<'a> = Pin<Box<dyn Future<Output = Result<HostResult, String>> + Send + 'a>>;
-
-pub(crate) trait PluginInstallationMetadataClient: Send + Sync {
-    fn execute(&self, command: HostCommand) -> MetadataFuture<'_>;
-}
-
-impl PluginInstallationMetadataClient for crate::host_lifecycle::HostManager {
-    fn execute(&self, command: HostCommand) -> MetadataFuture<'_> {
-        Box::pin(crate::host_lifecycle::HostManager::execute(self, command))
-    }
-}
 
 #[derive(Clone, Default)]
 pub(crate) struct PluginApplicationIconStore {
@@ -289,7 +278,7 @@ impl PluginApplicationManager {
 
     pub(crate) async fn resolve_agent_plugin(
         &self,
-        client: &dyn PluginInstallationMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         expected: &TrustedAgentPluginOption,
     ) -> Result<ResolvedAgentPluginExecution, String> {
@@ -377,7 +366,7 @@ impl PluginApplicationManager {
 
     pub(crate) async fn list_agent_plugins(
         &self,
-        client: &dyn PluginInstallationMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
     ) -> Result<Vec<TrustedAgentPluginOption>, String> {
         crate::host_lifecycle::validate_owner(owner_user_id)?;
@@ -564,7 +553,7 @@ impl PluginApplicationManager {
 
     async fn list(
         &self,
-        client: &dyn PluginInstallationMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
     ) -> Result<Vec<PresentedPluginApplication>, String> {
         crate::host_lifecycle::validate_owner(owner_user_id)?;
@@ -617,7 +606,7 @@ impl PluginApplicationManager {
 
     async fn resolve(
         &self,
-        client: &dyn PluginInstallationMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         plugin_id: &str,
         component_key: &str,
@@ -959,68 +948,6 @@ pub async fn handle_plugin_application_bridge_request(
     manager.runtime.bridge_request(request).await
 }
 
-async fn list_installation_summaries(
-    client: &dyn PluginInstallationMetadataClient,
-    owner_user_id: &str,
-) -> Result<Vec<LocalPluginInstallationSummary>, String> {
-    let mut installations = Vec::new();
-    let mut before_updated_at_unix_ms = None;
-    let mut before_installation_id = None;
-    let mut observed_cursors = BTreeSet::new();
-    loop {
-        let result = client
-            .execute(HostCommand::ListPluginInstallations(
-                ListPluginInstallationsCommand {
-                    owner_user_id: owner_user_id.to_owned(),
-                    before_updated_at_unix_ms,
-                    before_installation_id: before_installation_id.clone(),
-                    limit: 200,
-                },
-            ))
-            .await?;
-        let HostResult::PluginInstallations { page } = result else {
-            return Err(metadata_response_error());
-        };
-        if installations.len().saturating_add(page.installations.len()) > MAXIMUM_INSTALLATIONS {
-            return Err("已安装 Plugin 数量超过本机应用目录上限。".into());
-        }
-        installations.extend(page.installations);
-        match (
-            page.next_before_updated_at_unix_ms,
-            page.next_before_installation_id,
-        ) {
-            (Some(timestamp), Some(installation_id)) => {
-                if !observed_cursors.insert((timestamp, installation_id.clone())) {
-                    return Err("Host 返回了重复的 Plugin 安装分页游标。".into());
-                }
-                before_updated_at_unix_ms = Some(timestamp);
-                before_installation_id = Some(installation_id);
-            }
-            (None, None) => return Ok(installations),
-            _ => return Err("Host 返回了无效的 Plugin 安装分页游标。".into()),
-        }
-    }
-}
-
-async fn get_installation(
-    client: &dyn PluginInstallationMetadataClient,
-    owner_user_id: &str,
-    installation_id: &str,
-) -> Result<LocalPluginInstallationRecord, String> {
-    let result = client
-        .execute(HostCommand::GetPluginInstallation(
-            GetPluginInstallationCommand {
-                owner_user_id: owner_user_id.to_owned(),
-                installation_id: installation_id.to_owned(),
-            },
-        ))
-        .await?;
-    let HostResult::PluginInstallation { installation } = result else {
-        return Err(metadata_response_error());
-    };
-    Ok(installation)
-}
-
 fn validate_summary(
     summary: &LocalPluginInstallationSummary,
     owner_user_id: &str,
@@ -1050,20 +977,7 @@ fn validate_record(
     summary: &LocalPluginInstallationSummary,
     owner_user_id: &str,
 ) -> Result<(), String> {
-    record
-        .spec
-        .validate()
-        .map_err(|_| metadata_response_error())?;
-    if record.spec.owner_user_id != owner_user_id
-        || record.spec.installation_id != summary.installation_id
-        || record.spec.plugin_id != summary.plugin_id
-        || record.spec.release_id != summary.release_id
-        || record.spec.component_id != summary.component_id
-        || record.spec.component_revision != summary.component_revision
-        || record.spec.server_id != summary.server_id
-        || record.version != summary.version
-        || record.created_at_unix_ms != summary.created_at_unix_ms
-        || record.updated_at_unix_ms != summary.updated_at_unix_ms
+    if !record_matches_summary(record, summary, owner_user_id)
         || !record.spec.enabled
         || !valid_release_digest(&record.spec.release_digest)
     {
@@ -1073,14 +987,7 @@ fn validate_record(
 }
 
 fn confined_plugin_root(requested: &Path) -> Result<PathBuf, String> {
-    ensure_owned_directory(requested).map_err(|_| plugin_catalog_error())?;
-    let root = requested
-        .canonicalize()
-        .map_err(|_| plugin_catalog_error())?;
-    if !root.is_dir() {
-        return Err(plugin_catalog_error());
-    }
-    Ok(root)
+    canonical_plugin_root(requested).map_err(|_| plugin_catalog_error())
 }
 
 fn load_manifest(

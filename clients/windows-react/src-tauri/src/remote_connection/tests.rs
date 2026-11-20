@@ -84,8 +84,8 @@ impl ScriptedMetadata {
     }
 }
 
-impl RemoteConnectionMetadataClient for ScriptedMetadata {
-    fn execute(&self, command: HostCommand) -> MetadataFuture<'_> {
+impl HostCommandClient for ScriptedMetadata {
+    fn execute(&self, command: HostCommand) -> HostCommandFuture<'_> {
         Box::pin(async move {
             self.commands.lock().unwrap().push(command);
             self.results

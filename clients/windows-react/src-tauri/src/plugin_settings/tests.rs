@@ -22,8 +22,8 @@ impl HookHost {
     }
 }
 
-impl PluginSettingsHost for HookHost {
-    fn execute(&self, command: HostCommand) -> PluginHostFuture<'_> {
+impl HostCommandClient for HookHost {
+    fn execute(&self, command: HostCommand) -> HostCommandFuture<'_> {
         self.commands.lock().unwrap().push(command.clone());
         let behavior = self.behavior;
         Box::pin(async move {

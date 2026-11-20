@@ -4,7 +4,7 @@ use super::{
         ProcessOutcome, ResetFuture, SshConnectionMaterial, SshProcessInput, SshProcessOutput,
         SshProcessProgress, INTERACTIVE_SESSION_TIMEOUT,
     },
-    RemoteConnectionManager, RemoteConnectionMetadataClient,
+    HostCommandClient, RemoteConnectionManager,
 };
 use crate::app_owned_export::try_remove_stale_owned_file;
 use serde::{Deserialize, Serialize};
@@ -309,7 +309,7 @@ pub enum PresentedRemoteFileMutationResponse {
 impl RemoteConnectionManager {
     async fn execute_remote_file_listing(
         &self,
-        client: &dyn RemoteConnectionMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         input: &RemoteFileOperationInput,
         requested_path: Option<String>,
@@ -352,7 +352,7 @@ impl RemoteConnectionManager {
 
     async fn execute_remote_file_operation(
         &self,
-        client: &dyn RemoteConnectionMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         input: &RemoteFileOperationInput,
         operation: &RemoteFileOperation,
@@ -385,7 +385,7 @@ impl RemoteConnectionManager {
 
     async fn execute_remote_file_transfer(
         &self,
-        client: &dyn RemoteConnectionMetadataClient,
+        client: &dyn HostCommandClient,
         owner_user_id: &str,
         input: &RemoteFileOperationInput,
         operation: &RemoteFileOperation,
@@ -782,7 +782,7 @@ pub async fn download_remote_file(
 }
 
 async fn execute_mutation(
-    client: &dyn RemoteConnectionMetadataClient,
+    client: &dyn HostCommandClient,
     manager: &RemoteConnectionManager,
     owner_user_id: &str,
     input: RemoteFileOperationInput,

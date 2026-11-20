@@ -7,7 +7,7 @@ use super::*;
 use crate::remote_connection::{
     credentials::{tests_support::memory_vault, RemoteCredentialVault},
     ssh::{RemoteConnectionTester, ResetFuture, TestFuture},
-    MetadataFuture, RemoteConnectorRoute, RemoteConnectorRouteProvider,
+    HostCommandFuture, RemoteConnectorRoute, RemoteConnectorRouteProvider,
 };
 use chatos_local_agent_protocol::{
     HostCommand, HostResult, LocalRemoteAuthenticationType, LocalRemoteConnection,
@@ -54,8 +54,8 @@ impl RemoteConnectorRouteProvider for FixedRoute {
 
 struct FixedMetadata;
 
-impl RemoteConnectionMetadataClient for FixedMetadata {
-    fn execute(&self, command: HostCommand) -> MetadataFuture<'_> {
+impl HostCommandClient for FixedMetadata {
+    fn execute(&self, command: HostCommand) -> HostCommandFuture<'_> {
         Box::pin(async move {
             assert!(matches!(command, HostCommand::GetRemoteConnection(_)));
             Ok(HostResult::RemoteConnection {

@@ -84,8 +84,8 @@ impl ScriptedMetadataClient {
     }
 }
 
-impl PluginInstallationMetadataClient for ScriptedMetadataClient {
-    fn execute(&self, _command: HostCommand) -> MetadataFuture<'_> {
+impl HostCommandClient for ScriptedMetadataClient {
+    fn execute(&self, _command: HostCommand) -> HostCommandFuture<'_> {
         Box::pin(async move {
             self.responses
                 .lock()
