@@ -12,7 +12,6 @@ axum-support = ["dep:axum"]
 
 [dependencies]
 axum = { version = "0.8", optional = true }
-base64 = "0.22"
 chatos_config_sdk = { path = "../chatos_config_sdk" }
 chatos_internal_auth = { path = "../chatos_internal_auth" }
 dotenvy = "0.15"

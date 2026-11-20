@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use base64::Engine;
 use reqwest::StatusCode;
 use std::collections::HashMap;
 use std::env;
@@ -11,10 +10,9 @@ use tokio::sync::Mutex;
 
 use crate::config::{DiscoveryMode, RuntimeConfig};
 use crate::consul::{
-    ConsulHealthEntry, ConsulKvEntry, ConsulRegisterCheck, ConsulRegisterRequest, ServiceEndpoint,
+    ConsulHealthEntry, ConsulRegisterCheck, ConsulRegisterRequest, ServiceEndpoint,
     ServiceRegistration,
 };
-use crate::env_config::merge_env_config_text;
 use crate::utils::{non_empty, normalize_path};
 use crate::{build_http_client, HttpClientTimeouts, ServiceRuntimeError};
 
@@ -292,74 +290,6 @@ impl ChatosServiceRuntime {
         let endpoint = endpoints[*counter % endpoints.len()].clone();
         *counter = counter.wrapping_add(1);
         endpoint
-    }
-
-    pub async fn get_config_text(&self, key: &str) -> Result<Option<String>, ServiceRuntimeError> {
-        if !self.config.enabled || self.config.discovery_mode == DiscoveryMode::StaticOnly {
-            return Ok(None);
-        }
-        let Some(consul) = self.config.consul_http_addr.as_deref() else {
-            return Ok(None);
-        };
-        let endpoint = format!(
-            "{}/v1/kv/{}",
-            consul.trim_end_matches('/'),
-            key.trim_start_matches('/')
-        );
-        let response = self.client.get(endpoint).send().await?;
-        if response.status() == StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if !response.status().is_success() {
-            return Err(ServiceRuntimeError::Message(format!(
-                "consul kv read failed for {}: {}",
-                key,
-                response.status().as_u16()
-            )));
-        }
-        let values = response.json::<Vec<ConsulKvEntry>>().await?;
-        let Some(value) = values.into_iter().next().and_then(|entry| entry.value) else {
-            return Ok(None);
-        };
-        let decoded = base64::engine::general_purpose::STANDARD.decode(value.as_bytes())?;
-        Ok(Some(
-            String::from_utf8_lossy(decoded.as_slice()).into_owned(),
-        ))
-    }
-
-    pub async fn get_service_config_text(
-        &self,
-        service_name: &str,
-    ) -> Result<Option<String>, ServiceRuntimeError> {
-        let key = format!(
-            "chatos/{}/services/{}/config",
-            self.config.env_name, service_name
-        );
-        self.get_config_text(key.as_str()).await
-    }
-
-    pub async fn apply_config_center_env(
-        &self,
-        service_name: &str,
-    ) -> Result<usize, ServiceRuntimeError> {
-        if !self.config.enabled || self.config.discovery_mode == DiscoveryMode::StaticOnly {
-            return Ok(0);
-        }
-
-        let shared_key = format!("chatos/{}/shared/config", self.config.env_name);
-        let mut values = HashMap::new();
-        if let Some(text) = self.get_config_text(shared_key.as_str()).await? {
-            merge_env_config_text(&mut values, text.as_str())?;
-        }
-        if let Some(text) = self.get_service_config_text(service_name).await? {
-            merge_env_config_text(&mut values, text.as_str())?;
-        }
-
-        let mut applied = 0;
-        for (key, value) in values {
-            applied += apply_managed_env_var(key.as_str(), value.as_str());
-        }
-        Ok(applied)
     }
 }
 

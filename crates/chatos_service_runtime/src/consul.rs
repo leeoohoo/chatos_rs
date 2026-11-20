@@ -79,12 +79,6 @@ pub(crate) struct ConsulService {
     pub(crate) port: u16,
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct ConsulKvEntry {
-    #[serde(rename = "Value", default)]
-    pub(crate) value: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::{ConsulRegisterCheck, ConsulRegisterRequest, ServiceEndpoint};
