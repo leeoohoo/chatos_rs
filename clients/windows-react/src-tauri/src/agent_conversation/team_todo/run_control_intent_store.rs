@@ -1,7 +1,7 @@
 use super::*;
 
 impl AgentConversationStore {
-    pub(super) fn record_project_team_todo_cancel_intent(
+    pub(in crate::agent_conversation) fn record_project_team_todo_cancel_intent(
         &self,
         owner_user_id: &str,
         team_id: &str,
@@ -143,7 +143,7 @@ impl AgentConversationStore {
             .map_err(|_| team_todo_store_error())
     }
 
-    pub(super) fn record_project_team_run_retry_intent(
+    pub(in crate::agent_conversation) fn record_project_team_run_retry_intent(
         &self,
         owner_user_id: &str,
         team_id: &str,

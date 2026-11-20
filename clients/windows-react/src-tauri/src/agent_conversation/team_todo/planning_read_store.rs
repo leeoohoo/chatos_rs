@@ -1,7 +1,7 @@
 use super::*;
 
 impl AgentConversationStore {
-    pub(super) fn list_project_team_todo_progress(
+    pub(in crate::agent_conversation) fn list_project_team_todo_progress(
         &self,
         owner_user_id: &str,
         team_id: &str,

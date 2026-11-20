@@ -130,7 +130,7 @@ async fn native_pty_streams_output_and_exit_as_ordered_events() {
         )
         .await
         .unwrap();
-    assert_eq!(resources.snapshot().used_resource_units, 1);
+    assert_eq!(resources.used_resource_units(), 1);
     let session = ManagedLocalTerminal::spawn_with_permit(
         LocalTerminalIdentity {
             session_id: "local-terminal-test".into(),
@@ -166,7 +166,7 @@ async fn native_pty_streams_output_and_exit_as_ordered_events() {
 
     assert!(String::from_utf8_lossy(&output).contains("__CHATOS_LOCAL_PTY__"));
     assert_eq!(exit_code, Some(7));
-    assert_eq!(resources.snapshot().used_resource_units, 0);
+    assert_eq!(resources.used_resource_units(), 0);
     session.close();
 }
 

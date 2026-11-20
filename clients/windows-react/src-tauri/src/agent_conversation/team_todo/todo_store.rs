@@ -1,7 +1,7 @@
 use super::*;
 
 impl AgentConversationStore {
-    pub(super) fn list_project_team_todos(
+    pub(in crate::agent_conversation) fn list_project_team_todos(
         &self,
         owner_user_id: &str,
         team_id: &str,
@@ -90,7 +90,7 @@ impl AgentConversationStore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn create_project_team_todo(
+    pub(in crate::agent_conversation) fn create_project_team_todo(
         &self,
         owner_user_id: &str,
         team_id: &str,
@@ -174,7 +174,7 @@ impl AgentConversationStore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn update_project_team_todo(
+    pub(in crate::agent_conversation) fn update_project_team_todo(
         &self,
         owner_user_id: &str,
         team_id: &str,
@@ -277,7 +277,7 @@ impl AgentConversationStore {
         self.load_project_team_todo(owner_user_id, team_id, todo_id)
     }
 
-    pub(super) fn reorder_project_team_todos(
+    pub(in crate::agent_conversation) fn reorder_project_team_todos(
         &self,
         owner_user_id: &str,
         team_id: &str,
@@ -357,7 +357,7 @@ impl AgentConversationStore {
         self.list_project_team_todos(owner_user_id, team_id, false)
     }
 
-    pub(super) fn cancel_project_team_todo(
+    pub(in crate::agent_conversation) fn cancel_project_team_todo(
         &self,
         owner_user_id: &str,
         team_id: &str,
