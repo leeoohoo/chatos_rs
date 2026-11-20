@@ -1195,6 +1195,58 @@ async fn guidance_interrupts_an_active_claim_and_is_delivered_once() {
 }
 
 #[tokio::test]
+async fn large_tool_result_continuation_does_not_block_guidance() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    create(&storage, "conversation-large-tool-guidance").await;
+    let initial = turn("conversation-large-tool-guidance", 1, "large-tool-guidance");
+    start(&storage, &initial, 2_000).await.unwrap();
+    let claim = storage
+        .claim_next_run(
+            &idempotency("claim-large-tool-guidance"),
+            "user-1",
+            "worker-1",
+            "token-large-tool-guidance",
+            3_000,
+            13_000,
+            "event-claim-large-tool-guidance",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let continuation = json!({
+        "type":"tool_results",
+        "invocations":[{"result_json":{"image":"x".repeat(700_000)}}]
+    });
+    sqlx::query("UPDATE local_agent_runs SET continuation_input_json = ? WHERE run_id = ?")
+        .bind(serde_json::to_string(&continuation).unwrap())
+        .bind(&initial.run_id)
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+
+    let guided = storage
+        .guide_conversation_turn(
+            &idempotency("guide-after-large-tool-result"),
+            &GuideConversationTurnCommand {
+                owner_user_id: "user-1".to_string(),
+                conversation_id: initial.conversation_id.clone(),
+                expected_conversation_version: 2,
+                turn_id: initial.turn_id,
+                expected_run_version: Some(claim.run.version),
+                message_id: "message-after-large-tool-result".to_string(),
+                message: "also check the pending inventory tab".to_string(),
+                message_metadata: json!({}),
+                attachments: Vec::new(),
+            },
+            "event-guide-after-large-tool-result",
+            4_000,
+        )
+        .await
+        .expect("large tool results must not consume the guidance budget");
+    assert_eq!(guided.run.status, LocalAgentRunStatus::ContinuationReady);
+}
+
+#[tokio::test]
 async fn reviewed_turn_resumes_and_can_fail_again_then_finish_without_stale_terminal_state() {
     let storage = SqliteClientStorage::connect_memory().await.unwrap();
     create(&storage, "conversation-recover").await;

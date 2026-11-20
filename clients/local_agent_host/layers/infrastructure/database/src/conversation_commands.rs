@@ -381,19 +381,15 @@ async fn enforce_pending_guidance_limit(
     let pending_bytes = usize::try_from(pending_bytes).map_err(|_| {
         ClientStorageError::InvalidState("pending guidance size is invalid".to_string())
     })?;
-    let continuation_bytes: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(length(CAST(continuation_input_json AS BLOB)), 0) \
-         FROM local_agent_runs WHERE run_id = ?",
-    )
-    .bind(run_id)
-    .fetch_one(&mut *connection)
-    .await
-    .db()?;
-    let continuation_bytes = usize::try_from(continuation_bytes).map_err(|_| {
-        ClientStorageError::InvalidState("Run continuation size is invalid".to_string())
-    })?;
+    let continuation: Option<String> =
+        sqlx::query_scalar("SELECT continuation_input_json FROM local_agent_runs WHERE run_id = ?")
+            .bind(run_id)
+            .fetch_one(&mut *connection)
+            .await
+            .db()?;
+    let continuation_guidance_bytes = continuation_guidance_bytes(continuation.as_deref())?;
     if pending_bytes
-        .saturating_add(continuation_bytes)
+        .saturating_add(continuation_guidance_bytes)
         .saturating_add(additional_bytes)
         > LOCAL_AGENT_MAX_INPUT_BYTES
     {
@@ -402,6 +398,53 @@ async fn enforce_pending_guidance_limit(
         )));
     }
     Ok(())
+}
+
+fn continuation_guidance_bytes(continuation: Option<&str>) -> Result<usize, ClientStorageError> {
+    let Some(continuation) = continuation else {
+        return Ok(0);
+    };
+    let continuation: Value = serde_json::from_str(continuation)?;
+    let Some(guidance) = continuation.get("guidance") else {
+        return Ok(0);
+    };
+    let guidance = guidance.as_array().ok_or_else(|| {
+        ClientStorageError::InvalidState("Run continuation guidance must be an array".to_string())
+    })?;
+    guidance.iter().try_fold(0usize, |total, item| {
+        Ok(total.saturating_add(serde_json::to_vec(item)?.len()))
+    })
+}
+
+#[cfg(test)]
+mod guidance_size_tests {
+    use super::*;
+
+    #[test]
+    fn continuation_limit_counts_guidance_but_not_tool_results() {
+        let guidance = json!({"message_id":"follow-up","message":"continue","attachments":[]});
+        let continuation = json!({
+            "type":"tool_results",
+            "invocations":[{"result_json":{"image":"x".repeat(700_000)}}],
+            "guidance":[guidance.clone()]
+        });
+        let encoded = serde_json::to_string(&continuation).unwrap();
+        assert_eq!(
+            continuation_guidance_bytes(Some(&encoded)).unwrap(),
+            serde_json::to_vec(&guidance).unwrap().len()
+        );
+        assert_eq!(
+            continuation_guidance_bytes(Some(
+                &serde_json::to_string(&json!({
+                    "type":"tool_results",
+                    "invocations":[{"result_json":{"image":"x".repeat(700_000)}}]
+                }))
+                .unwrap()
+            ))
+            .unwrap(),
+            0
+        );
+    }
 }
 
 async fn verify_conversation_version(
