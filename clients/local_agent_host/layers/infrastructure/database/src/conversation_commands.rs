@@ -416,37 +416,6 @@ fn continuation_guidance_bytes(continuation: Option<&str>) -> Result<usize, Clie
     })
 }
 
-#[cfg(test)]
-mod guidance_size_tests {
-    use super::*;
-
-    #[test]
-    fn continuation_limit_counts_guidance_but_not_tool_results() {
-        let guidance = json!({"message_id":"follow-up","message":"continue","attachments":[]});
-        let continuation = json!({
-            "type":"tool_results",
-            "invocations":[{"result_json":{"image":"x".repeat(700_000)}}],
-            "guidance":[guidance.clone()]
-        });
-        let encoded = serde_json::to_string(&continuation).unwrap();
-        assert_eq!(
-            continuation_guidance_bytes(Some(&encoded)).unwrap(),
-            serde_json::to_vec(&guidance).unwrap().len()
-        );
-        assert_eq!(
-            continuation_guidance_bytes(Some(
-                &serde_json::to_string(&json!({
-                    "type":"tool_results",
-                    "invocations":[{"result_json":{"image":"x".repeat(700_000)}}]
-                }))
-                .unwrap()
-            ))
-            .unwrap(),
-            0
-        );
-    }
-}
-
 async fn verify_conversation_version(
     connection: &mut SqliteConnection,
     owner_user_id: &str,
@@ -850,4 +819,35 @@ async fn build_update(
             .unwrap_or_default(),
         run,
     })
+}
+
+#[cfg(test)]
+mod guidance_size_tests {
+    use super::*;
+
+    #[test]
+    fn continuation_limit_counts_guidance_but_not_tool_results() {
+        let guidance = json!({"message_id":"follow-up","message":"continue","attachments":[]});
+        let continuation = json!({
+            "type":"tool_results",
+            "invocations":[{"result_json":{"image":"x".repeat(700_000)}}],
+            "guidance":[guidance.clone()]
+        });
+        let encoded = serde_json::to_string(&continuation).unwrap();
+        assert_eq!(
+            continuation_guidance_bytes(Some(&encoded)).unwrap(),
+            serde_json::to_vec(&guidance).unwrap().len()
+        );
+        assert_eq!(
+            continuation_guidance_bytes(Some(
+                &serde_json::to_string(&json!({
+                    "type":"tool_results",
+                    "invocations":[{"result_json":{"image":"x".repeat(700_000)}}]
+                }))
+                .unwrap()
+            ))
+            .unwrap(),
+            0
+        );
+    }
 }
