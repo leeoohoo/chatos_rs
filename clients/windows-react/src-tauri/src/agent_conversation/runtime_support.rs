@@ -115,3 +115,50 @@ pub(super) fn confined_connector_directory(app_data_directory: &Path) -> Result<
 pub(super) fn reject_link_or_non_file(path: &Path) -> Result<(), String> {
     connector_storage::reject_link_or_non_file(path).map_err(|_| store_error())
 }
+
+pub(super) fn update_delivery_from_run(
+    transaction: &rusqlite::Transaction<'_>,
+    owner_user_id: &str,
+    room_id: &str,
+    delivery_id: &str,
+    turn_id: &str,
+    run_id: &str,
+    status: &LocalConversationTurnStatus,
+    created_at_unix_ms: i64,
+    updated_at_unix_ms: i64,
+) -> rusqlite::Result<usize> {
+    let delivery_status = match status {
+        LocalConversationTurnStatus::Running => "running",
+        LocalConversationTurnStatus::Succeeded => "completed",
+        LocalConversationTurnStatus::Failed => "failed",
+        LocalConversationTurnStatus::Cancelled => "cancelled",
+    };
+    let completed_at =
+        (*status != LocalConversationTurnStatus::Running).then_some(updated_at_unix_ms);
+    transaction.execute(
+        r#"
+        UPDATE project_agent_deliveries
+        SET status = ?1,
+            claimed_at_unix_ms = COALESCE(claimed_at_unix_ms, ?2),
+            completed_at_unix_ms = ?3
+        WHERE owner_user_id = ?4 AND room_id = ?5 AND id = ?6
+          AND status IN ('pending', 'running')
+          AND EXISTS (
+            SELECT 1 FROM windows_agent_delivery_runs run
+            WHERE run.owner_user_id = project_agent_deliveries.owner_user_id
+              AND run.delivery_id = project_agent_deliveries.id
+              AND run.turn_id = ?7 AND run.run_id = ?8
+          )
+        "#,
+        params![
+            delivery_status,
+            created_at_unix_ms,
+            completed_at,
+            owner_user_id,
+            room_id,
+            delivery_id,
+            turn_id,
+            run_id,
+        ],
+    )
+}

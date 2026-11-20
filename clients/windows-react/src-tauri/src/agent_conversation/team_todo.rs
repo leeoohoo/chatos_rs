@@ -3310,45 +3310,18 @@ impl AgentConversationStore {
             {
                 return Err(team_todo_store_error());
             }
-            let delivery_status = match update.status {
-                LocalConversationTurnStatus::Running => "running",
-                LocalConversationTurnStatus::Succeeded => "completed",
-                LocalConversationTurnStatus::Failed => "failed",
-                LocalConversationTurnStatus::Cancelled => "cancelled",
-            };
-            let completed_at = if update.status == LocalConversationTurnStatus::Running {
-                None
-            } else {
-                Some(update.updated_at_unix_ms)
-            };
-            let changed = transaction
-                .execute(
-                    r#"
-                    UPDATE project_agent_deliveries
-                    SET status = ?1,
-                        claimed_at_unix_ms = COALESCE(claimed_at_unix_ms, ?2),
-                        completed_at_unix_ms = ?3
-                    WHERE owner_user_id = ?4 AND room_id = ?5 AND id = ?6
-                      AND status IN ('pending', 'running')
-                      AND EXISTS (
-                        SELECT 1 FROM windows_agent_delivery_runs run
-                        WHERE run.owner_user_id = project_agent_deliveries.owner_user_id
-                          AND run.delivery_id = project_agent_deliveries.id
-                          AND run.turn_id = ?7 AND run.run_id = ?8
-                      )
-                    "#,
-                    params![
-                        delivery_status,
-                        update.created_at_unix_ms,
-                        completed_at,
-                        owner_user_id,
-                        team_id,
-                        update.delivery_id,
-                        update.turn_id,
-                        update.run_id,
-                    ],
-                )
-                .map_err(|_| team_todo_store_error())?;
+            let changed = update_delivery_from_run(
+                &transaction,
+                owner_user_id,
+                team_id,
+                &update.delivery_id,
+                &update.turn_id,
+                &update.run_id,
+                &update.status,
+                update.created_at_unix_ms,
+                update.updated_at_unix_ms,
+            )
+            .map_err(|_| team_todo_store_error())?;
             if changed > 1 {
                 return Err(team_todo_store_error());
             }
