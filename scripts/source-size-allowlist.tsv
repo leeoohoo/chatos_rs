@@ -6,7 +6,6 @@ clients/windows-react/src-tauri/src/plugin_settings.rs	3488	2027-02-28	Split exi
 clients/windows-react/src-tauri/src/plugin_application/runtime.rs	3293	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/agent_plugin_runtime.rs	3112	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/media_studio/mod.rs	2922	2027-02-28	Split existing production responsibilities before expiry
-clients/local_agent_host/layers/application/src/conversation_runtime.rs	2643	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/remote_connection/ssh.rs	2388	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/story_studio/media.rs	2205	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/story_studio/commands.rs	1900	2027-02-28	Split existing production responsibilities before expiry
