@@ -5,12 +5,6 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::McpBuiltinServer;
-
-const DEFAULT_MAX_FILE_BYTES: i64 = 256 * 1024;
-const DEFAULT_MAX_WRITE_BYTES: i64 = 5 * 1024 * 1024;
-const DEFAULT_SEARCH_LIMIT: usize = 40;
-
 pub const LEGACY_CODE_MAINTAINER_MCP_ID: &str = "builtin_code_maintainer";
 pub const LEGACY_CODE_MAINTAINER_COMMAND: &str = "builtin:code_maintainer";
 
@@ -101,23 +95,6 @@ impl BuiltinMcpKind {
             Self::AskUser => Some(ASK_USER_COMMAND),
             Self::RemoteConnectionController => Some(REMOTE_CONNECTION_CONTROLLER_COMMAND),
             Self::MemorySkillReader | Self::MemoryCommandReader | Self::MemoryPluginReader => None,
-        }
-    }
-
-    pub fn default_server(self, workspace_dir: impl Into<String>) -> McpBuiltinServer {
-        McpBuiltinServer {
-            name: self.server_name().to_string(),
-            kind: self.kind_name().to_string(),
-            workspace_dir: workspace_dir.into(),
-            user_id: None,
-            project_id: None,
-            remote_connection_id: None,
-            contact_agent_id: None,
-            auto_create_task: false,
-            allow_writes: !matches!(self, Self::CodeMaintainerRead),
-            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
-            max_write_bytes: DEFAULT_MAX_WRITE_BYTES,
-            search_limit: DEFAULT_SEARCH_LIMIT,
         }
     }
 }
