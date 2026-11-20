@@ -129,20 +129,7 @@ pub(super) fn merge_function_call_arguments_delta(
     event: &Value,
     arguments_piece: &str,
 ) {
-    let call_id = event
-        .get("call_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let item_id = event
-        .get("item_id")
-        .or_else(|| event.get("id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let index = resolve_tool_call_index(event, None, &state.tool_call_index_map)
-        .unwrap_or(state.tool_calls_map.len());
-    remember_tool_call_index(&mut state.tool_call_index_map, index, item_id, call_id);
+    let (index, item_id, call_id) = resolve_function_call_identity(state, event);
     merge_indexed_tool_call_parts(
         &mut state.tool_calls_map,
         index,
@@ -162,6 +149,21 @@ pub(super) fn merge_function_call_done(
     name_piece: Option<&str>,
     arguments_piece: Option<&str>,
 ) {
+    let (index, item_id, call_id) = resolve_function_call_identity(state, event);
+    merge_indexed_tool_call_parts(
+        &mut state.tool_calls_map,
+        index,
+        item_id,
+        call_id,
+        name_piece,
+        arguments_piece,
+    );
+}
+
+fn resolve_function_call_identity<'a>(
+    state: &mut StreamState,
+    event: &'a Value,
+) -> (usize, Option<&'a str>, Option<&'a str>) {
     let call_id = event
         .get("call_id")
         .and_then(Value::as_str)
@@ -176,14 +178,7 @@ pub(super) fn merge_function_call_done(
     let index = resolve_tool_call_index(event, None, &state.tool_call_index_map)
         .unwrap_or(state.tool_calls_map.len());
     remember_tool_call_index(&mut state.tool_call_index_map, index, item_id, call_id);
-    merge_indexed_tool_call_parts(
-        &mut state.tool_calls_map,
-        index,
-        item_id,
-        call_id,
-        name_piece,
-        arguments_piece,
-    );
+    (index, item_id, call_id)
 }
 
 pub(super) fn merge_chat_tool_call_delta(
