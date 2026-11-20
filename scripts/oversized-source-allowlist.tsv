@@ -113,7 +113,6 @@ memory_engine/backend/src/repositories/subject_memory_scopes.rs	854	2027-02-28	S
 clients/local_agent_host/layers/interface/src/lib.rs	853	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src/features/story-studio/ui/StoryStudioView.test.tsx	845	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Sources/ChatOSApp/Features/Pet/PetQuickChatView.swift	842	2027-02-28	Split existing owned source by responsibility before expiry
-clients/local_agent_host/layers/infrastructure/database/src/task_lifecycle.rs	841	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Sources/ChatOSConnector/NativeAgentPluginToolProvider.swift	840	2027-02-28	Extract plugin tool discovery and invocation adapters
 clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+Plugins.swift	837	2027-02-28	Split existing owned source by responsibility before expiry
 plugins/document/test/mcp.test.mjs	827	2027-02-28	Split existing owned source by responsibility before expiry
