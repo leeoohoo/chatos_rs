@@ -80,7 +80,6 @@ clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostLifecycle.swift	1014	2
 memory_engine/backend/src/services/ai_pipeline/cloud_agent.rs	1001	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/control_plane.rs	999	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Tests/ChatOSAppTests/MessageTaskWorkspaceViewModelTests.swift	972	2027-02-28	Split task workspace tests by presentation section
-clients/local_agent_host/src/infrastructure/hook_runner.rs	970	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/conversation_attachments.rs	968	2027-02-28	Split existing owned source by responsibility before expiry
 clients/local_agent_host/src/application/requirement_survey_tools.rs	958	2027-02-28	Extract requirement survey schemas and response mapping
 clients/windows-react/src-tauri/src/clipboard_history.rs	958	2027-02-28	Split existing owned source by responsibility before expiry
