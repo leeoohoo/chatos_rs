@@ -3,8 +3,6 @@
 
 //! Shared Windows AppContainer runtime used by the Tauri client and Local Agent Host.
 
-#![allow(dead_code)]
-
 #[cfg(windows)]
 mod app_data_maintenance {
     use std::{fs, path::Path, time::SystemTime};
@@ -279,6 +277,7 @@ mod terminal_runtime {
 
 #[cfg(windows)]
 #[path = "../../../clients/windows-react/src-tauri/src/windows_appcontainer.rs"]
+#[expect(dead_code, reason = "the source also serves the desktop client")]
 mod implementation;
 
 #[cfg(windows)]
