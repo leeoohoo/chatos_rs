@@ -1,4 +1,5 @@
 use super::*;
+use chatos_plugin_management_sdk::parse_plugin_manifest;
 
 #[derive(Clone, Copy)]
 enum HookHostBehavior {
