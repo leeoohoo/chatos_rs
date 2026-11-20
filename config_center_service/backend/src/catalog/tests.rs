@@ -191,11 +191,6 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
             "string",
         ),
         (
-            PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS",
-            "boolean",
-        ),
-        (
             PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
             "PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL",
             "string",
@@ -459,11 +454,6 @@ fn catalog_exposes_local_connector_runtime_routes_via_env_projection() {
             "duration_ms",
         ),
         (
-            LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-            "LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS",
-            "duration_ms",
-        ),
-        (
             LOCAL_CONNECTOR_DEVICE_CONNECT_SIGNATURE_MAX_SKEW_SECONDS_CONFIG_KEY,
             "LOCAL_CONNECTOR_DEVICE_SIGNATURE_MAX_SKEW_SECONDS",
             "integer",
@@ -696,12 +686,6 @@ fn catalog_exposes_memory_engine_runtime_routes_via_env_projection() {
             false,
         ),
         (
-            MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
-            "MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS",
-            "integer",
-            false,
-        ),
-        (
             MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS_CONFIG_KEY,
             "MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS",
             "duration_ms",
@@ -720,18 +704,6 @@ fn catalog_exposes_memory_engine_runtime_routes_via_env_projection() {
             false,
         ),
         (
-            MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
-            "MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS",
-            "integer",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS_CONFIG_KEY,
-            "MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS",
-            "duration_ms",
-            false,
-        ),
-        (
             MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS_CONFIG_KEY,
             "MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS",
             "duration_ms",
@@ -741,18 +713,6 @@ fn catalog_exposes_memory_engine_runtime_routes_via_env_projection() {
             MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY,
             "MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE",
             "integer",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
-            "MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS",
-            "integer",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS_CONFIG_KEY,
-            "MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS",
-            "duration_ms",
             false,
         ),
         (

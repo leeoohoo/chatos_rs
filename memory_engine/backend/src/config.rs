@@ -34,17 +34,14 @@ pub struct AppConfig {
     pub summary_retry_delay: Duration,
     pub summary_outbox_reconcile_interval: Duration,
     pub summary_outbox_batch_size: i64,
-    pub rollup_retry_delay: Duration,
     pub rollup_outbox_reconcile_interval: Duration,
     pub rollup_outbox_batch_size: i64,
-    pub subject_memory_retry_delay: Duration,
     pub subject_memory_outbox_reconcile_interval: Duration,
     pub subject_memory_outbox_batch_size: i64,
     pub subject_memory_lock_timeout_secs: i64,
     pub record_sync_lease_timeout_secs: i64,
     pub rollup_lock_timeout_secs: i64,
     pub internal_api_secrets: HashMap<String, String>,
-    pub require_signed_internal_requests: bool,
     pub runtime_context_assertion_keys: HashMap<String, RuntimeContextAssertionVerificationKey>,
     pub model_capabilities: HashMap<String, PublishedModelCapability>,
     pub active_model_capability_revision: String,
@@ -85,16 +82,11 @@ impl AppConfig {
         );
         let summary_outbox_batch_size =
             required_i64("MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE")?.max(1);
-        let rollup_retry_delay =
-            Duration::from_millis(required_u64("MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS")?.max(100));
         let rollup_outbox_reconcile_interval = Duration::from_millis(
             required_u64("MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS")?.max(1_000),
         );
         let rollup_outbox_batch_size =
             required_i64("MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE")?.max(1);
-        let subject_memory_retry_delay = Duration::from_millis(
-            required_u64("MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS")?.max(100),
-        );
         let subject_memory_outbox_reconcile_interval = Duration::from_millis(
             required_u64("MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS")?.max(1_000),
         );
@@ -141,19 +133,14 @@ impl AppConfig {
             summary_retry_delay,
             summary_outbox_reconcile_interval,
             summary_outbox_batch_size,
-            rollup_retry_delay,
             rollup_outbox_reconcile_interval,
             rollup_outbox_batch_size,
-            subject_memory_retry_delay,
             subject_memory_outbox_reconcile_interval,
             subject_memory_outbox_batch_size,
             subject_memory_lock_timeout_secs,
             record_sync_lease_timeout_secs,
             rollup_lock_timeout_secs,
             internal_api_secrets: caller_internal_api_secrets(),
-            require_signed_internal_requests: required_managed_bool(
-                "MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS",
-            )?,
             runtime_context_assertion_keys: runtime_context_assertion_keys()?,
             model_capabilities: published_model_capabilities()?,
             active_model_capability_revision: required_text(
@@ -170,9 +157,6 @@ impl AppConfig {
             .get(&config.active_model_capability_revision)
             .ok_or("active common model capability is not published in Configuration Center")?
             .input_limit()?;
-        if !config.require_signed_internal_requests {
-            return Err("MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true".to_string());
-        }
         for caller in ["user-service", "configuration-center"] {
             if !config.internal_api_secrets.contains_key(caller) {
                 return Err(format!(

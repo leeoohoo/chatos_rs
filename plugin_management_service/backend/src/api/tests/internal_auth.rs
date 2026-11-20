@@ -181,8 +181,7 @@ async fn internal_secret_is_bound_to_declared_caller_service() {
 
 #[tokio::test]
 async fn signed_internal_token_binds_caller_audience_scope_and_expiry() {
-    let mut state = test_state_with_secret(Some("a-long-internal-test-secret")).await;
-    state.config.require_signed_internal_requests = true;
+    let state = test_state_with_secret(Some("a-long-internal-test-secret")).await;
     let token = chatos_service_runtime::issue_internal_service_token(
         "a-long-internal-test-secret",
         "local-connector-service",
@@ -240,8 +239,7 @@ async fn signed_internal_token_binds_caller_audience_scope_and_expiry() {
 
 #[tokio::test]
 async fn system_stats_accepts_valid_scoped_signed_token() {
-    let mut state = test_state_with_secret(Some("a-long-internal-test-secret")).await;
-    state.config.require_signed_internal_requests = true;
+    let state = test_state_with_secret(Some("a-long-internal-test-secret")).await;
     let token = chatos_service_runtime::issue_internal_service_token(
         "a-long-internal-test-secret",
         "local-connector-service",
@@ -289,8 +287,7 @@ async fn system_stats_rejects_missing_caller_identity() {
 
 #[tokio::test]
 async fn system_stats_rejects_token_with_wrong_scope() {
-    let mut state = test_state_with_secret(Some("a-long-internal-test-secret")).await;
-    state.config.require_signed_internal_requests = true;
+    let state = test_state_with_secret(Some("a-long-internal-test-secret")).await;
     let token = chatos_service_runtime::issue_internal_service_token(
         "a-long-internal-test-secret",
         "local-connector-service",
@@ -518,7 +515,6 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
             user_service_request_timeout: Duration::from_secs(1),
             cors_origins: vec!["http://127.0.0.1:39261".to_string()],
             internal_api_secrets,
-            require_signed_internal_requests: true,
             local_connector_check_ttl: Duration::from_secs(60),
             local_connector_max_tool_snapshot_bytes: 512 * 1024,
             plugin_catalog_sync_enabled: false,

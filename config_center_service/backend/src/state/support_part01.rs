@@ -15,7 +15,6 @@ pub(super) fn plugin_management_service_runtime_default_values(
         })
         .filter(|definition| {
             [
-                PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
                 PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
                 PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
                 PLUGIN_MANAGEMENT_HOST_CONFIG_KEY,
@@ -155,15 +154,7 @@ pub(super) fn ensure_internal_request_security_values(
             }
             continue;
         }
-        let requires_strict_auth = matches!(
-            key.as_str(),
-            crate::catalog::PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY
-                | crate::catalog::MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY
-        );
-        if requires_strict_auth && values.get(key) != Some(&Value::Bool(true)) {
-            values.insert(key.clone(), Value::Bool(true));
-            changed_keys.push(key.clone());
-        } else if !values.contains_key(key) {
+        if !values.contains_key(key) {
             values.insert(key.clone(), fallback.clone());
             changed_keys.push(key.clone());
         }

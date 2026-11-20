@@ -2,8 +2,6 @@ pub const PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY: &str
     "plugin_management.downstream.local_connector_internal_api_secret";
 pub const PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.memory_engine_internal_api_secret";
-pub const PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
-    "plugin_management.security.require_signed_internal_requests";
 pub const PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "plugin_management.downstream.user_service_base_url";
 pub const PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =

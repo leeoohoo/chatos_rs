@@ -9,8 +9,6 @@ pub const LOCAL_CONNECTOR_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "local_connector.downstream.user_service_request_timeout_ms";
 pub const LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "local_connector.relay.request_timeout_ms";
-pub const LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "local_connector.relay.plugin_hook_request_timeout_ms";
 pub const LOCAL_CONNECTOR_PUBLIC_BASE_URL_CONFIG_KEY: &str = "local_connector.public.base_url";
 pub const LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE_CONFIG_KEY: &str =
     "local_connector.device_connect.require_signature";

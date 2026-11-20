@@ -7,8 +7,35 @@ use super::support::*;
 use super::*;
 
 #[test]
-fn retired_execution_keys_are_removed_without_matching_native_task_policy() {
+fn retired_configuration_keys_are_removed_without_matching_active_policy() {
     for key in [
+        "local_connector.relay.plugin_hook_request_timeout_ms",
+        "local_connector.runtime.internal_mtls_port",
+        "local_connector.security.chatos_internal_api_secret",
+        "local_connector.security.require_signed_internal_requests",
+        "memory_engine.queue.rollup_dead_letter_queue",
+        "memory_engine.queue.rollup_max_delivery_attempts",
+        "memory_engine.queue.rollup_queue",
+        "memory_engine.queue.rollup_retry_delay_ms",
+        "memory_engine.queue.rollup_retry_queue",
+        "memory_engine.queue.subject_memory_dead_letter_queue",
+        "memory_engine.queue.subject_memory_max_delivery_attempts",
+        "memory_engine.queue.subject_memory_queue",
+        "memory_engine.queue.subject_memory_retry_delay_ms",
+        "memory_engine.queue.subject_memory_retry_queue",
+        "memory_engine.queue.summary_dead_letter_queue",
+        "memory_engine.queue.summary_max_delivery_attempts",
+        "memory_engine.queue.summary_queue",
+        "memory_engine.queue.summary_retry_queue",
+        "memory_engine.security.chatos_internal_api_secret",
+        "memory_engine.security.require_signed_internal_requests",
+        "plugin_management.catalog.dead_letter_queue",
+        "plugin_management.catalog.queue",
+        "plugin_management.catalog.retry_queue",
+        "plugin_management.catalog.schedule_queue",
+        "plugin_management.downstream.chatos_internal_api_secret",
+        "plugin_management.security.require_signed_internal_requests",
+        "shared.logging.level",
         "task_runner.runtime.port",
         "task_runner.custom.future_setting",
         "chatos.downstream.task_runner_base_url",
@@ -20,6 +47,7 @@ fn retired_execution_keys_are_removed_without_matching_native_task_policy() {
         "project_service.downstream.task_runner_request_timeout_ms",
         "project_service.security.mcp_management_internal_api_secret",
         "project_service.security.task_runner_internal_api_secret",
+        "user_service.security.chatos_internal_secret",
     ] {
         assert!(is_retired_config_key(key), "retired key survived: {key}");
     }
@@ -41,9 +69,8 @@ use crate::catalog::{
     LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID_CONFIG_KEY,
     LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH_CONFIG_KEY,
-    LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH_CONFIG_KEY,
-    LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-    LOCAL_CONNECTOR_PORT_CONFIG_KEY, LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY,
+    LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH_CONFIG_KEY, LOCAL_CONNECTOR_PORT_CONFIG_KEY,
+    LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY,
     LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_ELEVATED_CONFIG_KEY,
     LOCAL_CONNECTOR_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
     LOCAL_CONNECTOR_PUBLIC_BASE_URL_CONFIG_KEY,
@@ -57,16 +84,11 @@ use crate::catalog::{
     MEMORY_ENGINE_DATABASE_URL_CONFIG_KEY, MEMORY_ENGINE_HOST_CONFIG_KEY,
     MEMORY_ENGINE_PORT_CONFIG_KEY, MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS_CONFIG_KEY,
     MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS_CONFIG_KEY,
-    MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
     MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY,
     MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS_CONFIG_KEY,
-    MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS_CONFIG_KEY,
     MEMORY_ENGINE_SUBJECT_MEMORY_LOCK_TIMEOUT_SECS_CONFIG_KEY,
-    MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
     MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_BATCH_SIZE_CONFIG_KEY,
     MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS_CONFIG_KEY,
-    MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS_CONFIG_KEY,
-    MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
     MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE_CONFIG_KEY,
     MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS_CONFIG_KEY,
     MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS_CONFIG_KEY,
@@ -99,7 +121,6 @@ use crate::catalog::{
     PLUGIN_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
     PLUGIN_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
     PLUGIN_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
     PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY, USER_SERVICE_EMAIL_FROM_CONFIG_KEY,
@@ -249,10 +270,6 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
             json!(30_000),
         ),
         (
-            LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(315_000),
-        ),
-        (
             LOCAL_CONNECTOR_DEVICE_CONNECT_SIGNATURE_MAX_SKEW_SECONDS_CONFIG_KEY.to_string(),
             json!(300),
         ),
@@ -345,12 +362,6 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
     assert_eq!(
         snapshot.env.get("LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS"),
         Some(&"30000".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS"),
-        Some(&"315000".to_string())
     );
     assert_eq!(
         snapshot
@@ -625,10 +636,6 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
             json!(2),
         ),
         (
-            MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string(),
-            json!(8),
-        ),
-        (
             MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS_CONFIG_KEY.to_string(),
             json!(5_000),
         ),
@@ -641,28 +648,12 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
             json!(100),
         ),
         (
-            MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string(),
-            json!(8),
-        ),
-        (
-            MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS_CONFIG_KEY.to_string(),
-            json!(5_000),
-        ),
-        (
             MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS_CONFIG_KEY.to_string(),
             json!(30_000),
         ),
         (
             MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY.to_string(),
             json!(100),
-        ),
-        (
-            MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string(),
-            json!(8),
-        ),
-        (
-            MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS_CONFIG_KEY.to_string(),
-            json!(5_000),
         ),
         (
             MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS_CONFIG_KEY.to_string(),
@@ -824,10 +815,6 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
             ),
         ),
         (
-            PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string(),
-            json!(true),
-        ),
-        (
             PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
             json!("http://127.0.0.1:39190"),
         ),
@@ -939,12 +926,6 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
             &"postgresql://plugin_management_app:change_me@127.0.0.1:5433/plugin_management_service"
                 .to_string()
         )
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS"),
-        Some(&"true".to_string())
     );
     assert_eq!(
         snapshot

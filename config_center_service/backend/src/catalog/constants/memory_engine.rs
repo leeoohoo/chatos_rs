@@ -1,5 +1,3 @@
-pub const MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
-    "memory_engine.security.require_signed_internal_requests";
 pub const CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
     "configuration_center.downstream.memory_engine_base_url";
 pub const CONFIGURATION_CENTER_PLUGIN_MANAGEMENT_BASE_URL_CONFIG_KEY: &str =
@@ -50,26 +48,16 @@ pub const MEMORY_ENGINE_CLOUD_AGENT_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
     "memory_engine.queue.cloud_agent_outbox_reconcile_ms";
 pub const MEMORY_ENGINE_CLOUD_AGENT_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
     "memory_engine.queue.cloud_agent_outbox_batch_size";
-pub const MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
-    "memory_engine.queue.summary_max_delivery_attempts";
 pub const MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS_CONFIG_KEY: &str =
     "memory_engine.queue.summary_retry_delay_ms";
 pub const MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
     "memory_engine.queue.summary_outbox_reconcile_ms";
 pub const MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
     "memory_engine.queue.summary_outbox_batch_size";
-pub const MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
-    "memory_engine.queue.rollup_max_delivery_attempts";
-pub const MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS_CONFIG_KEY: &str =
-    "memory_engine.queue.rollup_retry_delay_ms";
 pub const MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
     "memory_engine.queue.rollup_outbox_reconcile_ms";
 pub const MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
     "memory_engine.queue.rollup_outbox_batch_size";
-pub const MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
-    "memory_engine.queue.subject_memory_max_delivery_attempts";
-pub const MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS_CONFIG_KEY: &str =
-    "memory_engine.queue.subject_memory_retry_delay_ms";
 pub const MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
     "memory_engine.queue.subject_memory_outbox_reconcile_ms";
 pub const MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =

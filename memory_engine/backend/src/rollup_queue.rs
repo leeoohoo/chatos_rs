@@ -133,7 +133,6 @@ async fn process_claimed_batch(state: &Arc<AppState>) -> Result<usize, String> {
                 warn!(
                     summary_id = event.id,
                     version = event.rollup_dispatch_version,
-                    retry_delay_ms = state.config.rollup_retry_delay.as_millis(),
                     error,
                     "Memory Engine rollup database dispatch was deferred"
                 );

@@ -18,7 +18,6 @@ pub struct AppConfig {
     pub user_service_request_timeout: Duration,
     pub cors_origins: Vec<String>,
     pub internal_api_secrets: HashMap<String, String>,
-    pub require_signed_internal_requests: bool,
     pub local_connector_check_ttl: Duration,
     pub local_connector_max_tool_snapshot_bytes: usize,
     pub plugin_catalog_sync_enabled: bool,
@@ -65,9 +64,6 @@ impl AppConfig {
             user_service_request_timeout: Duration::from_millis(user_service_request_timeout_ms),
             cors_origins: cors_origins.clone(),
             internal_api_secrets: caller_internal_api_secrets()?,
-            require_signed_internal_requests: required_bool(
-                "PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS",
-            )?,
             local_connector_check_ttl: Duration::from_secs(
                 required_u64("PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS")?.clamp(15, 600),
             ),
@@ -135,12 +131,6 @@ impl AppConfig {
                     .to_string(),
                 );
         }
-        if !config.require_signed_internal_requests {
-            return Err(
-                "PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true".to_string(),
-            );
-        }
-
         validate_production_secret(
             "PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD",
             Some(config.super_admin_password.as_str()),

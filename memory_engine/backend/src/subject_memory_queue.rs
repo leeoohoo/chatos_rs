@@ -231,7 +231,6 @@ async fn process_claimed_batch(state: &Arc<AppState>) -> Result<usize, String> {
                     event_type = envelope.event_type,
                     event_id = envelope.message_identity(),
                     version = envelope.version,
-                    retry_delay_ms = state.config.subject_memory_retry_delay.as_millis(),
                     error,
                     "Memory Engine subject-memory database dispatch was deferred"
                 );

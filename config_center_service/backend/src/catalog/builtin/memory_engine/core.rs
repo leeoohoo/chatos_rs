@@ -2,23 +2,6 @@ use super::*;
 
 pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
     vec![
-        definition(
-            MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
-            "内部请求必须签名",
-            "Memory Engine 是否必须校验来自内部服务的签名请求",
-            "Memory Engine / Security",
-            "service",
-            Some("memory-engine"),
-            "boolean",
-            json!(true),
-            None,
-            None,
-            &[],
-            "restart_required",
-            &["MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS"],
-            358,
-            now,
-        ),
         secret_definition(
             MEMORY_ENGINE_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
             "User Service Internal Secret",
