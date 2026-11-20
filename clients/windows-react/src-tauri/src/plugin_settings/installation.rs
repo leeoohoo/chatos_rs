@@ -1,5 +1,6 @@
 use super::{
-    installed_projection, metadata_response_error, plugin_catalog_error, MAXIMUM_MANIFEST_BYTES,
+    metadata_response_error, plugin_catalog_error, presentation::installed_projection,
+    MAXIMUM_MANIFEST_BYTES,
 };
 use crate::{
     host_command_client::HostCommandClient,
