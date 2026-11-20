@@ -13,19 +13,6 @@ pub const DEVICE_STATUS_REVOKED: &str = "revoked";
 pub const WORKSPACE_STATUS_ACTIVE: &str = "active";
 pub const WORKSPACE_STATUS_DISABLED: &str = "disabled";
 
-pub const SANDBOX_MODE_LOCAL_PROCESS: &str = "local_process";
-pub const SANDBOX_READINESS_READY: &str = "ready";
-pub const SANDBOX_READINESS_SETUP_REQUIRED: &str = "setup_required";
-pub const SANDBOX_READINESS_UNSUPPORTED: &str = "unsupported";
-pub const SANDBOX_READINESS_UNDER_DEVELOPMENT: &str = "under_development";
-pub const PERMISSION_PROFILE_READ_ONLY: &str = "read_only";
-pub const PERMISSION_PROFILE_WORKSPACE_WRITE: &str = "workspace_write";
-pub const PERMISSION_PROFILE_FULL_ACCESS: &str = "full_access";
-pub const APPROVAL_POLICY_ON_REQUEST: &str = "on_request";
-pub const APPROVAL_POLICY_NEVER: &str = "never";
-pub const APPROVAL_REVIEWER_USER: &str = "user";
-pub const APPROVAL_REVIEWER_AUTO_REVIEW: &str = "auto_review";
-
 pub const SESSION_STATUS_CONNECTED: &str = "connected";
 pub const SESSION_STATUS_DISCONNECTED: &str = "disconnected";
 
@@ -97,7 +84,6 @@ pub struct LocalConnectorStoreStats {
     pub devices_offline: usize,
     pub devices_revoked: usize,
     pub workspaces_total: usize,
-    pub sandbox_pairings_total: usize,
     pub active_sessions_total: usize,
 }
 
@@ -238,67 +224,6 @@ impl LocalConnectorWorkspace {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalConnectorSandboxPairing {
-    pub id: String,
-    pub owner_user_id: String,
-    pub device_id: String,
-    pub workspace_id: String,
-    pub enabled: bool,
-    #[serde(default = "default_sandbox_mode")]
-    pub sandbox_mode: String,
-    #[serde(default = "default_sandbox_readiness")]
-    pub sandbox_readiness: String,
-    #[serde(default = "default_permission_profile_id")]
-    pub permission_profile_id: String,
-    #[serde(default = "default_approval_policy")]
-    pub approval_policy: String,
-    #[serde(default = "default_approval_reviewer")]
-    pub approval_reviewer: String,
-    #[serde(default)]
-    pub policy_revision: Option<String>,
-    pub facade_base_url: Option<String>,
-    pub access_client_id: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-impl LocalConnectorSandboxPairing {
-    pub fn new(
-        owner_user_id: String,
-        device_id: String,
-        workspace_id: String,
-        enabled: bool,
-        sandbox_mode: String,
-        sandbox_readiness: Option<String>,
-        permission_profile_id: Option<String>,
-        approval_policy: Option<String>,
-        approval_reviewer: Option<String>,
-        policy_revision: Option<String>,
-        facade_base_url: Option<String>,
-        access_client_id: Option<String>,
-    ) -> Self {
-        let now = now_rfc3339();
-        Self {
-            id: Uuid::new_v4().to_string(),
-            owner_user_id,
-            device_id,
-            workspace_id,
-            enabled,
-            sandbox_mode: normalize_sandbox_mode(Some(sandbox_mode)),
-            sandbox_readiness: normalize_sandbox_readiness(sandbox_readiness),
-            permission_profile_id: normalize_permission_profile_id(permission_profile_id),
-            approval_policy: normalize_approval_policy(approval_policy),
-            approval_reviewer: normalize_approval_reviewer(approval_reviewer),
-            policy_revision,
-            facade_base_url,
-            access_client_id,
-            created_at: now.clone(),
-            updated_at: now,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalConnectorSession {
     pub id: String,
     pub owner_user_id: String,
@@ -353,88 +278,11 @@ pub fn normalize_optional_text(value: Option<String>) -> Option<String> {
         .filter(|item| !item.is_empty())
 }
 
-pub fn normalize_device_status(value: Option<String>) -> String {
-    match value.as_deref().map(str::trim) {
-        Some(DEVICE_STATUS_ONLINE) => DEVICE_STATUS_ONLINE.to_string(),
-        Some(DEVICE_STATUS_OFFLINE) => DEVICE_STATUS_OFFLINE.to_string(),
-        Some(DEVICE_STATUS_REVOKED) => DEVICE_STATUS_REVOKED.to_string(),
-        _ => DEVICE_STATUS_REGISTERED.to_string(),
-    }
-}
-
 pub fn normalize_workspace_status(value: Option<String>) -> String {
     match value.as_deref().map(str::trim) {
         Some(WORKSPACE_STATUS_DISABLED) => WORKSPACE_STATUS_DISABLED.to_string(),
         _ => WORKSPACE_STATUS_ACTIVE.to_string(),
     }
-}
-
-pub fn normalize_sandbox_mode(_value: Option<String>) -> String {
-    SANDBOX_MODE_LOCAL_PROCESS.to_string()
-}
-
-pub fn normalize_sandbox_readiness(value: Option<String>) -> String {
-    match value.as_deref().map(str::trim).map(str::to_ascii_lowercase) {
-        Some(value) if value == SANDBOX_READINESS_READY => SANDBOX_READINESS_READY.to_string(),
-        Some(value) if value == SANDBOX_READINESS_SETUP_REQUIRED => {
-            SANDBOX_READINESS_SETUP_REQUIRED.to_string()
-        }
-        Some(value) if value == SANDBOX_READINESS_UNSUPPORTED => {
-            SANDBOX_READINESS_UNSUPPORTED.to_string()
-        }
-        Some(value) if value == SANDBOX_READINESS_UNDER_DEVELOPMENT => {
-            SANDBOX_READINESS_UNDER_DEVELOPMENT.to_string()
-        }
-        _ => SANDBOX_READINESS_READY.to_string(),
-    }
-}
-
-pub fn normalize_permission_profile_id(value: Option<String>) -> String {
-    match value.as_deref().map(str::trim).map(str::to_ascii_lowercase) {
-        Some(value) if value == PERMISSION_PROFILE_READ_ONLY => {
-            PERMISSION_PROFILE_READ_ONLY.to_string()
-        }
-        Some(value) if value == PERMISSION_PROFILE_FULL_ACCESS => {
-            PERMISSION_PROFILE_FULL_ACCESS.to_string()
-        }
-        _ => PERMISSION_PROFILE_WORKSPACE_WRITE.to_string(),
-    }
-}
-
-pub fn normalize_approval_policy(value: Option<String>) -> String {
-    match value.as_deref().map(str::trim).map(str::to_ascii_lowercase) {
-        Some(value) if value == APPROVAL_POLICY_NEVER => APPROVAL_POLICY_NEVER.to_string(),
-        _ => APPROVAL_POLICY_ON_REQUEST.to_string(),
-    }
-}
-
-pub fn normalize_approval_reviewer(value: Option<String>) -> String {
-    match value.as_deref().map(str::trim).map(str::to_ascii_lowercase) {
-        Some(value) if value == APPROVAL_REVIEWER_AUTO_REVIEW => {
-            APPROVAL_REVIEWER_AUTO_REVIEW.to_string()
-        }
-        _ => APPROVAL_REVIEWER_USER.to_string(),
-    }
-}
-
-fn default_sandbox_mode() -> String {
-    SANDBOX_MODE_LOCAL_PROCESS.to_string()
-}
-
-fn default_sandbox_readiness() -> String {
-    SANDBOX_READINESS_READY.to_string()
-}
-
-fn default_permission_profile_id() -> String {
-    PERMISSION_PROFILE_WORKSPACE_WRITE.to_string()
-}
-
-fn default_approval_policy() -> String {
-    APPROVAL_POLICY_ON_REQUEST.to_string()
-}
-
-fn default_approval_reviewer() -> String {
-    APPROVAL_REVIEWER_USER.to_string()
 }
 
 pub fn normalize_capabilities(values: Vec<String>) -> Vec<String> {
@@ -448,57 +296,9 @@ pub fn normalize_capabilities(values: Vec<String>) -> Vec<String> {
     }
     out
 }
-pub fn capabilities_from_json(raw: &str) -> Vec<String> {
-    serde_json::from_str::<Vec<String>>(raw)
-        .map(normalize_capabilities)
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sandbox_mode_is_always_native_local_process() {
-        assert_eq!(normalize_sandbox_mode(None), SANDBOX_MODE_LOCAL_PROCESS);
-        assert_eq!(
-            normalize_sandbox_mode(Some("legacy".to_string())),
-            SANDBOX_MODE_LOCAL_PROCESS
-        );
-    }
-
-    #[test]
-    fn sandbox_readiness_normalization_preserves_non_ready_states() {
-        assert_eq!(
-            normalize_sandbox_readiness(Some("setup_required".to_string())),
-            SANDBOX_READINESS_SETUP_REQUIRED
-        );
-        assert_eq!(
-            normalize_sandbox_readiness(Some("UNDER_DEVELOPMENT".to_string())),
-            SANDBOX_READINESS_UNDER_DEVELOPMENT
-        );
-        assert_eq!(
-            normalize_sandbox_readiness(Some(" unsupported ".to_string())),
-            SANDBOX_READINESS_UNSUPPORTED
-        );
-        assert_eq!(
-            normalize_sandbox_readiness(Some("ready".to_string())),
-            SANDBOX_READINESS_READY
-        );
-    }
-
-    #[test]
-    fn sandbox_readiness_normalization_defaults_legacy_unknown_to_ready() {
-        assert_eq!(normalize_sandbox_readiness(None), SANDBOX_READINESS_READY);
-        assert_eq!(
-            normalize_sandbox_readiness(Some(String::new())),
-            SANDBOX_READINESS_READY
-        );
-        assert_eq!(
-            normalize_sandbox_readiness(Some("legacy_unknown".to_string())),
-            SANDBOX_READINESS_READY
-        );
-    }
 
     #[test]
     fn device_api_serialization_never_exposes_registered_windows_sid() {

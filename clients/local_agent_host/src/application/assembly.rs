@@ -124,38 +124,6 @@ impl LocalAgentHostAssembly {
         )
     }
 
-    /// Builds the external-tool Host with retained Memory context and record
-    /// persistence enabled for both production Profiles.
-    pub fn with_external_tool_worker_and_memory<M, C, I, S>(
-        runtime: Arc<LocalAgentRuntime>,
-        owner_user_id: impl Into<String>,
-        model_resolver: M,
-        capability_resolver: C,
-        read_only_tools: I,
-        approval_exempt_tools: Vec<String>,
-        memory_source_id: impl Into<String>,
-        memory_sync_worker: LocalMemorySyncWorker,
-    ) -> Result<Self, String>
-    where
-        M: LocalModelRuntimeResolver + 'static,
-        C: LocalCapabilityResolver + 'static,
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        Self::build(
-            runtime,
-            owner_user_id.into(),
-            model_resolver,
-            capability_resolver,
-            None,
-            read_only_tools,
-            approval_exempt_tools,
-            Some(memory_source_id.into()),
-            Some(memory_sync_worker),
-            None,
-        )
-    }
-
     /// Builds the production external-tool Host with retained Memory and
     /// trusted, isolated Hook execution enabled.
     #[allow(clippy::too_many_arguments)]

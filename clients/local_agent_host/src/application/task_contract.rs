@@ -179,54 +179,6 @@ fn resolve_source_message_id(
     Ok(message_id.clone())
 }
 
-#[cfg(test)]
-mod source_binding_tests {
-    use super::*;
-
-    #[test]
-    fn source_message_identity_is_resolved_without_model_owned_ids() {
-        let messages = vec![
-            (
-                "current".to_string(),
-                "continue the shared work".to_string(),
-            ),
-            ("older-1".to_string(), "inspect the project".to_string()),
-            ("older-2".to_string(), "continue the old work".to_string()),
-        ];
-
-        assert_eq!(
-            resolve_source_message_id("R1", "continue", Some("current"), &messages).unwrap(),
-            "current"
-        );
-        assert_eq!(
-            resolve_source_message_id("R1", "inspect the project", Some("current"), &messages)
-                .unwrap(),
-            "older-1"
-        );
-        assert!(resolve_source_message_id("R1", "work", None, &messages)
-            .unwrap_err()
-            .contains("multiple"));
-        assert!(
-            resolve_source_message_id("R1", "missing", Some("current"), &messages)
-                .unwrap_err()
-                .contains("not an exact excerpt")
-        );
-    }
-
-    #[test]
-    fn repeated_identical_source_messages_bind_to_the_latest_one() {
-        let messages = vec![
-            ("older".to_string(), "download this video".to_string()),
-            ("latest".to_string(), "download this video".to_string()),
-        ];
-
-        assert_eq!(
-            resolve_source_message_id("R1", "download this video", None, &messages).unwrap(),
-            "latest"
-        );
-    }
-}
-
 fn conversation_message_text(content: &Value) -> Option<String> {
     content
         .as_str()
@@ -308,5 +260,53 @@ fn validate_verification_contract(task: &TaskContractView<'_>) -> Result<(), Str
         if resolved.len() == before {
             return Err("verification_contract.checks contains a dependency cycle".to_string());
         }
+    }
+}
+
+#[cfg(test)]
+mod source_binding_tests {
+    use super::*;
+
+    #[test]
+    fn source_message_identity_is_resolved_without_model_owned_ids() {
+        let messages = vec![
+            (
+                "current".to_string(),
+                "continue the shared work".to_string(),
+            ),
+            ("older-1".to_string(), "inspect the project".to_string()),
+            ("older-2".to_string(), "continue the old work".to_string()),
+        ];
+
+        assert_eq!(
+            resolve_source_message_id("R1", "continue", Some("current"), &messages).unwrap(),
+            "current"
+        );
+        assert_eq!(
+            resolve_source_message_id("R1", "inspect the project", Some("current"), &messages)
+                .unwrap(),
+            "older-1"
+        );
+        assert!(resolve_source_message_id("R1", "work", None, &messages)
+            .unwrap_err()
+            .contains("multiple"));
+        assert!(
+            resolve_source_message_id("R1", "missing", Some("current"), &messages)
+                .unwrap_err()
+                .contains("not an exact excerpt")
+        );
+    }
+
+    #[test]
+    fn repeated_identical_source_messages_bind_to_the_latest_one() {
+        let messages = vec![
+            ("older".to_string(), "download this video".to_string()),
+            ("latest".to_string(), "download this video".to_string()),
+        ];
+
+        assert_eq!(
+            resolve_source_message_id("R1", "download this video", None, &messages).unwrap(),
+            "latest"
+        );
     }
 }

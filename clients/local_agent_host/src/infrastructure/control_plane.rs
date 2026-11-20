@@ -150,27 +150,6 @@ impl LocalControlPlaneSnapshot {
         Ok(())
     }
 
-    pub fn remove_model_runtime(
-        &self,
-        owner_user_id: &str,
-        model_config_ref: &str,
-        model_config_revision: &str,
-    ) -> Result<bool, String> {
-        let key = revision_key(
-            owner_user_id.to_string(),
-            "model_config_ref",
-            model_config_ref.to_string(),
-            "model_config_revision",
-            model_config_revision.to_string(),
-        )?;
-        Ok(self
-            .models
-            .write()
-            .map_err(|_| "model control-plane snapshot lock is poisoned".to_string())?
-            .remove(&key)
-            .is_some())
-    }
-
     async fn apply_current_capacity(
         &self,
         owner_user_id: &str,

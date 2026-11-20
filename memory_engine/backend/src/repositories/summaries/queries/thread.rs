@@ -28,6 +28,7 @@ pub async fn get_summary_by_id(
     .transpose()
 }
 
+#[cfg(test)]
 pub async fn list_latest_thread_summary_frontier(
     db: &Db,
     tenant_id: &str,

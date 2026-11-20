@@ -337,7 +337,7 @@ fn payload_scope_matches(
         && payload_partition == project_partition_key
 }
 
-async fn refresh_subject_scope_slot(
+pub(crate) async fn refresh_subject_scope_slot(
     config: &AppConfig,
     db: &Db,
     terminal_context: &Value,
@@ -372,7 +372,7 @@ async fn refresh_subject_scope_slot(
     .await?;
     if !refreshed {
         return Err(
-            "subject memory scope ownership was lost before Cloud Agent creation".to_string(),
+            "subject memory scope ownership was lost before Cloud Agent execution".to_string(),
         );
     }
     Ok(())

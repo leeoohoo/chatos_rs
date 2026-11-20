@@ -9,9 +9,10 @@
 
 use crate::{LocalToolExecutor, LocalToolRegistry};
 use async_trait::async_trait;
+#[cfg(test)]
+use chatos_local_agent_protocol::LocalPluginInstallationRecord;
 use chatos_local_agent_protocol::{
     validate_identifier, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
-    LocalPluginInstallationRecord,
 };
 use serde_json::{json, Value};
 use std::{
@@ -113,6 +114,7 @@ impl LocalMcpServerConfig {
         Ok(name)
     }
 
+    #[cfg(test)]
     async fn from_installation<R>(
         installation: &LocalPluginInstallationRecord,
         secrets: &R,
@@ -200,13 +202,6 @@ impl LocalMcpToolSet {
         &self.definitions
     }
 
-    pub fn model_tools(&self) -> Vec<Value> {
-        self.definitions
-            .iter()
-            .map(LocalMcpToolDefinition::model_tool)
-            .collect()
-    }
-
     pub fn register_into(&self, registry: &mut LocalToolRegistry) -> Result<(), String> {
         for definition in &self.definitions {
             registry.register_shared(
@@ -237,16 +232,6 @@ struct StdioConnection {
 }
 
 impl LocalMcpStdioSession {
-    pub async fn connect_installation<R>(
-        installation: &LocalPluginInstallationRecord,
-        secrets: &R,
-    ) -> Result<LocalMcpToolSet, String>
-    where
-        R: LocalPluginSecretResolver + ?Sized,
-    {
-        Self::connect(LocalMcpServerConfig::from_installation(installation, secrets).await?).await
-    }
-
     pub async fn connect(config: LocalMcpServerConfig) -> Result<LocalMcpToolSet, String> {
         config.validate()?;
         if let Some(cwd) = config.cwd.as_deref() {

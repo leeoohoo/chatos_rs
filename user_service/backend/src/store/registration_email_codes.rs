@@ -357,11 +357,4 @@ impl AppStore {
         .await
         .map_err(db_error)
     }
-
-    pub async fn mark_registration_email_code_consumed(&self, email: &str) -> Result<(), String> {
-        let now = super::now_rfc3339();
-        sqlx::query(r#"UPDATE registration_email_codes SET consumed_at=$2,updated_at=$2,
-            data=jsonb_set(jsonb_set(data,'{consumed_at}',to_jsonb($3::text)),'{updated_at}',to_jsonb($3::text)) WHERE email=$1"#)
-            .bind(email).bind(timestamp(&now)?).bind(&now).execute(&self.pool).await.map(|_| ()).map_err(db_error)
-    }
 }

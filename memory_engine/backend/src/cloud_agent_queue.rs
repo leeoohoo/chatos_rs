@@ -91,7 +91,12 @@ async fn refresh_domain_slots(state: &AppState, terminal_context: &Value) -> Res
     refresh_resummarization_claim(state, terminal_context).await?;
     refresh_partition_summary_claim(state, terminal_context).await?;
     refresh_rollup_slot(state, terminal_context).await?;
-    refresh_subject_scope_slot(state, terminal_context).await
+    crate::services::memory_cloud_agent::refresh_subject_scope_slot(
+        &state.config,
+        &state.pool,
+        terminal_context,
+    )
+    .await
 }
 
 async fn refresh_resummarization_claim(
@@ -205,45 +210,6 @@ async fn refresh_partition_summary_claim(
     .await?;
     if !refreshed {
         return Err("summary slot ownership was lost before Cloud Agent execution".to_string());
-    }
-    Ok(())
-}
-
-async fn refresh_subject_scope_slot(
-    state: &AppState,
-    terminal_context: &Value,
-) -> Result<(), String> {
-    let Some(lock_owner) = terminal_context
-        .get("scope_lock_owner")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(());
-    };
-    let request = terminal_context
-        .get("request")
-        .cloned()
-        .ok_or_else(|| "subject memory Cloud Agent request is missing".to_string())?;
-    let request = serde_json::from_value::<crate::models::RunSubjectMemoryJobRequest>(request)
-        .map_err(|error| format!("decode subject memory Cloud Agent request failed: {error}"))?;
-    let scope_key = terminal_context
-        .get("scope_key")
-        .and_then(Value::as_str)
-        .or(request.scope_key.as_deref())
-        .ok_or_else(|| "subject memory Cloud Agent scope_key is missing".to_string())?;
-    let refreshed = crate::repositories::subject_memory_scopes::refresh_subject_memory_scope_slot(
-        &state.pool,
-        request.tenant_id.as_str(),
-        request.source_id.as_str(),
-        scope_key,
-        lock_owner,
-        crate::services::memory_cloud_agent::cloud_subject_scope_lock_timeout_secs(&state.config),
-    )
-    .await?;
-    if !refreshed {
-        return Err(
-            "subject memory scope ownership was lost before Cloud Agent execution".to_string(),
-        );
     }
     Ok(())
 }

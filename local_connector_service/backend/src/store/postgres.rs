@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::models::{
-    now_rfc3339, LocalConnectorDevice, LocalConnectorSandboxPairing, LocalConnectorStoreStats,
-    LocalConnectorWorkspace, DEVICE_STATUS_OFFLINE, DEVICE_STATUS_ONLINE, DEVICE_STATUS_REVOKED,
+    now_rfc3339, LocalConnectorDevice, LocalConnectorStoreStats, LocalConnectorWorkspace,
+    DEVICE_STATUS_OFFLINE, DEVICE_STATUS_ONLINE, DEVICE_STATUS_REVOKED,
 };
 
 use super::{db_error, decode_all, decode_optional, json, timestamp, ConnectorStore};
@@ -200,85 +200,14 @@ impl ConnectorStore {
             .map_err(db_error)
     }
 
-    pub async fn upsert_sandbox_pairing(
-        &self,
-        pairing: &LocalConnectorSandboxPairing,
-    ) -> Result<LocalConnectorSandboxPairing, String> {
-        let mut updated = pairing.clone();
-        updated.updated_at = now_rfc3339();
-        let value = sqlx::query_scalar(
-            "INSERT INTO local_connector_sandbox_pairings(id,owner_user_id,device_id,workspace_id,enabled,updated_at,data)
-             VALUES($1,$2,$3,$4,$5,$6,$7)
-             ON CONFLICT(owner_user_id,device_id,workspace_id) DO UPDATE SET enabled=EXCLUDED.enabled,
-               updated_at=EXCLUDED.updated_at,data=local_connector_sandbox_pairings.data ||
-               (EXCLUDED.data - 'id' - 'created_at') RETURNING data",
-        ).bind(&updated.id).bind(&updated.owner_user_id).bind(&updated.device_id).bind(&updated.workspace_id)
-            .bind(updated.enabled).bind(timestamp(&updated.updated_at)?).bind(json(&updated)?)
-            .fetch_one(&self.pool).await.map_err(db_error)?;
-        decode_optional(Some(value))?
-            .ok_or_else(|| "sandbox pairing not found after upsert".to_string())
-    }
-
-    pub async fn get_sandbox_pairing(
-        &self,
-        id: &str,
-    ) -> Result<Option<LocalConnectorSandboxPairing>, String> {
-        decode_optional(
-            sqlx::query_scalar("SELECT data FROM local_connector_sandbox_pairings WHERE id=$1")
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(db_error)?,
-        )
-    }
-
-    pub async fn list_sandbox_pairings(
-        &self,
-        owner_user_id: &str,
-        device_id: Option<String>,
-        workspace_id: Option<String>,
-    ) -> Result<Vec<LocalConnectorSandboxPairing>, String> {
-        decode_all(sqlx::query_scalar(
-            "SELECT data FROM local_connector_sandbox_pairings WHERE owner_user_id=$1
-             AND ($2::text IS NULL OR device_id=$2) AND ($3::text IS NULL OR workspace_id=$3) ORDER BY updated_at DESC",
-        ).bind(owner_user_id).bind(device_id).bind(workspace_id).fetch_all(&self.pool).await.map_err(db_error)?)
-    }
-
-    pub async fn update_sandbox_pairing(
-        &self,
-        pairing: &LocalConnectorSandboxPairing,
-    ) -> Result<(), String> {
-        let mut updated = pairing.clone();
-        updated.updated_at = now_rfc3339();
-        sqlx::query("UPDATE local_connector_sandbox_pairings SET workspace_id=$3,enabled=$4,updated_at=$5,data=$6 WHERE id=$1 AND owner_user_id=$2")
-            .bind(&updated.id).bind(&updated.owner_user_id).bind(&updated.workspace_id).bind(updated.enabled)
-            .bind(timestamp(&updated.updated_at)?).bind(json(&updated)?).execute(&self.pool).await
-            .map(|_| ()).map_err(db_error)
-    }
-
-    pub async fn delete_sandbox_pairing(
-        &self,
-        owner_user_id: &str,
-        id: &str,
-    ) -> Result<(), String> {
-        sqlx::query("DELETE FROM local_connector_sandbox_pairings WHERE id=$1 AND owner_user_id=$2")
-            .bind(id)
-            .bind(owner_user_id)
-            .execute(&self.pool)
-            .await
-            .map(|_| ())
-            .map_err(db_error)
-    }
-
     pub async fn system_stats(&self) -> Result<LocalConnectorStoreStats, String> {
-        let row = sqlx::query_as::<_, (i64,i64,i64,i64,i64,i64,i64)>(
+        let row = sqlx::query_as::<_, (i64,i64,i64,i64,i64,i64)>(
             "SELECT
              (SELECT count(*) FROM local_connector_devices),
              (SELECT count(*) FROM local_connector_devices WHERE status='online'),
              (SELECT count(*) FROM local_connector_devices WHERE status='offline'),
              (SELECT count(*) FROM local_connector_devices WHERE status='revoked'),
              (SELECT count(*) FROM local_connector_workspaces),
-             (SELECT count(*) FROM local_connector_sandbox_pairings),
              (SELECT count(*) FROM local_connector_active_sessions WHERE status='connected' AND expires_at>now())",
         ).fetch_one(&self.pool).await.map_err(db_error)?;
         Ok(LocalConnectorStoreStats {
@@ -287,8 +216,7 @@ impl ConnectorStore {
             devices_offline: usize::try_from(row.2).unwrap_or(usize::MAX),
             devices_revoked: usize::try_from(row.3).unwrap_or(usize::MAX),
             workspaces_total: usize::try_from(row.4).unwrap_or(usize::MAX),
-            sandbox_pairings_total: usize::try_from(row.5).unwrap_or(usize::MAX),
-            active_sessions_total: usize::try_from(row.6).unwrap_or(usize::MAX),
+            active_sessions_total: usize::try_from(row.5).unwrap_or(usize::MAX),
         })
     }
 }

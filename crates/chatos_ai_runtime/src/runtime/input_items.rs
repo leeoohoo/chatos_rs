@@ -18,18 +18,6 @@ pub(super) fn json_value_size_bytes(value: &Value) -> usize {
         .unwrap_or_else(|_| value.to_string().len())
 }
 
-pub(super) fn attach_runtime_debug(mut payload: Value, runtime_debug: &Value) -> Value {
-    if let Some(map) = payload.as_object_mut() {
-        map.insert("task_execution_debug".to_string(), runtime_debug.clone());
-        payload
-    } else {
-        json!({
-            "payload": payload,
-            "task_execution_debug": runtime_debug,
-        })
-    }
-}
-
 /// Merge runtime-owned sticky/lifecycle items without adding another identical
 /// copy on every durable cloud step. This intentionally applies only at the
 /// lifecycle boundary; user messages and tool history retain normal append

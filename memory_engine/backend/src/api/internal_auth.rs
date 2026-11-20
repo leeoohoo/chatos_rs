@@ -88,8 +88,6 @@ fn header_text<'a>(headers: &'a HeaderMap, key: &'static str) -> Option<&'a str>
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use axum::http::HeaderValue;
 
     use super::*;
@@ -130,39 +128,8 @@ mod tests {
     }
 
     fn test_config() -> AppConfig {
-        AppConfig {
-            host: "127.0.0.1".to_string(),
-            port: 0,
-            database_url: "postgresql://127.0.0.1:5432/test".to_string(),
-            ai_request_timeout_secs: 1,
-            api_enabled: true,
-            worker_enabled: false,
-            worker_interval_secs: 30,
-            worker_max_threads_per_tick: 1,
-            worker_summary_concurrency: 1,
-            worker_rollup_concurrency: 1,
-            worker_subject_memory_concurrency: 1,
-            worker_reconcile_concurrency: 1,
-            cloud_agent_outbox_reconcile_interval: std::time::Duration::from_secs(1),
-            cloud_agent_outbox_batch_size: 10,
-            summary_retry_delay: std::time::Duration::from_millis(100),
-            summary_outbox_reconcile_interval: std::time::Duration::from_secs(1),
-            summary_outbox_batch_size: 10,
-            rollup_outbox_reconcile_interval: std::time::Duration::from_secs(1),
-            rollup_outbox_batch_size: 10,
-            subject_memory_outbox_reconcile_interval: std::time::Duration::from_secs(1),
-            subject_memory_outbox_batch_size: 10,
-            subject_memory_lock_timeout_secs: 300,
-            record_sync_lease_timeout_secs: 300,
-            rollup_lock_timeout_secs: 300,
-            internal_api_secrets: HashMap::new(),
-            runtime_context_assertion_keys: crate::config::test_runtime_context_assertion_keys(),
-            model_capabilities: crate::config::test_model_capabilities(),
-            active_model_capability_revision: "test-model-capability-v1".into(),
-            user_service_base_url: "http://127.0.0.1:39190".to_string(),
-            user_service_internal_base_url: "https://127.0.0.1:39192".to_string(),
-            user_service_internal_http: reqwest::Client::new(),
-            user_service_request_timeout_ms: 300,
-        }
+        let mut config = crate::config::test_app_config("postgresql://127.0.0.1:5432/test");
+        config.ai_request_timeout_secs = 1;
+        config
     }
 }

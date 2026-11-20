@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::{json, Value};
@@ -9,9 +8,8 @@ use tracing::{info, warn};
 
 use crate::compat::extract_usage_snapshot;
 use crate::request::{AiRequestHandler, AiRequestOptions, AiResponse, StreamCallbacks};
-use crate::traits::{ModelRequest, RuntimeCallbacks};
+use crate::traits::ModelRequest;
 
-use super::input_items::attach_runtime_debug;
 use super::options::AiRuntimeOptions;
 
 const PROVIDER_ERROR_DETAIL_MAX_CHARS: usize = 2_000;
@@ -51,22 +49,6 @@ pub(super) async fn dispatch_model_request(
         },
         "ai runtime dispatching model request"
     );
-    let request_debug = json!({
-        "conversation_id": options.conversation_id.clone(),
-        "conversation_turn_id": options.conversation_turn_id.clone(),
-        "iteration": iteration,
-        "reason": iteration_reason,
-        "input_item_count": input_item_count,
-        "input_bytes": input_bytes,
-        "tool_count": tool_count,
-        "supports_responses": request.supports_responses,
-        "request_attempt": request_attempt,
-        "stream": provider_stream,
-        "thinking_level": request.thinking_level.clone(),
-        "previous_response_id": request.previous_response_id.clone(),
-        "connection_mode": if force_identity_encoding { "isolated_retry" } else { "pooled" },
-        "read_timeout_seconds": request_handler.read_timeout_seconds(),
-    });
     if let Some(callback) = &options.callbacks.on_turn_phase {
         callback(build_model_request_phase_payload(
             request,
@@ -82,8 +64,7 @@ pub(super) async fn dispatch_model_request(
     if let Some(callback) = &options.callbacks.on_before_model_input {
         callback(request.input.clone());
     }
-    let on_before_send_model_request =
-        build_before_send_model_request_callback(&options.callbacks, request_debug);
+    let on_before_send_model_request = options.callbacks.on_before_send_model_request.clone();
 
     let started_at = Instant::now();
     let prompt_cache_key = request.prompt_cache_key.clone().or_else(|| {
@@ -392,30 +373,8 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     output
 }
 
-fn build_before_send_model_request_callback(
-    callbacks: &RuntimeCallbacks,
-    request_debug: Value,
-) -> Option<Arc<dyn Fn(Value) + Send + Sync>> {
-    let legacy_callback = callbacks.on_before_model_request.clone();
-    let payload_callback = callbacks.on_before_send_model_request.clone();
-    if legacy_callback.is_none() && payload_callback.is_none() {
-        return None;
-    }
-
-    Some(Arc::new(move |payload: Value| {
-        if let Some(callback) = &legacy_callback {
-            callback(attach_runtime_debug(payload.clone(), &request_debug));
-        }
-        if let Some(callback) = &payload_callback {
-            callback(payload);
-        }
-    }))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-
     use serde_json::json;
 
     use super::*;
@@ -532,47 +491,6 @@ mod tests {
         assert!(payload.to_string().len() < 2_000);
         assert!(!payload.to_string().contains("private reasoning"));
         assert!(!payload.to_string().contains("secret"));
-    }
-
-    #[test]
-    fn before_send_callback_preserves_exact_payload_and_legacy_debug_payload() {
-        let legacy_payload = Arc::new(Mutex::new(None));
-        let exact_payload = Arc::new(Mutex::new(None));
-        let callbacks = RuntimeCallbacks {
-            on_before_model_request: Some(Arc::new({
-                let legacy_payload = Arc::clone(&legacy_payload);
-                move |payload| {
-                    *legacy_payload.lock().expect("legacy payload") = Some(payload);
-                }
-            })),
-            on_before_send_model_request: Some(Arc::new({
-                let exact_payload = Arc::clone(&exact_payload);
-                move |payload| {
-                    *exact_payload.lock().expect("exact payload") = Some(payload);
-                }
-            })),
-            ..RuntimeCallbacks::default()
-        };
-        let callback = build_before_send_model_request_callback(
-            &callbacks,
-            json!({"iteration": 2, "reason": "tool_results"}),
-        )
-        .expect("callback");
-        let payload = json!({"model": "test", "input": []});
-
-        callback(payload.clone());
-
-        assert_eq!(
-            *exact_payload.lock().expect("exact payload"),
-            Some(payload.clone())
-        );
-        let legacy = legacy_payload
-            .lock()
-            .expect("legacy payload")
-            .clone()
-            .expect("legacy value");
-        assert_eq!(legacy["model"], payload["model"]);
-        assert_eq!(legacy["task_execution_debug"]["iteration"], 2);
     }
 
     #[test]

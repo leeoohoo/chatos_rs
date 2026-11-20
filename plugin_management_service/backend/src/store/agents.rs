@@ -28,14 +28,6 @@ impl AppStore {
         sqlx::query("INSERT INTO plugin_agents(agent_key,service_name,enabled,plugin_id,release_id,component_key,updated_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(agent_key) DO UPDATE SET service_name=EXCLUDED.service_name,enabled=EXCLUDED.enabled,plugin_id=EXCLUDED.plugin_id,release_id=EXCLUDED.release_id,component_key=EXCLUDED.component_key,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data")
             .bind(&record.agent_key).bind(&record.service_name).bind(record.enabled).bind(plugin_id).bind(release_id).bind(component_key).bind(timestamp(&record.updated_at)?).bind(json(record)?).execute(&self.pool).await.map(|_|()).map_err(db_error)
     }
-    pub async fn delete_agent(&self, agent_key: &str) -> Result<(), String> {
-        sqlx::query("DELETE FROM plugin_agents WHERE agent_key=$1")
-            .bind(agent_key)
-            .execute(&self.pool)
-            .await
-            .map(|_| ())
-            .map_err(db_error)
-    }
     pub async fn list_agent_prompts(
         &self,
         agent_key: &str,

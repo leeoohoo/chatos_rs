@@ -504,6 +504,7 @@ pub async fn refresh_summary_claim(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub async fn try_claim_rollup(
     db: &Db,
     tenant_id: &str,

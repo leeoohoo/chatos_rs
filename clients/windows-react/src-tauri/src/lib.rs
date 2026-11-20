@@ -18,7 +18,6 @@ mod computer_use_worker;
 mod connector_state;
 mod connector_storage;
 mod control_plane;
-mod controlled_network_policy;
 mod conversation_attachments;
 mod conversation_composer;
 mod conversation_history;

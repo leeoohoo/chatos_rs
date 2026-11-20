@@ -34,8 +34,8 @@ import {
   createJsonApiClient,
 } from '@chatos/frontend-runtime';
 import {
-  clearAuthToken as clearSharedAuthToken,
-  getAuthToken as getSharedAuthToken,
+  clearAuthToken,
+  getAuthToken,
 } from '../../../shared/auth/tokenStore';
 import {
   ADMIN_SERVICE_BASES,
@@ -44,14 +44,6 @@ import {
 } from '../../../shared/api/servicePaths';
 
 const API_BASE_URL = ADMIN_SERVICE_BASES.userService;
-
-export function getAuthToken(): string | null {
-  return getSharedAuthToken();
-}
-
-export function clearAuthToken(): void {
-  clearSharedAuthToken();
-}
 
 export function buildApiUrl(path: string): string {
   return buildAdminServiceUrl(API_BASE_URL, path);

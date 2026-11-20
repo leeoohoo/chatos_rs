@@ -83,18 +83,6 @@ impl AppStore {
         tx.commit().await.map_err(db_error)
     }
 
-    pub async fn replace_plugin_marketplace_if_matches(
-        &self,
-        expected: &PluginMarketplaceRecord,
-        record: &PluginMarketplaceRecord,
-    ) -> Result<bool, String> {
-        let result = sqlx::query("UPDATE plugin_marketplaces SET name=$1,owner_user_id=$2,visibility=$3,source_kind=$4,catalog_url=$5,enabled=$6,trust_level=$7,data=$8 WHERE id=$9 AND data=$10")
-            .bind(&record.name).bind(&record.owner_user_id).bind(&record.visibility).bind(&record.source_kind)
-            .bind(&record.catalog_url).bind(record.enabled).bind(&record.trust_level).bind(json(record)?)
-            .bind(&expected.id).bind(json(expected)?).execute(&self.pool).await.map_err(db_error)?;
-        Ok(result.rows_affected() == 1)
-    }
-
     pub async fn replace_plugin_marketplace_if_matches_with_catalog_sync(
         &self,
         expected: &PluginMarketplaceRecord,

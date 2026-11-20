@@ -9,8 +9,8 @@ use chatos_cloud_agent_protocol::CloudAgentRunRecord;
 use tokio::sync::Mutex;
 
 use crate::{
-    validate_initial_cloud_agent_state, CloudAgentAtomicTransition, CloudAgentClaim,
-    CloudAgentClaimResult, CloudAgentOutboxIntent, CloudAgentOutboxPublishFailure,
+    apply_cloud_agent_transition, validate_initial_cloud_agent_state, CloudAgentAtomicTransition,
+    CloudAgentClaim, CloudAgentClaimResult, CloudAgentOutboxIntent, CloudAgentOutboxPublishFailure,
     CloudAgentPendingOutboxIntent, CloudAgentRunStore, CloudAgentStateRepository,
 };
 
@@ -404,51 +404,34 @@ impl CloudAgentRunStore for InMemoryCloudAgentRunStore {
     ) -> Result<bool, String> {
         transition.validate()?;
         let mut state = self.state.lock().await;
-        let claim = &transition.claim;
-        if state
+        let claim = transition.claim.clone();
+        let current_token = state
             .claims
             .get(claim.ordering.agent_run_id.as_str())
-            .is_none_or(|existing| existing.token != claim.claim_token)
-        {
+            .map(|existing| existing.token.clone());
+        if current_token.as_deref() != Some(claim.claim_token.as_str()) {
             return Ok(false);
         }
-        {
-            let Some(run) = state.runs.get_mut(claim.ordering.agent_run_id.as_str()) else {
-                return Ok(false);
-            };
-            if run.ordering != claim.ordering
-                || run.status != claim.expected_status
-                || run.phase != claim.expected_phase
-                || run.version != claim.expected_version
-            {
-                return Ok(false);
-            }
-            run.input = transition.next_input;
-            run.status = transition.next_status;
-            run.phase = transition.next_phase;
-            run.ordering.step_seq = transition.next_step_seq;
-            run.iteration = transition.next_iteration;
-            run.retry_count = transition.next_retry_count;
-            run.previous_response_id = transition.previous_response_id;
-            run.continuation_mode = transition.continuation_mode;
-            run.current_input_items_ref = transition.current_input_items_ref;
-            run.mcp_runtime_session_ref = transition.mcp_runtime_session_ref;
-            run.pending_batch_id = transition.pending_batch_id;
-            run.pending_tool_calls = transition.pending_tool_calls;
-            run.pending_tool_results = transition.pending_tool_results;
-            run.response_input_items = transition.response_input_items;
-            run.usage_accumulator = transition.usage_accumulator;
-            run.terminal_outcome = transition.terminal_outcome;
-            run.version = run.version.saturating_add(1);
-            run.updated_at = chrono::Utc::now();
-        }
-        for intent in transition.outbox {
+        let Some(run) = state.runs.get_mut(claim.ordering.agent_run_id.as_str()) else {
+            return Ok(false);
+        };
+        let Some(outbox) = apply_cloud_agent_transition(
+            run,
+            transition,
+            current_token.as_deref(),
+            chrono::Utc::now(),
+        )?
+        else {
+            return Ok(false);
+        };
+        let terminal = run.status.is_terminal();
+        for intent in outbox {
             state
                 .outbox
                 .entry(intent.event_id.clone())
                 .or_insert_with(|| InMemoryCloudAgentOutboxRecord::pending(intent));
         }
-        if transition.next_status.is_terminal() {
+        if terminal {
             let lane = state
                 .lanes
                 .get_mut(claim.ordering.ordering_lane_key.as_str())

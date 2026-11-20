@@ -494,14 +494,6 @@ impl AppStore {
         .map_err(db_error)
     }
 
-    pub async fn touch_agent_last_login(&self, id: &str) -> Result<(), String> {
-        let now = now_rfc3339();
-        sqlx::query(r#"UPDATE agent_accounts SET last_login_at=$2,updated_at=$2,
-            data=jsonb_set(jsonb_set(data,'{last_login_at}',to_jsonb($3::text)),'{updated_at}',to_jsonb($3::text)) WHERE id=$1"#)
-            .bind(id).bind(timestamp(&now)?).bind(&now).execute(&self.pool).await
-            .map(|_| ()).map_err(db_error)
-    }
-
     pub async fn revoke_token(
         &self,
         jti: &str,
@@ -532,21 +524,6 @@ impl AppStore {
             .fetch_one(&self.pool)
             .await
             .map_err(db_error)
-    }
-
-    pub async fn username_exists_elsewhere(
-        &self,
-        username: &str,
-        current_user_id: Option<&str>,
-    ) -> Result<bool, String> {
-        sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM users WHERE username=$1 AND ($2::text IS NULL OR id<>$2))",
-        )
-        .bind(username)
-        .bind(current_user_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(db_error)
     }
 
     pub async fn find_harness_provisioning_by_user_id(
@@ -657,20 +634,6 @@ impl AppStore {
         .await
         .map(|_| ())
         .map_err(db_error)
-    }
-
-    pub async fn consume_invite_code(
-        &self,
-        id: &str,
-        now_unix: i64,
-        now: &str,
-    ) -> Result<bool, String> {
-        sqlx::query(r#"UPDATE invite_codes SET used_count=used_count+1,updated_at=$3,
-            data=jsonb_set(jsonb_set(jsonb_set(data,'{used_count}',to_jsonb(used_count+1)),
-            '{last_used_at}',to_jsonb($4::text)),'{updated_at}',to_jsonb($4::text))
-            WHERE id=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>$2) AND used_count<max_uses"#)
-            .bind(id).bind(now_unix).bind(timestamp(now)?).bind(now).execute(&self.pool).await
-            .map(|result| result.rows_affected()==1).map_err(db_error)
     }
 }
 

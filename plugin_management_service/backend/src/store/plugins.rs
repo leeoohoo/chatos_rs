@@ -194,32 +194,6 @@ impl AppStore {
         .await
     }
 
-    pub async fn commit_plugin_catalog_sync(
-        &self,
-        record: &PluginCatalogSyncRecord,
-        expected_revision: Option<&str>,
-    ) -> Result<bool, String> {
-        let data = json(record)?;
-        let synced_at = timestamp(&record.synced_at)?;
-        if let Some(expected) = expected_revision {
-            return sqlx::query("UPDATE plugin_catalog_syncs SET synced_at=$1,data=$2 WHERE marketplace_id=$3 AND data->>'revision'=$4")
-                .bind(synced_at).bind(data).bind(&record.marketplace_id).bind(expected).execute(&self.pool).await.map(|r| r.rows_affected()==1).map_err(db_error);
-        }
-        match sqlx::query(
-            "INSERT INTO plugin_catalog_syncs(marketplace_id,synced_at,data) VALUES($1,$2,$3)",
-        )
-        .bind(&record.marketplace_id)
-        .bind(synced_at)
-        .bind(data)
-        .execute(&self.pool)
-        .await
-        {
-            Ok(_) => Ok(true),
-            Err(sqlx::Error::Database(error)) if error.is_unique_violation() => Ok(false),
-            Err(error) => Err(db_error(error)),
-        }
-    }
-
     pub async fn list_plugin_catalog(
         &self,
         query: &PluginCatalogQuery,
@@ -363,18 +337,6 @@ impl AppStore {
             return Ok(Vec::new());
         }
         decode_all(sqlx::query_scalar("SELECT r.data FROM plugin_releases r LEFT JOIN plugin_release_publication_states s ON s.release_id=r.id WHERE r.id=ANY($1) AND COALESCE(s.ready,TRUE)").bind(ids).fetch_all(&self.pool).await.map_err(db_error)?)
-    }
-
-    pub async fn get_plugin_release_any_state(
-        &self,
-        id: &str,
-    ) -> Result<Option<PluginReleaseRecord>, String> {
-        fetch_one(
-            "SELECT data FROM plugin_releases WHERE id=$1",
-            id,
-            &self.pool,
-        )
-        .await
     }
 
     pub async fn list_plugin_releases_any_state_by_ids(

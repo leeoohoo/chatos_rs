@@ -16,24 +16,16 @@ import {
   createJsonApiClient,
 } from '@chatos/frontend-runtime';
 import {
-  clearAuthToken as clearSharedAuthToken,
-  getAuthToken as getSharedAuthToken,
+  clearAuthToken,
+  getAuthToken,
 } from '../../shared/auth/tokenStore';
 import { ADMIN_SERVICE_BASES, stripBackendApiPrefix } from '../../shared/api/servicePaths';
-
-export function getToken(): string | null {
-  return getSharedAuthToken();
-}
-
-export function clearToken(): void {
-  clearSharedAuthToken();
-}
 
 const rawRequest = createJsonApiClient({
   baseUrl: ADMIN_SERVICE_BASES.configCenter,
   timeoutMs: 30_000,
-  getAuthToken: getToken,
-  onUnauthorized: clearToken,
+  getAuthToken,
+  onUnauthorized: clearAuthToken,
   readSuccessResponse: (response) => response.json(),
   overrideContentType: true,
 });

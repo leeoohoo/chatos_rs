@@ -256,6 +256,44 @@ pub(crate) fn test_runtime_context_assertion_keys(
     )])
 }
 
+#[cfg(test)]
+pub(crate) fn test_app_config(database_url: impl Into<String>) -> AppConfig {
+    AppConfig {
+        host: "127.0.0.1".to_string(),
+        port: 0,
+        database_url: database_url.into(),
+        ai_request_timeout_secs: 5,
+        api_enabled: true,
+        worker_enabled: false,
+        worker_interval_secs: 30,
+        worker_max_threads_per_tick: 1,
+        worker_summary_concurrency: 1,
+        worker_rollup_concurrency: 1,
+        worker_subject_memory_concurrency: 1,
+        worker_reconcile_concurrency: 1,
+        cloud_agent_outbox_reconcile_interval: Duration::from_secs(1),
+        cloud_agent_outbox_batch_size: 10,
+        summary_retry_delay: Duration::from_millis(100),
+        summary_outbox_reconcile_interval: Duration::from_secs(1),
+        summary_outbox_batch_size: 10,
+        rollup_outbox_reconcile_interval: Duration::from_secs(1),
+        rollup_outbox_batch_size: 10,
+        subject_memory_outbox_reconcile_interval: Duration::from_secs(1),
+        subject_memory_outbox_batch_size: 10,
+        subject_memory_lock_timeout_secs: 300,
+        record_sync_lease_timeout_secs: 300,
+        rollup_lock_timeout_secs: 300,
+        internal_api_secrets: HashMap::new(),
+        runtime_context_assertion_keys: test_runtime_context_assertion_keys(),
+        model_capabilities: test_model_capabilities(),
+        active_model_capability_revision: "test-model-capability-v1".into(),
+        user_service_base_url: "http://127.0.0.1:39190".to_string(),
+        user_service_internal_base_url: "https://127.0.0.1:39192".to_string(),
+        user_service_internal_http: reqwest::Client::new(),
+        user_service_request_timeout_ms: 300,
+    }
+}
+
 fn caller_internal_api_secrets() -> HashMap<String, String> {
     [
         (

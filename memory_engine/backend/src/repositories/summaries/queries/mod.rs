@@ -13,8 +13,9 @@ pub use rollups::{
     list_pending_summary_partition_keys_by_level, list_summaries_by_ids,
     list_summaries_by_ids_in_source, list_threads_with_pending_rollups,
 };
+#[cfg(test)]
+pub use thread::list_latest_thread_summary_frontier;
 pub use thread::{
     get_highest_thread_summary_for_project, get_summary_by_id,
-    list_latest_thread_summaries_at_level_for_project, list_latest_thread_summary_frontier,
-    list_thread_summaries,
+    list_latest_thread_summaries_at_level_for_project, list_thread_summaries,
 };

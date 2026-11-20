@@ -23,10 +23,7 @@ pub mod traits;
 pub mod turn;
 
 pub use builder::AiRuntimeBuilder;
-pub use compat::{
-    cap_tool_output_for_input, extract_usage_snapshot, rewrite_system_messages_to_user,
-    truncate_function_call_outputs_in_input, UsageSnapshot,
-};
+pub use compat::{extract_usage_snapshot, UsageSnapshot};
 pub use error_policy::{
     classify_transient_retry, classify_user_facing_ai_error, effective_transient_retry_limit,
     exhausted_transient_retry_message, handle_transient_retry, handle_transient_retry_with_abort,

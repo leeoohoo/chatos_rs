@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import {
-  clearAuthToken as clearSharedAuthToken,
-  getAuthToken as getSharedAuthToken,
+  clearAuthToken,
+  getAuthToken,
 } from '../../../shared/auth/tokenStore';
 import { ADMIN_SERVICE_BASES, buildAdminServiceUrl } from '../../../shared/api/servicePaths';
 
@@ -15,14 +15,6 @@ export interface UserOptionRecord {
 
 export function buildUserServiceApiUrl(path: string): string {
   return buildAdminServiceUrl(ADMIN_SERVICE_BASES.userService, path);
-}
-
-export function getAuthToken(): string | null {
-  return getSharedAuthToken();
-}
-
-export function clearAuthToken(): void {
-  clearSharedAuthToken();
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

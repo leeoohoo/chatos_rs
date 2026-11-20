@@ -84,18 +84,6 @@ impl AppStore {
         fetch_one("SELECT data FROM plugin_mcps WHERE id=$1", id, &self.pool).await
     }
 
-    pub async fn list_system_mcps(&self) -> Result<Vec<McpRecord>, String> {
-        decode_all(
-            sqlx::query_scalar(
-                "SELECT data FROM plugin_mcps WHERE visibility=$1 ORDER BY display_name,name",
-            )
-            .bind(VISIBILITY_SYSTEM_PRIVATE)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db_error)?,
-        )
-    }
-
     pub async fn list_all_mcps_for_admin_catalog(&self) -> Result<Vec<McpRecord>, String> {
         decode_all(
             sqlx::query_scalar(
@@ -239,12 +227,6 @@ impl AppStore {
         owner_user_id: &str,
     ) -> Result<Vec<SkillRecord>, String> {
         decode_all(sqlx::query_scalar("SELECT data FROM plugin_skills WHERE enabled AND ((owner_user_id=$1 AND source_kind=$2 AND visibility=$3) OR visibility=$4)").bind(owner_user_id).bind(SOURCE_KIND_USER_CREATED).bind(VISIBILITY_PRIVATE).bind(VISIBILITY_PUBLIC).fetch_all(&self.pool).await.map_err(db_error)?)
-    }
-
-    pub async fn replace_skill(&self, record: &SkillRecord) -> Result<(), String> {
-        let (plugin_id, release_id, component_key) = component_columns(&record.plugin_component);
-        sqlx::query("INSERT INTO plugin_skills(id,owner_user_id,visibility,source_kind,name,display_name,enabled,content_kind,plugin_id,release_id,component_key,updated_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(id) DO UPDATE SET owner_user_id=EXCLUDED.owner_user_id,visibility=EXCLUDED.visibility,source_kind=EXCLUDED.source_kind,name=EXCLUDED.name,display_name=EXCLUDED.display_name,enabled=EXCLUDED.enabled,content_kind=EXCLUDED.content_kind,plugin_id=EXCLUDED.plugin_id,release_id=EXCLUDED.release_id,component_key=EXCLUDED.component_key,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data")
-            .bind(&record.id).bind(&record.owner_user_id).bind(&record.visibility).bind(&record.source_kind).bind(&record.name).bind(&record.display_name).bind(record.enabled).bind(&record.content.kind).bind(plugin_id).bind(release_id).bind(component_key).bind(timestamp(&record.updated_at)?).bind(json(record)?).execute(&self.pool).await.map(|_|()).map_err(db_error)
     }
 
     pub async fn list_skill_packages(

@@ -3,8 +3,7 @@
 
 import axios, { AxiosHeaders } from 'axios';
 
-import { clearAuthToken, getAuthToken } from './userService';
-
+import { clearAuthToken, getAuthToken } from '../../../shared/auth/tokenStore';
 import { ADMIN_SERVICE_BASES } from '../../../shared/api/servicePaths';
 
 const baseURL = ADMIN_SERVICE_BASES.memoryEngine;
