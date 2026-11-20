@@ -76,8 +76,6 @@ struct CodeExchangeResponse {
     openid: Option<String>,
     unionid: Option<String>,
     errcode: Option<i64>,
-    #[allow(dead_code)]
-    errmsg: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
