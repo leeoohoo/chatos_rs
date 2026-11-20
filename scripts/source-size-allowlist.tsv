@@ -60,7 +60,6 @@ clients/windows-react/src-tauri/src/clipboard_history.rs	958	2027-02-28	Split ex
 scripts/deploy-production.sh	949	2027-02-28	Split existing production responsibilities before expiry
 clients/macos/Sources/ChatOSConnector/NativeMCPCodeWriteTools.swift	947	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src/features/story-studio/ui/StoryStudioView.tsx	938	2027-02-28	Split existing production responsibilities before expiry
-clients/local_agent_host/layers/application/src/skill_runtime.rs	920	2027-02-28	Split existing production responsibilities before expiry
 clients/macos/Sources/ChatOSCore/AgentGroupChat/LocalAgentTodo.swift	916	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/story_studio/batch_execution.rs	904	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/requirement_survey.rs	897	2027-02-28	Split existing production responsibilities before expiry

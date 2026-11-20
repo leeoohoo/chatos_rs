@@ -90,7 +90,6 @@ scripts/deploy-production.sh	949	2027-02-28	Split existing owned source by respo
 clients/macos/Sources/ChatOSConnector/NativeMCPCodeWriteTools.swift	947	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Tests/ChatOSConnectorTests/CodeReadWorkerProcessIsolationTests.swift	940	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src/features/story-studio/ui/StoryStudioView.tsx	938	2027-02-28	Split existing owned source by responsibility before expiry
-clients/local_agent_host/layers/application/src/skill_runtime.rs	920	2027-02-28	Extract skill runtime activation and resource loading paths
 clients/macos/Sources/ChatOSCore/AgentGroupChat/LocalAgentTodo.swift	916	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/story_studio/batch_execution.rs	904	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/remote_connection/tests.rs	902	2027-02-28	Split remote connection tests by credential, lifecycle, and jump-host behavior
