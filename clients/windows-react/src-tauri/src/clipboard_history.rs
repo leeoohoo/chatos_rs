@@ -15,8 +15,7 @@ use tauri::{http, AppHandle, LogicalSize, Manager, State, WebviewUrl, WebviewWin
 use uuid::Uuid;
 
 use crate::{
-    app_data_transaction::{create_owned_file, ensure_owned_directory},
-    general_settings::GeneralSettingsStore,
+    app_data_transaction::ensure_owned_directory, general_settings::GeneralSettingsStore,
     global_utilities::GlobalUtilityPreferencesStore,
 };
 
@@ -860,6 +859,7 @@ fn encode_rgba_png(width: usize, height: usize, rgba: &[u8]) -> Result<Vec<u8>, 
 
 #[cfg(any(target_os = "windows", test))]
 fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use crate::app_data_transaction::create_owned_file;
     let parent = path.parent().ok_or_else(clipboard_error)?;
     ensure_owned_directory(parent).map_err(|_| clipboard_error())?;
     create_owned_file(parent, path, ".clipboard-", bytes).map_err(|_| clipboard_error())

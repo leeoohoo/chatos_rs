@@ -2846,7 +2846,7 @@ mod tests {
         };
         let fingerprint = resolved_runtime_fingerprint(&resolved).unwrap();
 
-        let manager = PluginApplicationManager::new(directory.path().join("app-data"));
+        let _manager = PluginApplicationManager::new(directory.path().join("app-data"));
         let session = McpSession::connect(
             &plugin_root,
             &context,
@@ -2854,7 +2854,7 @@ mod tests {
             fingerprint,
             None,
             #[cfg(windows)]
-            manager.workspace_leases(),
+            _manager.workspace_leases(),
         )
         .await
         .unwrap();
@@ -2994,8 +2994,8 @@ fn main() {
         };
 
         let fingerprint = resolved_runtime_fingerprint(&resolved).unwrap();
-        let app_data = directory.path().join("app-data");
-        let manager = PluginApplicationManager::new(app_data.clone());
+        let _app_data = directory.path().join("app-data");
+        let _manager = PluginApplicationManager::new(_app_data.clone());
         let resources = MachineResourceGovernor::default();
         let permit = resources
             .acquire(
@@ -3011,7 +3011,7 @@ fn main() {
             fingerprint,
             Some(permit),
             #[cfg(windows)]
-            manager.workspace_leases(),
+            _manager.workspace_leases(),
         )
         .await
         .unwrap();
@@ -3099,10 +3099,10 @@ fn main() {
         assert_eq!(resources.used_resource_units(), 0);
         #[cfg(windows)]
         for journal in [
-            app_data
+            _app_data
                 .join("local-agent")
                 .join("appcontainer-workspace-leases"),
-            app_data
+            _app_data
                 .join("local-agent")
                 .join("appcontainer-profile-leases"),
         ] {

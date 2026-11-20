@@ -2,7 +2,7 @@ use super::{TerminalRuntimeError, TerminalScope};
 use serde_json::json;
 use std::{
     collections::VecDeque,
-    io::{self, Read, Write},
+    io,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -252,7 +252,7 @@ fn blocking_reader(file: std::fs::File) -> BlockingReader {
         let mut file = file;
         let mut buffer = vec![0_u8; 8 * 1_024];
         loop {
-            match file.read(&mut buffer) {
+            match std::io::Read::read(&mut file, &mut buffer) {
                 Ok(0) => return,
                 Ok(count) => {
                     if sender.send(Ok(buffer[..count].to_vec())).is_err() {
@@ -570,7 +570,7 @@ impl ManagedStdin {
                     let mut file = file
                         .lock()
                         .map_err(|_| io::Error::other("sandboxed stdin lock poisoned"))?;
-                    file.write_all(&bytes)
+                    std::io::Write::write_all(&mut *file, &bytes)
                 })
                 .await
                 .map_err(|_| io::Error::other("sandboxed stdin worker stopped"))?

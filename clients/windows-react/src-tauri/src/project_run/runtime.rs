@@ -7,7 +7,6 @@ use crate::machine_resource_governor::{
 use crate::terminal_runtime::process::ProcessTermination;
 use std::{
     collections::HashMap,
-    ffi::OsStr,
     path::PathBuf,
     process::Stdio,
     sync::{
@@ -651,7 +650,7 @@ fn project_command(executable: &std::path::Path, arguments: &[String]) -> Comman
         let mut command_line = quote_windows_command_arg(executable.as_os_str());
         for argument in arguments {
             command_line.push(' ');
-            command_line.push_str(&quote_windows_command_arg(OsStr::new(argument)));
+            command_line.push_str(&quote_windows_command_arg(std::ffi::OsStr::new(argument)));
         }
         // `/c` consumes the remainder of the command line.  Passing that
         // remainder through `arg` makes Rust escape the embedded quotes for
@@ -676,12 +675,12 @@ fn project_command(executable: &std::path::Path, arguments: &[String]) -> Comman
 #[cfg(windows)]
 fn is_batch_script(path: &std::path::Path) -> bool {
     path.extension()
-        .and_then(OsStr::to_str)
+        .and_then(std::ffi::OsStr::to_str)
         .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "cmd" | "bat"))
 }
 
 #[cfg(windows)]
-fn quote_windows_command_arg(value: &OsStr) -> String {
+fn quote_windows_command_arg(value: &std::ffi::OsStr) -> String {
     let value = value.to_string_lossy();
     if value.is_empty() {
         return "\"\"".into();
