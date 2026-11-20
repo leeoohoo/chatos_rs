@@ -5,7 +5,6 @@ use super::{
 #[cfg(windows)]
 use crate::windows_appcontainer::WorkspaceLeaseManager;
 use crate::{
-    app_data_transaction::ensure_owned_directory,
     machine_resource_governor::{
         MachineResourceGovernor, MachineResourceKind, MachineResourcePermit,
         MachineResourcePriority,
@@ -14,18 +13,12 @@ use crate::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use reqwest::{redirect::Policy, Client};
-use ring::{
-    hmac,
-    rand::{SecureRandom, SystemRandom},
-};
+use ring::hmac;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
-    fs::{self, File},
-    io::{self, Read},
-    path::{Component, Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex as StandardMutex,
@@ -38,15 +31,22 @@ use tokio::{
 use uuid::Uuid;
 
 mod context;
+mod filesystem;
 mod loopback_proxy;
 mod process_lifecycle;
 mod process_preparation;
+mod security;
 mod static_server;
 use context::{
     resolve_host_context, resolve_runtime_context, ResolvedHostContext, ResolvedRuntimeContext,
 };
 use loopback_proxy::LoopbackProxyShutdown;
 use process_lifecycle::spawn_application_runtime;
+use security::{
+    authenticated_launch_url, secure_random_token, stale_bridge_error, stale_launch_error,
+    storage_partition_id, validate_bridge_request, validate_launch_request,
+    validated_loopback_origin,
+};
 use static_server::StaticServerShutdown;
 
 #[cfg(test)]
@@ -60,8 +60,12 @@ use process_preparation::{
     available_loopback_port, prepare_runtime_process, resolve_package_executable,
 };
 #[cfg(test)]
+use security::{health_proof, MAXIMUM_BRIDGE_REQUEST_BYTES};
+#[cfg(test)]
 use std::{
     collections::BTreeMap,
+    fs,
+    io::Read,
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
 #[cfg(test)]
@@ -75,7 +79,6 @@ const MAXIMUM_RUNTIMES_PER_OWNER: usize = 8;
 const HEALTH_REQUEST_TIMEOUT_MS: u64 = 700;
 const HEALTH_RETRY_MS: u64 = 80;
 const TERMINATION_GRACE_MS: u64 = 2_000;
-const MAXIMUM_BRIDGE_REQUEST_BYTES: usize = 256 * 1_024;
 const HOST_CONTEXT_READ_CAPABILITY: &str = "host.context.read";
 const PLUGIN_AUTHENTICATION_HEADER: &str = "x-chatos-plugin-token";
 const PLUGIN_HEALTH_CHALLENGE_HEADER: &str = "x-chatos-plugin-challenge";
@@ -717,33 +720,6 @@ impl PluginApplicationRuntime {
     }
 }
 
-fn authenticated_launch_url(process: &RunningPluginApplication) -> String {
-    format!(
-        "{}{}?token={}",
-        process.base_url.trim_end_matches('/'),
-        PLUGIN_SESSION_BOOTSTRAP_PATH,
-        process.authentication_token
-    )
-}
-
-fn secure_random_token() -> Result<String, String> {
-    let mut bytes = [0_u8; 32];
-    SystemRandom::new()
-        .fill(&mut bytes)
-        .map_err(|_| "无法生成 Plugin 应用启动凭据。".to_owned())?;
-    Ok(URL_SAFE_NO_PAD.encode(bytes))
-}
-
-fn health_proof(authentication_token: &str, challenge: &str) -> String {
-    URL_SAFE_NO_PAD.encode(
-        hmac::sign(
-            &hmac::Key::new(hmac::HMAC_SHA256, authentication_token.as_bytes()),
-            challenge.as_bytes(),
-        )
-        .as_ref(),
-    )
-}
-
 impl RunningPluginApplication {
     fn release_resource(&self) {
         if let Ok(mut permit) = self.resource_permit.lock() {
@@ -806,189 +782,11 @@ impl RunningPluginApplication {
     }
 }
 
-fn validate_launch_request(request: &PluginApplicationLaunchRequest) -> Result<(), String> {
-    validate_text(&request.owner_user_id, 512)?;
-    validate_text(&request.presentation_id, 512)?;
-    validate_text(&request.plugin_id, 1_024)?;
-    validate_text(&request.component_key, 1_024)?;
-    if request.generation == 0 {
-        return Err(plugin_runtime_error());
-    }
-    if let PluginApplicationContextSelection::Project { project_id } = &request.context {
-        validate_text(project_id, 1_024)?;
-    }
-    Ok(())
-}
-
-fn validate_bridge_request(request: &PluginApplicationBridgeRequest) -> Result<(), String> {
-    validate_text(&request.owner_user_id, 512)?;
-    validate_text(&request.presentation_id, 512)?;
-    validate_text(&request.session_id, 256)?;
-    validate_text(&request.request_id, 256)?;
-    validate_text(&request.method, 256)?;
-    if request.generation == 0
-        || request.host_session_nonce.len() != 64
-        || !request
-            .host_session_nonce
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-        || validated_loopback_origin(&request.origin)? != request.origin
-        || !request.payload.is_object()
-        || serde_json::to_vec(request)
-            .map(|bytes| bytes.len() > MAXIMUM_BRIDGE_REQUEST_BYTES)
-            .unwrap_or(true)
-    {
-        return Err(stale_bridge_error());
-    }
-    Ok(())
-}
-
-fn validated_loopback_origin(value: &str) -> Result<String, String> {
-    let url = reqwest::Url::parse(value).map_err(|_| stale_bridge_error())?;
-    if url.scheme() != "http"
-        || url.host_str() != Some("127.0.0.1")
-        || url.port().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(stale_bridge_error());
-    }
-    Ok(url.origin().ascii_serialization())
-}
-
 fn presentation_key(request: &PluginApplicationLaunchRequest) -> PresentationKey {
     PresentationKey {
         owner_user_id: request.owner_user_id.clone(),
         presentation_id: request.presentation_id.clone(),
     }
-}
-
-fn resolve_non_linked_file(root: &Path, relative: &str) -> Result<PathBuf, String> {
-    if relative.is_empty() || relative.len() > 4_096 || relative.chars().any(char::is_control) {
-        return Err(plugin_catalog_error());
-    }
-    let relative = Path::new(relative);
-    if relative.is_absolute()
-        || relative
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
-    {
-        return Err(plugin_catalog_error());
-    }
-    let canonical_root = root.canonicalize().map_err(|_| plugin_catalog_error())?;
-    let mut candidate = canonical_root.clone();
-    for component in relative.components() {
-        if let Component::Normal(component) = component {
-            candidate.push(component);
-            let metadata = fs::symlink_metadata(&candidate).map_err(|_| plugin_catalog_error())?;
-            if is_link_or_reparse_point(&metadata) {
-                return Err(plugin_catalog_error());
-            }
-        }
-    }
-    let canonical = candidate
-        .canonicalize()
-        .map_err(|_| plugin_catalog_error())?;
-    if !canonical.starts_with(&canonical_root) || !canonical.is_file() {
-        return Err(plugin_catalog_error());
-    }
-    Ok(canonical)
-}
-
-fn create_confined_directory(root: &Path, relative: &Path) -> Result<PathBuf, String> {
-    if relative.is_absolute()
-        || relative
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err(plugin_runtime_error());
-    }
-    ensure_owned_directory(root).map_err(|_| plugin_runtime_error())?;
-    let requested_root_metadata = fs::symlink_metadata(root).map_err(|_| plugin_runtime_error())?;
-    if !requested_root_metadata.is_dir() || is_link_or_reparse_point(&requested_root_metadata) {
-        return Err(plugin_runtime_error());
-    }
-    let root = root.canonicalize().map_err(|_| plugin_runtime_error())?;
-    if is_link_or_reparse_point(&fs::symlink_metadata(&root).map_err(|_| plugin_runtime_error())?) {
-        return Err(plugin_runtime_error());
-    }
-    let mut current = root.clone();
-    for component in relative.components() {
-        let Component::Normal(component) = component else {
-            return Err(plugin_runtime_error());
-        };
-        current.push(component);
-        match fs::symlink_metadata(&current) {
-            Ok(metadata) => {
-                if !metadata.is_dir() || is_link_or_reparse_point(&metadata) {
-                    return Err(plugin_runtime_error());
-                }
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                fs::create_dir(&current).map_err(|_| plugin_runtime_error())?;
-            }
-            Err(_) => return Err(plugin_runtime_error()),
-        }
-    }
-    let canonical = current.canonicalize().map_err(|_| plugin_runtime_error())?;
-    if !canonical.starts_with(&root) {
-        return Err(plugin_runtime_error());
-    }
-    Ok(canonical)
-}
-
-fn bounded_file(path: &Path, maximum: u64) -> Result<Vec<u8>, String> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| plugin_runtime_error())?;
-    if !metadata.is_file() || is_link_or_reparse_point(&metadata) || metadata.len() > maximum {
-        return Err(plugin_runtime_error());
-    }
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    File::open(path)
-        .and_then(|file| file.take(maximum + 1).read_to_end(&mut bytes))
-        .map_err(|_| plugin_runtime_error())?;
-    if bytes.len() as u64 > maximum {
-        return Err(plugin_runtime_error());
-    }
-    Ok(bytes)
-}
-
-fn storage_partition_id(application_id: &str, scope_key: &str) -> String {
-    let value = sha256(&format!("{application_id}\n{scope_key}"));
-    format!(
-        "{}-{}-{}-{}-{}",
-        &value[0..8],
-        &value[8..12],
-        &value[12..16],
-        &value[16..20],
-        &value[20..32]
-    )
-}
-
-fn sha256(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
-}
-
-#[cfg(windows)]
-fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    metadata.file_type().is_symlink()
-        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
-    metadata.file_type().is_symlink()
-}
-
-fn stale_launch_error() -> String {
-    "Plugin 应用启动请求已失效。".into()
-}
-
-fn stale_bridge_error() -> String {
-    "Plugin 应用 Bridge 会话无效。".into()
 }
 
 fn plugin_runtime_error() -> String {
