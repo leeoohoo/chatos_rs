@@ -752,7 +752,6 @@ dependencies = [
 name = "chatos_service_runtime"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "chatos_config_sdk",
  "chatos_internal_auth",
  "dotenvy",
