@@ -7,7 +7,6 @@ mod control_plane;
 #[cfg(test)]
 mod control_plane_tests;
 mod hook_runner;
-mod mcp;
 mod memory;
 mod model_credentials;
 
@@ -24,10 +23,6 @@ pub use control_plane::{LocalControlPlaneSnapshot, LocalModelCredentialResolver}
 pub use hook_runner::WindowsAppContainerHookRunner;
 pub use hook_runner::{
     LocalHookInvocation, LocalHookInvocationResult, LocalHookRunner, MacOsSeatbeltHookRunner,
-};
-pub use mcp::{
-    LocalMcpServerConfig, LocalMcpStdioSession, LocalMcpToolDefinition, LocalMcpToolSet,
-    LocalPluginSecretResolver,
 };
 pub use memory::{LocalMemoryRuntimeConfig, LocalMemoryRuntimeServices};
 pub use model_credentials::ChildEnvironmentModelCredentialResolver;

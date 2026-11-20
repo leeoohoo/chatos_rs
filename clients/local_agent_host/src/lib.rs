@@ -38,10 +38,9 @@ pub use infrastructure::WindowsAppContainerHookRunner;
 pub use infrastructure::{
     ChildEnvironmentModelCredentialResolver, LocalCapabilityPolicySnapshot,
     LocalCapabilitySnapshotStore, LocalControlPlaneSnapshot, LocalHookInvocation,
-    LocalHookInvocationResult, LocalHookRunner, LocalJsonSchemaOutputFormat, LocalMcpServerConfig,
-    LocalMcpStdioSession, LocalMcpToolDefinition, LocalMcpToolSet, LocalMemoryRuntimeConfig,
-    LocalMemoryRuntimeServices, LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
-    LocalModelCredentialResolver, LocalPluginSecretResolver, MacOsSeatbeltHookRunner,
+    LocalHookInvocationResult, LocalHookRunner, LocalJsonSchemaOutputFormat,
+    LocalMemoryRuntimeConfig, LocalMemoryRuntimeServices, LocalModelConfigSnapshot,
+    LocalModelConfigSnapshotStore, LocalModelCredentialResolver, MacOsSeatbeltHookRunner,
 };
 pub use interface::{
     decode_response, read_frame, serve_reader_writer, serve_stream, write_frame,

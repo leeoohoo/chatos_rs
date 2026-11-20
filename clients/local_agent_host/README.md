@@ -17,7 +17,6 @@ The current milestone provides:
 - the eight Main Chat task tools (`list_tasks`, `get_task`, `create_task`, `create_tasks_with_prerequisites`, `cancel_task`, `wait_for_task_completion`, `get_task_dependency_graph`, and `resolve_task_followup`);
 - a `chatos_ai_runtime` single-step Profile adapter and conservative tool-safety policy;
 - a local tool registry and one-invocation Tool Scheduler;
-- a client-owned MCP stdio process/session adapter with local tool discovery and execution;
 - durable installed-Plugin/MCP snapshots in the client-owned SQLite database;
 - durable non-secret model and capability control-plane revisions;
 - a client-owned Conversation/Turn/Message fact source with atomic Main Chat Run creation and control;
@@ -119,11 +118,9 @@ User Messages can include up to 32 local attachment records. SQLite stores only 
 
 Task Graphs created by a Main Chat Turn retain `conversation_turn` as their source. SQLite projects each Task/Run lifecycle into its own assistant callback Message: `task.run.started` first writes the natural acknowledgement and the terminal event updates that same Run Message. The callback metadata preserves the original “执行过程 / 任务详情” actions, while the source user Message remains the root of the Task Graph. A per-Run terminal signature prevents duplicate delivery; retries and restarts create a new Run callback. Pending user cancellation remains visible even without a Task Run, while replacement and dependency-cascade cancellations stay hidden as before. No server callback or `chatos/backend` message proxy participates.
 
-Installed Plugin MCP configurations are created, queried, updated and removed through version-protected Host commands and stored by the Local Agent SQLite repository. Records freeze Plugin release/component revisions, executable location and the allowed tool set. Environment entries store native credential references only; `LocalPluginSecretResolver` resolves their values transiently from Keychain or Credential Manager immediately before local process launch.
+Installed Plugin MCP configurations are created, queried, updated and removed through version-protected Host commands and stored by the Local Agent SQLite repository. Records freeze Plugin release/component revisions, executable location and the allowed tool set.
 
 `LocalToolScheduler` claims one persisted invocation, routes it through `LocalToolRegistry`, and commits the result. Executor infrastructure errors on side-effecting calls become `needs_review`; read-only executor errors become ordinary failed tool results that the next model step can inspect.
-
-`LocalMcpStdioSession` launches installed Plugin MCP processes directly on the client, performs the MCP initialize handshake, follows paginated `tools/list`, prefixes tool names per local server, and registers `tools/call` executors in `LocalToolRegistry`. It never routes Plugin execution through a server. The default process environment is empty; native integration must explicitly provide the minimum environment required by the signed Plugin release. Transport loss or timeout invalidates the session so an unknown side-effect result cannot be silently replayed, while an MCP `isError` response is committed as a known failed tool result.
 
 ## Run locally
 
