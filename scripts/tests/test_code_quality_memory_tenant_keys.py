@@ -45,7 +45,8 @@ class MemoryTenantKeyContractTests(unittest.TestCase):
         threads = (MEMORY / "src/repositories/threads/writes.rs").read_text()
         records = (MEMORY / "src/repositories/records/writes.rs").read_text()
         summary_commits = (
-            MEMORY / "src/repositories/generation_output_commits.rs"
+            MEMORY
+            / "src/repositories/generation_output_commits/thread_commit.rs"
         ).read_text()
         self.assertIn("ON CONFLICT(tenant_id,source_id,id)", threads)
         self.assertIn("ON CONFLICT(tenant_id,source_id,id)", records)
