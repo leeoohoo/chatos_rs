@@ -39,7 +39,6 @@ clients/windows-react/src/features/media-studio/ui/MediaStudioView.tsx	1125	2027
 clients/windows-react/src-tauri/src/agent_conversation/documents.rs	1120	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/agent_skill_management.rs	1118	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/pet.rs	1077	2027-02-28	Split existing production responsibilities before expiry
-clients/local_agent_host/layers/ports/src/lib.rs	1073	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src/features/agent-management/domain/agentManagement.ts	1071	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/authentication/client.rs	1070	2027-02-28	Split existing production responsibilities before expiry
 clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryProjectStore.swift	1061	2027-02-28	Split existing production responsibilities before expiry

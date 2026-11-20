@@ -61,7 +61,6 @@ clients/windows-react/src-tauri/src/agent_skill_management.rs	1118	2027-02-28	Sp
 clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentMessageTaskGraphServiceTests.swift	1088	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentHostLifecycleTests.swift	1080	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/pet.rs	1077	2027-02-28	Split existing owned source by responsibility before expiry
-clients/local_agent_host/layers/ports/src/lib.rs	1073	2027-02-28	Split existing owned source by responsibility before expiry
 clients/local_agent_host/src/application/coordinator_tests.rs	1073	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src/features/agent-management/domain/agentManagement.ts	1071	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/authentication/client.rs	1070	2027-02-28	Split existing owned source by responsibility before expiry
