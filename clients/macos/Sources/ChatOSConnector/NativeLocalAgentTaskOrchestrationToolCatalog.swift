@@ -272,14 +272,27 @@ extension NativeLocalAgentPlatformToolCatalog {
     )
     let externalSchema = mcpSelection(
       externalChoices,
-      emptyDescription: "No external MCP configuration is selectable for this Agent binding. Send an empty external_mcp_config_ids array."
+      emptyDescription: "No standalone external MCP configuration is selectable for this Agent binding. This does not make installed components under plugin_hints unavailable; inspect plugin_hints separately. Send an empty external_mcp_config_ids array."
     )
     let taskModelSchema = taskModelSelection(taskModelChoices)
+    let browserPluginIsSelectable = pluginChoices.contains {
+      $0.pluginKey == NativeBrowserPluginIdentity.marketplaceKey
+        && $0.componentKey == NativeBrowserPluginIdentity.componentKey
+    }
     return (baseCapabilityTools + mainChatCompanionTools).map { tool in
       guard case .object(var definition) = tool,
         case .string(let name)? = definition["name"],
         case .object(var parameters)? = definition["parameters"]
       else { return tool }
+      if browserPluginIsSelectable,
+        name == createTaskToolName || name == createTasksToolName,
+        case .string(let description)? = definition["description"]
+      {
+        definition["description"] = .string(
+          description
+            + " Browser CDP is currently selectable through plugin_hints; dispatch external-URL inspection with that component even when external_mcp_config_ids is empty."
+        )
+      }
       if name == createTaskToolName,
         case .object(var properties)? = parameters["properties"]
       {

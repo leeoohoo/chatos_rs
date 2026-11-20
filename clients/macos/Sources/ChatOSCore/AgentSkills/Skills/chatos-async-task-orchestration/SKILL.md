@@ -1,11 +1,11 @@
 ---
 name: chatos-async-task-orchestration
-description: Plan and manage durable local work with the bound Task tools, including one Task or a multi-Task dependency graph, capabilities, follow-ups and handoff. Use for explicit requests to create background Tasks, durable requirements/solution/implementation plans, real project inspection, file creation/editing, commands, plugins or tracked execution. Ordinary questions, screenshot interpretation, translation and short reply drafting default to Main Chat unless the user explicitly requests a Task.
+description: Plan and manage durable local work with the bound Task tools, including one Task or a multi-Task dependency graph, capabilities, follow-ups and handoff. Use for explicit requests to create background Tasks, durable requirements/solution/implementation plans, real project inspection, file creation/editing, commands, plugins or tracked execution. External URL inspection that needs a browser is execution work and uses a Task when a browser Plugin is selectable. Ordinary questions, screenshot interpretation, translation and short reply drafting default to Main Chat unless the user explicitly requests a Task.
 ---
 
 # Asynchronous Task orchestration
 
-Use Task tools as an execution system, not a reminder list. Answer directly when the current context is sufficient. Create durable work when the user explicitly requests a background Task or when the request needs real files, commands, builds, external capabilities, generated artifacts, or tracked execution. Preserve the requested scope even when the content is simple, such as drafting but not sending an email.
+Use Task tools as an execution system, not a reminder list. Answer directly when the current context is sufficient. Create durable work when the user explicitly requests a background Task or when the request needs real files, commands, builds, external capabilities, generated artifacts, or tracked execution. Opening or inspecting an external URL through a selectable browser Plugin is external execution, not an ordinary Main Chat question. Preserve the requested scope even when the content is simple, such as drafting but not sending an email.
 
 Structured requirements, solution design, and dependency-aware implementation plans are durable artifacts when the current catalog advertises a matching planning Plugin. Bind that Plugin to the Task. Do not answer only in Main Chat or substitute a project Markdown file unless the user explicitly requested Markdown or no matching planning Plugin is available. A confirmed requirement plan is Task context, not a substitute for the requested planning artifact.
 

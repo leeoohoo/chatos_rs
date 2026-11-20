@@ -122,15 +122,20 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
             return tool["name"] == .string("create_task")
         })
         guard case .object(let tool) = create,
+              case .string(let toolDescription)? = tool["description"],
               case .object(let parameters)? = tool["parameters"],
               case .object(let properties)? = parameters["properties"],
               case .object(let thinkingLevel)? = properties["thinking_level"],
               case .array(let thinkingLevels)? = thinkingLevel["enum"],
+              case .object(let externalMCPs)? = properties["external_mcp_config_ids"],
+              case .string(let externalMCPDescription)? = externalMCPs["description"],
               case .object(let hints)? = properties["plugin_hints"],
               case .object(let items)? = hints["items"],
               case .array(let choices)? = items["oneOf"] else {
             return XCTFail("missing installed Plugin choice schema")
         }
+        XCTAssertTrue(toolDescription.contains("Browser CDP is currently selectable through plugin_hints"))
+        XCTAssertTrue(externalMCPDescription.contains("does not make installed components under plugin_hints unavailable"))
         let identities = choices.compactMap { choice -> String? in
             guard case .object(let object) = choice,
                   case .object(let choiceProperties)? = object["properties"],
@@ -368,7 +373,7 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
             "current-Run evidence proves that matching work is already active or was successfully created"
         ))
         XCTAssertTrue(mainChatPolicy.instructions.contains(
-            "A capability offered only through the current `create_task`"
+            "A capability offered only through the current Task creation schema"
         ))
         XCTAssertTrue(mainChatPolicy.instructions.contains(
             "external URL and a browser Plugin is selectable"

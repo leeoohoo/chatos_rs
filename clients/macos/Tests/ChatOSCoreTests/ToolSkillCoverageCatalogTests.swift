@@ -99,6 +99,12 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertTrue(taskOrchestration.instructions.contains(
             "external URL should use the selectable browser Plugin"
         ))
+        XCTAssertTrue(taskOrchestration.description.contains(
+            "External URL inspection that needs a browser is execution work"
+        ))
+        XCTAssertTrue(taskOrchestration.instructions.contains(
+            "not an ordinary Main Chat question"
+        ))
         XCTAssertTrue(taskOrchestration.instructions.contains(
             "Complementary capabilities are additive"
         ))
