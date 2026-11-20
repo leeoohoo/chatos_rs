@@ -11,6 +11,8 @@ use std::{
 };
 use uuid::Uuid;
 
+use crate::secure_file::{is_windows_reparse_point, single_link_regular_file};
+
 const MAXIMUM_WRITE_BYTES: usize = 2 * 1_024 * 1_024;
 const MAXIMUM_OPERATIONS_PER_BATCH: usize = 200;
 const EDIT_SESSION_TTL: Duration = Duration::from_secs(6 * 60 * 60);
@@ -952,7 +954,10 @@ fn cleanup_stale_edit_artifacts(directory: &Path, cutoff: SystemTime) -> usize {
     let Ok(metadata) = fs::symlink_metadata(directory) else {
         return 0;
     };
-    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || is_windows_reparse_point(&metadata)
+    {
         return 0;
     }
     let Ok(entries) = fs::read_dir(directory) else {
@@ -972,7 +977,7 @@ fn cleanup_stale_edit_artifacts(directory: &Path, cutoff: SystemTime) -> usize {
         };
         if !metadata.is_file()
             || metadata.file_type().is_symlink()
-            || is_reparse_point(&metadata)
+            || is_windows_reparse_point(&metadata)
             || !metadata.modified().is_ok_and(|modified| modified <= cutoff)
             || !single_link_regular_file(&path, &metadata)
         {
@@ -997,74 +1002,6 @@ fn canonical_edit_artifact_name(name: &OsStr) -> bool {
                 .and_then(|suffix| Uuid::parse_str(suffix).ok())
                 .is_some_and(|uuid| uuid.to_string() == value[prefix.len()..])
         })
-}
-
-#[cfg(windows)]
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
-    false
-}
-
-#[cfg(windows)]
-fn single_link_regular_file(path: &Path, _: &fs::Metadata) -> bool {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
-        Storage::FileSystem::{
-            CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-        },
-    };
-
-    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
-    const OPEN_EXISTING: u32 = 3;
-    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-
-    let wide = path
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let handle = unsafe {
-        CreateFileW(
-            wide.as_ptr(),
-            FILE_READ_ATTRIBUTES,
-            0,
-            std::ptr::null(),
-            OPEN_EXISTING,
-            FILE_FLAG_OPEN_REPARSE_POINT,
-            std::ptr::null_mut(),
-        )
-    };
-    if handle == INVALID_HANDLE_VALUE {
-        return false;
-    }
-    let mut information = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
-    let valid = unsafe { GetFileInformationByHandle(handle, &mut information) } != 0;
-    let safe = valid
-        && information.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)
-            == 0
-        && information.nNumberOfLinks == 1;
-    let _ = unsafe { CloseHandle(handle) };
-    safe
-}
-
-#[cfg(unix)]
-fn single_link_regular_file(_: &Path, metadata: &fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    metadata.nlink() == 1
-}
-
-#[cfg(not(any(windows, unix)))]
-fn single_link_regular_file(_: &Path, _: &fs::Metadata) -> bool {
-    false
 }
 
 fn session_result(session: &EditSession, reused: bool) -> Value {

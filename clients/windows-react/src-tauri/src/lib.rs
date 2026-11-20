@@ -56,6 +56,7 @@ mod remote_connection;
 mod requirement_survey;
 mod resource_pressure;
 mod run_inspector;
+mod secure_file;
 mod single_instance;
 mod story_studio;
 mod system_permissions;

@@ -30,7 +30,7 @@ clients/windows-react/src/features/media-studio/application/mediaStudioStore.ts	
 clients/windows-react/src-tauri/src/plugin_installer_tool_worker.rs	1467	2027-02-28	Split existing production responsibilities before expiry
 clients/macos/Sources/ChatOSApp/Features/MediaStudio/MediaStudioViewModel.swift	1459	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/agent_conversation/proposals.rs	1441	2027-02-28	Split existing production responsibilities before expiry
-clients/windows-react/src-tauri/src/terminal_tool_worker/code_write.rs	1426	2027-02-28	Split existing production responsibilities before expiry
+clients/windows-react/src-tauri/src/terminal_tool_worker/code_write.rs	1363	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/agent_management.rs	1394	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/media_studio/workflow.rs	1392	2027-02-28	Split existing production responsibilities before expiry
 clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGraphService.swift	1346	2027-02-28	Split existing production responsibilities before expiry

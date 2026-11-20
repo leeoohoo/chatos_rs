@@ -6,6 +6,7 @@ use std::{
 use uuid::Uuid;
 
 use crate::app_owned_export::try_remove_stale_owned_file;
+use crate::secure_file::{is_windows_reparse_point, single_link_regular_file};
 
 const STALE_APP_DATA_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const MAXIMUM_ENTRIES_PER_SCOPE: usize = 2_000;
@@ -274,62 +275,6 @@ fn stale_owned_temporary_tree(root: &Path, cutoff: SystemTime, maximum_entries: 
     true
 }
 
-#[cfg(windows)]
-fn single_link_regular_file(path: &Path, _: &fs::Metadata) -> bool {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
-        Storage::FileSystem::{
-            CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-        },
-    };
-
-    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
-    const OPEN_EXISTING: u32 = 3;
-    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-
-    let wide = path
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let handle = unsafe {
-        CreateFileW(
-            wide.as_ptr(),
-            FILE_READ_ATTRIBUTES,
-            0,
-            std::ptr::null(),
-            OPEN_EXISTING,
-            FILE_FLAG_OPEN_REPARSE_POINT,
-            std::ptr::null_mut(),
-        )
-    };
-    if handle == INVALID_HANDLE_VALUE {
-        return false;
-    }
-    let mut information = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
-    let valid = unsafe { GetFileInformationByHandle(handle, &mut information) } != 0;
-    let safe = valid
-        && information.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)
-            == 0
-        && information.nNumberOfLinks == 1;
-    let _ = unsafe { CloseHandle(handle) };
-    safe
-}
-
-#[cfg(unix)]
-fn single_link_regular_file(_: &Path, metadata: &fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    metadata.nlink() == 1
-}
-
-#[cfg(not(any(windows, unix)))]
-fn single_link_regular_file(_: &Path, _: &fs::Metadata) -> bool {
-    false
-}
-
 fn canonical_temporary_name(name: &str, pattern: &CleanupNamePattern) -> bool {
     match pattern {
         CleanupNamePattern::Uuid(prefixes) => prefixes.iter().any(|prefix| {
@@ -369,18 +314,6 @@ fn safe_directory(path: &Path) -> bool {
             && !metadata.file_type().is_symlink()
             && !is_windows_reparse_point(&metadata)
     })
-}
-
-#[cfg(windows)]
-fn is_windows_reparse_point(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn is_windows_reparse_point(_: &fs::Metadata) -> bool {
-    false
 }
 
 #[cfg(test)]
