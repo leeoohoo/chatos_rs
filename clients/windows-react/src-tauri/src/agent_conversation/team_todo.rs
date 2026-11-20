@@ -5,15 +5,21 @@ use std::collections::HashSet;
 
 mod execution_progress_store;
 mod planning_mutation_store;
+mod planning_projection;
 mod planning_read_store;
 mod run_control_completion_store;
 mod run_control_intent_store;
+mod run_reconciliation_support;
 mod run_scheduler_store;
 mod scheduler_store;
 mod team_chat_read_store;
 mod team_chat_write_store;
 mod todo_store;
 mod workspace_store;
+
+pub(crate) use planning_projection::todo_planning_reference;
+use planning_projection::{load_todo_assignee_options, todo_planning_response};
+use run_reconciliation_support::*;
 
 const MAXIMUM_TEAM_TODOS: usize = 1_000;
 const MAXIMUM_TEAM_CHAT_HOP_COUNT: i64 = 4;
@@ -238,234 +244,6 @@ pub(super) struct TeamRunReconciliation {
     pub(super) created_at_unix_ms: i64,
     pub(super) updated_at_unix_ms: i64,
     pub(super) project_write_evidence_verified: bool,
-}
-
-fn reconcile_todo_from_delivery(
-    connection: &Connection,
-    owner_user_id: &str,
-    update: &TeamRunReconciliation,
-) -> Result<(), String> {
-    let requires_project_write =
-        delivery_todo_requires_project_write(connection, owner_user_id, &update.delivery_id)?;
-    let has_terminal_receipt = todo_has_terminal_receipt(
-        connection,
-        owner_user_id,
-        &update.delivery_id,
-        &update.run_id,
-    )?;
-    let (status, blocked_reason, result) = match update.status {
-        LocalConversationTurnStatus::Running => return Ok(()),
-        LocalConversationTurnStatus::Succeeded
-            if requires_project_write && !update.project_write_evidence_verified =>
-        {
-            (
-                "blocked",
-                "Host 已结束运行，但缺少事务提交后的项目读取回执；任务没有被伪装为已完成。",
-                "",
-            )
-        }
-        LocalConversationTurnStatus::Succeeded if !has_terminal_receipt => (
-            "blocked",
-            "Host 已结束运行，但执行线程没有调用 todo_complete 或 todo_block 保存终态回执。",
-            "",
-        ),
-        LocalConversationTurnStatus::Succeeded => (
-            "completed",
-            "",
-            "Todo 已由 Local Agent Host 完成；详细过程保留在运行详情中。",
-        ),
-        LocalConversationTurnStatus::Failed => (
-            "blocked",
-            "Local Agent Host 执行失败，请在运行详情中检查失败记录。",
-            "",
-        ),
-        LocalConversationTurnStatus::Cancelled => (
-            "blocked",
-            "Local Agent Host 运行已取消；任务保留为阻塞，等待明确重试或取消。",
-            "",
-        ),
-    };
-    connection
-        .execute(
-            r#"
-            UPDATE local_agent_todos
-            SET status = ?1, blocked_reason = ?2, result = ?3,
-                updated_at_unix_ms = CASE
-                  WHEN updated_at_unix_ms >= ?4 THEN updated_at_unix_ms + 1
-                  ELSE ?4
-                END
-            WHERE owner_user_id = ?5 AND status = 'in_progress'
-              AND EXISTS (
-                SELECT 1 FROM project_agent_deliveries delivery
-                WHERE delivery.owner_user_id = local_agent_todos.owner_user_id
-                  AND delivery.id = ?6 AND delivery.trigger_kind = 'todo'
-                  AND delivery.target_agent_id = local_agent_todos.agent_id
-                  AND (delivery.deduplication_key = 'todo:' || local_agent_todos.id
-                       OR delivery.deduplication_key LIKE
-                          'todo:' || local_agent_todos.id || ':attempt:%')
-              )
-            "#,
-            params![
-                status,
-                blocked_reason,
-                result,
-                update.updated_at_unix_ms,
-                owner_user_id,
-                update.delivery_id,
-            ],
-        )
-        .map_err(|_| team_todo_store_error())?;
-    Ok(())
-}
-
-fn delivery_todo_requires_project_write(
-    connection: &Connection,
-    owner_user_id: &str,
-    delivery_id: &str,
-) -> Result<bool, String> {
-    let plan = connection
-        .query_row(
-            r#"
-            SELECT todo.execution_plan_json
-            FROM local_agent_todos todo
-            JOIN project_agent_deliveries delivery
-              ON delivery.owner_user_id = todo.owner_user_id
-             AND delivery.target_agent_id = todo.agent_id
-             AND delivery.trigger_kind = 'todo'
-             AND (delivery.deduplication_key = 'todo:' || todo.id
-                  OR delivery.deduplication_key LIKE 'todo:' || todo.id || ':attempt:%')
-            WHERE todo.owner_user_id = ?1 AND delivery.id = ?2
-            LIMIT 1
-            "#,
-            params![owner_user_id, delivery_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|_| team_todo_store_error())?;
-    let Some(plan) = plan else { return Ok(false) };
-    let plan: AgentTodoExecutionPlan =
-        serde_json::from_str(&plan).map_err(|_| team_todo_store_error())?;
-    validate_execution_plan(&plan).map_err(|_| team_todo_store_error())?;
-    Ok(plan.requires_execution
-        && plan
-            .builtin_capabilities
-            .iter()
-            .any(|capability| capability == "project_write"))
-}
-
-fn load_todo_assignee_options(
-    connection: &Connection,
-    owner_user_id: &str,
-    run_id: &str,
-    team_id: &str,
-    current_agent_id: &str,
-) -> Result<Vec<Value>, String> {
-    let mut statement = connection
-        .prepare(
-            r#"
-            SELECT profile.id, profile.name, profile.profession_key, member.role,
-                   CASE WHEN room.project_manager_agent_id = profile.id THEN 1 ELSE 0 END
-            FROM project_agent_room_members member
-            JOIN local_agent_profiles profile
-              ON profile.owner_user_id = member.owner_user_id
-             AND profile.id = member.agent_id
-            JOIN project_agent_rooms room
-              ON room.owner_user_id = member.owner_user_id
-             AND room.id = member.room_id
-            WHERE member.owner_user_id = ?1 AND member.room_id = ?2
-              AND member.status = 'active' AND profile.status = 'active'
-            ORDER BY profile.name, profile.id
-            "#,
-        )
-        .map_err(|_| team_todo_store_error())?;
-    let rows = statement
-        .query_map(params![owner_user_id, team_id], |row| {
-            let agent_id = row.get::<_, String>(0)?;
-            Ok(json!({
-                "assignee_ref": todo_planning_reference(
-                    owner_user_id,
-                    run_id,
-                    "assignee",
-                    &agent_id,
-                ),
-                "name": row.get::<_, String>(1)?,
-                "profession": row.get::<_, String>(2)?,
-                "role": row.get::<_, String>(3)?,
-                "is_project_manager": row.get::<_, i64>(4)? == 1,
-                "is_current_agent": agent_id == current_agent_id,
-            }))
-        })
-        .map_err(|_| team_todo_store_error())?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|_| team_todo_store_error())
-}
-
-fn todo_planning_response(
-    owner_user_id: &str,
-    run_id: &str,
-    binding: &AgentAssetToolBinding,
-    todo: &AgentTeamTodo,
-    todos: &[AgentTeamTodo],
-) -> Value {
-    let dependencies = todo
-        .dependency_ids
-        .iter()
-        .filter_map(|dependency_id| {
-            todos
-                .iter()
-                .find(|candidate| candidate.id == *dependency_id)
-        })
-        .map(|dependency| {
-            json!({
-                "todo_ref": todo_planning_reference(
-                    owner_user_id,
-                    run_id,
-                    "todo",
-                    &dependency.id,
-                ),
-                "title": dependency.title,
-                "assignee": dependency.agent_name,
-                "status": dependency.status,
-                "blocked_reason": dependency.blocked_reason,
-                "result": dependency.result,
-            })
-        })
-        .collect::<Vec<_>>();
-    json!({
-        "todo_ref": todo_planning_reference(owner_user_id, run_id, "todo", &todo.id),
-        "assignee": todo.agent_name,
-        "assigned_to_current_agent": todo.agent_id == binding.agent_id,
-        "title": todo.title,
-        "detail": todo.detail,
-        "objective": todo.execution_contract.objective,
-        "scope": todo.execution_contract.scope,
-        "expected_outputs": todo.execution_contract.expected_outputs,
-        "acceptance_criteria": todo.execution_contract.acceptance_criteria,
-        "constraints": todo.execution_contract.constraints,
-        "priority": todo.priority,
-        "status": todo.status,
-        "blocked_reason": todo.blocked_reason,
-        "result": todo.result,
-        "builtin_capabilities": todo.execution_plan.builtin_capabilities,
-        "plugins": todo.execution_plan.plugins.iter()
-            .map(|plugin| plugin.display_name.clone())
-            .collect::<Vec<_>>(),
-        "dependencies": dependencies,
-        "updated_at_unix_ms": todo.updated_at_unix_ms,
-    })
-}
-
-pub(crate) fn todo_planning_reference(
-    owner_user_id: &str,
-    run_id: &str,
-    kind: &str,
-    identifier: &str,
-) -> String {
-    let digest = Sha256::digest(
-        format!("chatos-todo-planning-ref-v1\n{owner_user_id}\n{run_id}\n{kind}\n{identifier}")
-            .as_bytes(),
-    );
-    format!("{kind}_ref_{digest:x}")
 }
 
 fn team_chat_routing_stop_reason(
