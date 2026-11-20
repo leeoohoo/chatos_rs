@@ -14,7 +14,6 @@ clients/windows-react/src-tauri/src/story_studio/media.rs	2205	2027-02-28	Split 
 clients/macos/Tests/ChatOSAppTests/ConversationSessionViewModelTests.swift	2029	2027-02-28	Split conversation session tests by history, sending, and realtime behavior
 clients/macos/Tests/ChatOSAppTests/MediaStudioVideoJobStoreTests.swift	1960	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/story_studio/commands.rs	1900	2027-02-28	Split existing owned source by responsibility before expiry
-clients/local_agent_host/layers/infrastructure/database/src/hook_event_store.rs	1777	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/plugin_application/mod.rs	1760	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/remote_connection/files.rs	1749	2027-02-28	Split remote file listing, mutation, transfer, and local selection responsibilities
 memory_engine/backend/src/repositories/generation_output_commits.rs	1725	2027-02-28	Split existing owned source by responsibility before expiry
