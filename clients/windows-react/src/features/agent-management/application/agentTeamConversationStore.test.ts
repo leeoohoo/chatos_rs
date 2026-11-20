@@ -27,6 +27,7 @@ describe("agent team conversation store", () => {
     expect(await useAgentTeamConversationStore.getState().send(port, " 开始实现 ", [])).toBe(true);
     expect(port.queueTeamMessage).toHaveBeenCalledWith("owner-1", TEAM_ID, "开始实现", [], []);
     expect(port.dispatchNextTeamDelivery).toHaveBeenCalledTimes(3);
+    expect(port.loadTeamConversation).toHaveBeenCalledWith("owner-1", TEAM_ID, null, 50);
     expect(useAgentTeamConversationStore.getState().snapshot).toEqual(running);
   });
 
@@ -46,7 +47,7 @@ describe("agent team conversation store", () => {
     expect(port.queueTeamMessage).toHaveBeenCalledWith(
       "owner-1", TEAM_ID, "", [], ["attachment-1"],
     );
-    expect(useAgentTeamConversationStore.getState().error).toBe("刷新暂时失败");
+    expect(useAgentTeamConversationStore.getState().error).toBe("读取团队消息失败：刷新暂时失败");
   });
 
   it("reconciles running Agent lanes before dispatching more work", async () => {
@@ -64,6 +65,42 @@ describe("agent team conversation store", () => {
     await useAgentTeamConversationStore.getState().activate(port, "owner-1", TEAM_ID);
     expect(port.loadTeamMemberActivity).toHaveBeenCalledWith("owner-1", TEAM_ID, "agent-1");
     expect(useAgentTeamConversationStore.getState().snapshot).toEqual(completed);
+  });
+
+  it("keeps the failing native cycle stage in the surfaced error", async () => {
+    const running = snapshot({
+      messages: [message("message-1")],
+      deliveries: [delivery("delivery-1", "running")],
+    });
+    const port = stubPort({
+      loadTeamConversation: vi.fn(async () => running),
+      loadTeamMemberActivity: vi.fn(async () => { throw new Error("存储暂时繁忙"); }),
+    });
+    await useAgentTeamConversationStore.getState().activate(port, "owner-1", TEAM_ID);
+    expect(useAgentTeamConversationStore.getState().error).toBe(
+      "对账团队 Agent 运行失败：存储暂时繁忙",
+    );
+  });
+
+  it("prepends older messages without losing the latest page", async () => {
+    const recent = snapshot({
+      messages: [message("message-2"), message("message-3")],
+      hasOlder: true,
+    });
+    const older = snapshot({
+      messages: [message("message-1")],
+      hasOlder: false,
+    });
+    const port = stubPort({
+      loadTeamConversation: vi.fn().mockResolvedValueOnce(recent).mockResolvedValueOnce(older),
+    });
+    await useAgentTeamConversationStore.getState().activate(port, "owner-1", TEAM_ID);
+    expect(await useAgentTeamConversationStore.getState().loadOlder(port)).toBe(true);
+    expect(port.loadTeamConversation).toHaveBeenLastCalledWith("owner-1", TEAM_ID, "message-2", 50);
+    expect(useAgentTeamConversationStore.getState().snapshot?.messages.map(({ id }) => id)).toEqual([
+      "message-1", "message-2", "message-3",
+    ]);
+    expect(useAgentTeamConversationStore.getState().snapshot?.hasOlder).toBe(false);
   });
 
   it("does not let a late previous team replace the active team", async () => {
@@ -94,7 +131,7 @@ function stubPort(overrides: Partial<AgentManagementPort> = {}): AgentManagement
     queueTeamMessage: vi.fn(),
     dispatchNextTeamDelivery: vi.fn(async () => null),
     loadTeamMemberActivity: vi.fn(async (_owner, teamId, agentId) => ({
-      roomId: teamId, agentId, conversationId: `agent-team-${teamId}-${agentId}`,
+      roomId: teamId, agentId, conversationId: `agent-team-v2-${teamId}-${agentId}`,
       conversationVersion: 1, hasActiveDelivery: false, items: [],
     })),
     ...overrides,

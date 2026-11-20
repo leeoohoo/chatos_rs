@@ -11,7 +11,7 @@ use image::{
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     io::Cursor,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -34,7 +34,8 @@ use crate::{
             TodoPlanningCreateInput, TodoPlanningUpdateInput,
         },
         AgentAssetToolBinding, AgentAssetToolRecord, AgentCommunicationToolBinding,
-        AgentConversationStore,
+        AgentConversationStore, AgentProjectDashboardUpdate, AgentProjectIssue,
+        AgentProjectMilestone, AgentTeamAssetReview, AgentTeamAssetUpdateSuggestion,
     },
     agent_plugin_runtime::{AgentPluginRunContext, CAPABILITY_BROKER_TOOL_NAMES},
     agent_skill_management::AgentSkillStore,
@@ -43,18 +44,23 @@ use crate::{
     host_lifecycle::HostManager,
     platform_execution_context::resolve_platform_execution_context,
     plugin_application::{PluginApplicationManager, TrustedAgentPluginOption},
+    plugin_installer_tool_worker::{execute_plugin_installer_tool, PLUGIN_INSTALLER_TOOL_NAMES},
     product_skill_runtime::ProductSkillRuntime,
     terminal_tool_worker::TerminalToolWorker,
 };
 
 pub const ATTACHMENT_READ_TOOL_NAME: &str = "local_attachment_read";
-const TEAM_ASSET_TOOL_NAMES: [&str; 5] = [
+const TEAM_ASSET_TOOL_NAMES: [&str; 7] = [
     "team_asset_list",
     "team_asset_get",
     "team_asset_create",
     "team_asset_update",
     "team_asset_archive",
+    "team_asset_review_list",
+    "team_asset_review_resolve",
 ];
+const PROJECT_DASHBOARD_TOOL_NAMES: [&str; 2] =
+    ["project_dashboard_get", "project_dashboard_update"];
 const TODO_EXECUTION_TOOL_NAMES: [&str; 4] = [
     "todo_get_context",
     "todo_progress_append",
@@ -211,12 +217,14 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
             include_tool_names: Some(
                 std::iter::once(ATTACHMENT_READ_TOOL_NAME)
                     .chain(TEAM_ASSET_TOOL_NAMES)
+                    .chain(PROJECT_DASHBOARD_TOOL_NAMES)
                     .chain(TODO_EXECUTION_TOOL_NAMES)
                     .chain(CAPABILITY_BROKER_TOOL_NAMES)
                     .chain(TODO_PLANNING_READ_TOOL_NAMES)
                     .chain(TEAM_CHAT_READ_TOOL_NAMES)
                     .chain(TEAM_CHAT_WRITE_TOOL_NAMES)
                     .chain(TODO_PLANNING_WRITE_TOOL_NAMES)
+                    .chain(PLUGIN_INSTALLER_TOOL_NAMES)
                     .map(str::to_owned)
                     .collect(),
             ),
@@ -235,6 +243,8 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
                 execute_attachment_read(app, owner_user_id, &claim).await
             } else if CAPABILITY_BROKER_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
                 execute_capability_broker_tool(app, owner_user_id, &claim).await
+            } else if PROJECT_DASHBOARD_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
+                execute_project_dashboard_tool(app, owner_user_id, &claim).await
             } else if TODO_EXECUTION_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
                 execute_todo_execution_tool(app, owner_user_id, &claim).await
             } else if TODO_PLANNING_READ_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
@@ -246,6 +256,8 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
             } else if TODO_PLANNING_WRITE_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str())
             {
                 execute_todo_planning_write_tool(app, owner_user_id, &claim).await
+            } else if PLUGIN_INSTALLER_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
+                execute_plugin_installer_tool(app, owner_user_id, &claim).await
             } else {
                 execute_team_asset_tool(app, owner_user_id, &claim).await
             };
@@ -1262,11 +1274,27 @@ async fn execute_todo_execution_tool(
         }
         "todo_complete" => {
             let summary = required_bounded_string(arguments, "summary", 16_000)?;
+            let asset_update_suggestions = arguments
+                .get("asset_update_suggestions")
+                .map(|value| {
+                    serde_json::from_value::<Vec<AgentTeamAssetUpdateSuggestion>>(value.clone())
+                        .map_err(|_| "The Todo execution arguments are invalid.".to_owned())
+                })
+                .transpose()?
+                .unwrap_or_default();
             let verified = app
                 .state::<TerminalToolWorker>()
                 .project_write_completion_verified(owner_user_id, &run.run_id);
             tauri::async_runtime::spawn_blocking(move || {
-                store.finish_todo_execution(&owner, &run_id, true, &summary, verified, now)
+                store.finish_todo_execution(
+                    &owner,
+                    &run_id,
+                    true,
+                    &summary,
+                    &asset_update_suggestions,
+                    verified,
+                    now,
+                )
             })
             .await
             .map_err(|_| "The Todo completion task exited unexpectedly.".to_owned())??
@@ -1274,7 +1302,7 @@ async fn execute_todo_execution_tool(
         "todo_block" => {
             let reason = required_bounded_string(arguments, "reason", 8_000)?;
             tauri::async_runtime::spawn_blocking(move || {
-                store.finish_todo_execution(&owner, &run_id, false, &reason, false, now)
+                store.finish_todo_execution(&owner, &run_id, false, &reason, &[], false, now)
             })
             .await
             .map_err(|_| "The Todo blocking task exited unexpectedly.".to_owned())??
@@ -1316,6 +1344,500 @@ fn optional_bounded_string(
         .transpose()
 }
 
+async fn execute_project_dashboard_tool(
+    app: &AppHandle,
+    owner_user_id: &str,
+    claim: &LocalAgentToolClaim,
+) -> Result<LocalAgentToolOutcome, String> {
+    if !PROJECT_DASHBOARD_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
+        return Err("The requested project dashboard tool is unavailable.".into());
+    }
+    let arguments = claim
+        .invocation
+        .arguments
+        .as_object()
+        .ok_or_else(invalid_dashboard_arguments)?;
+    let host = app.state::<HostManager>();
+    let result = host
+        .execute(HostCommand::GetRun(GetRunCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            run_id: claim.invocation.run_id.clone(),
+        }))
+        .await?;
+    let HostResult::Run { run } = result else {
+        return Err("The project dashboard Run context is invalid.".into());
+    };
+    if run.owner_user_id != owner_user_id || run.run_id != claim.invocation.run_id {
+        return Err("The project dashboard Run context is invalid.".into());
+    }
+    let store = app.state::<AgentConversationStore>().inner().clone();
+    let owner = owner_user_id.to_owned();
+    let run_id = run.run_id.clone();
+    let (binding, planning_snapshot) = tauri::async_runtime::spawn_blocking(move || {
+        store.todo_planning_tool_snapshot(&owner, &run_id, true)
+    })
+    .await
+    .map_err(|_| "The project dashboard lookup task exited unexpectedly.".to_owned())??;
+    validate_asset_run_context(&run.profile_key, &run.input, &binding)?;
+    let team_reference = planning_snapshot["team"]["team_ref"]
+        .as_str()
+        .ok_or_else(|| "The project dashboard team context is invalid.".to_owned())?;
+    if let Some(requested) = arguments.get("team_ref") {
+        if requested.as_str() != Some(team_reference) {
+            return Err("The project dashboard team reference is unavailable for this Run.".into());
+        }
+    }
+
+    let output = match claim.invocation.tool_name.as_str() {
+        "project_dashboard_get" => {
+            let store = app.state::<AgentConversationStore>().inner().clone();
+            let owner = owner_user_id.to_owned();
+            let team_id = binding.team_id.clone();
+            let dashboard = tauri::async_runtime::spawn_blocking(move || {
+                store.load_project_dashboard_snapshot(&owner, &team_id)
+            })
+            .await
+            .map_err(|_| "The project dashboard read task exited unexpectedly.".to_owned())??;
+            project_dashboard_output(
+                owner_user_id,
+                &run.run_id,
+                team_reference,
+                &planning_snapshot,
+                dashboard,
+            )?
+        }
+        "project_dashboard_update" => {
+            if binding.todo_id.is_some() || !binding.is_project_manager {
+                return Err(
+                    "Only the active project manager Agent may update the dashboard.".into(),
+                );
+            }
+            let requested_team = required_dashboard_string(arguments, "team_ref", 600)?;
+            if requested_team != team_reference {
+                return Err(
+                    "The project dashboard team reference is unavailable for this Run.".into(),
+                );
+            }
+            let expected_revision = arguments
+                .get("expected_revision")
+                .map(|value| {
+                    value
+                        .as_i64()
+                        .filter(|revision| *revision > 0)
+                        .ok_or_else(invalid_dashboard_arguments)
+                })
+                .transpose()?;
+            let (draft, todo_references) = parse_project_dashboard_update(arguments)?;
+            let unique_references = todo_references
+                .iter()
+                .cloned()
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let store = app.state::<AgentConversationStore>().inner().clone();
+            let owner = owner_user_id.to_owned();
+            let run_id = run.run_id.clone();
+            let references_for_lookup = unique_references.clone();
+            let (verified_binding, resolved_ids) =
+                tauri::async_runtime::spawn_blocking(move || {
+                    store.resolve_dashboard_todo_references(&owner, &run_id, &references_for_lookup)
+                })
+                .await
+                .map_err(|_| {
+                    "The project dashboard Todo lookup task exited unexpectedly.".to_owned()
+                })??;
+            if verified_binding != binding {
+                return Err("The project dashboard binding changed during the operation.".into());
+            }
+            let todo_ids = unique_references
+                .into_iter()
+                .zip(resolved_ids)
+                .collect::<HashMap<_, _>>();
+            let update = materialize_project_dashboard_update(draft, &todo_ids)?;
+            let store = app.state::<AgentConversationStore>().inner().clone();
+            let owner = owner_user_id.to_owned();
+            let team_id = binding.team_id.clone();
+            let editor = binding.agent_id.clone();
+            let saved = tauri::async_runtime::spawn_blocking(move || {
+                store.save_project_dashboard_as_manager(
+                    &owner,
+                    &team_id,
+                    &editor,
+                    expected_revision,
+                    update,
+                    now_unix_ms(),
+                )
+            })
+            .await
+            .map_err(|_| "The project dashboard update task exited unexpectedly.".to_owned())??;
+            dashboard_record_output(&saved, owner_user_id, &run.run_id)?
+        }
+        _ => return Err("The requested project dashboard tool is unavailable.".into()),
+    };
+    Ok(LocalAgentToolOutcome::Succeeded { output })
+}
+
+#[derive(Debug)]
+struct DashboardMilestoneDraft {
+    id: String,
+    title: String,
+    detail: String,
+    status: String,
+    progress_percent: i64,
+    acceptance_criteria: Vec<String>,
+    todo_refs: Vec<String>,
+    target_at_unix_ms: Option<i64>,
+}
+
+#[derive(Debug)]
+struct DashboardIssueDraft {
+    id: String,
+    title: String,
+    detail: String,
+    requested_action: String,
+    severity: String,
+    owner: String,
+    todo_ref: Option<String>,
+}
+
+#[derive(Debug)]
+struct ProjectDashboardDraft {
+    phase: String,
+    health: String,
+    summary: String,
+    next_steps: Vec<String>,
+    milestones: Vec<DashboardMilestoneDraft>,
+    issues: Vec<DashboardIssueDraft>,
+}
+
+fn parse_project_dashboard_update(
+    arguments: &Map<String, Value>,
+) -> Result<(ProjectDashboardDraft, Vec<String>), String> {
+    let phase = required_dashboard_string(arguments, "phase", 240)?.to_owned();
+    let health = required_dashboard_string(arguments, "health", 32)?.to_owned();
+    if !matches!(
+        health.as_str(),
+        "on_track" | "at_risk" | "blocked" | "completed"
+    ) {
+        return Err(invalid_dashboard_arguments());
+    }
+    let summary = required_dashboard_string(arguments, "summary", 16_000)?.to_owned();
+    let next_steps = dashboard_string_array(arguments.get("next_steps"), 32, 2_000)?;
+    let milestone_values = dashboard_object_array(arguments.get("milestones"), 64)?;
+    let issue_values = dashboard_object_array(arguments.get("issues"), 64)?;
+    let mut todo_references = Vec::new();
+    let mut milestones = Vec::with_capacity(milestone_values.len());
+    for value in milestone_values {
+        let id = required_dashboard_string(value, "id", 512)?.to_owned();
+        let title = required_dashboard_string(value, "title", 240)?.to_owned();
+        let detail = optional_dashboard_string(value, "detail", 8_000)?.unwrap_or_default();
+        let status = required_dashboard_string(value, "status", 32)?.to_owned();
+        if !matches!(
+            status.as_str(),
+            "pending" | "in_progress" | "blocked" | "completed"
+        ) {
+            return Err(invalid_dashboard_arguments());
+        }
+        let progress_percent = value
+            .get("progress_percent")
+            .and_then(Value::as_i64)
+            .filter(|progress| (0..=100).contains(progress))
+            .ok_or_else(invalid_dashboard_arguments)?;
+        let acceptance_criteria =
+            dashboard_string_array(value.get("acceptance_criteria"), 32, 2_000)?;
+        let todo_refs = dashboard_unique_string_array(value.get("todo_refs"), 128, 600)?;
+        todo_references.extend(todo_refs.iter().cloned());
+        let target_at_unix_ms = value
+            .get("target_at_unix_ms")
+            .map(|value| {
+                value
+                    .as_i64()
+                    .filter(|time| *time >= 0)
+                    .ok_or_else(invalid_dashboard_arguments)
+            })
+            .transpose()?;
+        milestones.push(DashboardMilestoneDraft {
+            id,
+            title,
+            detail,
+            status,
+            progress_percent,
+            acceptance_criteria,
+            todo_refs,
+            target_at_unix_ms,
+        });
+    }
+    let mut issues = Vec::with_capacity(issue_values.len());
+    for value in issue_values {
+        let severity = required_dashboard_string(value, "severity", 32)?.to_owned();
+        let owner = required_dashboard_string(value, "owner", 32)?.to_owned();
+        if !matches!(severity.as_str(), "info" | "warning" | "critical")
+            || !matches!(owner.as_str(), "human" | "agent" | "external")
+        {
+            return Err(invalid_dashboard_arguments());
+        }
+        let todo_ref = optional_dashboard_string(value, "todo_ref", 600)?;
+        if let Some(reference) = todo_ref.as_ref() {
+            todo_references.push(reference.clone());
+        }
+        issues.push(DashboardIssueDraft {
+            id: required_dashboard_string(value, "id", 512)?.to_owned(),
+            title: required_dashboard_string(value, "title", 240)?.to_owned(),
+            detail: optional_dashboard_string(value, "detail", 8_000)?.unwrap_or_default(),
+            requested_action: required_dashboard_string(value, "requested_action", 4_000)?
+                .to_owned(),
+            severity,
+            owner,
+            todo_ref,
+        });
+    }
+    Ok((
+        ProjectDashboardDraft {
+            phase,
+            health,
+            summary,
+            next_steps,
+            milestones,
+            issues,
+        },
+        todo_references,
+    ))
+}
+
+fn materialize_project_dashboard_update(
+    draft: ProjectDashboardDraft,
+    todo_ids: &HashMap<String, String>,
+) -> Result<AgentProjectDashboardUpdate, String> {
+    Ok(AgentProjectDashboardUpdate {
+        phase: draft.phase,
+        health: draft.health,
+        summary: draft.summary,
+        next_steps: draft.next_steps,
+        milestones: draft
+            .milestones
+            .into_iter()
+            .map(|milestone| {
+                Ok(AgentProjectMilestone {
+                    id: milestone.id,
+                    title: milestone.title,
+                    detail: milestone.detail,
+                    status: milestone.status,
+                    progress_percent: milestone.progress_percent,
+                    acceptance_criteria: milestone.acceptance_criteria,
+                    linked_todo_ids: milestone
+                        .todo_refs
+                        .into_iter()
+                        .map(|reference| {
+                            todo_ids
+                                .get(&reference)
+                                .cloned()
+                                .ok_or_else(invalid_dashboard_arguments)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                    target_at_unix_ms: milestone.target_at_unix_ms,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+        issues: draft
+            .issues
+            .into_iter()
+            .map(|issue| {
+                Ok(AgentProjectIssue {
+                    id: issue.id,
+                    title: issue.title,
+                    detail: issue.detail,
+                    requested_action: issue.requested_action,
+                    severity: issue.severity,
+                    owner: issue.owner,
+                    related_todo_id: issue
+                        .todo_ref
+                        .map(|reference| {
+                            todo_ids
+                                .get(&reference)
+                                .cloned()
+                                .ok_or_else(invalid_dashboard_arguments)
+                        })
+                        .transpose()?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+    })
+}
+
+fn project_dashboard_output(
+    owner_user_id: &str,
+    run_id: &str,
+    team_reference: &str,
+    planning_snapshot: &Value,
+    snapshot: crate::agent_conversation::AgentProjectDashboardSnapshot,
+) -> Result<Value, String> {
+    let todos = planning_snapshot["todos"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let count = |status: &str| {
+        todos
+            .iter()
+            .filter(|todo| todo["status"].as_str() == Some(status))
+            .count()
+    };
+    Ok(json!({
+        "team_ref": team_reference,
+        "team_name": planning_snapshot["team"]["name"],
+        "team_goal": planning_snapshot["team"]["goal"],
+        "dashboard": snapshot.dashboard.as_ref()
+            .map(|dashboard| dashboard_record_output(dashboard, owner_user_id, run_id))
+            .transpose()?,
+        "facts": {
+            "total_todos": todos.len(),
+            "pending_todos": count("pending"),
+            "in_progress_todos": count("in_progress"),
+            "blocked_todos": count("blocked"),
+            "completed_todos": count("completed"),
+            "pending_approvals": snapshot.pending_approval_count,
+        },
+        "todos": todos,
+    }))
+}
+
+fn dashboard_record_output(
+    dashboard: &crate::agent_conversation::AgentProjectDashboard,
+    owner_user_id: &str,
+    run_id: &str,
+) -> Result<Value, String> {
+    let encoded = serde_json::to_value(dashboard).map_err(|_| invalid_dashboard_arguments())?;
+    let milestones = encoded["milestones"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|item| {
+            let refs = item["linkedTodoIds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(|id| todo_planning_reference(owner_user_id, run_id, "todo", id))
+                .collect::<Vec<_>>();
+            json!({
+                "id": item["id"], "title": item["title"], "detail": item["detail"],
+                "status": item["status"], "progress_percent": item["progressPercent"],
+                "acceptance_criteria": item["acceptanceCriteria"], "todo_refs": refs,
+                "target_at_unix_ms": item["targetAtUnixMs"],
+            })
+        })
+        .collect::<Vec<_>>();
+    let issues = encoded["issues"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|item| {
+            let reference = item["relatedTodoId"]
+                .as_str()
+                .map(|id| todo_planning_reference(owner_user_id, run_id, "todo", id));
+            json!({
+                "id": item["id"], "title": item["title"], "detail": item["detail"],
+                "requested_action": item["requestedAction"], "severity": item["severity"],
+                "owner": item["owner"], "todo_ref": reference,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "revision": encoded["revision"], "phase": encoded["phase"],
+        "health": encoded["health"], "summary": encoded["summary"],
+        "next_steps": encoded["nextSteps"], "milestones": milestones, "issues": issues,
+        "updated_at_unix_ms": encoded["updatedAtUnixMs"],
+    }))
+}
+
+fn dashboard_object_array(
+    value: Option<&Value>,
+    maximum: usize,
+) -> Result<Vec<&Map<String, Value>>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    value
+        .as_array()
+        .filter(|values| values.len() <= maximum)
+        .ok_or_else(invalid_dashboard_arguments)?
+        .iter()
+        .map(|item| item.as_object().ok_or_else(invalid_dashboard_arguments))
+        .collect()
+}
+
+fn dashboard_string_array(
+    value: Option<&Value>,
+    maximum_items: usize,
+    maximum_characters: usize,
+) -> Result<Vec<String>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    value
+        .as_array()
+        .filter(|values| values.len() <= maximum_items)
+        .ok_or_else(invalid_dashboard_arguments)?
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .filter(|text| {
+                    !text.is_empty()
+                        && text.trim() == *text
+                        && text.chars().count() <= maximum_characters
+                        && !text.contains('\0')
+                })
+                .map(str::to_owned)
+                .ok_or_else(invalid_dashboard_arguments)
+        })
+        .collect()
+}
+
+fn dashboard_unique_string_array(
+    value: Option<&Value>,
+    maximum_items: usize,
+    maximum_characters: usize,
+) -> Result<Vec<String>, String> {
+    let values = dashboard_string_array(value, maximum_items, maximum_characters)?;
+    if values.iter().collect::<HashSet<_>>().len() != values.len() {
+        return Err(invalid_dashboard_arguments());
+    }
+    Ok(values)
+}
+
+fn required_dashboard_string<'a>(
+    arguments: &'a Map<String, Value>,
+    field: &str,
+    maximum: usize,
+) -> Result<&'a str, String> {
+    arguments
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty()
+                && value.trim() == *value
+                && value.chars().count() <= maximum
+                && !value.contains('\0')
+        })
+        .ok_or_else(invalid_dashboard_arguments)
+}
+
+fn optional_dashboard_string(
+    arguments: &Map<String, Value>,
+    field: &str,
+    maximum: usize,
+) -> Result<Option<String>, String> {
+    arguments
+        .get(field)
+        .map(|_| required_dashboard_string(arguments, field, maximum).map(str::to_owned))
+        .transpose()
+}
+
+fn invalid_dashboard_arguments() -> String {
+    "The project dashboard arguments are invalid.".into()
+}
+
 async fn execute_team_asset_tool(
     app: &AppHandle,
     owner_user_id: &str,
@@ -1353,6 +1875,22 @@ async fn execute_team_asset_tool(
     validate_asset_run_context(&run.profile_key, &run.input, &binding)?;
     let output = match claim.invocation.tool_name.as_str() {
         "team_asset_list" => {
+            let target_team_id = if binding.todo_id.is_some() {
+                binding.team_id.clone()
+            } else if let Some(team_reference) = arguments.get("team_ref") {
+                resolve_asset_team_reference(
+                    app,
+                    owner_user_id,
+                    &run.run_id,
+                    team_reference
+                        .as_str()
+                        .filter(|value| !value.is_empty() && value.chars().count() <= 600)
+                        .ok_or_else(invalid_asset_arguments)?,
+                )
+                .await?
+            } else {
+                binding.team_id.clone()
+            };
             let category = arguments
                 .get("category")
                 .map(|value| value.as_str().ok_or_else(invalid_asset_arguments))
@@ -1360,7 +1898,10 @@ async fn execute_team_asset_tool(
                 .filter(|value| !value.is_empty());
             let assets = records
                 .iter()
-                .filter(|record| category.is_none_or(|value| record.category == value))
+                .filter(|record| {
+                    record.team_id == target_team_id
+                        && category.is_none_or(|value| record.category == value)
+                })
                 .map(|record| asset_summary(owner_user_id, &run.run_id, record))
                 .collect::<Vec<_>>();
             json!({"assets": assets, "snapshot": binding.todo_id.is_some()})
@@ -1387,13 +1928,17 @@ async fn execute_team_asset_tool(
             })
         }
         "team_asset_create" => {
-            require_asset_manager(&binding)?;
+            require_asset_manager_lane(&binding)?;
+            let team_reference = required_asset_string(arguments, "team_ref", 600)?;
+            let target_team_id =
+                resolve_asset_team_reference(app, owner_user_id, &run.run_id, team_reference)
+                    .await?;
             let category = required_asset_string(arguments, "category", 64)?.to_owned();
             let title = required_asset_string(arguments, "title", 240)?.to_owned();
             let markdown = required_asset_text(arguments, "markdown", 128_000)?.to_owned();
             let store = app.state::<AgentConversationStore>().inner().clone();
             let owner = owner_user_id.to_owned();
-            let team_id = binding.team_id.clone();
+            let team_id = target_team_id;
             let agent_id = binding.agent_id.clone();
             let saved = tauri::async_runtime::spawn_blocking(move || {
                 store.save_project_team_asset_as_manager(
@@ -1413,18 +1958,15 @@ async fn execute_team_asset_tool(
             saved_asset_output(owner_user_id, &run.run_id, saved)
         }
         "team_asset_update" => {
-            require_asset_manager(&binding)?;
+            require_asset_manager_lane(&binding)?;
             let record = referenced_asset(arguments, owner_user_id, &run.run_id, &records)?;
-            let expected_revision = required_asset_revision(arguments)?;
-            if record.revision != expected_revision {
-                return Err("The team asset revision changed; list the assets again.".into());
-            }
+            let expected_revision = record.revision;
             let category = required_asset_string(arguments, "category", 64)?.to_owned();
             let title = required_asset_string(arguments, "title", 240)?.to_owned();
             let markdown = required_asset_text(arguments, "markdown", 128_000)?.to_owned();
             let store = app.state::<AgentConversationStore>().inner().clone();
             let owner = owner_user_id.to_owned();
-            let team_id = binding.team_id.clone();
+            let team_id = record.team_id.clone();
             let agent_id = binding.agent_id.clone();
             let asset_id = record.asset_id.clone();
             let saved = tauri::async_runtime::spawn_blocking(move || {
@@ -1445,15 +1987,12 @@ async fn execute_team_asset_tool(
             saved_asset_output(owner_user_id, &run.run_id, saved)
         }
         "team_asset_archive" => {
-            require_asset_manager(&binding)?;
+            require_asset_manager_lane(&binding)?;
             let record = referenced_asset(arguments, owner_user_id, &run.run_id, &records)?;
-            let expected_revision = required_asset_revision(arguments)?;
-            if record.revision != expected_revision {
-                return Err("The team asset revision changed; list the assets again.".into());
-            }
+            let expected_revision = record.revision;
             let store = app.state::<AgentConversationStore>().inner().clone();
             let owner = owner_user_id.to_owned();
-            let team_id = binding.team_id.clone();
+            let team_id = record.team_id.clone();
             let agent_id = binding.agent_id.clone();
             let asset_id = record.asset_id.clone();
             let archived = tauri::async_runtime::spawn_blocking(move || {
@@ -1470,14 +2009,122 @@ async fn execute_team_asset_tool(
             .map_err(|_| "The team asset archive task exited unexpectedly.".to_owned())??;
             saved_asset_output(owner_user_id, &run.run_id, archived)
         }
+        "team_asset_review_list" => {
+            require_asset_manager_lane(&binding)?;
+            let target_team_id = arguments
+                .get("team_ref")
+                .map(|value| {
+                    value
+                        .as_str()
+                        .filter(|reference| {
+                            !reference.is_empty() && reference.chars().count() <= 600
+                        })
+                        .ok_or_else(invalid_asset_arguments)
+                })
+                .transpose()?;
+            let target_team_id = if let Some(reference) = target_team_id {
+                Some(
+                    resolve_asset_team_reference(app, owner_user_id, &run.run_id, reference)
+                        .await?,
+                )
+            } else {
+                None
+            };
+            let store = app.state::<AgentConversationStore>().inner().clone();
+            let owner = owner_user_id.to_owned();
+            let agent_id = binding.agent_id.clone();
+            let reviews = tauri::async_runtime::spawn_blocking(move || {
+                store.list_team_asset_reviews(
+                    &owner,
+                    target_team_id.as_deref(),
+                    Some(&agent_id),
+                    "pending",
+                    500,
+                )
+            })
+            .await
+            .map_err(|_| "The team asset review lookup task exited unexpectedly.".to_owned())??;
+            let reviews = reviews
+                .iter()
+                .map(|review| team_asset_review_output(owner_user_id, &run.run_id, review))
+                .collect::<Vec<_>>();
+            json!({"reviews": reviews})
+        }
+        "team_asset_review_resolve" => {
+            require_asset_manager_lane(&binding)?;
+            let review_ref = required_asset_string(arguments, "review_ref", 600)?;
+            let outcome = required_asset_string(arguments, "outcome", 16)?;
+            let store = app.state::<AgentConversationStore>().inner().clone();
+            let owner = owner_user_id.to_owned();
+            let agent_id = binding.agent_id.clone();
+            let pending = tauri::async_runtime::spawn_blocking(move || {
+                store.list_team_asset_reviews(&owner, None, Some(&agent_id), "pending", 500)
+            })
+            .await
+            .map_err(|_| "The team asset review lookup task exited unexpectedly.".to_owned())??;
+            let review = pending
+                .iter()
+                .find(|review| {
+                    team_asset_review_reference(owner_user_id, &run.run_id, review) == review_ref
+                })
+                .ok_or_else(|| {
+                    "The team asset review reference is unavailable for this Run.".to_owned()
+                })?;
+            let supplied_reason = arguments
+                .get("reason")
+                .map(|_| required_asset_string(arguments, "reason", 4_000).map(str::to_owned))
+                .transpose()?
+                .unwrap_or_default();
+            let (resolved_asset, reason) = match outcome {
+                "applied" => {
+                    let record = referenced_asset(arguments, owner_user_id, &run.run_id, &records)?;
+                    (
+                        Some((record.asset_id.clone(), record.revision)),
+                        supplied_reason,
+                    )
+                }
+                "rejected" => {
+                    if arguments.contains_key("asset_ref") {
+                        return Err(invalid_asset_arguments());
+                    }
+                    if supplied_reason.is_empty() {
+                        return Err(invalid_asset_arguments());
+                    }
+                    (None, supplied_reason)
+                }
+                _ => return Err(invalid_asset_arguments()),
+            };
+            let store = app.state::<AgentConversationStore>().inner().clone();
+            let owner = owner_user_id.to_owned();
+            let review_id = review.id.clone();
+            let reviewer_agent_id = binding.agent_id.clone();
+            let outcome = outcome.to_owned();
+            let resolved_asset_owned = resolved_asset.clone();
+            let updated = tauri::async_runtime::spawn_blocking(move || {
+                store.resolve_team_asset_review(
+                    &owner,
+                    &review_id,
+                    &reviewer_agent_id,
+                    &outcome,
+                    resolved_asset_owned
+                        .as_ref()
+                        .map(|(asset_id, revision)| (asset_id.as_str(), *revision)),
+                    &reason,
+                    now_unix_ms(),
+                )
+            })
+            .await
+            .map_err(|_| "The team asset review update task exited unexpectedly.".to_owned())??;
+            team_asset_review_output(owner_user_id, &run.run_id, &updated)
+        }
         _ => return Err("The requested team asset tool is unavailable.".into()),
     };
     Ok(LocalAgentToolOutcome::Succeeded { output })
 }
 
-fn require_asset_manager(binding: &AgentAssetToolBinding) -> Result<(), String> {
+fn require_asset_manager_lane(binding: &AgentAssetToolBinding) -> Result<(), String> {
     if binding.todo_id.is_some() || !binding.is_project_manager {
-        Err("Only the active project manager Agent may change team assets.".into())
+        Err("Only the active project manager lane may change or review team assets.".into())
     } else {
         Ok(())
     }
@@ -1496,12 +2143,21 @@ fn referenced_asset<'a>(
         .ok_or_else(|| "The team asset reference is unavailable for this Run.".to_owned())
 }
 
-fn required_asset_revision(arguments: &Map<String, Value>) -> Result<i64, String> {
-    arguments
-        .get("expected_revision")
-        .and_then(Value::as_i64)
-        .filter(|revision| *revision > 0)
-        .ok_or_else(invalid_asset_arguments)
+async fn resolve_asset_team_reference(
+    app: &AppHandle,
+    owner_user_id: &str,
+    run_id: &str,
+    reference: &str,
+) -> Result<String, String> {
+    let store = app.state::<AgentConversationStore>().inner().clone();
+    let owner = owner_user_id.to_owned();
+    let run = run_id.to_owned();
+    let reference = reference.to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.resolve_agent_asset_team_reference(&owner, &run, &reference)
+    })
+    .await
+    .map_err(|_| "The team reference lookup task exited unexpectedly.".to_owned())?
 }
 
 fn required_asset_string<'a>(
@@ -1539,6 +2195,7 @@ fn saved_asset_output(
     asset: crate::agent_conversation::AgentTeamAsset,
 ) -> Value {
     let record = AgentAssetToolRecord {
+        team_id: asset.team_id,
         asset_id: asset.id,
         category: asset.category,
         title: asset.title,
@@ -1657,6 +2314,41 @@ fn asset_reference(owner_user_id: &str, run_id: &str, record: &AgentAssetToolRec
         .as_bytes(),
     );
     format!("asset_ref_{digest:x}")
+}
+
+fn team_asset_review_reference(
+    owner_user_id: &str,
+    run_id: &str,
+    review: &AgentTeamAssetReview,
+) -> String {
+    let digest = Sha256::digest(
+        format!(
+            "chatos-team-asset-review-ref-v1\n{owner_user_id}\n{run_id}\n{}\n{}",
+            review.team_id, review.id
+        )
+        .as_bytes(),
+    );
+    format!("asset_review_ref_{digest:x}")
+}
+
+fn team_asset_review_output(
+    owner_user_id: &str,
+    run_id: &str,
+    review: &AgentTeamAssetReview,
+) -> Value {
+    json!({
+        "review_ref": team_asset_review_reference(owner_user_id, run_id, review),
+        "team_ref": todo_planning_reference(owner_user_id, run_id, "team", &review.team_id),
+        "source_todo_title": review.todo_title,
+        "source_agent_name": review.source_agent_name,
+        "category": review.suggestion.category,
+        "title": review.suggestion.title,
+        "markdown": review.suggestion.markdown,
+        "rationale": review.suggestion.rationale,
+        "status": review.status,
+        "review_reason": review.review_reason,
+        "created_at_unix_ms": review.created_at_unix_ms,
+    })
 }
 
 fn invalid_asset_arguments() -> String {
@@ -1937,10 +2629,11 @@ pub fn team_asset_tool_schemas() -> Vec<Value> {
         json!({
             "type": "function",
             "name": "team_asset_list",
-            "description": "列出当前团队共享资产。asset_ref 仅对当前 Run 有效，必须原样传给 team_asset_get。",
+            "description": "列出项目团队共享资产。Todo 执行线程固定读取任务所属团队；通讯线程可用 agent_workspace_snapshot 返回的 team_ref 选择自己所在的其他团队。asset_ref 仅对当前 Run 有效。",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "team_ref": {"type": "string", "minLength": 1, "maxLength": 600},
                     "category": {
                         "type": "string",
                         "enum": ["overview", "current_progress", "tech_stack", "architecture", "conventions", "decision", "reference"]
@@ -1953,46 +2646,45 @@ pub fn team_asset_tool_schemas() -> Vec<Value> {
         json!({
             "type": "function",
             "name": "team_asset_create",
-            "description": "仅供当前团队的项目经理 Agent 创建共享资产。",
+            "description": "仅供目标团队明确指定的项目经理创建共享资产；team_ref 必须来自当前 Run 的 agent_workspace_snapshot。",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "team_ref": {"type": "string", "minLength": 1, "maxLength": 600},
                     "category": {"type": "string", "enum": ["overview", "current_progress", "tech_stack", "architecture", "conventions", "decision", "reference"]},
                     "title": {"type": "string", "minLength": 1, "maxLength": 240},
                     "markdown": {"type": "string", "maxLength": 128000}
                 },
-                "required": ["category", "title", "markdown"],
+                "required": ["team_ref", "category", "title", "markdown"],
                 "additionalProperties": false
             }
         }),
         json!({
             "type": "function",
             "name": "team_asset_update",
-            "description": "仅供当前团队的项目经理 Agent 使用当前 Run 的 asset_ref 和 revision 更新共享资产。",
+            "description": "仅供目标团队明确指定的项目经理使用当前 Run 的 asset_ref 更新共享资产；revision 由引用携带并由客户端并发校验。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "asset_ref": {"type": "string", "minLength": 1, "maxLength": 160},
-                    "expected_revision": {"type": "integer", "minimum": 1},
                     "category": {"type": "string", "enum": ["overview", "current_progress", "tech_stack", "architecture", "conventions", "decision", "reference"]},
                     "title": {"type": "string", "minLength": 1, "maxLength": 240},
                     "markdown": {"type": "string", "maxLength": 128000}
                 },
-                "required": ["asset_ref", "expected_revision", "category", "title", "markdown"],
+                "required": ["asset_ref", "category", "title", "markdown"],
                 "additionalProperties": false
             }
         }),
         json!({
             "type": "function",
             "name": "team_asset_archive",
-            "description": "仅供当前团队的项目经理 Agent 使用当前 Run 的 asset_ref 和 revision 归档共享资产。",
+            "description": "仅供目标团队明确指定的项目经理使用当前 Run 的 asset_ref 归档共享资产；revision 由引用携带并由客户端并发校验。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "asset_ref": {"type": "string", "minLength": 1, "maxLength": 160},
-                    "expected_revision": {"type": "integer", "minimum": 1}
+                    "asset_ref": {"type": "string", "minLength": 1, "maxLength": 160}
                 },
-                "required": ["asset_ref", "expected_revision"],
+                "required": ["asset_ref"],
                 "additionalProperties": false
             }
         }),
@@ -2006,6 +2698,104 @@ pub fn team_asset_tool_schemas() -> Vec<Value> {
                     "asset_ref": {"type": "string", "minLength": 1, "maxLength": 160}
                 },
                 "required": ["asset_ref"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "team_asset_review_list",
+            "description": "仅供项目经理列出执行者提交的待审核共享资产建议。检查当前项目经理负责的团队时必须省略 team_ref；只有在当前 Run 刚调用 agent_workspace_snapshot 且需要限定其中某一团队时，才传它返回的 team_ref，绝不能复用历史对话或 Memory 中的引用。每条建议必须应用到共享资产，或给出事实理由明确拒绝。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "team_ref": {"type": "string", "minLength": 1, "maxLength": 600}
+                },
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "team_asset_review_resolve",
+            "description": "仅供项目经理处理一条共享资产建议。applied 时必须先用 team_asset_create/update 写入，再传成功返回的当前 asset_ref；rejected 时必须传具体 reason。处理后不可撤回。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "review_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "outcome": {"type": "string", "enum": ["applied", "rejected"]},
+                    "asset_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "reason": {"type": "string", "minLength": 1, "maxLength": 4000}
+                },
+                "required": ["review_ref", "outcome"],
+                "additionalProperties": false
+            }
+        }),
+    ]
+}
+
+pub fn project_dashboard_tool_schemas() -> Vec<Value> {
+    vec![
+        json!({
+            "type": "function",
+            "name": "project_dashboard_get",
+            "description": "读取项目总览、里程碑、项目经理登记的问题，以及团队 Todo 的实时状态。项目经理更新看板前必须先调用本工具。",
+            "parameters": {
+                "type": "object",
+                "properties": {"team_ref": {"type": "string", "minLength": 1, "maxLength": 600}},
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "project_dashboard_update",
+            "description": "仅供目标团队明确指定的项目经理更新结构化项目总览。必须先读取当前总览；首次创建省略 expected_revision，后续更新必须提交当前 revision。Todo 只能使用同一 Run 返回的 todo_ref。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "team_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "expected_revision": {"type": "integer", "minimum": 1},
+                    "phase": {"type": "string", "minLength": 1, "maxLength": 240},
+                    "health": {"type": "string", "enum": ["on_track", "at_risk", "blocked", "completed"]},
+                    "summary": {"type": "string", "minLength": 1, "maxLength": 16000},
+                    "next_steps": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 2000}, "maxItems": 32},
+                    "milestones": {
+                        "type": "array", "maxItems": 64,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string", "minLength": 1, "maxLength": 512},
+                                "title": {"type": "string", "minLength": 1, "maxLength": 240},
+                                "detail": {"type": "string", "maxLength": 8000},
+                                "status": {"type": "string", "enum": ["pending", "in_progress", "blocked", "completed"]},
+                                "progress_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+                                "acceptance_criteria": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 2000}, "maxItems": 32},
+                                "todo_refs": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 600}, "maxItems": 128, "uniqueItems": true},
+                                "target_at_unix_ms": {"type": "integer", "minimum": 0}
+                            },
+                            "required": ["id", "title", "status", "progress_percent"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "issues": {
+                        "type": "array", "maxItems": 64,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string", "minLength": 1, "maxLength": 512},
+                                "title": {"type": "string", "minLength": 1, "maxLength": 240},
+                                "detail": {"type": "string", "maxLength": 8000},
+                                "requested_action": {"type": "string", "minLength": 1, "maxLength": 4000},
+                                "severity": {"type": "string", "enum": ["info", "warning", "critical"]},
+                                "owner": {"type": "string", "enum": ["human", "agent", "external"]},
+                                "todo_ref": {"type": "string", "minLength": 1, "maxLength": 600}
+                            },
+                            "required": ["id", "title", "requested_action", "severity", "owner"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["team_ref", "phase", "health", "summary"],
                 "additionalProperties": false
             }
         }),
@@ -2275,7 +3065,7 @@ pub fn todo_planning_write_tool_schemas() -> Vec<Value> {
                     "assignee_ref": {"type": "string", "minLength": 1, "maxLength": 600},
                     "depends_on_todo_refs": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 600}, "maxItems": 64, "uniqueItems": true},
                     "requires_execution": {"type": "boolean", "default": true},
-                    "builtin_capabilities": {"type": "array", "items": {"type": "string", "enum": ["project_read", "project_write", "terminal"]}, "maxItems": 3, "uniqueItems": true},
+                    "builtin_capabilities": {"type": "array", "items": {"type": "string", "enum": ["project_read", "project_write", "terminal", "requirement_survey_read", "requirement_survey_write"]}, "maxItems": 5, "uniqueItems": true},
                     "plugin_hints": {
                         "type": "array",
                         "items": {
@@ -2367,7 +3157,22 @@ pub fn todo_execution_tool_schemas() -> Vec<Value> {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "summary": {"type": "string", "minLength": 1, "maxLength": 16000}
+                    "summary": {"type": "string", "minLength": 1, "maxLength": 16000},
+                    "asset_update_suggestions": {
+                        "type": "array",
+                        "maxItems": 8,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "category": {"type": "string", "enum": ["overview", "current_progress", "tech_stack", "architecture", "conventions", "decision", "reference"]},
+                                "title": {"type": "string", "minLength": 1, "maxLength": 240},
+                                "markdown": {"type": "string", "minLength": 1, "maxLength": 128000},
+                                "rationale": {"type": "string", "minLength": 1, "maxLength": 4000}
+                            },
+                            "required": ["category", "title", "markdown", "rationale"],
+                            "additionalProperties": false
+                        }
+                    }
                 },
                 "required": ["summary"],
                 "additionalProperties": false
@@ -2406,20 +3211,72 @@ mod tests {
     #[test]
     fn team_asset_schema_never_exposes_raw_asset_ids() {
         let schemas = team_asset_tool_schemas();
-        assert_eq!(schemas.len(), 5);
+        assert_eq!(schemas.len(), 7);
         assert!(schemas
             .iter()
             .all(|schema| !schema.to_string().contains("asset_id")));
         assert!(schemas
             .iter()
-            .filter(|schema| schema["name"] != "team_asset_create")
+            .filter(|schema| {
+                matches!(
+                    schema["name"].as_str(),
+                    Some(
+                        "team_asset_get"
+                            | "team_asset_update"
+                            | "team_asset_archive"
+                            | "team_asset_review_resolve"
+                    )
+                )
+            })
             .all(|schema| schema.to_string().contains("asset_ref")));
+        assert_eq!(schemas[5]["name"], "team_asset_review_list");
+        assert_eq!(schemas[6]["name"], "team_asset_review_resolve");
+        assert!(schemas[0]["parameters"]["properties"]
+            .get("team_ref")
+            .is_some());
+        assert!(schemas[1]["parameters"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "team_ref"));
+        assert!(schemas[2]["parameters"]["properties"]
+            .get("expected_revision")
+            .is_none());
+        assert!(schemas[3]["parameters"]["properties"]
+            .get("expected_revision")
+            .is_none());
+        assert!(schemas[5]["parameters"]["properties"]
+            .get("team_ref")
+            .is_some());
+        assert!(schemas[5]["parameters"]["required"]
+            .as_array()
+            .is_some_and(Vec::is_empty));
+        assert!(schemas[5]["description"]
+            .as_str()
+            .is_some_and(|description| description.contains("必须省略 team_ref")
+                && description.contains("当前 Run")
+                && description.contains("绝不能复用历史对话或 Memory")));
+    }
+
+    #[test]
+    fn project_dashboard_catalog_uses_revisioned_run_scoped_references() {
+        let schemas = project_dashboard_tool_schemas();
+        assert_eq!(schemas.len(), 2);
+        assert_eq!(schemas[0]["name"], "project_dashboard_get");
+        assert_eq!(schemas[1]["name"], "project_dashboard_update");
+        let encoded = schemas[1].to_string();
+        assert!(encoded.contains("team_ref"));
+        assert!(encoded.contains("expected_revision"));
+        assert!(encoded.contains("todo_refs"));
+        assert!(!encoded.contains("team_id"));
+        assert!(!encoded.contains("todo_id"));
     }
 
     #[test]
     fn todo_execution_catalog_requires_program_owned_completion_tools() {
-        let names = todo_execution_tool_schemas()
-            .into_iter()
+        let schemas = todo_execution_tool_schemas();
+        let names = schemas
+            .iter()
             .map(|schema| schema["name"].as_str().unwrap().to_owned())
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
@@ -2430,6 +3287,10 @@ mod tests {
                 "todo_get_context".to_owned(),
                 "todo_progress_append".to_owned(),
             ])
+        );
+        assert_eq!(
+            schemas[2]["parameters"]["properties"]["asset_update_suggestions"]["maxItems"],
+            8
         );
     }
 
@@ -2506,6 +3367,8 @@ mod tests {
         let encoded = serde_json::to_string(&schemas).unwrap();
         assert!(encoded.contains("plugin_hints"));
         assert!(encoded.contains("plugin_ref"));
+        assert!(encoded.contains("requirement_survey_read"));
+        assert!(encoded.contains("requirement_survey_write"));
         assert!(!encoded.contains("todo_id"));
         assert!(!encoded.contains("team_id"));
         assert!(!encoded.contains("agent_id"));
@@ -2540,6 +3403,7 @@ mod tests {
     #[test]
     fn team_asset_refs_are_run_scoped_and_context_is_lane_bound() {
         let record = AgentAssetToolRecord {
+            team_id: "team-1".into(),
             asset_id: "real-asset-id".into(),
             category: "overview".into(),
             title: "概览".into(),
@@ -2550,6 +3414,31 @@ mod tests {
         let second = asset_reference("owner-1", "run-2", &record);
         assert_ne!(first, second);
         assert!(!first.contains(&record.asset_id));
+        let review = AgentTeamAssetReview {
+            id: "real-review-id".into(),
+            team_id: "team-1".into(),
+            todo_id: "todo-1".into(),
+            todo_title: "核验架构".into(),
+            source_agent_id: "agent-2".into(),
+            source_agent_name: "架构师".into(),
+            suggestion: AgentTeamAssetUpdateSuggestion {
+                category: "architecture".into(),
+                title: "事件驱动".into(),
+                markdown: "正文".into(),
+                rationale: "已核验".into(),
+            },
+            status: "pending".into(),
+            resolved_asset_id: None,
+            resolved_asset_revision: None,
+            reviewed_by_agent_id: None,
+            review_reason: String::new(),
+            created_at_unix_ms: 1,
+            updated_at_unix_ms: 1,
+        };
+        let first_review = team_asset_review_reference("owner-1", "run-1", &review);
+        let second_review = team_asset_review_reference("owner-1", "run-2", &review);
+        assert_ne!(first_review, second_review);
+        assert!(!first_review.contains(&review.id));
 
         let manager = AgentAssetToolBinding {
             team_id: "team-1".into(),
@@ -2567,6 +3456,13 @@ mod tests {
         });
         assert!(validate_asset_run_context("main_chat", &manager_input, &manager).is_ok());
         assert!(validate_asset_run_context("task_execution", &manager_input, &manager).is_err());
+        assert!(require_asset_manager_lane(&manager).is_ok());
+
+        let member_manager_lane = AgentAssetToolBinding {
+            is_project_manager: false,
+            ..manager.clone()
+        };
+        assert!(require_asset_manager_lane(&member_manager_lane).is_err());
 
         let executor = AgentAssetToolBinding {
             todo_id: Some("todo-1".into()),
@@ -2588,6 +3484,7 @@ mod tests {
             }
         });
         assert!(validate_asset_run_context("task_execution", &executor_input, &executor).is_ok());
+        assert!(require_asset_manager_lane(&executor).is_err());
     }
 
     #[test]

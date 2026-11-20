@@ -1,3 +1,7 @@
+use crate::machine_resource_governor::{
+    MachineResourceGovernor, MachineResourceKind, MachineResourcePermit, MachineResourcePriority,
+};
+use crate::terminal_runtime::process::ProcessTermination;
 use serde::Deserialize;
 use std::{collections::BTreeMap, path::PathBuf, process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command, time::timeout};
@@ -25,13 +29,21 @@ pub(crate) struct ComputerUseDiagnostics {
 
 pub(crate) async fn diagnose(
     launch: &TrustedComputerUseLaunch,
+    resources: &MachineResourceGovernor,
 ) -> Result<ComputerUseDiagnostics, String> {
-    diagnose_with_timeout(launch, DIAGNOSTIC_TIMEOUT).await
+    let permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
+    diagnose_with_timeout_and_permit(launch, DIAGNOSTIC_TIMEOUT, Some(permit)).await
 }
 
-async fn diagnose_with_timeout(
+async fn diagnose_with_timeout_and_permit(
     launch: &TrustedComputerUseLaunch,
     maximum_duration: Duration,
+    _permit: Option<MachineResourcePermit>,
 ) -> Result<ComputerUseDiagnostics, String> {
     validate_launch(launch)?;
     let mut command = prepared_command(launch);
@@ -44,10 +56,14 @@ async fn diagnose_with_timeout(
     let mut child = command
         .spawn()
         .map_err(|_| "Computer Use 运行检查无法启动。".to_owned())?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "Computer Use 运行检查输出不可用。".to_owned())?;
+    let termination = ProcessTermination::attach(&child).map_err(|_| {
+        let _ = child.start_kill();
+        "Computer Use 运行检查进程树无法隔离。".to_owned()
+    })?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        let _ = termination.terminate(true);
+        "Computer Use 运行检查输出不可用。".to_owned()
+    })?;
     let collected = timeout(maximum_duration, async {
         let mut bytes = Vec::new();
         stdout
@@ -71,21 +87,31 @@ async fn diagnose_with_timeout(
     let bytes = match collected {
         Ok(Ok(bytes)) => bytes,
         Ok(Err(error)) => {
-            let _ = child.kill().await;
+            let _ = termination.terminate(true);
             let _ = child.wait().await;
             return Err(error);
         }
         Err(_) => {
-            let _ = child.kill().await;
+            let _ = termination.terminate(true);
             let _ = child.wait().await;
             return Err("Computer Use 运行检查超时。".into());
         }
     };
+    let _ = termination.terminate(true);
     parse_diagnostics(&bytes)
 }
 
-pub(crate) fn open_onboarding(launch: &TrustedComputerUseLaunch) -> Result<(), String> {
+pub(crate) async fn open_onboarding(
+    launch: &TrustedComputerUseLaunch,
+    resources: &MachineResourceGovernor,
+) -> Result<(), String> {
     validate_launch(launch)?;
+    let permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let mut command = prepared_command(launch);
     command
         .arg("--onboarding")
@@ -96,14 +122,21 @@ pub(crate) fn open_onboarding(launch: &TrustedComputerUseLaunch) -> Result<(), S
     let mut child = command
         .spawn()
         .map_err(|_| "Computer Use 处理指引无法打开。".to_owned())?;
+    let termination = ProcessTermination::attach(&child).map_err(|_| {
+        let _ = child.start_kill();
+        "Computer Use 处理指引进程树无法隔离。".to_owned()
+    })?;
     tauri::async_runtime::spawn(async move {
         if timeout(ONBOARDING_MAXIMUM_LIFETIME, child.wait())
             .await
             .is_err()
         {
-            let _ = child.kill().await;
+            let _ = termination.terminate(true);
             let _ = child.wait().await;
+        } else {
+            let _ = termination.terminate(true);
         }
+        drop(permit);
     });
     Ok(())
 }
@@ -148,6 +181,11 @@ fn prepared_command(launch: &TrustedComputerUseLaunch) -> Command {
         .current_dir(&launch.working_directory)
         .env_clear()
         .envs(safe_environment());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.as_std_mut().process_group(0);
+    }
     command
 }
 
@@ -219,18 +257,17 @@ mod tests {
             executable: executable.canonicalize().unwrap(),
             working_directory: root,
         };
-        assert!(
-            diagnose_with_timeout(&launch, Duration::from_secs(1))
-                .await
-                .unwrap()
-                .all_granted
-        );
+        let resources = MachineResourceGovernor::default();
+        assert!(diagnose(&launch, &resources).await.unwrap().all_granted);
+        assert_eq!(resources.used_resource_units(), 0);
 
         std::fs::write(&executable, "#!/bin/sh\nexec sleep 2\n").unwrap();
-        assert!(diagnose_with_timeout(&launch, Duration::from_millis(50))
-            .await
-            .unwrap_err()
-            .contains("超时"));
+        assert!(
+            diagnose_with_timeout_and_permit(&launch, Duration::from_millis(50), None)
+                .await
+                .unwrap_err()
+                .contains("超时")
+        );
     }
 
     #[test]

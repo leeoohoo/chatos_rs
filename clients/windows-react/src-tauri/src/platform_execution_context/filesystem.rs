@@ -7,6 +7,8 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use crate::app_data_transaction::ensure_owned_directory;
+
 const MAXIMUM_STATE_BYTES: u64 = 16 * 1_024 * 1_024;
 
 #[derive(Debug, Deserialize)]
@@ -113,7 +115,7 @@ pub(crate) fn resolve_contact_root(
         .join("ConversationWorkspaces")
         .join(owner_scope)
         .join(conversation_scope);
-    fs::create_dir_all(&root).map_err(|_| project_unavailable())?;
+    ensure_owned_directory(&root).map_err(|_| project_unavailable())?;
     let canonical = fs::canonicalize(root).map_err(|_| project_unavailable())?;
     if !canonical.starts_with(&canonical_connector)
         || !canonical

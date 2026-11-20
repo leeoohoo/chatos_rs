@@ -11,6 +11,10 @@ describe("pet presentation", () => {
       attentionCount: 1,
     };
     expect(petPresentationSchema.safeParse(valid).success).toBe(true);
+    expect(petPresentationSchema.safeParse({
+      ...valid,
+      primaryActivity: { ...valid.primaryActivity, kind: "working", detailCode: "reviewing_followup" },
+    }).success).toBe(true);
     expect(petPresentationSchema.safeParse({ ...valid, runId: "must-not-cross-the-window-boundary" }).success).toBe(false);
   });
 });

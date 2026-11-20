@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { messageTaskGraphSchema } from "../../../contracts/conversationRunContract";
 import {
+  runInspectorGraphSchema,
   runInspectorDetailSchema,
   taskInspectorDetailSchema,
   taskMutationReceiptSchema,
@@ -10,7 +10,7 @@ import type { RunInspectorPort, TaskMutationRequest } from "../ports/RunInspecto
 export class TauriRunInspectorAdapter implements RunInspectorPort {
   async loadGraph(lookup: Parameters<RunInspectorPort["loadGraph"]>[0]) {
     const value = await invoke("load_message_task_graph", { input: lookup });
-    return value == null ? null : messageTaskGraphSchema.parse(value);
+    return value == null ? null : runInspectorGraphSchema.parse(value);
   }
 
   async loadTask(
@@ -23,9 +23,13 @@ export class TauriRunInspectorAdapter implements RunInspectorPort {
   }
 
   async loadRun(ownerUserId: string, runId: string, eventOffset: number) {
-    return runInspectorDetailSchema.parse(
-      await invoke("load_run_inspector", { ownerUserId, runId, eventOffset }),
-    );
+    try {
+      return runInspectorDetailSchema.parse(
+        await invoke("load_run_inspector", { ownerUserId, runId, eventOffset }),
+      );
+    } catch (failure) {
+      throw new Error(readInvokeFailure(failure, "Run 详情暂时不可用。"));
+    }
   }
 
   async retryTask(request: TaskMutationRequest) {
@@ -43,4 +47,17 @@ export class TauriRunInspectorAdapter implements RunInspectorPort {
   private async mutate(command: string, request: TaskMutationRequest) {
     return taskMutationReceiptSchema.parse(await invoke(command, { input: request }));
   }
+}
+
+function readInvokeFailure(failure: unknown, fallback: string): string {
+  if (failure instanceof Error && failure.message.trim()) return failure.message;
+  if (typeof failure === "string" && failure.trim()) return failure;
+  if (failure && typeof failure === "object") {
+    const value = failure as Record<string, unknown>;
+    for (const key of ["message", "error", "detail"]) {
+      const message = value[key];
+      if (typeof message === "string" && message.trim()) return message;
+    }
+  }
+  return fallback;
 }

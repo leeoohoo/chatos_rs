@@ -36,13 +36,15 @@ type InspectorPhase = { kind: "closed" } | OpenInspectorPhase;
 interface RunInspectorState {
   ownerUserId: string | null;
   lifecycleId: number;
+  probeRequestSequence: number;
+  probeRequestIds: Record<string, number>;
   requestSequence: number;
   snapshotRequestId: number;
   paginationRequestId: number;
   mutationRequestId: number;
   probes: Record<string, ProbePhase>;
   phase: InspectorPhase;
-  probe(port: RunInspectorPort, lookup: RunInspectorLookup): Promise<void>;
+  probe(port: RunInspectorPort, lookup: RunInspectorLookup, refresh?: boolean): Promise<void>;
   open(port: RunInspectorPort, lookup: RunInspectorLookup): Promise<void>;
   selectTask(port: RunInspectorPort, taskId: string): Promise<void>;
   setSection(port: RunInspectorPort, section: RunInspectorSection): Promise<void>;
@@ -59,6 +61,8 @@ interface RunInspectorState {
 export const useRunInspectorStore = create<RunInspectorState>((set, get) => ({
   ownerUserId: null,
   lifecycleId: 0,
+  probeRequestSequence: 0,
+  probeRequestIds: {},
   requestSequence: 0,
   snapshotRequestId: 0,
   paginationRequestId: 0,
@@ -66,30 +70,43 @@ export const useRunInspectorStore = create<RunInspectorState>((set, get) => ({
   probes: {},
   phase: { kind: "closed" },
 
-  async probe(port, lookup) {
+  async probe(port, lookup, refresh = false) {
     if (get().ownerUserId !== lookup.ownerUserId) get().reset(lookup.ownerUserId);
     const current = get();
     const existing = current.probes[lookup.userMessageId];
-    if (existing && existing.kind !== "idle") return;
+    if ((!refresh && existing && existing.kind !== "idle") || existing?.kind === "loading") return;
     const lifecycleId = current.lifecycleId;
+    const requestId = current.probeRequestSequence + 1;
     set((state) => ({
-      probes: { ...state.probes, [lookup.userMessageId]: { kind: "loading" } },
+      probeRequestSequence: requestId,
+      probeRequestIds: { ...state.probeRequestIds, [lookup.userMessageId]: requestId },
+      probes: {
+        ...state.probes,
+        [lookup.userMessageId]: refresh && existing ? existing : { kind: "loading" },
+      },
     }));
     try {
       const graph = await port.loadGraph(lookup);
-      if (!acceptsLifecycle(get, lifecycleId, lookup.ownerUserId)) return;
+      if (!acceptsProbe(get, lifecycleId, lookup, requestId)) return;
       set((state) => ({
+        probeRequestIds: { ...state.probeRequestIds, [lookup.userMessageId]: 0 },
         probes: {
           ...state.probes,
           [lookup.userMessageId]: graph && graph.nodes.length > 0
             ? { kind: "available", graph }
-            : { kind: "unavailable" },
+            : refresh && existing?.kind === "available" ? existing : { kind: "unavailable" },
         },
       }));
     } catch {
-      if (!acceptsLifecycle(get, lifecycleId, lookup.ownerUserId)) return;
+      if (!acceptsProbe(get, lifecycleId, lookup, requestId)) return;
       set((state) => ({
-        probes: { ...state.probes, [lookup.userMessageId]: { kind: "unavailable" } },
+        probeRequestIds: { ...state.probeRequestIds, [lookup.userMessageId]: 0 },
+        probes: {
+          ...state.probes,
+          [lookup.userMessageId]: refresh && existing?.kind === "available"
+            ? existing
+            : { kind: "unavailable" },
+        },
       }));
     }
   },
@@ -310,6 +327,8 @@ export const useRunInspectorStore = create<RunInspectorState>((set, get) => ({
     set((state) => ({
       ownerUserId: ownerUserId.trim() || null,
       lifecycleId: state.lifecycleId + 1,
+      probeRequestSequence: state.probeRequestSequence + 1,
+      probeRequestIds: {},
       requestSequence: state.requestSequence + 1,
       snapshotRequestId: 0,
       paginationRequestId: 0,
@@ -438,6 +457,17 @@ function getOpenPhase(get: GetState) {
 function acceptsLifecycle(get: GetState, lifecycleId: number, ownerUserId: string) {
   const state = get();
   return state.lifecycleId === lifecycleId && state.ownerUserId === ownerUserId;
+}
+
+function acceptsProbe(
+  get: GetState,
+  lifecycleId: number,
+  lookup: RunInspectorLookup,
+  requestId: number,
+) {
+  const state = get();
+  return acceptsLifecycle(get, lifecycleId, lookup.ownerUserId)
+    && state.probeRequestIds[lookup.userMessageId] === requestId;
 }
 
 function acceptsSnapshot(get: GetState, requestId: number, taskId: string) {

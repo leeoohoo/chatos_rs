@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useMediaStudioStore } from "../application/mediaStudioStore";
+import { useMediaWorkflowStore } from "../application/mediaWorkflowStore";
 import type {
   MediaStudioHistoryItem,
   MediaStudioModel,
@@ -83,6 +84,78 @@ describe("MediaStudioView", () => {
     expect(screen.getByText("1 / 8")).toBeVisible();
   });
 
+  it("hands a saved image directly to the video workspace like macOS", async () => {
+    const item = historyItem(RECORD_ID, "quiet lake");
+    const adapter = port({
+      loadImageHistory: vi.fn(async () => ({ items: [item], nextCursor: null, unreadableCount: 0 })),
+      stageHistoryReferences: vi.fn(async () => ({
+        references: [{
+          id: REFERENCE_ID,
+          name: "generated.png",
+          mimeType: "image/png" as const,
+          byteSize: 1_024,
+          previewUrl: null,
+        }],
+        errors: [],
+      })),
+    });
+    render(<MediaStudioView ownerUserId="alice" port={adapter} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "▧ 用作视频首帧" }));
+
+    expect(await screen.findByRole("heading", { name: "视频画布" })).toBeVisible();
+    await waitFor(() => expect(adapter.stageHistoryReferences).toHaveBeenCalledWith({
+      ownerUserId: "alice",
+      presentationId: expect.any(String),
+      assets: [{ recordId: RECORD_ID, contentToken: CONTENT_TOKEN }],
+    }));
+    expect(await screen.findByText("generated.png")).toBeVisible();
+  });
+
+  it("previews multiple images with navigation and zoom before video handoff", async () => {
+    const item = historyItem(RECORD_ID, "quiet lake");
+    const secondToken = "e".repeat(32);
+    item.images.push({
+      ...item.images[0]!,
+      id: `asset-${GENERATED_ID}`,
+      contentToken: secondToken,
+      previewUrl: `http://chatos-media.localhost/${SESSION_ID}/${RECORD_ID}/${secondToken}`,
+    });
+    const adapter = port({
+      loadImageHistory: vi.fn(async () => ({ items: [item], nextCursor: null, unreadableCount: 0 })),
+      stageHistoryReferences: vi.fn(async () => ({
+        references: [{
+          id: REFERENCE_ID,
+          name: "second.png",
+          mimeType: "image/png" as const,
+          byteSize: 2_048,
+          previewUrl: null,
+        }],
+        errors: [],
+      })),
+    });
+    render(<MediaStudioView ownerUserId="alice" port={adapter} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "预览 quiet lake 1" }));
+    const dialog = screen.getByRole("dialog", { name: "图片预览" });
+    expect(dialog).toHaveTextContent("1 / 2");
+    fireEvent.click(screen.getByRole("button", { name: "下一张图片" }));
+    expect(dialog).toHaveTextContent("2 / 2");
+    expect(dialog.querySelector(".media-preview__viewport img")).toHaveAttribute("alt", "quiet lake 2");
+    fireEvent.click(screen.getByRole("button", { name: "放大图片" }));
+    expect(dialog).toHaveTextContent("125%");
+    fireEvent.click(screen.getByRole("button", { name: "适应窗口" }));
+    expect(dialog).toHaveTextContent("适应");
+    fireEvent.click(within(dialog).getByRole("button", { name: "▧ 用作视频首帧" }));
+
+    expect(await screen.findByRole("heading", { name: "视频画布" })).toBeVisible();
+    await waitFor(() => expect(adapter.stageHistoryReferences).toHaveBeenCalledWith({
+      ownerUserId: "alice",
+      presentationId: expect.any(String),
+      assets: [{ recordId: RECORD_ID, contentToken: secondToken }],
+    }));
+  });
+
   it("keeps non-persisted generated media visible and discards the page on unmount", async () => {
     const adapter = port({
       generateImage: vi.fn(async ({ request }) => ({
@@ -111,6 +184,7 @@ describe("MediaStudioView", () => {
 
     expect(await screen.findByText(/disk full/)).toBeVisible();
     expect(screen.getByText("仅保留在当前页面，尚未写入本机创作记录")).toBeVisible();
+    expect(screen.getByRole("button", { name: "▧ 用作视频首帧" })).toBeDisabled();
     const presentationId = useMediaStudioStore.getState().presentationId;
     rendered.unmount();
     await waitFor(() => expect(adapter.discardPresentation).toHaveBeenCalledWith({
@@ -177,10 +251,112 @@ describe("MediaStudioView", () => {
     expect(await screen.findByText("MiniMax-H3 · 已保存到本机")).toBeVisible();
     expect(document.querySelector("video")).toHaveAttribute("src", video.previewUrl);
   });
+
+  it("shows live workflow node state and previews the persisted node result", async () => {
+    const item = historyItem(GENERATED_ID, "workflow image");
+    let savedWorkflow: Parameters<MediaStudioPort["saveWorkflow"]>[1] | undefined;
+    let listener: Parameters<MediaStudioPort["watchWorkflowRun"]>[1] | undefined;
+    const adapter = port({
+      saveWorkflow: vi.fn(async (_owner, workflow) => {
+        savedWorkflow = workflow;
+        return true;
+      }),
+      watchWorkflowRun: vi.fn(async (_scope, value) => {
+        listener = value;
+        return () => undefined;
+      }),
+      runWorkflow: vi.fn(async (scope) => {
+        const nodeId = savedWorkflow!.nodes[0]!.id;
+        listener?.({ ...scope, nodeId, phase: "running", progress: null, result: null, errorMessage: null });
+        const result = { type: "images" as const, item };
+        listener?.({ ...scope, nodeId, phase: "completed", progress: null, result, errorMessage: null });
+        return {
+          workflowId: scope.workflowId,
+          clientRequestId: scope.clientRequestId,
+          status: "completed" as const,
+          finalText: "",
+          imageRecordIds: [item.id],
+          videoRecordIds: [],
+          nodeResults: [{ nodeId, result }],
+          errorMessage: null,
+        };
+      }),
+    });
+    render(<MediaStudioView ownerUserId="alice" port={adapter} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /工作流/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /新建工作流/ }));
+    fireEvent.change(screen.getByRole("textbox", { name: "图片节点提示词" }), {
+      target: { value: "draw a workflow image" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "运行" }));
+
+    expect(await screen.findByLabelText("节点运行成功")).toBeVisible();
+    expect(screen.getByRole("img", { name: "工作流节点生成图片 1" }))
+      .toHaveAttribute("src", item.images[0]!.previewUrl);
+    fireEvent.click(screen.getByRole("button", { name: /记录/ }));
+    expect(await screen.findByText("workflow image")).toBeVisible();
+  });
+
+  it("uses only compatible defaults and choices for every workflow node kind", async () => {
+    const adapter = port({
+      listModels: vi.fn(async () => [model(), textModel(), videoModel()]),
+    });
+    render(<MediaStudioView ownerUserId="alice" port={adapter} />);
+
+    const imageWorkspaceSelect = await screen.findByRole("combobox", { name: "图片模型" });
+    expect([...imageWorkspaceSelect.querySelectorAll("option")].map((option) => option.value))
+      .toEqual(["image-model"]);
+
+    fireEvent.click(screen.getByRole("button", { name: /工作流/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /新建工作流/ }));
+    expect(screen.getByRole("combobox", { name: "图片节点模型" })).toHaveValue("image-model");
+
+    fireEvent.click(screen.getByRole("button", { name: "＋ 文本" }));
+    fireEvent.click(screen.getByRole("button", { name: "＋ 视频" }));
+
+    const textSelect = screen.getByRole("combobox", { name: "文本节点模型" });
+    const videoSelect = screen.getByRole("combobox", { name: "视频节点模型" });
+    expect(textSelect).toHaveValue("text-model");
+    expect([...textSelect.querySelectorAll("option")].map((option) => option.value))
+      .toEqual(["", "text-model"]);
+    expect(videoSelect).toHaveValue("video-model");
+    expect([...videoSelect.querySelectorAll("option")].map((option) => option.value))
+      .toEqual(["", "video-model"]);
+    expect(screen.getByRole("combobox", { name: "图片节点尺寸" })).toHaveValue("1024x1024");
+    expect(screen.getByRole("combobox", { name: "视频节点尺寸" })).toHaveValue("768P");
+    expect(screen.getByRole("combobox", { name: "视频节点比例" })).toHaveValue("16:9");
+    expect(screen.getByRole("combobox", { name: "视频节点时长" })).toHaveValue("4");
+
+    fireEvent.change(screen.getByRole("combobox", { name: "图片节点尺寸" }), { target: { value: "1536x1024" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "视频节点尺寸" }), { target: { value: "2K" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "视频节点比例" }), { target: { value: "9:16" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "视频节点时长" }), { target: { value: "15" } });
+    expect(useMediaWorkflowStore.getState().draft?.nodes[0]).toMatchObject({ imageSize: "1536x1024" });
+    expect(useMediaWorkflowStore.getState().draft?.nodes.at(-1)).toMatchObject({
+      videoSize: "2K",
+      videoRatio: "9:16",
+      videoSeconds: 15,
+    });
+  });
 });
 
 function port(overrides: Partial<MediaStudioPort> = {}): MediaStudioPort {
   return {
+    listWorkflows: vi.fn(async () => []),
+    saveWorkflow: vi.fn(async () => true),
+    deleteWorkflow: vi.fn(async () => undefined),
+    watchWorkflowRun: vi.fn(async () => () => undefined),
+    runWorkflow: vi.fn(async ({ workflowId, clientRequestId }) => ({
+      workflowId,
+      clientRequestId,
+      status: "completed" as const,
+      finalText: "",
+      imageRecordIds: [],
+      videoRecordIds: [],
+      nodeResults: [],
+      errorMessage: null,
+    })),
     listModels: vi.fn(async () => [model()]),
     loadImageHistory: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     loadVideoHistory: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
@@ -227,9 +403,11 @@ function model(): MediaStudioModel {
     name: "Image Model",
     provider: "openai-compatible",
     modelName: "gpt-image-1",
+    workload: "image",
     enabled: true,
     taskEnabled: true,
     hasApiKey: true,
+    supportsImageInput: true,
   };
 }
 
@@ -239,9 +417,25 @@ function videoModel(): MediaStudioModel {
     name: "MiniMax Video",
     provider: "openai-compatible",
     modelName: "MiniMax-H3",
+    workload: "video",
     enabled: true,
     taskEnabled: false,
     hasApiKey: true,
+    supportsImageInput: true,
+  };
+}
+
+function textModel(): MediaStudioModel {
+  return {
+    id: "text-model",
+    name: "Text Model",
+    provider: "openai-compatible",
+    modelName: "gpt-6.1-sol",
+    workload: "chat",
+    enabled: true,
+    taskEnabled: true,
+    hasApiKey: true,
+    supportsImageInput: true,
   };
 }
 

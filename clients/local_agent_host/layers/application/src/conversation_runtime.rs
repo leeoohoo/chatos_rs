@@ -822,11 +822,6 @@ fn normalized_agent_execution_context(
             "source is not an Agent execution surface",
         ));
     }
-    if conversation_resource.is_some() && team_executor_context.is_none() {
-        return Err(invalid_agent_context(
-            "Agent direct conversations must not use Contact or Project resource bindings",
-        ));
-    }
     let values = context
         .as_object()
         .ok_or_else(|| invalid_agent_context("context must be an object"))?;
@@ -888,6 +883,35 @@ fn normalized_agent_execution_context(
     }
     let room_id = agent_context_string(values, "room_id", 512, true)?;
     let agent_id = agent_context_string(values, "agent_id", 512, true)?;
+    if team_executor_context.is_none() {
+        match conversation_resource {
+            Some(LocalConversationResourceBinding {
+                kind: LocalConversationResourceKind::Contact,
+                resource_id,
+            }) if resource_id == agent_id => {}
+            Some(LocalConversationResourceBinding {
+                kind: LocalConversationResourceKind::Contact,
+                ..
+            }) => {
+                return Err(invalid_agent_context(
+                    "Contact resource does not match the Agent identity",
+                ))
+            }
+            Some(LocalConversationResourceBinding {
+                kind: LocalConversationResourceKind::Project,
+                ..
+            }) => {
+                return Err(invalid_agent_context(
+                    "Agent conversations must use a Contact resource",
+                ))
+            }
+            None => {
+                return Err(invalid_agent_context(
+                    "Agent conversations require a Contact resource",
+                ))
+            }
+        }
+    }
     let expected_conversation_id = if let Some(executor) = team_executor_context {
         for (field, expected) in [("team_id", room_id), ("agent_id", agent_id)] {
             if executor.get(field).and_then(serde_json::Value::as_str) != Some(expected) {
@@ -898,9 +922,9 @@ fn normalized_agent_execution_context(
         }
         conversation_id.to_string()
     } else if source == "native_agent_team" {
-        format!("agent-team-{room_id}-{agent_id}")
+        format!("agent-team-v2-{room_id}-{agent_id}")
     } else {
-        format!("agent-direct-{room_id}")
+        format!("agent-direct-v2-{room_id}")
     };
     if conversation_id != expected_conversation_id {
         return Err(invalid_agent_context(
@@ -1779,20 +1803,31 @@ mod tests {
     }
 
     #[test]
-    fn agent_context_is_strictly_bound_to_an_unbound_direct_conversation() {
-        let normalized =
-            normalized_agent_execution_context(&agent_context(), "agent-direct-room-1", None, None)
-                .unwrap()
-                .unwrap();
+    fn agent_context_requires_a_matching_contact_resource() {
+        let resource = LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Contact,
+            resource_id: "agent-1".into(),
+        };
+        let normalized = normalized_agent_execution_context(
+            &agent_context(),
+            "agent-direct-v2-room-1",
+            Some(&resource),
+            None,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(normalized["agent_id"], "agent-1");
         assert_eq!(normalized["profession_key"], "software_engineer");
-        assert!(
-            normalized_agent_execution_context(&agent_context(), "conversation-1", None, None,)
-                .is_err()
-        );
         assert!(normalized_agent_execution_context(
             &agent_context(),
-            "agent-direct-room-1",
+            "agent-direct-v2-room-1",
+            None,
+            None,
+        )
+        .is_err());
+        assert!(normalized_agent_execution_context(
+            &agent_context(),
+            "agent-direct-v2-room-1",
             Some(&project_resource()),
             None,
         )
@@ -1835,27 +1870,41 @@ mod tests {
 
     #[test]
     fn agent_context_rejects_unknown_fields_and_bad_skill_hashes() {
+        let resource = LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Contact,
+            resource_id: "agent-1".into(),
+        };
         let mut unknown = agent_context();
         unknown["agent_execution_context"]["secret_path"] = json!("/tmp/private");
-        assert!(
-            normalized_agent_execution_context(&unknown, "agent-direct-room-1", None, None,)
-                .is_err()
-        );
+        assert!(normalized_agent_execution_context(
+            &unknown,
+            "agent-direct-v2-room-1",
+            Some(&resource),
+            None,
+        )
+        .is_err());
 
         let mut bad_hash = agent_context();
         bad_hash["agent_execution_context"]["profession_skill_sha256"] = json!("ABC");
-        assert!(
-            normalized_agent_execution_context(&bad_hash, "agent-direct-room-1", None, None,)
-                .is_err()
-        );
+        assert!(normalized_agent_execution_context(
+            &bad_hash,
+            "agent-direct-v2-room-1",
+            Some(&resource),
+            None,
+        )
+        .is_err());
     }
 
     #[test]
     fn team_agent_context_is_strictly_bound_to_its_agent_lane() {
+        let resource = LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Contact,
+            resource_id: "agent-1".into(),
+        };
         let normalized = normalized_agent_execution_context(
             &team_agent_context(),
-            "agent-team-team-1-agent-1",
-            None,
+            "agent-team-v2-team-1-agent-1",
+            Some(&resource),
             None,
         )
         .unwrap()
@@ -1865,8 +1914,8 @@ mod tests {
         assert_eq!(normalized["is_project_manager"], false);
         assert!(normalized_agent_execution_context(
             &team_agent_context(),
-            "agent-team-team-1-agent-2",
-            None,
+            "agent-team-v2-team-1-agent-2",
+            Some(&resource),
             None,
         )
         .is_err());
@@ -1874,8 +1923,8 @@ mod tests {
         wrong_source["source"] = json!("native_agent_direct");
         assert!(normalized_agent_execution_context(
             &wrong_source,
-            "agent-team-team-1-agent-1",
-            None,
+            "agent-team-v2-team-1-agent-1",
+            Some(&resource),
             None,
         )
         .is_err());

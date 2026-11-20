@@ -12,6 +12,17 @@ fn local_terminal_identifiers_and_dimensions_fail_closed() {
     assert!(validate_dimensions(80, 1_001).is_err());
 }
 
+#[test]
+fn presented_output_event_uses_the_react_wire_field_name() {
+    let value = serde_json::to_value(PresentedLocalTerminalEvent::Output {
+        cursor: 1,
+        data_base64: "YQ==".into(),
+    })
+    .unwrap();
+    assert_eq!(value["dataBase64"], "YQ==");
+    assert!(value.get("data_base64").is_none());
+}
+
 #[tokio::test]
 async fn registry_limits_each_owner_and_reset_invalidates_pending_starts() {
     let registry = LocalTerminalRegistry::default();
@@ -77,6 +88,21 @@ fn local_launch_uses_a_fixed_shell_and_allowlisted_environment() {
     assert!(!keys.contains(&"OPENAI_API_KEY"));
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_local_launch_does_not_load_user_profile() {
+    let directory = tempfile::tempdir().unwrap();
+    let launch = LocalTerminalLaunch::for_platform(directory.path().to_path_buf()).unwrap();
+    assert_eq!(launch.arguments, vec!["-NoLogo", "-NoProfile"]);
+    assert_eq!(launch.shell_name, "PowerShell");
+    assert!(launch.environment.iter().all(|(key, _)| {
+        matches!(
+            key.as_str(),
+            "COLORTERM" | "HOME" | "PATH" | "SystemRoot" | "TERM" | "USERPROFILE" | "WINDIR"
+        )
+    }));
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn native_pty_streams_output_and_exit_as_ordered_events() {
@@ -96,7 +122,16 @@ async fn native_pty_streams_output_and_exit_as_ordered_events() {
         initial_working_directory: directory.path().to_string_lossy().into_owned(),
         shell_name: "sh".into(),
     };
-    let session = ManagedLocalTerminal::spawn(
+    let resources = MachineResourceGovernor::default();
+    let permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await
+        .unwrap();
+    assert_eq!(resources.snapshot().used_resource_units, 1);
+    let session = ManagedLocalTerminal::spawn_with_permit(
         LocalTerminalIdentity {
             session_id: "local-terminal-test".into(),
             owner_user_id: "owner-1".into(),
@@ -107,6 +142,7 @@ async fn native_pty_streams_output_and_exit_as_ordered_events() {
         launch,
         80,
         24,
+        Some(permit),
     )
     .unwrap();
     session
@@ -130,5 +166,185 @@ async fn native_pty_streams_output_and_exit_as_ordered_events() {
 
     assert!(String::from_utf8_lossy(&output).contains("__CHATOS_LOCAL_PTY__"));
     assert_eq!(exit_code, Some(7));
+    assert_eq!(resources.snapshot().used_resource_units, 0);
     session.close();
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_native_pty_exits_after_power_shell_exit_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let launch = LocalTerminalLaunch::for_platform(directory.path().to_path_buf()).unwrap();
+    let session = ManagedLocalTerminal::spawn(
+        LocalTerminalIdentity {
+            session_id: "local-terminal-windows-exit-test".into(),
+            owner_user_id: "owner-1".into(),
+            presentation_id: "tab-1".into(),
+            epoch: 0,
+            generation: 1,
+        },
+        launch,
+        80,
+        24,
+    )
+    .unwrap();
+    // PowerShell asks an interactive terminal for the cursor position before
+    // displaying its prompt.  A raw PTY test must answer that query just as a
+    // terminal emulator would, otherwise the shell never consumes input.
+    session.send(b"\x1b[1;1R").unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    session.send(b"exit\r\n").unwrap();
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut cursor = 0;
+    let mut output = Vec::new();
+    let running = loop {
+        let timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if timeout.is_zero() {
+            break true;
+        }
+        let (snapshot, _) = session
+            .poll(cursor, timeout.as_millis().min(1_000) as u64)
+            .await
+            .unwrap();
+        if let Some(last) = snapshot.events.last() {
+            cursor = last.cursor();
+        }
+        for event in &snapshot.events {
+            if let LocalTerminalEvent::Output { bytes, .. } = event {
+                output.extend(bytes);
+            }
+        }
+        if !snapshot.running {
+            break false;
+        }
+    };
+    session.close();
+    assert!(
+        !running,
+        "PowerShell did not exit within the 15-second bound; output={:?}",
+        String::from_utf8_lossy(&output)
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_native_pty_drains_megabyte_output_and_exits() {
+    let directory = tempfile::tempdir().unwrap();
+    let launch = LocalTerminalLaunch::for_platform(directory.path().to_path_buf()).unwrap();
+    let session = ManagedLocalTerminal::spawn(
+        LocalTerminalIdentity {
+            session_id: "local-terminal-windows-output-test".into(),
+            owner_user_id: "owner-1".into(),
+            presentation_id: "tab-1".into(),
+            epoch: 0,
+            generation: 1,
+        },
+        launch,
+        80,
+        24,
+    )
+    .unwrap();
+    session.send(b"\x1b[1;1R").unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    session
+        .send(b"1..65536 | ForEach-Object { 'xxxxxxxxxxxxxxxx' }; exit\r\n")
+        .unwrap();
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut cursor = 0;
+    let mut output_bytes = 0;
+    let running = loop {
+        let timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if timeout.is_zero() {
+            break true;
+        }
+        let (snapshot, _) = session
+            .poll(cursor, timeout.as_millis().min(1_000) as u64)
+            .await
+            .unwrap();
+        for event in &snapshot.events {
+            cursor = event.cursor();
+            if let LocalTerminalEvent::Output { bytes, .. } = event {
+                output_bytes += bytes.len();
+            }
+        }
+        if !snapshot.running {
+            break false;
+        }
+    };
+    session.close();
+    assert!(
+        !running,
+        "PowerShell output command did not exit within 15 seconds"
+    );
+    assert!(
+        output_bytes >= 1_024 * 1_024,
+        "expected at least 1 MiB of output, received {output_bytes} bytes"
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_native_pty_repeats_cursor_handshake_and_exit_without_leaking_sessions() {
+    let resources = MachineResourceGovernor::default();
+    for iteration in 0..3 {
+        let directory = tempfile::tempdir().unwrap();
+        let launch = LocalTerminalLaunch::for_platform(directory.path().to_path_buf()).unwrap();
+        let permit = resources
+            .acquire(
+                MachineResourceKind::CodeReadWorker,
+                MachineResourcePriority::Interactive,
+            )
+            .await
+            .unwrap();
+        let session = ManagedLocalTerminal::spawn_with_permit(
+            LocalTerminalIdentity {
+                session_id: format!("local-terminal-windows-repeat-{iteration}"),
+                owner_user_id: "owner-1".into(),
+                presentation_id: format!("tab-repeat-{iteration}"),
+                epoch: 0,
+                generation: 1,
+            },
+            launch,
+            80,
+            24,
+            Some(permit),
+        )
+        .unwrap();
+        assert_eq!(resources.used_resource_units(), 1);
+        session.send(b"\x1b[1;1R").unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        session.send(b"exit\r\n").unwrap();
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+        let mut cursor = 0;
+        let exit_code = loop {
+            let timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if timeout.is_zero() {
+                panic!("PowerShell repeat {iteration} did not exit within 15 seconds");
+            }
+            let (snapshot, _) = session
+                .poll(cursor, timeout.as_millis().min(1_000) as u64)
+                .await
+                .unwrap();
+            if let Some(last) = snapshot.events.last() {
+                cursor = last.cursor();
+            }
+            if !snapshot.running {
+                break snapshot.exit_code;
+            }
+        };
+        assert_eq!(
+            exit_code,
+            Some(0),
+            "PowerShell repeat {iteration} exit code"
+        );
+        session.close();
+        assert_eq!(
+            resources.used_resource_units(),
+            0,
+            "PowerShell repeat {iteration} released its resource permit"
+        );
+    }
 }

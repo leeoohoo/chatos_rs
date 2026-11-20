@@ -34,6 +34,80 @@ impl LocalConversationStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut connection, command).await? {
                 return Ok(replay);
             }
+            // Older Agent conversations were created without a resource binding.  A later
+            // Agent-bound client may safely migrate exactly that legacy shape while creating
+            // the deterministic conversation again.  Never overwrite an existing binding;
+            // the owner-scoped unique index and the version predicate keep this idempotent.
+            if let Some(existing) = fetch_conversation_record_for_owner(
+                &mut connection,
+                &conversation.owner_user_id,
+                &conversation.conversation_id,
+            )
+            .await?
+            {
+                if existing.resource == conversation.resource {
+                    let detail = fetch_conversation(&mut connection, &conversation.conversation_id)
+                        .await?
+                        .ok_or_else(|| {
+                            ClientStorageError::NotFound(conversation.conversation_id.clone())
+                        })?;
+                    Self::record_receipt(&mut connection, command, &detail, now_unix_ms).await?;
+                    return Ok(detail);
+                }
+                let Some(resource) = conversation.resource.as_ref() else {
+                    return Err(ClientStorageError::Conflict(format!(
+                        "conversation already exists: {}",
+                        conversation.conversation_id
+                    )));
+                };
+                if existing.resource.is_some() {
+                    return Err(ClientStorageError::Conflict(format!(
+                        "conversation resource already bound: {}",
+                        conversation.conversation_id
+                    )));
+                }
+                let resource_kind = match resource.kind {
+                    chatos_local_agent_protocol::LocalConversationResourceKind::Contact => {
+                        "contact"
+                    }
+                    chatos_local_agent_protocol::LocalConversationResourceKind::Project => {
+                        "project"
+                    }
+                };
+                let updated = sqlx::query(
+                    "UPDATE local_conversations SET resource_kind = ?, resource_id = ?, \
+                     version = version + 1, updated_at_unix_ms = ? \
+                     WHERE conversation_id = ? AND owner_user_id = ? AND version = ? \
+                       AND resource_kind IS NULL AND resource_id IS NULL",
+                )
+                .bind(resource_kind)
+                .bind(&resource.resource_id)
+                .bind(now_unix_ms)
+                .bind(&conversation.conversation_id)
+                .bind(&conversation.owner_user_id)
+                .bind(i64::try_from(existing.version).map_err(|_| {
+                    ClientStorageError::InvalidState("conversation version exceeds i64".to_string())
+                })?)
+                .execute(&mut *connection)
+                .await;
+                if let Err(error) = updated {
+                    return Err(if is_unique_violation(&error) {
+                        ClientStorageError::Conflict(format!(
+                            "conversation resource already belongs to another conversation: {}",
+                            resource.resource_id
+                        ))
+                    } else {
+                        ClientStorageError::database(error)
+                    });
+                }
+                let detail = fetch_conversation(&mut connection, &conversation.conversation_id)
+                    .await?
+                    .ok_or_else(|| {
+                        ClientStorageError::NotFound(conversation.conversation_id.clone())
+                    })?;
+                Self::record_receipt(&mut connection, command, &detail, now_unix_ms).await?;
+                return Ok(detail);
+            }
             let inserted = sqlx::query(
                 "INSERT INTO local_conversations(\
                  conversation_id, owner_user_id, title, resource_kind, resource_id, version, \

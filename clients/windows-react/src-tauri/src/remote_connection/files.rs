@@ -6,6 +6,7 @@ use super::{
     },
     RemoteConnectionManager, RemoteConnectionMetadataClient,
 };
+use crate::app_owned_export::try_remove_stale_owned_file;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -15,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::Mutex as StandardMutex,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::State;
 
@@ -35,6 +36,9 @@ const MAXIMUM_PENDING_SELECTIONS: usize = 32;
 const SELECTION_LIFETIME: Duration = Duration::from_secs(15 * 60);
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const TRANSFER_PROCESS_LIFETIME: Duration = Duration::from_secs(65 * 60);
+const STALE_DOWNLOAD_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const MAXIMUM_DOWNLOAD_CLEANUP_ENTRIES: usize = 2_000;
+const DOWNLOAD_TEMPORARY_PREFIX: &str = ".chatos-download-";
 
 type FileFuture<'a> = Pin<Box<dyn Future<Output = Result<SshProcessProgress, String>> + Send + 'a>>;
 
@@ -734,6 +738,17 @@ pub async fn download_remote_file(
     };
     let remote_path = validate_mutable_remote_path(&remote_path)?;
     let temporary_path = download_temporary_path(&destination, &selection_id, &input.operation_id)?;
+    let cleanup_parent = temporary_path
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(local_selection_error)?;
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let cutoff = SystemTime::now()
+            .checked_sub(STALE_DOWNLOAD_TEMPORARY_AGE)
+            .unwrap_or(UNIX_EPOCH);
+        cleanup_stale_download_temporaries(&cleanup_parent, cutoff)
+    })
+    .await;
     let operation = RemoteFileOperation {
         identity: format!("download\0{selection_id}\0{remote_path}\0{overwrite}"),
         command: download_script(&remote_path),
@@ -1052,15 +1067,9 @@ fn revalidate_upload_file(selection: &PendingLocalSelection) -> Result<(PathBuf,
 
 fn prepare_download_destination(path: &Path) -> Result<(PathBuf, String), String> {
     let parent = path.parent().ok_or_else(local_selection_error)?;
+    validate_download_parent(parent)?;
     let canonical_parent = fs::canonicalize(parent).map_err(|_| local_selection_error())?;
-    let parent_metadata =
-        fs::symlink_metadata(&canonical_parent).map_err(|_| local_selection_error())?;
-    if !parent_metadata.is_dir()
-        || parent_metadata.file_type().is_symlink()
-        || is_reparse_point(&parent_metadata)
-    {
-        return Err(local_selection_error());
-    }
+    validate_download_parent(&canonical_parent)?;
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
@@ -1086,6 +1095,8 @@ fn revalidate_download_destination(
 }
 
 fn revalidate_download_path(destination: &Path, overwrite: bool) -> Result<(), String> {
+    let parent = destination.parent().ok_or_else(local_selection_error)?;
+    validate_download_parent(parent)?;
     match fs::symlink_metadata(destination) {
         Ok(metadata) => {
             validate_regular_local_file(&metadata)?;
@@ -1097,6 +1108,15 @@ fn revalidate_download_path(destination: &Path, overwrite: bool) -> Result<(), S
         Err(_) => return Err(local_selection_error()),
     }
     Ok(())
+}
+
+fn validate_download_parent(parent: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(parent).map_err(|_| local_selection_error())?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+        Err(local_selection_error())
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_regular_local_file(metadata: &fs::Metadata) -> Result<(), String> {
@@ -1123,7 +1143,40 @@ fn download_temporary_path(
     Ok(parent.join(format!(".chatos-download-{}.tmp", &suffix[..24])))
 }
 
+fn cleanup_stale_download_temporaries(parent: &Path, cutoff: SystemTime) -> usize {
+    let Ok(metadata) = fs::symlink_metadata(parent) else {
+        return 0;
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+        return 0;
+    }
+    let Ok(entries) = fs::read_dir(parent) else {
+        return 0;
+    };
+    entries
+        .take(MAXIMUM_DOWNLOAD_CLEANUP_ENTRIES)
+        .filter_map(Result::ok)
+        .filter(|entry| canonical_download_temporary_name(&entry.file_name()))
+        .filter(|entry| try_remove_stale_owned_file(&entry.path(), cutoff))
+        .count()
+}
+
+fn canonical_download_temporary_name(name: &std::ffi::OsStr) -> bool {
+    let Some(value) = name
+        .to_str()
+        .and_then(|value| value.strip_prefix(DOWNLOAD_TEMPORARY_PREFIX))
+        .and_then(|value| value.strip_suffix(".tmp"))
+    else {
+        return false;
+    };
+    value.len() == 24
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn persist_download(source: &Path, destination: &Path, overwrite: bool) -> Result<(), String> {
+    validate_download_commit_paths(source, destination, overwrite)?;
     if overwrite {
         replace_file(source, destination).map_err(|_| "无法保存下载文件。".to_owned())
     } else {
@@ -1139,6 +1192,27 @@ fn persist_download(source: &Path, destination: &Path, overwrite: bool) -> Resul
     }
 }
 
+fn validate_download_commit_paths(
+    source: &Path,
+    destination: &Path,
+    overwrite: bool,
+) -> Result<(), String> {
+    let destination_parent = destination.parent().ok_or_else(local_selection_error)?;
+    validate_download_parent(destination_parent)?;
+
+    let source_parent = source.parent().ok_or_else(local_selection_error)?;
+    validate_download_parent(source_parent)?;
+    let source_parent = fs::canonicalize(source_parent).map_err(|_| local_selection_error())?;
+    let destination_parent =
+        fs::canonicalize(destination_parent).map_err(|_| local_selection_error())?;
+    if source_parent != destination_parent {
+        return Err(local_selection_error());
+    }
+
+    let source_metadata = fs::symlink_metadata(source).map_err(|_| local_selection_error())?;
+    validate_regular_local_file(&source_metadata)?;
+    revalidate_download_path(destination, overwrite)
+}
 fn validate_operation_id(value: &str) -> Result<(), String> {
     if value.is_empty()
         || value.len() > 128
@@ -1539,6 +1613,38 @@ mod tests {
     }
 
     #[test]
+    fn download_cleanup_removes_only_stale_canonical_owned_temporaries() {
+        let directory = tempfile::tempdir().unwrap();
+        let stale = directory
+            .path()
+            .join(".chatos-download-0123456789abcdef01234567.tmp");
+        let fresh = directory
+            .path()
+            .join(".chatos-download-fedcba9876543210fedcba98.tmp");
+        let malformed = directory.path().join(".chatos-download-not-owned.tmp");
+        let unrelated = directory.path().join("notes.tmp");
+        for path in [&stale, &fresh, &malformed, &unrelated] {
+            fs::write(path, b"value").unwrap();
+        }
+
+        assert_eq!(
+            cleanup_stale_download_temporaries(directory.path(), UNIX_EPOCH),
+            0
+        );
+        assert_eq!(
+            cleanup_stale_download_temporaries(
+                directory.path(),
+                SystemTime::now() + Duration::from_secs(1),
+            ),
+            2
+        );
+        assert!(!stale.exists());
+        assert!(!fresh.exists());
+        assert!(malformed.exists());
+        assert!(unrelated.exists());
+    }
+
+    #[test]
     fn download_commit_is_atomic_and_never_overwrites_without_confirmation() {
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("download.txt");
@@ -1585,6 +1691,47 @@ mod tests {
         assert!(finish_download(&mut second_outcome, &destination, false).is_err());
         assert_eq!(fs::read(&destination).unwrap(), b"new content");
         assert!(!second.exists());
+    }
+
+    #[test]
+    fn download_commit_rejects_a_non_directory_parent_and_cleans_the_temporary() {
+        let directory = tempfile::tempdir().unwrap();
+        let parent_file = directory.path().join("parent");
+        fs::write(&parent_file, b"not a directory").unwrap();
+        let temporary = directory.path().join("download.tmp");
+        fs::write(&temporary, b"new content").unwrap();
+        let destination = parent_file.join("download.txt");
+        let created = Arc::new(AtomicBool::new(true));
+        let mut outcome = ProcessOutcome {
+            exit_code: 0,
+            stdout: Vec::new(),
+            stdout_bytes: 11,
+            stderr: format!("\0{DOWNLOAD_SIZE_MARKER}\011\0").into_bytes(),
+            prompts: String::new(),
+            timed_out: false,
+            output_truncated: false,
+            output_file: Some(super::super::ssh::ProcessOutputFile::new(
+                temporary.clone(),
+                created,
+            )),
+        };
+
+        assert!(finish_download(&mut outcome, &destination, false).is_err());
+        assert!(!temporary.exists());
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn download_commit_rejects_a_temporary_from_another_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let source_directory = tempfile::tempdir().unwrap();
+        let source = source_directory.path().join("download.tmp");
+        let destination = directory.path().join("download.txt");
+        fs::write(&source, b"new content").unwrap();
+
+        assert!(persist_download(&source, &destination, false).is_err());
+        assert!(source.exists());
+        assert!(!destination.exists());
     }
 
     #[cfg(unix)]

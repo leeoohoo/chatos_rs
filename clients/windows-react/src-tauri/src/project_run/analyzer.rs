@@ -94,10 +94,12 @@ pub(crate) fn analyze_project(root: &Path) -> Result<ProjectRunAnalysis, String>
                 continue;
             }
             let lowercase = name.to_lowercase();
-            if metadata.is_dir() {
-                if depth < MAXIMUM_DEPTH && !IGNORED_DIRECTORIES.contains(&lowercase.as_str()) {
-                    queue.push_back((path, depth + 1));
-                }
+            if metadata.is_dir()
+                && depth < MAXIMUM_DEPTH
+                && !IGNORED_DIRECTORIES.contains(&lowercase.as_str())
+                && queue.len() < MAXIMUM_DIRECTORIES
+            {
+                queue.push_back((path, depth + 1));
             } else if metadata.is_file() {
                 files.insert(lowercase, path);
             }
@@ -766,7 +768,11 @@ fn discover_toolchains() -> BTreeMap<String, Vec<DiscoveredToolchain>> {
 fn find_executable(name: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
     let extensions: &[&str] = if cfg!(windows) {
-        &["", ".exe", ".cmd", ".bat"]
+        // Windows installations commonly expose POSIX shell shims without an
+        // extension next to the real executable (for example Node's `npm`
+        // file beside `npm.cmd`).  CreateProcess cannot launch those files,
+        // so prefer native executable and batch entry points first.
+        &[".exe", ".cmd", ".bat", ""]
     } else {
         &[""]
     };

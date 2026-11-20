@@ -22,9 +22,15 @@ test('packed plugin starts its local backend without repository node_modules', a
       mkdir(packDirectory, { recursive: true }),
       mkdir(installDirectory, { recursive: true })
     ]);
-    const { stdout } = await execFileAsync('npm', [
-      'pack', '--json', '--pack-destination', packDirectory
-    ], { cwd: process.cwd(), maxBuffer: 4 * 1024 * 1024 });
+    const npmArguments = ['pack', '--json', '--pack-destination', packDirectory];
+    const npmCli = process.env.npm_execpath;
+    const { stdout } = npmCli
+      ? await execFileAsync(process.execPath, [npmCli, ...npmArguments], {
+          cwd: process.cwd(), maxBuffer: 4 * 1024 * 1024
+        })
+      : await execFileAsync('npm', npmArguments, {
+          cwd: process.cwd(), maxBuffer: 4 * 1024 * 1024
+        });
     const [{ filename }] = JSON.parse(stdout);
     await execFileAsync('tar', [
       '-xzf', path.join(packDirectory, filename), '-C', installDirectory

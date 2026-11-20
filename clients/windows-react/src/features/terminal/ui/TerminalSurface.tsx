@@ -6,6 +6,7 @@ import "@xterm/xterm/css/xterm.css";
 
 export interface TerminalSurfaceHandle {
   clear(): void;
+  clearSearch(): void;
   findNext(query: string): void;
   findPrevious(query: string): void;
   focus(): void;
@@ -40,6 +41,10 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
 
     useImperativeHandle(ref, () => ({
       clear() { terminalRef.current?.clear(); },
+      clearSearch() {
+        searchRef.current?.clearDecorations();
+        terminalRef.current?.clearSelection();
+      },
       findNext(query) { searchRef.current?.findNext(query, { incremental: true }); },
       findPrevious(query) { searchRef.current?.findPrevious(query, { incremental: true }); },
       focus() { terminalRef.current?.focus(); },

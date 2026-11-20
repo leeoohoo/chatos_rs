@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, HashMap, VecDeque},
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    fs::{self, File},
+    io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -14,11 +14,14 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 use crate::{
-    atomic_file::replace_file,
+    app_data_transaction::{ensure_owned_directory, replace_owned_file},
     authentication::AuthenticationManager,
     general_settings::GeneralSettingsStore,
     global_utilities::{dispatch_action, GlobalUtilityAction, GlobalUtilityPreferencesStore},
     host_lifecycle::validate_owner,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
 };
 
 const WINDOW_LABEL: &str = "quick-search";
@@ -29,6 +32,7 @@ const MAXIMUM_QUERY_CHARACTERS: usize = 256;
 const MAXIMUM_MEMORY_RESULTS: usize = 36;
 const MAXIMUM_TOTAL_RESULTS: usize = 50;
 const MAXIMUM_APPLICATION_RECORDS: usize = 4_096;
+const MAXIMUM_SEARCH_DIRECTORIES: usize = 10_000;
 const FILE_SEARCH_TIMEOUT: Duration = Duration::from_secs(3);
 const FILE_SEARCH_CANDIDATE_LIMIT: usize = 256;
 
@@ -397,6 +401,7 @@ pub(crate) async fn query_quick_search(
     authentication: State<'_, AuthenticationManager>,
     general_settings: State<'_, GeneralSettingsStore>,
     manager: State<'_, QuickSearchManager>,
+    resources: State<'_, MachineResourceGovernor>,
 ) -> Result<QuickSearchSnapshot, String> {
     validate_query(&input.query)?;
     let presentation_id = parse_id(&input.presentation_id)?;
@@ -411,6 +416,13 @@ pub(crate) async fn query_quick_search(
     let search_owner_user_id = owner_user_id.clone();
     let query = input.query;
     let include_files = input.include_files;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await
+        .map_err(|_| search_error())?;
     let build = tauri::async_runtime::spawn_blocking(move || {
         build_results(
             &data_directory,
@@ -1048,7 +1060,9 @@ fn scan_applications() -> Vec<ApplicationRecord> {
                 }
                 let is_application = is_application_path(&path);
                 if metadata.is_dir() && !is_application {
-                    directories.push_back(path);
+                    if directories.len() < MAXIMUM_SEARCH_DIRECTORIES {
+                        directories.push_back(path);
+                    }
                     continue;
                 }
                 if !is_application {
@@ -1199,7 +1213,11 @@ fn search_files(query: &str, timeout: Duration) -> FileSearchResult {
                 }
             }
             if metadata.is_dir() && depth < 12 {
-                directories.push_back((path, depth + 1));
+                if directories.len() < MAXIMUM_SEARCH_DIRECTORIES {
+                    directories.push_back((path, depth + 1));
+                } else {
+                    source_issue = true;
+                }
             }
         }
         if candidates.len() >= FILE_SEARCH_CANDIDATE_LIMIT {
@@ -1308,14 +1326,8 @@ fn save_usage(path: &Path, records: &BTreeMap<String, UsageRecord>) -> Result<()
         return Err(search_error());
     }
     let parent = path.parent().ok_or_else(search_error)?;
-    fs::create_dir_all(parent).map_err(|_| search_error())?;
-    let temporary = parent.join(format!(".quick-search-{}.tmp", Uuid::new_v4()));
-    let result =
-        write_private_file(&temporary, &bytes).and_then(|_| replace_file(&temporary, path));
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-        return Err(search_error());
-    }
+    ensure_owned_directory(parent).map_err(|_| search_error())?;
+    replace_owned_file(parent, path, ".quick-search-", &bytes).map_err(|_| search_error())?;
     if let Ok(directory) = File::open(parent) {
         let _ = directory.sync_all();
     }
@@ -1343,19 +1355,6 @@ fn prune_usage(records: &mut BTreeMap<String, UsageRecord>) {
         .map(|(key, _)| key)
         .collect::<std::collections::BTreeSet<_>>();
     records.retain(|key, _| retained.contains(key));
-}
-
-fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
 }
 
 fn require_presentation(
@@ -1488,7 +1487,8 @@ mod tests {
                         modified_at: metadata.modified().unwrap_or(UNIX_EPOCH),
                     });
                 }
-                if metadata.is_dir() && depth < 12 {
+                if metadata.is_dir() && depth < 12 && directories.len() < MAXIMUM_SEARCH_DIRECTORIES
+                {
                     directories.push_back((path, depth + 1));
                 }
             }

@@ -3,15 +3,19 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     time::{Duration, Instant, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
 
 use crate::{
-    atomic_file::replace_file, host_lifecycle::validate_owner,
+    app_owned_export::replace_bytes_preserving_permissions,
+    host_lifecycle::validate_owner,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
     platform_execution_context::resolve_project_root,
 };
 
@@ -134,6 +138,7 @@ pub struct ProjectFileWriteResult {
 #[tauri::command]
 pub async fn load_project_directory(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     path: String,
@@ -143,6 +148,12 @@ pub async fn load_project_directory(
     let project_id = required("project_id", project_id)?;
     let relative_path = normalized_relative_path(&path, true)?;
     let app_data_directory = app.path().app_data_dir().map_err(|_| directory_error())?;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     tauri::async_runtime::spawn_blocking(move || {
         let root = resolved_project_root(&app_data_directory, &owner_user_id, &project_id)?;
         list_directory(&root, &project_id, &relative_path)
@@ -154,6 +165,7 @@ pub async fn load_project_directory(
 #[tauri::command]
 pub async fn read_project_file(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     path: String,
@@ -162,6 +174,12 @@ pub async fn read_project_file(
     let project_id = required("project_id", project_id)?;
     let relative_path = normalized_relative_path(&path, false)?;
     let app_data_directory = app.path().app_data_dir().map_err(|_| file_error())?;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     tauri::async_runtime::spawn_blocking(move || {
         let root = resolved_project_root(&app_data_directory, &owner_user_id, &project_id)?;
         read_file(&root, &project_id, &relative_path)
@@ -173,6 +191,7 @@ pub async fn read_project_file(
 #[tauri::command]
 pub async fn search_project_entries(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     path: String,
@@ -185,6 +204,12 @@ pub async fn search_project_entries(
     let query = normalized_query(query)?;
     let limit = limit.clamp(1, MAXIMUM_SEARCH_RESULTS);
     let app_data_directory = app.path().app_data_dir().map_err(|_| search_error())?;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     tauri::async_runtime::spawn_blocking(move || {
         let root = resolved_project_root(&app_data_directory, &owner_user_id, &project_id)?;
         search_entries(&root, &project_id, &relative_path, &query, limit)
@@ -196,6 +221,7 @@ pub async fn search_project_entries(
 #[tauri::command]
 pub async fn search_project_content(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     path: String,
@@ -208,6 +234,12 @@ pub async fn search_project_content(
     let query = normalized_query(query)?;
     let limit = limit.clamp(1, MAXIMUM_SEARCH_RESULTS);
     let app_data_directory = app.path().app_data_dir().map_err(|_| search_error())?;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     tauri::async_runtime::spawn_blocking(move || {
         let root = resolved_project_root(&app_data_directory, &owner_user_id, &project_id)?;
         search_content(&root, &project_id, &relative_path, &query, limit)
@@ -219,6 +251,7 @@ pub async fn search_project_content(
 #[tauri::command]
 pub async fn write_project_file(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     path: String,
@@ -233,6 +266,12 @@ pub async fn write_project_file(
         return Err("文件内容超过 2 MiB 写入上限。".into());
     }
     let app_data_directory = app.path().app_data_dir().map_err(|_| file_error())?;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     tauri::async_runtime::spawn_blocking(move || {
         let root = resolved_project_root(&app_data_directory, &owner_user_id, &project_id)?;
         write_file(
@@ -250,6 +289,7 @@ pub async fn write_project_file(
 #[tauri::command]
 pub async fn create_project_entry(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     parent_path: String,
@@ -262,6 +302,12 @@ pub async fn create_project_entry(
     let name = normalized_entry_name(name)?;
     let kind = mutation_kind(&kind)?;
     let app_data_directory = app.path().app_data_dir().map_err(|_| file_error())?;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     tauri::async_runtime::spawn_blocking(move || {
         let root = resolved_project_root(&app_data_directory, &owner_user_id, &project_id)?;
         create_entry(&root, &project_id, &parent_path, &name, kind)
@@ -273,6 +319,7 @@ pub async fn create_project_entry(
 #[tauri::command]
 pub async fn delete_project_entry(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     path: String,
@@ -288,6 +335,12 @@ pub async fn delete_project_entry(
         .map(normalized_revision)
         .transpose()?;
     let app_data_directory = app.path().app_data_dir().map_err(|_| file_error())?;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     tauri::async_runtime::spawn_blocking(move || {
         let root = resolved_project_root(&app_data_directory, &owner_user_id, &project_id)?;
         delete_entry(
@@ -447,8 +500,13 @@ fn write_file(
     if content_revision(&current) != expected_revision {
         return Err("文件已被其他程序修改，请重新加载后再保存。".into());
     }
-    atomic_write(&file_path, content.as_bytes(), metadata.permissions())
-        .map_err(|_| file_error())?;
+    replace_bytes_preserving_permissions(
+        &file_path,
+        ".chatos-project-file-",
+        content.as_bytes(),
+        metadata.permissions(),
+    )
+    .map_err(|_| file_error())?;
     Ok(ProjectFileWriteResult {
         project_id: project_id.to_owned(),
         path: relative_path.to_owned(),
@@ -467,9 +525,17 @@ fn create_entry(
     let target = parent.join(name);
     match kind {
         MutationKind::File => {
-            OpenOptions::new()
-                .write(true)
-                .create_new(true)
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+                options
+                    .share_mode(0)
+                    .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            }
+            options
                 .open(&target)
                 .map_err(|_| "同名文件或目录已存在。".to_owned())?;
         }
@@ -529,23 +595,6 @@ fn delete_entry(
     })
 }
 
-fn atomic_write(path: &Path, bytes: &[u8], permissions: fs::Permissions) -> std::io::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| std::io::Error::other("missing parent"))?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    temporary.as_file_mut().set_permissions(permissions)?;
-    temporary.as_file_mut().write_all(bytes)?;
-    temporary.as_file_mut().flush()?;
-    temporary.as_file().sync_all()?;
-    let temporary_path = temporary.into_temp_path().keep()?;
-    let result = replace_file(&temporary_path, path);
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary_path);
-    }
-    result
-}
-
 fn content_revision(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -557,6 +606,7 @@ fn search_entries(
     query: &str,
     limit: usize,
 ) -> Result<ProjectEntrySearchResult, String> {
+    let limit = limit.clamp(1, MAXIMUM_SEARCH_RESULTS);
     let start = resolve_existing_path(project_root, relative_path, true)?;
     let deadline = Instant::now() + SEARCH_DURATION;
     let needle = search_fold(query);
@@ -572,7 +622,7 @@ fn search_entries(
             break;
         }
         visited_directories += 1;
-        let remaining_visits = MAXIMUM_SEARCH_VISITS - visited_entries;
+        let remaining_visits = MAXIMUM_SEARCH_VISITS.saturating_sub(visited_entries + stack.len());
         if remaining_visits == 0 {
             is_truncated = true;
             break;
@@ -590,7 +640,11 @@ fn search_entries(
             let child_relative = child_path(&directory_relative, &name);
             let is_directory = metadata.is_dir();
             if is_directory && !ignored_search_directory(&name) {
-                stack.push((path, child_relative.clone()));
+                if visited_directories + stack.len() < MAXIMUM_SEARCH_VISITS {
+                    stack.push((path, child_relative.clone()));
+                } else {
+                    is_truncated = true;
+                }
             }
             if search_fold(&name).contains(&needle)
                 || search_fold(&child_relative).contains(&needle)
@@ -629,6 +683,7 @@ fn search_content(
     query: &str,
     limit: usize,
 ) -> Result<ProjectContentSearchResult, String> {
+    let limit = limit.clamp(1, MAXIMUM_SEARCH_RESULTS);
     let start = resolve_existing_path(project_root, relative_path, true)?;
     let deadline = Instant::now() + SEARCH_DURATION;
     let needle = search_fold(query);
@@ -1115,6 +1170,30 @@ mod tests {
         }
         assert_eq!(normalized_relative_path("", true).unwrap(), "");
         assert!(normalized_relative_path("", false).is_err());
+    }
+
+    #[test]
+    fn large_directories_are_bounded_for_listing_and_name_search() {
+        let root = tempfile::tempdir().unwrap();
+        for index in 0..(MAXIMUM_DIRECTORY_ENTRIES * 2 + 1_000) {
+            fs::write(
+                root.path().join(format!("entry-{index:05}-needle.txt")),
+                "needle",
+            )
+            .unwrap();
+        }
+
+        let listing = list_directory(root.path(), "project-large", "").unwrap();
+        assert_eq!(listing.entries.len(), MAXIMUM_DIRECTORY_ENTRIES);
+        assert!(listing.is_truncated);
+
+        let search = search_entries(root.path(), "project-large", "", "needle", 2_000).unwrap();
+        assert_eq!(search.matches.len(), MAXIMUM_SEARCH_RESULTS);
+        assert!(search.is_truncated);
+
+        let content = search_content(root.path(), "project-large", "", "needle", 2_000).unwrap();
+        assert_eq!(content.matches.len(), MAXIMUM_SEARCH_RESULTS);
+        assert!(content.is_truncated);
     }
 
     #[test]

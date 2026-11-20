@@ -276,6 +276,81 @@ fn native_store_is_owner_scoped_atomic_and_round_trips_schema_v2() {
 }
 
 #[test]
+fn stale_story_cleanup_only_removes_canonical_uncommitted_manifests() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut saved = project();
+    let referenced_asset = format!("image-{}.png", Uuid::new_v4().simple());
+    saved.props[0]
+        .media
+        .images
+        .push(StoryImage::test_image(&referenced_asset));
+    store.save("alice", &saved).unwrap();
+    let project_directory = projects_directory(app_data.path(), "alice").join(&saved.id);
+    let runs_directory = project_directory.join("runs");
+    fs::create_dir(&runs_directory).unwrap();
+
+    let project_temporary = project_directory.join("project.json.tmp");
+    let batch_temporary = project_directory.join(format!(
+        "media-batch-{}.json.tmp",
+        Uuid::new_v4().to_string().to_lowercase()
+    ));
+    let run_temporary = runs_directory.join(format!(
+        "{}.json.tmp",
+        Uuid::new_v4().to_string().to_lowercase()
+    ));
+    let project_shared_temporary = project_directory.join(format!(
+        ".story-json-{}.tmp",
+        Uuid::new_v4().to_string().to_lowercase()
+    ));
+    let run_shared_temporary = runs_directory.join(format!(
+        ".story-json-{}.tmp",
+        Uuid::new_v4().to_string().to_lowercase()
+    ));
+    let unrelated = project_directory.join("notes.json.tmp");
+    let invalid_batch = project_directory.join("media-batch-not-a-uuid.json.tmp");
+    let invalid_run = runs_directory.join("not-a-uuid.json.tmp");
+    let orphan_asset = project_directory.join(format!("image-{}.png", Uuid::new_v4().simple()));
+    let referenced_asset = project_directory.join(&referenced_asset);
+    for path in [
+        &project_temporary,
+        &batch_temporary,
+        &run_temporary,
+        &project_shared_temporary,
+        &run_shared_temporary,
+        &unrelated,
+        &invalid_batch,
+        &invalid_run,
+        &orphan_asset,
+        &referenced_asset,
+    ] {
+        fs::write(path, b"value").unwrap();
+    }
+
+    assert_eq!(
+        store.cleanup_stale_temporaries_before(std::time::UNIX_EPOCH),
+        0
+    );
+    assert_eq!(
+        store.cleanup_stale_temporaries_before(
+            std::time::SystemTime::now() + std::time::Duration::from_secs(1),
+        ),
+        6
+    );
+    assert!(!project_temporary.exists());
+    assert!(!batch_temporary.exists());
+    assert!(!run_temporary.exists());
+    assert!(!project_shared_temporary.exists());
+    assert!(!run_shared_temporary.exists());
+    assert!(!orphan_asset.exists());
+    assert!(referenced_asset.exists());
+    assert!(project_directory.join("project.json").exists());
+    assert!(unrelated.exists());
+    assert!(invalid_batch.exists());
+    assert!(invalid_run.exists());
+}
+
+#[test]
 fn catalog_page_is_stable_newest_first_and_counts_unreadable_manifests() {
     let app_data = tempdir().unwrap();
     let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
@@ -2129,7 +2204,7 @@ fn story_memory_contract_binds_syncs_and_composes_only_the_current_run() {
     );
     assert_eq!(
         scope.subject_id,
-        format!("client-agent:story:{}", canonical.id)
+        format!("agent:story-studio:{}", canonical.id)
     );
     assert!(run.uses_cloud_memory);
 

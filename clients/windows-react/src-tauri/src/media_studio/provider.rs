@@ -92,6 +92,11 @@ pub(crate) fn resolve_image_model(
     {
         return Err("模型配置与当前账号不匹配。".into());
     }
+    if chatos_service_runtime::model_workload::ModelWorkload::for_model(&model.model)
+        != chatos_service_runtime::model_workload::ModelWorkload::Image
+    {
+        return Err("所选模型不支持图片生成。".into());
+    }
     let model_config_id = required("model_config_id", model.id)?;
     let model_name = required("model", model.model)?;
     let api_key = model
@@ -486,6 +491,16 @@ mod tests {
         assert!(!String::from_utf8(wire.body)
             .unwrap()
             .contains("must-not-cross"));
+    }
+
+    #[test]
+    fn image_runtime_rejects_chat_models_before_building_a_provider_request() {
+        let mut model = gateway_model();
+        model.model = "gpt-6.1-sol".into();
+        let Err(error) = resolve_image_model("alice", "image-model", model) else {
+            panic!("chat model must not resolve for image generation")
+        };
+        assert_eq!(error, "所选模型不支持图片生成。");
     }
 
     #[test]

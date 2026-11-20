@@ -6,25 +6,39 @@ use chatos_plugin_management_sdk::SkillGateDeclaration;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
+#[cfg(windows)]
+use std::ffi::OsString;
+#[cfg(not(windows))]
+use std::process::Stdio;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    fs,
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
+#[cfg(not(windows))]
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStdin, ChildStdout, Command},
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     sync::Mutex,
 };
 
+#[cfg(not(windows))]
+use crate::terminal_runtime::process::ProcessTermination;
+#[cfg(windows)]
+use crate::windows_appcontainer::{SandboxedChild, WorkspaceAccess, WorkspaceLeaseManager};
 use crate::{
+    app_data_transaction::ensure_owned_directory,
+    app_owned_export::try_remove_stale_owned_file,
     host_lifecycle::HostManager,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePermit,
+        MachineResourcePriority,
+    },
     plugin_application::{
         PluginApplicationManager, ResolvedAgentPluginExecution, TrustedAgentPluginOption,
     },
-    terminal_runtime::process::ProcessTermination,
 };
 
 pub(crate) const CAPABILITY_SEARCH_TOOL_NAME: &str = "capability_search";
@@ -48,10 +62,13 @@ const MAXIMUM_MCP_TOOL_PAGES: usize = 100;
 const MAXIMUM_MCP_TOOLS: usize = 512;
 const MAXIMUM_TOOL_SCHEMA_BYTES: usize = 256 * 1_024;
 const MAXIMUM_JOURNAL_BYTES: u64 = 8 * 1_024 * 1_024;
+const STALE_JOURNAL_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const MAXIMUM_JOURNAL_TEMPORARY_ENTRIES: usize = 2_000;
 const MAXIMUM_PLUGIN_SKILLS: usize = 128;
 const MAXIMUM_SKILL_INSTRUCTIONS_BYTES: u64 = 256 * 1_024;
 const MAXIMUM_SKILL_RESOURCE_BYTES: u64 = 1_024 * 1_024;
 const MAXIMUM_SKILL_RESOURCES: usize = 256;
+const MAXIMUM_SKILL_DIRECTORY_ENTRIES: usize = MAXIMUM_SKILL_RESOURCES * 2;
 const MAXIMUM_SKILL_CATALOG_BYTES: u64 = 16 * 1_024 * 1_024;
 const MAXIMUM_SKILL_PAGE_CHARACTERS: usize = 160_000;
 
@@ -95,7 +112,10 @@ pub(crate) fn load_agent_plugin_skill_snapshot<'a>(
     if !installation_root.is_dir() {
         return Err(plugin_runtime_error());
     }
-    let mut directories = manifest_directories.map(str::to_owned).collect::<Vec<_>>();
+    let mut directories = manifest_directories
+        .take(MAXIMUM_PLUGIN_SKILLS.saturating_add(1))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
     if directories.is_empty() {
         directories = discover_bundled_skill_directories(&installation_root, package_name)?;
     }
@@ -171,12 +191,14 @@ fn discover_bundled_skill_directories(
             continue;
         }
         let root = secure_existing_skill_path(installation_root, &root_path)?;
-        let mut children = std::fs::read_dir(root)
+        for (visited, child) in std::fs::read_dir(root)
             .map_err(|_| plugin_runtime_error())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| plugin_runtime_error())?;
-        children.sort_by_key(std::fs::DirEntry::file_name);
-        for child in children {
+            .enumerate()
+        {
+            if visited >= MAXIMUM_SKILL_DIRECTORY_ENTRIES {
+                return Err(plugin_runtime_error());
+            }
+            let child = child.map_err(|_| plugin_runtime_error())?;
             let name = child
                 .file_name()
                 .into_string()
@@ -347,31 +369,35 @@ fn load_skill_resources(
     skill_directory: &Path,
     total_bytes: &mut u64,
 ) -> Result<BTreeMap<String, String>, String> {
-    let references = skill_directory.join("references");
-    let metadata = match std::fs::symlink_metadata(&references) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
-        Err(_) => return Err(plugin_runtime_error()),
-    };
-    if !metadata.is_dir() || is_symlink_or_reparse(&metadata) {
-        return Ok(BTreeMap::new());
-    }
-    let references = references
-        .canonicalize()
-        .map_err(|_| plugin_runtime_error())?;
-    if !references.starts_with(installation_root) {
-        return Err(plugin_runtime_error());
-    }
     let mut resources = BTreeMap::new();
     let mut observed = 0_usize;
-    let mut stack = vec![(references, PathBuf::from("references"))];
-    while let Some((directory, relative_directory)) = stack.pop() {
-        let mut entries = std::fs::read_dir(&directory)
-            .map_err(|_| plugin_runtime_error())?
-            .collect::<Result<Vec<_>, _>>()
+    let mut visited_entries = 0_usize;
+    let mut stack = Vec::new();
+    for resource_root in ["scripts", "references", "assets"] {
+        let candidate = skill_directory.join(resource_root);
+        let metadata = match std::fs::symlink_metadata(&candidate) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Err(plugin_runtime_error()),
+        };
+        if !metadata.is_dir() || is_symlink_or_reparse(&metadata) {
+            return Err(plugin_runtime_error());
+        }
+        let canonical = candidate
+            .canonicalize()
             .map_err(|_| plugin_runtime_error())?;
-        entries.sort_by_key(std::fs::DirEntry::file_name);
-        for entry in entries {
+        if !canonical.starts_with(installation_root) {
+            return Err(plugin_runtime_error());
+        }
+        stack.push((canonical, PathBuf::from(resource_root)));
+    }
+    while let Some((directory, relative_directory)) = stack.pop() {
+        for entry in std::fs::read_dir(&directory).map_err(|_| plugin_runtime_error())? {
+            visited_entries = visited_entries.saturating_add(1);
+            if visited_entries > MAXIMUM_SKILL_DIRECTORY_ENTRIES {
+                return Err(plugin_runtime_error());
+            }
+            let entry = entry.map_err(|_| plugin_runtime_error())?;
             let name = entry
                 .file_name()
                 .into_string()
@@ -382,7 +408,7 @@ fn load_skill_resources(
             let metadata =
                 std::fs::symlink_metadata(entry.path()).map_err(|_| plugin_runtime_error())?;
             if is_symlink_or_reparse(&metadata) {
-                continue;
+                return Err(plugin_runtime_error());
             }
             let relative = relative_directory.join(&name);
             if metadata.is_dir() {
@@ -440,14 +466,29 @@ pub(crate) struct AgentPluginRuntime {
     plugin_root: PathBuf,
     journal: InvocationJournal,
     sessions: Arc<Mutex<HashMap<String, Arc<McpSession>>>>,
+    resources: MachineResourceGovernor,
 }
 
 impl AgentPluginRuntime {
+    #[cfg(test)]
     pub(crate) fn new(plugin_root: PathBuf, journal_root: PathBuf) -> Self {
+        Self::new_with_resources(
+            plugin_root,
+            journal_root,
+            MachineResourceGovernor::default(),
+        )
+    }
+
+    pub(crate) fn new_with_resources(
+        plugin_root: PathBuf,
+        journal_root: PathBuf,
+        resources: MachineResourceGovernor,
+    ) -> Self {
         Self {
             plugin_root,
             journal: InvocationJournal::new(journal_root),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            resources,
         }
     }
 
@@ -620,6 +661,26 @@ impl AgentPluginRuntime {
             optional_nullable_u64(arguments, "offset", 0, usize::MAX as u64)?.unwrap_or(0) as usize;
         let limit = optional_nullable_u64(arguments, "limit", 1, 20)?.unwrap_or(8) as usize;
         let query = query.unwrap_or_default().to_lowercase();
+        if session.definitions.is_empty() && !session.skills_by_option.is_empty() {
+            let (skills, next_offset) = session
+                .describe_skill_catalog(&query, offset, limit)
+                .await?;
+            return Ok(LocalAgentToolOutcome::Succeeded {
+                output: json!({
+                    "view": "skill_catalog",
+                    "disclosure_version": 2,
+                    "binding_schema_version": 1,
+                    "provider_id": format!("plugin:{}:{}", selection.plugin_id, selection.component_key),
+                    "plugin_option": requested_plugin,
+                    "name": selection.display_name,
+                    "tools": [],
+                    "skills": skills,
+                    "offset": offset,
+                    "next_offset": next_offset,
+                    "guidance": "Activate a returned skill_ref with agent_skill_activate before following its instructions or reading its resources.",
+                }),
+            });
+        }
         let filtered = session
             .definitions
             .iter()
@@ -891,12 +952,27 @@ impl AgentPluginRuntime {
         if let Some(stale) = stale {
             stale.invalidate().await;
         }
+        let resource_permit = if resolved.executable.is_some() {
+            Some(
+                self.resources
+                    .acquire(
+                        MachineResourceKind::CodeReadWorker,
+                        MachineResourcePriority::Interactive,
+                    )
+                    .await?,
+            )
+        } else {
+            None
+        };
         let session = Arc::new(
             McpSession::connect(
                 &self.plugin_root,
                 context,
                 resolved,
                 runtime_fingerprint.clone(),
+                resource_permit,
+                #[cfg(windows)]
+                manager.workspace_leases(),
             )
             .await?,
         );
@@ -998,14 +1074,30 @@ struct McpSession {
     described: Mutex<HashSet<String>>,
     disclosed_skills: Mutex<HashSet<String>>,
     activated_skills: Mutex<HashSet<String>>,
-    connection: Mutex<McpConnection>,
+    connection: Option<Mutex<McpConnection>>,
 }
 
+#[cfg(windows)]
+type McpStdin = tokio::fs::File;
+#[cfg(not(windows))]
+type McpStdin = ChildStdin;
+#[cfg(windows)]
+type McpStdout = tokio::fs::File;
+#[cfg(not(windows))]
+type McpStdout = ChildStdout;
+
 struct McpConnection {
+    #[cfg(windows)]
+    child: Option<SandboxedChild>,
+    #[cfg(not(windows))]
     child: Child,
+    #[cfg(not(windows))]
     _termination: ProcessTermination,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    stdin: McpStdin,
+    stdout: BufReader<McpStdout>,
+    #[cfg(windows)]
+    stderr_task: tokio::task::JoinHandle<()>,
+    resource_permit: Option<MachineResourcePermit>,
     next_request_id: u64,
     unusable: bool,
 }
@@ -1016,9 +1108,39 @@ impl McpSession {
         context: &AgentPluginRunContext,
         resolved: ResolvedAgentPluginExecution,
         runtime_fingerprint: String,
+        resource_permit: Option<MachineResourcePermit>,
+        #[cfg(windows)] workspace_leases: &WorkspaceLeaseManager,
     ) -> Result<Self, String> {
-        let executable = resolved
-            .executable
+        let skills_by_option = resolved
+            .skill_snapshot
+            .documents
+            .values()
+            .map(|document| {
+                (
+                    skill_option(context, &resolved.identity, &document.name),
+                    document.clone(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let Some(executable) = resolved.executable.as_ref() else {
+            if skills_by_option.is_empty()
+                || !resolved.args.is_empty()
+                || !resolved.environment.is_empty()
+                || resolved.allowed_tools.is_some()
+            {
+                return Err(plugin_runtime_error());
+            }
+            return Ok(Self {
+                runtime_fingerprint,
+                definitions: Vec::new(),
+                skills_by_option,
+                described: Mutex::new(HashSet::new()),
+                disclosed_skills: Mutex::new(HashSet::new()),
+                activated_skills: Mutex::new(HashSet::new()),
+                connection: None,
+            });
+        };
+        let executable = executable
             .canonicalize()
             .map_err(|_| plugin_runtime_error())?;
         let plugin_root = plugin_root
@@ -1027,33 +1149,93 @@ impl McpSession {
         if !executable.is_file() || !executable.starts_with(&plugin_root) {
             return Err(plugin_runtime_error());
         }
-        let mut command = Command::new(&executable);
-        command
-            .args(&resolved.args)
-            .current_dir(
-                resolved
-                    .working_directory
-                    .as_deref()
-                    .unwrap_or(&context.execution_root),
-            )
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(false)
-            .env_clear();
-        command.envs(safe_environment(context, &resolved.environment));
+        #[cfg(windows)]
+        let connection = {
+            let installation_root = resolved
+                .installation_root
+                .canonicalize()
+                .map_err(|_| plugin_runtime_error())?;
+            if !installation_root.is_dir()
+                || !installation_root.starts_with(&plugin_root)
+                || !executable.starts_with(&installation_root)
+            {
+                return Err(plugin_runtime_error());
+            }
+            let current_directory = resolved
+                .working_directory
+                .as_deref()
+                .unwrap_or(&context.execution_root);
+            let environment = safe_environment(context, &resolved.environment)
+                .into_iter()
+                .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+                .collect::<Vec<_>>();
+            let mut child = workspace_leases.spawn_workspace_command_with_leases(
+                current_directory,
+                &executable,
+                &resolved.args,
+                &[
+                    (installation_root, WorkspaceAccess::ReadOnly),
+                    (context.execution_root.clone(), WorkspaceAccess::ReadWrite),
+                ],
+                resolved.network_policy,
+                &environment,
+            )?;
+            let stdin = child.take_stdin().ok_or_else(plugin_runtime_error)?;
+            let stdout = child.take_stdout().ok_or_else(plugin_runtime_error)?;
+            let stderr = child.take_stderr().ok_or_else(plugin_runtime_error)?;
+            let stderr_task = tokio::spawn(async move {
+                let mut stderr = tokio::fs::File::from_std(stderr);
+                let mut sink = tokio::io::sink();
+                let _ = tokio::io::copy(&mut stderr, &mut sink).await;
+            });
+            McpConnection {
+                child: Some(child),
+                stdin: tokio::fs::File::from_std(stdin),
+                stdout: BufReader::new(tokio::fs::File::from_std(stdout)),
+                stderr_task,
+                resource_permit,
+                next_request_id: 1,
+                unusable: false,
+            }
+        };
         #[cfg(not(windows))]
-        {
-            use std::os::unix::process::CommandExt;
-            command.as_std_mut().process_group(0);
-        }
-        let mut child = command.spawn().map_err(|_| plugin_runtime_error())?;
-        let termination = ProcessTermination::attach(&child).map_err(|_| {
-            let _ = child.start_kill();
-            plugin_runtime_error()
-        })?;
-        let stdin = child.stdin.take().ok_or_else(plugin_runtime_error)?;
-        let stdout = child.stdout.take().ok_or_else(plugin_runtime_error)?;
+        let connection = {
+            let mut command = Command::new(&executable);
+            command
+                .args(&resolved.args)
+                .current_dir(
+                    resolved
+                        .working_directory
+                        .as_deref()
+                        .unwrap_or(&context.execution_root),
+                )
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .kill_on_drop(false)
+                .env_clear();
+            command.envs(safe_environment(context, &resolved.environment));
+            {
+                use std::os::unix::process::CommandExt;
+                command.as_std_mut().process_group(0);
+            }
+            let mut child = command.spawn().map_err(|_| plugin_runtime_error())?;
+            let termination = ProcessTermination::attach(&child).map_err(|_| {
+                let _ = child.start_kill();
+                plugin_runtime_error()
+            })?;
+            let stdin = child.stdin.take().ok_or_else(plugin_runtime_error)?;
+            let stdout = child.stdout.take().ok_or_else(plugin_runtime_error)?;
+            McpConnection {
+                child,
+                _termination: termination,
+                stdin,
+                stdout: BufReader::new(stdout),
+                resource_permit,
+                next_request_id: 1,
+                unusable: false,
+            }
+        };
         let session = Self {
             runtime_fingerprint: runtime_fingerprint.clone(),
             definitions: Vec::new(),
@@ -1061,14 +1243,7 @@ impl McpSession {
             described: Mutex::new(HashSet::new()),
             disclosed_skills: Mutex::new(HashSet::new()),
             activated_skills: Mutex::new(HashSet::new()),
-            connection: Mutex::new(McpConnection {
-                child,
-                _termination: termination,
-                stdin,
-                stdout: BufReader::new(stdout),
-                next_request_id: 1,
-                unusable: false,
-            }),
+            connection: Some(Mutex::new(connection)),
         };
         let initialization = session
             .request(
@@ -1098,17 +1273,6 @@ impl McpSession {
             .map_err(|error| error.message)?;
         let tools = session.list_tools().await.map_err(|error| error.message)?;
         let definitions = decode_tool_definitions(context, &resolved, tools)?;
-        let skills_by_option = resolved
-            .skill_snapshot
-            .documents
-            .values()
-            .map(|document| {
-                (
-                    skill_option(context, &resolved.identity, &document.name),
-                    document.clone(),
-                )
-            })
-            .collect();
         Ok(Self {
             runtime_fingerprint,
             definitions,
@@ -1179,6 +1343,37 @@ impl McpSession {
                 })
             })
             .collect()
+    }
+
+    async fn describe_skill_catalog(
+        &self,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<Value>, Option<usize>), String> {
+        let filtered = self
+            .skills_by_option
+            .iter()
+            .filter(|(_, document)| {
+                query.is_empty()
+                    || format!("{} {}", document.name, document.description)
+                        .to_lowercase()
+                        .contains(query)
+            })
+            .map(|(option, _)| option.clone())
+            .collect::<Vec<_>>();
+        if offset > filtered.len() || limit == 0 || limit > 20 {
+            return Err(invalid_capability_arguments());
+        }
+        let page = filtered
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>();
+        self.mark_disclosed_skills(&page).await;
+        let next_offset = (offset + page.len() < filtered.len()).then_some(offset + page.len());
+        Ok((self.skill_summaries(&page), next_offset))
     }
 
     async fn activate_skill(
@@ -1292,7 +1487,10 @@ impl McpSession {
 
     async fn request(&self, method: &str, parameters: Value) -> Result<Value, McpError> {
         let future = async {
-            let mut connection = self.connection.lock().await;
+            let Some(connection) = self.connection.as_ref() else {
+                return Err(McpError::known("Plugin does not provide an MCP runtime."));
+            };
+            let mut connection = connection.lock().await;
             if connection.unusable {
                 return Err(McpError::unknown("Plugin MCP session is unavailable."));
             }
@@ -1340,7 +1538,10 @@ impl McpSession {
 
     async fn notify(&self, method: &str, parameters: Value) -> Result<(), McpError> {
         let future = async {
-            let mut connection = self.connection.lock().await;
+            let Some(connection) = self.connection.as_ref() else {
+                return Err(McpError::known("Plugin does not provide an MCP runtime."));
+            };
+            let mut connection = connection.lock().await;
             if connection.unusable {
                 return Err(McpError::unknown("Plugin MCP session is unavailable."));
             }
@@ -1365,14 +1566,29 @@ impl McpSession {
     }
 
     async fn invalidate(&self) {
-        let mut connection = self.connection.lock().await;
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+        let mut connection = connection.lock().await;
         if connection.unusable {
             return;
         }
         connection.unusable = true;
-        let _ = connection._termination.terminate(true);
-        let _ = connection.child.start_kill();
-        let _ = tokio::time::timeout(PROCESS_REAP_TIMEOUT, connection.child.wait()).await;
+        connection.resource_permit.take();
+        #[cfg(windows)]
+        {
+            if let Some(child) = connection.child.take() {
+                let _ = child.terminate();
+                let _ = tokio::task::spawn_blocking(move || child.wait(PROCESS_REAP_TIMEOUT)).await;
+            }
+            connection.stderr_task.abort();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = connection._termination.terminate(true);
+            let _ = connection.child.start_kill();
+            let _ = tokio::time::timeout(PROCESS_REAP_TIMEOUT, connection.child.wait()).await;
+        }
     }
 }
 
@@ -1398,7 +1614,10 @@ impl McpError {
     }
 }
 
-async fn write_message(stdin: &mut ChildStdin, value: &Value) -> Result<(), McpError> {
+async fn write_message(
+    stdin: &mut (impl AsyncWrite + Unpin),
+    value: &Value,
+) -> Result<(), McpError> {
     let mut payload = serde_json::to_vec(value)
         .map_err(|_| McpError::known("Plugin MCP request could not be encoded."))?;
     payload.push(b'\n');
@@ -1412,7 +1631,7 @@ async fn write_message(stdin: &mut ChildStdin, value: &Value) -> Result<(), McpE
         .map_err(|_| McpError::unknown("Plugin MCP request could not be flushed."))
 }
 
-async fn read_message(stdout: &mut BufReader<ChildStdout>) -> Result<Value, McpError> {
+async fn read_message(stdout: &mut (impl AsyncBufRead + Unpin)) -> Result<Value, McpError> {
     let mut payload = Vec::new();
     loop {
         let available = stdout
@@ -1616,9 +1835,32 @@ fn safe_environment(
     manifest_environment: &BTreeMap<String, String>,
 ) -> BTreeMap<String, String> {
     let mut environment = BTreeMap::new();
-    for key in ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "TEMP", "TMP"] {
+    #[cfg(windows)]
+    const ALLOWED_HOST_ENVIRONMENT: &[&str] = &[
+        "ALLUSERSPROFILE",
+        "APPDATA",
+        "ComSpec",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LOCALAPPDATA",
+        "PATH",
+        "PATHEXT",
+        "PROGRAMDATA",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "SystemDrive",
+        "SystemRoot",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "WINDIR",
+    ];
+    #[cfg(not(windows))]
+    const ALLOWED_HOST_ENVIRONMENT: &[&str] = &["HOME", "LANG", "LC_ALL", "TEMP", "TMP"];
+    for key in ALLOWED_HOST_ENVIRONMENT {
         if let Ok(value) = std::env::var(key) {
-            environment.insert(key.to_owned(), value);
+            environment.insert((*key).to_owned(), value);
         }
     }
     #[cfg(not(windows))]
@@ -1706,10 +1948,15 @@ fn resolved_runtime_fingerprint(resolved: &ResolvedAgentPluginExecution) -> Resu
         hasher.update(value);
     }
 
-    let executable = resolved
-        .executable
+    let installation_root = resolved
+        .installation_root
         .canonicalize()
         .map_err(|_| plugin_runtime_error())?;
+    let executable = resolved
+        .executable
+        .as_ref()
+        .map(|path| path.canonicalize().map_err(|_| plugin_runtime_error()))
+        .transpose()?;
     let working_directory = resolved
         .working_directory
         .as_ref()
@@ -1720,7 +1967,11 @@ fn resolved_runtime_fingerprint(resolved: &ResolvedAgentPluginExecution) -> Resu
         allowed_tools.sort();
     }
     let identity = resolved.identity.frozen_identity();
-    let executable = executable.to_string_lossy().into_owned();
+    let installation_root = installation_root.to_string_lossy().into_owned();
+    let executable = executable
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let working_directory = working_directory
         .as_ref()
         .map(|path| path.to_string_lossy().into_owned())
@@ -1733,10 +1984,12 @@ fn resolved_runtime_fingerprint(resolved: &ResolvedAgentPluginExecution) -> Resu
     let mut hasher = Sha256::new();
     for value in [
         identity.as_bytes(),
+        installation_root.as_bytes(),
         executable.as_bytes(),
         working_directory.as_bytes(),
         arguments.as_bytes(),
         environment.as_bytes(),
+        resolved.network_policy.as_bytes(),
         allowed_tools.as_bytes(),
     ] {
         update(&mut hasher, value);
@@ -1911,14 +2164,11 @@ impl InvocationJournal {
 }
 
 async fn ensure_private_journal_root(root: &Path) -> Result<(), String> {
+    ensure_owned_directory(root).map_err(|_| journal_error())?;
     match tokio::fs::symlink_metadata(root).await {
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
         Ok(_) => return Err(journal_error()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            tokio::fs::create_dir_all(root)
-                .await
-                .map_err(|_| journal_error())?;
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Err(journal_error()),
         Err(_) => return Err(journal_error()),
     }
     let metadata = tokio::fs::symlink_metadata(root)
@@ -1934,7 +2184,61 @@ async fn ensure_private_journal_root(root: &Path) -> Result<(), String> {
             .await
             .map_err(|_| journal_error())?;
     }
+    let cleanup_root = root.to_owned();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let cutoff = SystemTime::now()
+            .checked_sub(STALE_JOURNAL_TEMPORARY_AGE)
+            .unwrap_or(UNIX_EPOCH);
+        cleanup_stale_journal_temporaries_before(
+            &cleanup_root,
+            cutoff,
+            MAXIMUM_JOURNAL_TEMPORARY_ENTRIES,
+        )
+    })
+    .await;
     Ok(())
+}
+
+fn cleanup_stale_journal_temporaries_before(
+    root: &Path,
+    cutoff: SystemTime,
+    maximum_entries: usize,
+) -> usize {
+    if maximum_entries == 0 {
+        return 0;
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return 0;
+    };
+    let mut removed = 0usize;
+    for (visited, entry) in entries.enumerate() {
+        if visited >= maximum_entries {
+            break;
+        }
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if canonical_journal_temporary_name(&name)
+            && try_remove_stale_owned_file(&entry.path(), cutoff)
+        {
+            removed = removed.saturating_add(1);
+        }
+    }
+    removed
+}
+
+fn canonical_journal_temporary_name(name: &str) -> bool {
+    name.strip_prefix('.')
+        .and_then(|value| value.strip_suffix(".tmp"))
+        .and_then(|value| {
+            uuid::Uuid::parse_str(value)
+                .ok()
+                .filter(|uuid| uuid.to_string() == value)
+        })
+        .is_some()
 }
 
 fn journal_stage_path(base: &Path, stage: &str) -> PathBuf {
@@ -1953,7 +2257,17 @@ async fn read_journal_record(path: &Path) -> Result<Option<JournalRecord>, Strin
     {
         return Err(journal_error());
     }
-    let bytes = tokio::fs::read(path).await.map_err(|_| journal_error())?;
+    let mut bytes = Vec::with_capacity(metadata.len().min(MAXIMUM_JOURNAL_BYTES) as usize + 1);
+    tokio::fs::File::open(path)
+        .await
+        .map_err(|_| journal_error())?
+        .take(MAXIMUM_JOURNAL_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|_| journal_error())?;
+    if bytes.len() as u64 > MAXIMUM_JOURNAL_BYTES {
+        return Err(journal_error());
+    }
     serde_json::from_slice(&bytes)
         .map(Some)
         .map_err(|_| journal_error())
@@ -1969,6 +2283,13 @@ async fn write_journal_record(path: &Path, record: &JournalRecord) -> Result<(),
     let temporary = parent.join(format!(".{}.tmp", uuid::Uuid::new_v4()));
     let mut options = tokio::fs::OpenOptions::new();
     options.create_new(true).write(true);
+    #[cfg(windows)]
+    {
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
     #[cfg(unix)]
     {
         options.mode(0o600);
@@ -2253,7 +2574,8 @@ mod tests {
         assert!(frozen_plugin_selections(&context).unwrap().is_empty());
 
         let directory = tempfile::tempdir().unwrap();
-        let manager = PluginApplicationManager::new(directory.path().join("app-data"));
+        let app_data = directory.path().join("app-data");
+        let manager = PluginApplicationManager::new(app_data.clone());
         let host = HostManager::default();
         let runtime = AgentPluginRuntime::new(
             directory.path().join("plugins"),
@@ -2331,6 +2653,53 @@ mod tests {
                 & 0o777;
             assert_eq!(result_mode, 0o600);
         }
+    }
+
+    #[test]
+    fn journal_cleanup_removes_only_stale_canonical_temporaries_within_bound() {
+        let directory = tempfile::tempdir().unwrap();
+        let token = "00000000-0000-0000-0000-000000000000";
+        let canonical = directory.path().join(format!(".{token}.tmp"));
+        let malformed = directory.path().join(".not-a-uuid.tmp");
+        std::fs::write(&canonical, b"stale").unwrap();
+        std::fs::write(&malformed, b"keep").unwrap();
+
+        assert_eq!(
+            cleanup_stale_journal_temporaries_before(directory.path(), UNIX_EPOCH, 10),
+            0
+        );
+        assert!(canonical.exists());
+        assert!(malformed.exists());
+
+        assert_eq!(
+            cleanup_stale_journal_temporaries_before(
+                directory.path(),
+                SystemTime::now() + Duration::from_secs(1),
+                10,
+            ),
+            1
+        );
+        assert!(!canonical.exists());
+        assert!(malformed.exists());
+
+        let bounded = (1..=3)
+            .map(|index| {
+                let path = directory
+                    .path()
+                    .join(format!(".00000000-0000-0000-0000-00000000000{index}.tmp"));
+                std::fs::write(&path, b"stale").unwrap();
+                path
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            cleanup_stale_journal_temporaries_before(
+                directory.path(),
+                SystemTime::now() + Duration::from_secs(1),
+                2,
+            ),
+            2
+        );
+        assert_eq!(bounded.iter().filter(|path| path.exists()).count(), 1);
     }
 
     #[tokio::test]
@@ -2440,6 +2809,77 @@ mod tests {
         .is_err());
     }
 
+    #[tokio::test]
+    async fn skill_only_session_never_starts_a_process_and_preserves_disclosure_gates() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin_root = directory.path().join("Plugins");
+        let installation = plugin_root.join("plugin-1").join("1.0.0");
+        let skill = installation.join("skills").join("portable-helper");
+        for resource in ["scripts", "references", "assets"] {
+            std::fs::create_dir_all(skill.join(resource)).unwrap();
+        }
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: portable-helper\ndescription: Portable helper\n---\nFollow the portable rules.\n",
+        )
+        .unwrap();
+        std::fs::write(skill.join("scripts/check.ps1"), "Write-Output safe").unwrap();
+        std::fs::write(skill.join("references/guide.md"), "Guide").unwrap();
+        std::fs::write(skill.join("assets/readme.txt"), "Asset").unwrap();
+        let context = context();
+        let snapshot = load_agent_plugin_skill_snapshot(
+            &installation,
+            "portable-helper",
+            ["skills/portable-helper"].into_iter(),
+        )
+        .unwrap();
+        let resolved = ResolvedAgentPluginExecution {
+            identity: frozen_plugin_selections(&context).unwrap().remove(0),
+            installation_root: installation.clone(),
+            executable: None,
+            args: Vec::new(),
+            working_directory: Some(installation),
+            environment: BTreeMap::new(),
+            network_policy: "disabled",
+            allowed_tools: None,
+            skill_snapshot: snapshot,
+        };
+        let fingerprint = resolved_runtime_fingerprint(&resolved).unwrap();
+
+        let manager = PluginApplicationManager::new(directory.path().join("app-data"));
+        let session = McpSession::connect(
+            &plugin_root,
+            &context,
+            resolved,
+            fingerprint,
+            None,
+            #[cfg(windows)]
+            manager.workspace_leases(),
+        )
+        .await
+        .unwrap();
+
+        assert!(session.connection.is_none());
+        assert!(session.definitions.is_empty());
+        assert_eq!(session.skills_by_option.len(), 1);
+        let skill_ref = session.skills_by_option.keys().next().unwrap().clone();
+        assert!(session.activate_skill(&skill_ref).await.is_err());
+        let (catalog, next_offset) = session
+            .describe_skill_catalog("portable", 0, 8)
+            .await
+            .unwrap();
+        assert_eq!(catalog[0]["skill_ref"], skill_ref);
+        assert_eq!(catalog[0]["name"], "portable-helper");
+        assert_eq!(next_offset, None);
+        let activated = session.activate_skill(&skill_ref).await.unwrap().unwrap();
+        assert!(activated.resources.contains_key("scripts/check.ps1"));
+        assert!(activated.resources.contains_key("references/guide.md"));
+        assert!(activated.resources.contains_key("assets/readme.txt"));
+        let error = session.call_tool("forged", json!({})).await.unwrap_err();
+        assert!(error.outcome_known);
+        session.invalidate().await;
+    }
+
     #[cfg(unix)]
     #[test]
     fn skill_snapshot_rejects_a_symlinked_declared_directory() {
@@ -2494,7 +2934,7 @@ mod tests {
         std::fs::write(
             &fixture_source,
             r###"
-use std::io::{self, BufRead, Write};
+use std::{env, fs, io::{self, BufRead, Write}, path::PathBuf};
 
 fn main() {
     let stdin = io::stdin();
@@ -2504,11 +2944,15 @@ fn main() {
         let Some(id_tail) = line.split("\"id\":").nth(1) else { continue };
         let id = id_tail.chars().take_while(|value| value.is_ascii_digit()).collect::<String>();
         let response = if line.contains("\"method\":\"initialize\"") {
-            r#"{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}}}"#
+            r#"{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}}}"#.to_owned()
         } else if line.contains("\"method\":\"tools/list\"") {
-            r#"{"jsonrpc":"2.0","id":0,"result":{"tools":[{"name":"echo_document","description":"Echo a bounded document request.","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false},"_meta":{"chatos/skillGate":{"allOf":["document-helper"]}}}]}}"#
+            r#"{"jsonrpc":"2.0","id":0,"result":{"tools":[{"name":"echo_document","description":"Echo a bounded document request.","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false},"_meta":{"chatos/skillGate":{"allOf":["document-helper"]}}}]}}"#.to_owned()
         } else if line.contains("\"method\":\"tools/call\"") {
-            r#"{"jsonrpc":"2.0","id":0,"result":{"content":[{"type":"text","text":"verified"},{"type":"image","data":"/9j/2Q==","mimeType":"image/jpeg"}],"structuredContent":{"captureRegionGlobal":{"x":0,"y":0,"width":1,"height":1}},"isError":false}}"#
+            let workspace = PathBuf::from(env::var_os("CHATOS_WORKSPACE_ROOT").unwrap());
+            let workspace_written = fs::write(workspace.join("plugin-output.txt"), b"verified").is_ok();
+            let installation = env::current_exe().unwrap().parent().unwrap().to_path_buf();
+            let installation_write_denied = fs::write(installation.join("plugin-escape.txt"), b"escape").is_err();
+            format!(r#"{{"jsonrpc":"2.0","id":0,"result":{{"content":[{{"type":"text","text":"verified"}},{{"type":"image","data":"/9j/2Q==","mimeType":"image/jpeg"}}],"structuredContent":{{"captureRegionGlobal":{{"x":0,"y":0,"width":1,"height":1}},"workspaceWritten":{workspace_written},"installationWriteDenied":{installation_write_denied}}},"isError":false}}}}"#)
         } else {
             continue;
         };
@@ -2539,18 +2983,39 @@ fn main() {
         .unwrap();
         let resolved = ResolvedAgentPluginExecution {
             identity: frozen_plugin_selections(&context).unwrap().remove(0),
-            executable,
+            installation_root: installation.clone(),
+            executable: Some(executable),
             args: Vec::new(),
-            working_directory: Some(installation),
+            working_directory: Some(installation.clone()),
             environment: BTreeMap::new(),
+            network_policy: "disabled",
             allowed_tools: Some(vec!["echo_document".into()]),
             skill_snapshot,
         };
 
         let fingerprint = resolved_runtime_fingerprint(&resolved).unwrap();
-        let session = McpSession::connect(&plugin_root, &context, resolved, fingerprint)
+        let app_data = directory.path().join("app-data");
+        let manager = PluginApplicationManager::new(app_data.clone());
+        let resources = MachineResourceGovernor::default();
+        let permit = resources
+            .acquire(
+                MachineResourceKind::CodeReadWorker,
+                MachineResourcePriority::Interactive,
+            )
             .await
             .unwrap();
+        let session = McpSession::connect(
+            &plugin_root,
+            &context,
+            resolved,
+            fingerprint,
+            Some(permit),
+            #[cfg(windows)]
+            manager.workspace_leases(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resources.used_resource_units(), 1);
 
         assert_eq!(session.definitions.len(), 1);
         assert_eq!(session.definitions[0].name, "echo_document");
@@ -2618,6 +3083,30 @@ fn main() {
             result["structuredContent"]["captureRegionGlobal"]["width"],
             1
         );
+        assert_eq!(result["structuredContent"]["workspaceWritten"], true);
+        assert_eq!(
+            std::fs::read(context.execution_root.join("plugin-output.txt")).unwrap(),
+            b"verified"
+        );
+        #[cfg(windows)]
+        {
+            assert_eq!(result["structuredContent"]["installationWriteDenied"], true);
+            assert!(!installation.join("plugin-escape.txt").exists());
+        }
+        #[cfg(not(windows))]
+        let _ = std::fs::remove_file(installation.join("plugin-escape.txt"));
         session.invalidate().await;
+        assert_eq!(resources.used_resource_units(), 0);
+        #[cfg(windows)]
+        for journal in [
+            app_data
+                .join("local-agent")
+                .join("appcontainer-workspace-leases"),
+            app_data
+                .join("local-agent")
+                .join("appcontainer-profile-leases"),
+        ] {
+            assert_eq!(std::fs::read_dir(journal).unwrap().count(), 0);
+        }
     }
 }

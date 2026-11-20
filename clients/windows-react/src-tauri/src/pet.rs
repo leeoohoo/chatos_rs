@@ -1,26 +1,25 @@
+use crate::{
+    app_data_transaction::{ensure_owned_directory, replace_owned_file},
+    authentication::AuthenticationManager,
+    general_settings::GeneralSettingsStore,
+    host_lifecycle::{validate_owner, HostManager},
+};
 use chatos_local_agent_protocol::{
-    HostCommand, HostResult, ListRunsCommand, LocalAgentRunListScope, LocalAgentRunStatus,
-    LocalAgentRunSummary,
+    GetTaskGraphCommand, HostCommand, HostResult, ListRunsCommand, ListTaskGraphsCommand,
+    LocalAgentRunListScope, LocalAgentRunStatus, LocalAgentRunSummary, LocalTaskGraphListScope,
 };
 use image::{ImageFormat, ImageReader};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
-    fs::{self, File, OpenOptions},
-    io::{Cursor, Read, Write},
+    collections::{BTreeMap, BTreeSet},
+    fs::File,
+    io::{Cursor, Read},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tauri::{
     http, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State, WebviewUrl,
     WebviewWindowBuilder, WindowEvent,
-};
-use uuid::Uuid;
-
-use crate::{
-    authentication::AuthenticationManager,
-    general_settings::GeneralSettingsStore,
-    host_lifecycle::{validate_owner, HostManager},
 };
 
 pub(crate) const PET_WINDOW_LABEL: &str = "pet-overlay";
@@ -224,14 +223,8 @@ impl PetPreferencesStore {
             return Err(pet_error());
         }
         let parent = self.path.parent().ok_or_else(pet_error)?;
-        fs::create_dir_all(parent).map_err(|_| pet_error())?;
-        let temporary = parent.join(format!(".preferences-{}.tmp", Uuid::new_v4()));
-        let result =
-            write_private_file(&temporary, &bytes).and_then(|_| fs::rename(&temporary, &self.path));
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-            return Err(pet_error());
-        }
+        ensure_owned_directory(parent).map_err(|_| pet_error())?;
+        replace_owned_file(parent, &self.path, ".preferences-", &bytes).map_err(|_| pet_error())?;
         if let Ok(directory) = File::open(parent) {
             let _ = directory.sync_all();
         }
@@ -586,6 +579,7 @@ async fn fetch_presentation(
     now_unix_ms: i64,
 ) -> Result<PetPresentationProjection, String> {
     let active = list_runs(manager, owner_user_id, LocalAgentRunListScope::Active, None).await?;
+    let task_display_statuses = task_display_statuses(manager, owner_user_id, &active).await;
     let cutoff = now_unix_ms.saturating_sub(RECENT_TERMINAL_MILLISECONDS);
     let terminal = list_runs(
         manager,
@@ -598,10 +592,73 @@ async fn fetch_presentation(
         owner_user_id,
         active,
         terminal,
+        &task_display_statuses,
         preferences,
         language,
         now_unix_ms,
     )
+}
+
+async fn task_display_statuses(
+    manager: &HostManager,
+    owner_user_id: &str,
+    runs: &[LocalAgentRunSummary],
+) -> BTreeMap<String, String> {
+    let mut unresolved = runs
+        .iter()
+        .filter(|run| run.owner_entity_type == "task")
+        .map(|run| run.owner_entity_id.clone())
+        .collect::<BTreeSet<_>>();
+    if unresolved.is_empty() {
+        return BTreeMap::new();
+    }
+    let Ok(result) = manager
+        .execute(HostCommand::ListTaskGraphs(ListTaskGraphsCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            scope: LocalTaskGraphListScope::Active,
+            source_entity_type: None,
+            source_entity_id: None,
+            before_updated_at_unix_ms: None,
+            before_graph_id: None,
+            limit: 100,
+        }))
+        .await
+    else {
+        return BTreeMap::new();
+    };
+    let HostResult::TaskGraphs { page } = result else {
+        return BTreeMap::new();
+    };
+    let mut statuses = BTreeMap::new();
+    for summary in page.graphs {
+        if unresolved.is_empty() {
+            break;
+        }
+        let Ok(result) = manager
+            .execute(HostCommand::GetTaskGraph(GetTaskGraphCommand {
+                owner_user_id: owner_user_id.to_owned(),
+                graph_id: summary.graph_id.clone(),
+            }))
+            .await
+        else {
+            continue;
+        };
+        let HostResult::TaskGraph { graph } = result else {
+            continue;
+        };
+        if graph.owner_user_id != owner_user_id || graph.graph_id != summary.graph_id {
+            continue;
+        }
+        for task in graph.tasks {
+            if unresolved.remove(&task.task_id) {
+                statuses.insert(
+                    task.task_id.clone(),
+                    crate::run_inspector::display_status(&task),
+                );
+            }
+        }
+    }
+    statuses
 }
 
 async fn list_runs(
@@ -631,6 +688,7 @@ fn project_presentation(
     owner_user_id: &str,
     active: Vec<LocalAgentRunSummary>,
     terminal: Vec<LocalAgentRunSummary>,
+    task_display_statuses: &BTreeMap<String, String>,
     preferences: &PetPreferencesFile,
     language: &str,
     now_unix_ms: i64,
@@ -652,7 +710,13 @@ fn project_presentation(
     }
     let mut activities = runs
         .into_values()
-        .map(project_activity)
+        .map(|run| {
+            let display_status = (run.owner_entity_type == "task")
+                .then(|| task_display_statuses.get(&run.owner_entity_id))
+                .flatten()
+                .map(String::as_str);
+            project_activity(run, display_status)
+        })
         .filter(|activity| preferences.show_process || activity.kind != "working")
         .filter(|activity| preferences.show_completions || activity.kind != "succeeded")
         .collect::<Vec<_>>();
@@ -687,7 +751,15 @@ fn project_presentation(
     })
 }
 
-fn project_activity(run: LocalAgentRunSummary) -> PetActivityProjection {
+fn project_activity(
+    run: LocalAgentRunSummary,
+    task_display_status: Option<&str>,
+) -> PetActivityProjection {
+    let task_gate = match task_display_status {
+        Some("reviewing_followup") => Some("reviewing_followup"),
+        Some("waiting_confirmation") => Some("waiting_confirmation"),
+        _ => None,
+    };
     let kind = match run.status {
         LocalAgentRunStatus::WaitingUser => "waiting_for_user",
         LocalAgentRunStatus::Paused | LocalAgentRunStatus::NeedsReview => "reviewing",
@@ -696,13 +768,13 @@ fn project_activity(run: LocalAgentRunSummary) -> PetActivityProjection {
         LocalAgentRunStatus::Cancelled => "cancelled",
         _ => "working",
     };
-    let detail_code = match run.status {
+    let detail_code = task_gate.or(match run.status {
         LocalAgentRunStatus::WaitingUser => Some("waiting_user"),
         LocalAgentRunStatus::WaitingToolResult => Some("waiting_tool"),
         LocalAgentRunStatus::RetryScheduled => Some("retry_scheduled"),
         LocalAgentRunStatus::Paused | LocalAgentRunStatus::NeedsReview => Some("needs_review"),
         _ => None,
-    };
+    });
     PetActivityProjection {
         source: if run.profile_key == "main_chat" {
             "chat"
@@ -807,19 +879,6 @@ fn read_bounded(path: &Path, maximum_bytes: u64) -> std::io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
-}
-
 fn pet_error() -> String {
     "无法读取或保存宠物偏好。".into()
 }
@@ -908,6 +967,7 @@ mod tests {
             "alice",
             active.clone(),
             terminal.clone(),
+            &BTreeMap::new(),
             &PetPreferencesFile::default(),
             "zh-CN",
             now,
@@ -925,8 +985,16 @@ mod tests {
             show_completions: false,
             ..PetPreferencesFile::default()
         };
-        let filtered =
-            project_presentation("alice", active, terminal, &preferences, "zh-CN", now).unwrap();
+        let filtered = project_presentation(
+            "alice",
+            active,
+            terminal,
+            &BTreeMap::new(),
+            &preferences,
+            "zh-CN",
+            now,
+        )
+        .unwrap();
         assert_eq!(filtered.primary_activity.unwrap().kind, "waiting_for_user");
         assert_eq!(filtered.active_work_count, 0);
     }
@@ -940,6 +1008,7 @@ mod tests {
             "alice",
             vec![foreign],
             vec![],
+            &BTreeMap::new(),
             &PetPreferencesFile::default(),
             "zh-CN",
             now,
@@ -955,12 +1024,38 @@ mod tests {
             "alice",
             vec![],
             vec![expired],
+            &BTreeMap::new(),
             &PetPreferencesFile::default(),
             "zh-CN",
             now,
         )
         .unwrap();
         assert_eq!(presentation, idle_presentation("zh-CN"));
+    }
+
+    #[test]
+    fn task_followup_gate_overrides_stale_running_pet_activity() {
+        let now = 2_000_000;
+        for gate in ["reviewing_followup", "waiting_confirmation"] {
+            let run = run("gated", LocalAgentRunStatus::ModelRunning, now);
+            let task_id = run.owner_entity_id.clone();
+            let presentation = project_presentation(
+                "alice",
+                vec![run],
+                vec![],
+                &BTreeMap::from([(task_id, gate.to_owned())]),
+                &PetPreferencesFile::default(),
+                "zh-CN",
+                now,
+            )
+            .unwrap();
+            assert_eq!(presentation.animation_state, "running");
+            assert_eq!(presentation.active_work_count, 1);
+            assert_eq!(presentation.attention_count, 0);
+            let activity = presentation.primary_activity.unwrap();
+            assert_eq!(activity.kind, "working");
+            assert_eq!(activity.detail_code, Some(gate));
+        }
     }
 
     fn run(id: &str, status: LocalAgentRunStatus, updated_at_unix_ms: i64) -> LocalAgentRunSummary {

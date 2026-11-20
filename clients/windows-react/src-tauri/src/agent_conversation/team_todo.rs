@@ -6,6 +6,13 @@ use std::collections::HashSet;
 const MAXIMUM_TEAM_TODOS: usize = 1_000;
 const MAXIMUM_TEAM_CHAT_HOP_COUNT: i64 = 4;
 const MAXIMUM_TEAM_CHAT_RUNS_PER_ROOT: i64 = 12;
+const TODO_BUILTIN_CAPABILITIES: [&str; 5] = [
+    "project_read",
+    "project_write",
+    "terminal",
+    "requirement_survey_read",
+    "requirement_survey_write",
+];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1253,7 +1260,10 @@ impl AgentConversationStore {
         if !belongs_to_team {
             return Err("团队任务不存在。".into());
         }
-        load_todo_progress(&connection, owner_user_id, todo_id, limit)
+        load_todo_progress(&connection, owner_user_id, todo_id, limit)?
+            .into_iter()
+            .map(todo_progress_for_ui)
+            .collect()
     }
 
     pub(crate) fn todo_planning_tool_snapshot(
@@ -1302,11 +1312,36 @@ impl AgentConversationStore {
                 "goal": team_goal,
                 "assignees": assignees,
             },
-            "builtin_capabilities": ["project_read", "project_write", "terminal"],
+            "builtin_capabilities": TODO_BUILTIN_CAPABILITIES,
             "plugins": [],
             "todos": todo_values,
         });
         Ok((binding, output))
+    }
+
+    pub(crate) fn resolve_dashboard_todo_references(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        references: &[String],
+    ) -> Result<(AgentAssetToolBinding, Vec<String>), String> {
+        validate_identifier(run_id).map_err(|_| team_todo_store_error())?;
+        validate_reference_list(references, 192)?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let binding = load_agent_asset_tool_binding(&connection, owner_user_id, run_id)?;
+        if binding.todo_id.is_some() {
+            return Err("Project dashboard tools are unavailable in an executor Run.".into());
+        }
+        let resolved = resolve_todo_references(
+            &connection,
+            owner_user_id,
+            run_id,
+            &binding.team_id,
+            references,
+            false,
+        )?;
+        Ok((binding, resolved))
     }
 
     pub(crate) fn todo_planning_progress(
@@ -1709,6 +1744,7 @@ impl AgentConversationStore {
                 "cancelled",
                 "cancelled",
                 "项目经理已停止该任务。",
+                &[],
                 updated_at_unix_ms,
             )?;
             transaction
@@ -1891,6 +1927,7 @@ impl AgentConversationStore {
             "progress",
             stage,
             detail,
+            &[],
             now_unix_ms,
         )?;
         transaction.commit().map_err(|_| team_todo_store_error())?;
@@ -1903,6 +1940,7 @@ impl AgentConversationStore {
         run_id: &str,
         completed: bool,
         detail: &str,
+        asset_update_suggestions: &[AgentTeamAssetUpdateSuggestion],
         project_write_evidence_verified: bool,
         now_unix_ms: i64,
     ) -> Result<(AgentAssetToolBinding, Value), String> {
@@ -1911,6 +1949,10 @@ impl AgentConversationStore {
             .map_err(|_| invalid_team_todo_input())?;
         if now_unix_ms < 0 {
             return Err(invalid_team_todo_input());
+        }
+        validate_asset_update_suggestions(asset_update_suggestions)?;
+        if !completed && !asset_update_suggestions.is_empty() {
+            return Err(invalid_team_asset_review_input());
         }
         reject_link_or_non_file(&self.database)?;
         let mut connection = open_database(&self.database, false)?;
@@ -1966,6 +2008,7 @@ impl AgentConversationStore {
             target_status,
             target_status,
             detail,
+            asset_update_suggestions,
             now_unix_ms,
         )?;
         let changed = transaction
@@ -3216,7 +3259,7 @@ impl AgentConversationStore {
                 let conversation_id = if trigger_kind == "todo" {
                     format!("agent-team-executor-{delivery_id}")
                 } else {
-                    format!("agent-team-{team_id}-{agent_id}")
+                    super::agent_team_conversation_id(team_id, &agent_id)
                 };
                 Ok(ActiveTeamRunBinding {
                     delivery_id,
@@ -3885,15 +3928,13 @@ fn normalized_planning_capabilities(
     requested: &[String],
     requires_execution: bool,
 ) -> Result<Vec<String>, String> {
-    if requested.len() > 3 {
+    if requested.len() > TODO_BUILTIN_CAPABILITIES.len() {
         return Err(invalid_team_todo_input());
     }
     let mut unique = HashSet::new();
     for capability in requested {
-        if !matches!(
-            capability.as_str(),
-            "project_read" | "project_write" | "terminal"
-        ) || !unique.insert(capability.as_str())
+        if !TODO_BUILTIN_CAPABILITIES.contains(&capability.as_str())
+            || !unique.insert(capability.as_str())
             || (!requires_execution && capability != "project_read")
         {
             return Err(invalid_team_todo_input());
@@ -3902,7 +3943,10 @@ fn normalized_planning_capabilities(
     if unique.contains("project_write") {
         unique.insert("project_read");
     }
-    Ok(["project_read", "project_write", "terminal"]
+    if unique.contains("requirement_survey_write") {
+        unique.insert("requirement_survey_read");
+    }
+    Ok(TODO_BUILTIN_CAPABILITIES
         .into_iter()
         .filter(|capability| unique.contains(capability))
         .map(str::to_owned)
@@ -4132,8 +4176,13 @@ pub(super) fn insert_todo_progress(
     kind: &str,
     stage: &str,
     detail: &str,
+    asset_update_suggestions: &[AgentTeamAssetUpdateSuggestion],
     now_unix_ms: i64,
 ) -> Result<Value, String> {
+    validate_asset_update_suggestions(asset_update_suggestions)?;
+    if !asset_update_suggestions.is_empty() && kind != "completed" {
+        return Err(invalid_team_asset_review_input());
+    }
     let sequence: i64 = connection
         .query_row(
             "SELECT COALESCE(MAX(sequence), 0) + 1 FROM local_agent_todo_events \
@@ -4143,13 +4192,15 @@ pub(super) fn insert_todo_progress(
         )
         .map_err(|_| team_todo_store_error())?;
     let event_id = identifier("todo_event");
+    let suggestions_json =
+        serde_json::to_string(asset_update_suggestions).map_err(|_| team_todo_store_error())?;
     connection
         .execute(
             r#"
             INSERT INTO local_agent_todo_events (
                 owner_user_id, id, todo_id, sequence, run_id, kind, stage, detail,
                 asset_update_suggestions_json, created_at_unix_ms
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '[]', ?9)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             "#,
             params![
                 owner_user_id,
@@ -4160,10 +4211,51 @@ pub(super) fn insert_todo_progress(
                 kind,
                 stage,
                 detail,
+                suggestions_json,
                 now_unix_ms,
             ],
         )
         .map_err(|_| team_todo_store_error())?;
+    if !asset_update_suggestions.is_empty() {
+        let (team_id, source_agent_id): (String, String) = connection
+            .query_row(
+                "SELECT team_room_id, agent_id FROM local_agent_todos \
+                 WHERE owner_user_id = ?1 AND id = ?2",
+                params![owner_user_id, todo_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| team_todo_store_error())?;
+        for (index, suggestion) in asset_update_suggestions.iter().enumerate() {
+            connection
+                .execute(
+                    r#"
+                    INSERT INTO local_agent_team_asset_reviews (
+                        owner_user_id, id, team_room_id, todo_id, todo_event_id,
+                        suggestion_index, source_agent_id, category, title, markdown,
+                        rationale, status, resolved_asset_id, resolved_asset_revision,
+                        reviewed_by_agent_id, review_reason,
+                        created_at_unix_ms, updated_at_unix_ms
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                              ?11, 'pending', NULL, NULL, NULL, '', ?12, ?12)
+                    "#,
+                    params![
+                        owner_user_id,
+                        identifier("asset_review"),
+                        team_id,
+                        todo_id,
+                        event_id,
+                        index as i64,
+                        source_agent_id,
+                        suggestion.category,
+                        suggestion.title,
+                        suggestion.markdown,
+                        suggestion.rationale,
+                        now_unix_ms,
+                    ],
+                )
+                .map_err(|_| team_todo_store_error())?;
+        }
+    }
     Ok(json!({
         "sequence": sequence,
         "run_id": run_id,
@@ -4172,6 +4264,27 @@ pub(super) fn insert_todo_progress(
         "detail": detail,
         "created_at_unix_ms": now_unix_ms,
     }))
+}
+
+fn validate_asset_update_suggestions(
+    suggestions: &[AgentTeamAssetUpdateSuggestion],
+) -> Result<(), String> {
+    if suggestions.len() > 8 {
+        return Err(invalid_team_asset_review_input());
+    }
+    let mut identities = HashSet::new();
+    let mut total_markdown_bytes = 0usize;
+    for suggestion in suggestions {
+        validate_team_asset_suggestion(suggestion)?;
+        if !identities.insert((suggestion.category.as_str(), suggestion.title.as_str())) {
+            return Err(invalid_team_asset_review_input());
+        }
+        total_markdown_bytes = total_markdown_bytes.saturating_add(suggestion.markdown.len());
+        if total_markdown_bytes > 256_000 {
+            return Err(invalid_team_asset_review_input());
+        }
+    }
+    Ok(())
 }
 
 fn load_todo_progress(
@@ -4211,6 +4324,17 @@ fn load_todo_progress(
         .map_err(|_| team_todo_store_error())?;
     values.reverse();
     Ok(values)
+}
+
+fn todo_progress_for_ui(mut progress: Value) -> Result<Value, String> {
+    let object = progress.as_object_mut().ok_or_else(team_todo_store_error)?;
+    let run_id = object.remove("run_id").ok_or_else(team_todo_store_error)?;
+    let created_at_unix_ms = object
+        .remove("created_at_unix_ms")
+        .ok_or_else(team_todo_store_error)?;
+    object.insert("runId".to_owned(), run_id);
+    object.insert("createdAtUnixMs".to_owned(), created_at_unix_ms);
+    Ok(progress)
 }
 
 fn load_todo_prerequisites(
@@ -4463,7 +4587,7 @@ fn validate_contract_list(values: &[String], allow_empty: bool) -> Result<(), St
 
 fn validate_execution_plan(plan: &AgentTodoExecutionPlan) -> Result<(), String> {
     if plan.selected_at_unix_ms < 0
-        || plan.builtin_capabilities.len() > 3
+        || plan.builtin_capabilities.len() > TODO_BUILTIN_CAPABILITIES.len()
         || plan.plugins.len() > 32
     {
         return Err(team_todo_store_error());
@@ -4471,14 +4595,18 @@ fn validate_execution_plan(plan: &AgentTodoExecutionPlan) -> Result<(), String> 
     validate_identifier(&plan.selection_revision).map_err(|_| team_todo_store_error())?;
     let mut capabilities = HashSet::new();
     for capability in &plan.builtin_capabilities {
-        if !matches!(
-            capability.as_str(),
-            "project_read" | "project_write" | "terminal"
-        ) || !capabilities.insert(capability)
+        if !TODO_BUILTIN_CAPABILITIES.contains(&capability.as_str())
+            || !capabilities.insert(capability.as_str())
             || (!plan.requires_execution && capability != "project_read")
         {
             return Err(team_todo_store_error());
         }
+    }
+    if capabilities.contains("project_write") && !capabilities.contains("project_read")
+        || capabilities.contains("requirement_survey_write")
+            && !capabilities.contains("requirement_survey_read")
+    {
+        return Err(team_todo_store_error());
     }
     let mut plugins = HashSet::new();
     for plugin in &plan.plugins {
@@ -4947,15 +5075,19 @@ pub(crate) async fn reorder_agent_team_todos(
     Ok(todos)
 }
 
-async fn execute_team_run_cancel_intent(
+pub(super) async fn cancel_active_team_run(
     manager: &HostManager,
-    intent: &TeamRunControlIntent,
+    owner_user_id: &str,
+    conversation_id: &str,
+    turn_id: &str,
+    run_id: &str,
+    reason: &str,
 ) -> Result<LocalConversationTurnRecord, String> {
     let load_conversation = || {
         manager.execute(HostCommand::GetConversationContext(
             GetConversationCommand {
-                owner_user_id: intent.owner_user_id.clone(),
-                conversation_id: intent.conversation_id.clone(),
+                owner_user_id: owner_user_id.to_owned(),
+                conversation_id: conversation_id.to_owned(),
             },
         ))
     };
@@ -4963,15 +5095,15 @@ async fn execute_team_run_cancel_intent(
     let HostResult::Conversation { conversation } = result else {
         return Err("Local Agent Host 返回了错误的团队运行响应。".into());
     };
-    if conversation.conversation.owner_user_id != intent.owner_user_id
-        || conversation.conversation.conversation_id != intent.conversation_id
+    if conversation.conversation.owner_user_id != owner_user_id
+        || conversation.conversation.conversation_id != conversation_id
     {
         return Err("Local Agent Host 返回了不匹配的团队运行。".into());
     }
     let turn = conversation
         .turns
         .iter()
-        .find(|turn| turn.turn_id == intent.turn_id && turn.run_id == intent.run_id)
+        .find(|turn| turn.turn_id == turn_id && turn.run_id == run_id)
         .cloned()
         .ok_or_else(|| "Local Agent Host 中找不到待停止的团队运行。".to_owned())?;
     if turn.status != LocalConversationTurnStatus::Running {
@@ -4979,34 +5111,34 @@ async fn execute_team_run_cancel_intent(
     }
     let run_result = manager
         .execute(HostCommand::GetRun(GetRunCommand {
-            owner_user_id: intent.owner_user_id.clone(),
-            run_id: intent.run_id.clone(),
+            owner_user_id: owner_user_id.to_owned(),
+            run_id: run_id.to_owned(),
         }))
         .await?;
     let HostResult::Run { run } = run_result else {
         return Err("Local Agent Host 返回了错误的 Run 响应。".into());
     };
-    if run.owner_user_id != intent.owner_user_id || run.run_id != intent.run_id {
+    if run.owner_user_id != owner_user_id || run.run_id != run_id {
         return Err("Local Agent Host 返回了不匹配的 Run。".into());
     }
     let cancelled = manager
         .execute_detailed(HostCommand::CancelConversationTurn(
             CancelConversationTurnCommand {
-                owner_user_id: intent.owner_user_id.clone(),
-                conversation_id: intent.conversation_id.clone(),
+                owner_user_id: owner_user_id.to_owned(),
+                conversation_id: conversation_id.to_owned(),
                 expected_conversation_version: conversation.conversation.version,
-                turn_id: intent.turn_id.clone(),
+                turn_id: turn_id.to_owned(),
                 expected_run_version: Some(run.version),
-                reason: "用户已停止这个团队 Todo。".into(),
+                reason: reason.to_owned(),
             },
         ))
         .await;
     match cancelled {
         Ok(HostResult::ConversationTurnUpdated { result }) => {
-            if result.conversation.owner_user_id != intent.owner_user_id
-                || result.conversation.conversation_id != intent.conversation_id
-                || result.turn.turn_id != intent.turn_id
-                || result.turn.run_id != intent.run_id
+            if result.conversation.owner_user_id != owner_user_id
+                || result.conversation.conversation_id != conversation_id
+                || result.turn.turn_id != turn_id
+                || result.turn.run_id != run_id
                 || result.turn.status == LocalConversationTurnStatus::Running
             {
                 return Err("Local Agent Host 返回了不匹配的停止结果。".into());
@@ -5028,13 +5160,28 @@ async fn execute_team_run_cancel_intent(
                 .turns
                 .into_iter()
                 .find(|turn| {
-                    turn.turn_id == intent.turn_id
-                        && turn.run_id == intent.run_id
+                    turn.turn_id == turn_id
+                        && turn.run_id == run_id
                         && turn.status != LocalConversationTurnStatus::Running
                 })
                 .ok_or(original.message)
         }
     }
+}
+
+async fn execute_team_run_cancel_intent(
+    manager: &HostManager,
+    intent: &TeamRunControlIntent,
+) -> Result<LocalConversationTurnRecord, String> {
+    cancel_active_team_run(
+        manager,
+        &intent.owner_user_id,
+        &intent.conversation_id,
+        &intent.turn_id,
+        &intent.run_id,
+        "用户已停止这个团队 Todo。",
+    )
+    .await
 }
 
 async fn finish_team_run_cancel_intent(
@@ -5337,4 +5484,44 @@ pub(crate) async fn cancel_agent_team_todo(
         .await?;
     crate::attachment_tool_worker::schedule_team_todo_drain(app, session_owner, schedule_team_id);
     Ok(todo)
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    #[test]
+    fn requirement_survey_write_completes_its_read_dependency() {
+        let normalized =
+            normalized_planning_capabilities(&["requirement_survey_write".to_owned()], true)
+                .unwrap();
+        assert_eq!(
+            normalized,
+            vec![
+                "requirement_survey_read".to_owned(),
+                "requirement_survey_write".to_owned(),
+            ]
+        );
+        assert!(
+            normalized_planning_capabilities(&["requirement_survey_read".to_owned()], false,)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn persisted_requirement_survey_plan_requires_the_read_dependency() {
+        let mut plan = AgentTodoExecutionPlan {
+            requires_execution: true,
+            builtin_capabilities: vec![
+                "requirement_survey_read".into(),
+                "requirement_survey_write".into(),
+            ],
+            plugins: Vec::new(),
+            selection_revision: "requirement-survey-v1".into(),
+            selected_at_unix_ms: 1,
+        };
+        assert!(validate_execution_plan(&plan).is_ok());
+        plan.builtin_capabilities = vec!["requirement_survey_write".into()];
+        assert!(validate_execution_plan(&plan).is_err());
+    }
 }

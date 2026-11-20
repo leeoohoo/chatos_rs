@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WeChatCompanionSnapshot } from "../domain/wechatCompanion";
+import type { WeChatBindTicket, WeChatCompanionSnapshot } from "../domain/wechatCompanion";
 import type { WeChatCompanionPort } from "../ports/WeChatCompanionPort";
 import { useWeChatCompanionStore } from "./weChatCompanionStore";
 
@@ -34,6 +34,36 @@ describe("weChatCompanionStore", () => {
     await useWeChatCompanionStore.getState().pollTicket(port);
     expect(useWeChatCompanionStore.getState().ticket?.previewUrl).toContain("chatos-wechat");
     expect(useWeChatCompanionStore.getState().pollingDelayMs).toBe(4_000);
+  });
+
+  it("expires the matching local QR code and ignores an in-flight issued result", async () => {
+    let release!: (ticket: WeChatBindTicket) => void;
+    const port = stubPort({ pollTicket: vi.fn(async () => new Promise<WeChatBindTicket>((resolve) => { release = resolve; })) });
+    await useWeChatCompanionStore.getState().activate(port, "owner-1");
+    await useWeChatCompanionStore.getState().issueTicket(port);
+    const previewUrl = useWeChatCompanionStore.getState().ticket!.previewUrl;
+    const polling = useWeChatCompanionStore.getState().pollTicket(port);
+    useWeChatCompanionStore.getState().expireTicket(previewUrl);
+    release({ status: "issued", expiresAtUnix: 4_102_444_800, previewUrl });
+    await polling;
+    expect(useWeChatCompanionStore.getState().ticket?.status).toBe("expired");
+    expect(useWeChatCompanionStore.getState().isPolling).toBe(false);
+  });
+
+  it("recovers a confirmed binding when the confirmation response fails", async () => {
+    const port = stubPort({
+      confirmTicket: vi.fn(async () => { throw new Error("response lost"); }),
+      load: vi.fn()
+        .mockResolvedValueOnce(snapshot())
+        .mockResolvedValueOnce({ binding: { bound: true, createdAt: null, lastLoginAt: null }, sessions: [] }),
+    });
+    await useWeChatCompanionStore.getState().activate(port, "owner-1");
+    await useWeChatCompanionStore.getState().issueTicket(port);
+    await useWeChatCompanionStore.getState().pollTicket(port);
+    await useWeChatCompanionStore.getState().confirmTicket(port);
+    expect(useWeChatCompanionStore.getState().snapshot?.binding.bound).toBe(true);
+    expect(useWeChatCompanionStore.getState().ticket).toBeNull();
+    expect(useWeChatCompanionStore.getState().error).toBeNull();
   });
 });
 

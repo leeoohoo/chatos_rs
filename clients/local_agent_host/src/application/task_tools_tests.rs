@@ -1229,6 +1229,17 @@ fn task_model_definitions_are_host_owned_and_closed() {
         .as_str()
         .expect("create task description")
         .contains("splitting would not enable useful concurrency"));
+    for supersedes in [
+        &tools[2]["parameters"]["properties"]["supersedes_task_ids"],
+        &tools[3]["parameters"]["properties"]["supersedes_task_ids"],
+    ] {
+        let description = supersedes["description"]
+            .as_str()
+            .expect("supersedes_task_ids description");
+        assert!(description.contains("Do not call cancel_task first"));
+        assert!(description.contains("atomically cancels"));
+        assert!(description.contains("records the replacement chain"));
+    }
     assert!(names.iter().all(|name| !name.starts_with("notepad_")));
     assert_eq!(
         tools[2]["parameters"]["required"],

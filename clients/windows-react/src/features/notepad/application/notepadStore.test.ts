@@ -104,6 +104,8 @@ function stubPort(overrides: Partial<NotepadPort> = {}): NotepadPort {
     getNote: vi.fn(async (_owner, id) => detail(id)),
     updateNote: vi.fn(async (_owner, draft) => detail(draft.noteId, draft.expectedVersion + 1, draft.content)),
     deleteNote: vi.fn(async (_owner, noteId) => noteId),
+    copyText: vi.fn(async () => undefined),
+    exportMarkdown: vi.fn(async () => true),
     importImage: vi.fn(async () => null),
   };
   return { ...defaults, ...overrides };

@@ -5,11 +5,20 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  assertMacPackagingHost,
   readDeclaredVersion,
   windowsPlatformFromPortableExecutable,
 } from "./package-support.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+test("requires a macOS host for the cross-platform package", () => {
+  assertMacPackagingHost("darwin");
+  assert.throws(
+    () => assertMacPackagingHost("win32"),
+    /requires a macOS host.*received win32.*build:windows.*smoke:windows/s,
+  );
+});
 
 function portableExecutable(machine) {
   const bytes = Buffer.alloc(128);
@@ -81,4 +90,15 @@ test("keeps package, manifest, and both native implementations on one release", 
     "windows-x64",
     "windows-arm64",
   ]);
+});
+
+test("routes skill-gate audits through the native worker for each supported host", () => {
+  const auditScript = readFileSync(
+    path.join(projectRoot, "scripts", "audit-skill-gates.mjs"),
+    "utf8",
+  );
+  assert.match(auditScript, /process\.platform === "win32"/);
+  assert.match(auditScript, /path\.join\(packageRoot, "bin", "open-computer-use"\)/);
+  assert.match(auditScript, /process\.platform === "darwin"/);
+  assert.match(auditScript, /swift.*visual-computer-use-mcp/s);
 });

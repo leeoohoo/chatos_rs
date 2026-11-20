@@ -1,9 +1,13 @@
 use super::models::{
     ProjectRunChangeSnapshot, ProjectRunInstance, ProjectRunState, ResolvedProjectRunTarget,
 };
+use crate::machine_resource_governor::{
+    MachineResourceGovernor, MachineResourceKind, MachineResourcePermit, MachineResourcePriority,
+};
 use crate::terminal_runtime::process::ProcessTermination;
 use std::{
     collections::HashMap,
+    ffi::OsStr,
     path::PathBuf,
     process::Stdio,
     sync::{
@@ -48,9 +52,30 @@ impl ProjectRunScope {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct ProjectRunManager {
     store: Arc<Mutex<ProjectRunStore>>,
+    resources: MachineResourceGovernor,
+}
+
+impl Default for ProjectRunManager {
+    fn default() -> Self {
+        Self::new_with_resources(MachineResourceGovernor::default())
+    }
+}
+
+impl ProjectRunManager {
+    pub(crate) fn new_with_resources(resources: MachineResourceGovernor) -> Self {
+        Self {
+            store: Arc::new(Mutex::new(ProjectRunStore::default())),
+            resources,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn used_resource_units(&self) -> usize {
+        self.resources.used_resource_units()
+    }
 }
 
 #[derive(Default)]
@@ -109,10 +134,12 @@ struct ManagedProjectRun {
     state: Mutex<ManagedProjectRunState>,
     changed: Arc<ProjectChangeSignal>,
     finished: Notify,
+    resource_permit: Mutex<Option<MachineResourcePermit>>,
 }
 
 struct ManagedProjectRunState {
     status: ManagedStatus,
+    stop_requested: bool,
     log: Vec<u8>,
     log_truncated: bool,
     started_at_unix_ms: i64,
@@ -142,7 +169,14 @@ impl ProjectRunManager {
             let changed = store.changes.entry(scope.key()).or_default().clone();
             (sequence, changed)
         };
-        let process = spawn_project_run(scope, target, sequence, changed.clone()).await?;
+        let permit = self
+            .resources
+            .acquire(
+                MachineResourceKind::CodeReadWorker,
+                MachineResourcePriority::Interactive,
+            )
+            .await?;
+        let process = spawn_project_run(scope, target, sequence, changed.clone(), permit).await?;
         {
             let mut store = self.store.lock().await;
             store.instances.insert(process.id.clone(), process.clone());
@@ -459,12 +493,18 @@ impl ManagedProjectRun {
     async fn finish(&self, exit_code: Option<i32>) {
         let mut state = self.state.lock().await;
         state.exit_code = exit_code;
-        state.status = if exit_code == Some(0) {
+        // A user-requested stop is a normal terminal outcome even when the
+        // wrapped launcher reports a non-zero termination code (for example
+        // npm/cmd commonly returns 1 after its process tree is terminated).
+        // Preserve the exit code for diagnostics, but do not surface this as
+        // a failed run in the UI.
+        state.status = if state.stop_requested || exit_code == Some(0) {
             ManagedStatus::Exited
         } else {
             ManagedStatus::Failed
         };
         drop(state);
+        self.resource_permit.lock().await.take();
         self.changed.bump();
         self.finished.notify_waiters();
     }
@@ -495,6 +535,7 @@ impl ManagedProjectRun {
             if matches!(state.status, ManagedStatus::Exited | ManagedStatus::Failed) {
                 return Ok(());
             }
+            state.stop_requested = true;
             state.status = ManagedStatus::Stopping;
         }
         self.append(format!("\n[{reason}]\n").as_bytes()).await;
@@ -526,6 +567,7 @@ async fn spawn_project_run(
     mut target: ResolvedProjectRunTarget,
     sequence: u64,
     changed: Arc<ProjectChangeSignal>,
+    resource_permit: MachineResourcePermit,
 ) -> Result<Arc<ManagedProjectRun>, String> {
     let mut redactions = target
         .environment
@@ -537,9 +579,8 @@ async fn spawn_project_run(
     redactions.sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
     redactions.dedup();
     prepare_launch_environment(&mut target)?;
-    let mut command = Command::new(&target.executable);
+    let mut command = project_command(&target.executable, &target.arguments);
     command
-        .args(&target.arguments)
         .current_dir(&target.cwd)
         .envs(&target.environment)
         .stdin(Stdio::null())
@@ -578,6 +619,7 @@ async fn spawn_project_run(
         termination,
         state: Mutex::new(ManagedProjectRunState {
             status: ManagedStatus::Running,
+            stop_requested: false,
             log: initial_log,
             log_truncated: false,
             started_at_unix_ms: now_unix_ms(),
@@ -585,6 +627,7 @@ async fn spawn_project_run(
         }),
         changed,
         finished: Notify::new(),
+        resource_permit: Mutex::new(Some(resource_permit)),
     });
     let stdout_task = stdout.map(|stdout| tokio::spawn(read_pipe(process.clone(), stdout)));
     let stderr_task = stderr.map(|stderr| tokio::spawn(read_pipe(process.clone(), stderr)));
@@ -595,6 +638,80 @@ async fn spawn_project_run(
         stderr_task,
     ));
     Ok(process)
+}
+
+fn project_command(executable: &std::path::Path, arguments: &[String]) -> Command {
+    #[cfg(windows)]
+    if is_batch_script(executable) {
+        let mut command = Command::new(
+            std::env::var_os("ComSpec")
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "cmd.exe".into()),
+        );
+        let mut command_line = quote_windows_command_arg(executable.as_os_str());
+        for argument in arguments {
+            command_line.push(' ');
+            command_line.push_str(&quote_windows_command_arg(OsStr::new(argument)));
+        }
+        // `/c` consumes the remainder of the command line.  Passing that
+        // remainder through `arg` makes Rust escape the embedded quotes for
+        // CreateProcess, so cmd.exe receives `\"C:\\Program Files...\"` as
+        // the command name.  Keep the command line raw after `/c` so quoted
+        // batch paths remain executable when the path contains spaces.
+        command.arg("/d").arg("/s").arg("/c");
+        std::os::windows::process::CommandExt::raw_arg(
+            command.as_std_mut(),
+            // The outer pair is consumed by cmd's `/s /c` parser; the
+            // inner pair stays around the batch path itself.
+            format!(" \"{command_line}\""),
+        );
+        return command;
+    }
+
+    let mut command = Command::new(executable);
+    command.args(arguments);
+    command
+}
+
+#[cfg(windows)]
+fn is_batch_script(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "cmd" | "bat"))
+}
+
+#[cfg(windows)]
+fn quote_windows_command_arg(value: &OsStr) -> String {
+    let value = value.to_string_lossy();
+    if value.is_empty() {
+        return "\"\"".into();
+    }
+    let needs_quotes = value
+        .chars()
+        .any(|character| character.is_whitespace() || character == '\"');
+    if !needs_quotes {
+        return value.into_owned();
+    }
+    let mut quoted = String::from("\"");
+    let mut backslashes = 0;
+    for character in value.chars() {
+        match character {
+            '\\' => backslashes += 1,
+            '\"' => {
+                quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
+                quoted.push('\"');
+                backslashes = 0;
+            }
+            _ => {
+                quoted.push_str(&"\\".repeat(backslashes));
+                quoted.push(character);
+                backslashes = 0;
+            }
+        }
+    }
+    quoted.push_str(&"\\".repeat(backslashes * 2));
+    quoted.push('\"');
+    quoted
 }
 
 fn prepare_launch_environment(target: &mut ResolvedProjectRunTarget) -> Result<(), String> {

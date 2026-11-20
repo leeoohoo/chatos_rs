@@ -303,7 +303,7 @@ fn supersedes_task_ids_schema() -> Value {
     json!({
         "type": "array", "maxItems": 50, "uniqueItems": true,
         "items": {"type": "string", "minLength": 1},
-        "description": "Ids of affected old tasks already confirmed cancelled with cancel_task. Creates corrected work instead of reusing the old source graph; all ids must belong to this conversation. Omit for ordinary creation."
+        "description": "Ids of affected old Tasks selected with replace in the current task_followup_review, or terminal historical Tasks that corrected work supersedes. Do not call cancel_task first for a held replacement: creating this Task graph atomically cancels the held old Tasks, inserts the corrected work, and records the replacement chain. All ids must belong to this conversation. Omit for ordinary creation."
     })
 }
 

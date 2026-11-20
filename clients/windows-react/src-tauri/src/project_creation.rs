@@ -1,5 +1,11 @@
 use crate::{
-    authentication::AuthenticationManager, connector_state, host_lifecycle::validate_owner,
+    app_data_transaction::{create_owned_file, ensure_owned_directory},
+    authentication::AuthenticationManager,
+    connector_state,
+    host_lifecycle::validate_owner,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
     workspace_index::open_project_registry,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -8,7 +14,7 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    fs::{self, File},
+    fs::{self, OpenOptions},
     io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -19,6 +25,7 @@ use tauri::{AppHandle, Manager, State};
 const LEGACY_PROJECT_TYPE: &str = "software_development";
 const JOURNAL_SCHEMA_VERSION: u32 = 1;
 const MAXIMUM_JOURNALS: usize = 64;
+const MAXIMUM_JOURNAL_DIRECTORY_ENTRIES: usize = MAXIMUM_JOURNALS * 2;
 const MAXIMUM_JOURNAL_BYTES: u64 = 1_024 * 1_024;
 const MAXIMUM_PENDING_SELECTIONS: usize = 32;
 const SELECTION_LIFETIME: Duration = Duration::from_secs(15 * 60);
@@ -279,6 +286,7 @@ pub async fn create_local_project(
     project_type_key: String,
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, ProjectCreationManager>,
+    resources: State<'_, MachineResourceGovernor>,
 ) -> Result<CreatedLocalProject, String> {
     validate_owner(&owner_user_id)?;
     validate_route_identifier(&presentation_id, "presentationId")?;
@@ -288,6 +296,12 @@ pub async fn create_local_project(
     validate_project_type(&project_type_key)?;
     authentication
         .access_token_for_owner(&owner_user_id)
+        .await?;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
         .await?;
     let selection = manager.begin_save(&owner_user_id, &presentation_id, &selection_id)?;
     let transaction_lock = Arc::clone(&manager.transaction);
@@ -665,28 +679,31 @@ fn persist_journal(
     if bytes.len() as u64 > MAXIMUM_JOURNAL_BYTES {
         return Err(creation_error());
     }
-    let mut temporary =
-        tempfile::NamedTempFile::new_in(&directory).map_err(|_| creation_error())?;
-    std::io::Write::write_all(&mut temporary, &bytes).map_err(|_| creation_error())?;
-    temporary
-        .as_file()
-        .sync_all()
+    create_owned_file(&directory, &path, ".project-creation-", &bytes)
         .map_err(|_| creation_error())?;
-    temporary.persist(&path).map_err(|_| creation_error())?;
     Ok(path)
 }
 
 fn load_journals(directory: &Path) -> Result<Vec<(PathBuf, CreationJournal)>, String> {
-    let mut paths = fs::read_dir(directory)
+    let mut paths = Vec::with_capacity(MAXIMUM_JOURNALS);
+    for (visited, entry) in fs::read_dir(directory)
         .map_err(|_| creation_error())?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
-        .collect::<Vec<_>>();
-    paths.sort();
-    if paths.len() > MAXIMUM_JOURNALS {
-        return Err("项目创建恢复记录过多。".into());
+        .enumerate()
+    {
+        if visited >= MAXIMUM_JOURNAL_DIRECTORY_ENTRIES {
+            return Err("项目创建恢复记录过多。".into());
+        }
+        let entry = entry.map_err(|_| creation_error())?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        if paths.len() >= MAXIMUM_JOURNALS {
+            return Err("项目创建恢复记录过多。".into());
+        }
+        paths.push(path);
     }
+    paths.sort();
     paths
         .into_iter()
         .map(|path| {
@@ -698,7 +715,18 @@ fn load_journals(directory: &Path) -> Result<Vec<(PathBuf, CreationJournal)>, St
                 return Err(creation_error());
             }
             let mut bytes = Vec::with_capacity(metadata.len() as usize);
-            File::open(&path)
+            let mut options = OpenOptions::new();
+            options.read(true);
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+                options
+                    .share_mode(0)
+                    .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            }
+            options
+                .open(&path)
                 .and_then(|file| file.take(MAXIMUM_JOURNAL_BYTES + 1).read_to_end(&mut bytes))
                 .map_err(|_| creation_error())?;
             if bytes.len() as u64 > MAXIMUM_JOURNAL_BYTES {
@@ -715,10 +743,12 @@ fn remove_journal(path: &Path) -> Result<(), String> {
 }
 
 fn connector_directory(app_data_directory: &Path) -> Result<PathBuf, String> {
-    fs::create_dir_all(app_data_directory).map_err(|_| creation_error())?;
+    ensure_owned_directory(app_data_directory).map_err(|_| creation_error())?;
+    validate_private_directory(app_data_directory)?;
     let app_data = fs::canonicalize(app_data_directory).map_err(|_| creation_error())?;
     let connector = app_data.join("NativeConnector");
-    fs::create_dir_all(&connector).map_err(|_| creation_error())?;
+    ensure_owned_directory(&connector).map_err(|_| creation_error())?;
+    validate_private_directory(&connector)?;
     let connector = fs::canonicalize(connector).map_err(|_| creation_error())?;
     if !connector.starts_with(app_data) {
         return Err(creation_error());
@@ -730,12 +760,22 @@ fn journal_directory(connector_directory: &Path) -> Result<PathBuf, String> {
     let canonical_connector =
         fs::canonicalize(connector_directory).map_err(|_| creation_error())?;
     let requested = canonical_connector.join("ProjectCreationJournal");
-    fs::create_dir_all(&requested).map_err(|_| creation_error())?;
+    ensure_owned_directory(&requested).map_err(|_| creation_error())?;
+    validate_private_directory(&requested)?;
     let canonical = fs::canonicalize(requested).map_err(|_| creation_error())?;
     if !canonical.starts_with(canonical_connector) {
         return Err(creation_error());
     }
     Ok(canonical)
+}
+
+fn validate_private_directory(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| creation_error())?;
+    if !metadata.is_dir() || is_link_or_reparse_point(&metadata) {
+        Err(creation_error())
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_journal(journal: &CreationJournal) -> Result<(), String> {
@@ -1209,6 +1249,15 @@ mod tests {
         )
         .unwrap()
         .is_empty());
+    }
+
+    #[test]
+    fn journal_loading_rejects_too_many_entries_before_parsing_contents() {
+        let directory = tempfile::tempdir().unwrap();
+        for index in 0..=MAXIMUM_JOURNALS {
+            fs::write(directory.path().join(format!("{index}.json")), b"{}").unwrap();
+        }
+        assert!(load_journals(directory.path()).is_err());
     }
 
     #[test]

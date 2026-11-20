@@ -1,4 +1,8 @@
 use super::models::{PresentedRemoteConnectionTestResult, RemoteCredentialBundle};
+use crate::app_data_transaction::{ensure_owned_directory, replace_owned_file};
+use crate::machine_resource_governor::{
+    MachineResourceGovernor, MachineResourceKind, MachineResourcePermit, MachineResourcePriority,
+};
 use crate::terminal_runtime::process::ProcessTermination;
 use chatos_local_agent_protocol::{
     LocalRemoteAuthenticationType, LocalRemoteConnectionSpec, LocalRemoteHostKeyPolicy,
@@ -88,6 +92,7 @@ pub(super) struct NativeOpenSshTester {
     runtime_root: PathBuf,
     timeout: Duration,
     sessions: Arc<Mutex<HashMap<String, Arc<ActiveSshSession>>>>,
+    resource_governor: Option<MachineResourceGovernor>,
 }
 
 impl NativeOpenSshTester {
@@ -98,6 +103,21 @@ impl NativeOpenSshTester {
                 .join("runtime"),
             timeout: DEFAULT_TEST_TIMEOUT,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            resource_governor: None,
+        }
+    }
+
+    pub(super) fn with_resource_governor(
+        app_data_directory: PathBuf,
+        resource_governor: MachineResourceGovernor,
+    ) -> Self {
+        Self {
+            runtime_root: app_data_directory
+                .join("remote-connections")
+                .join("runtime"),
+            timeout: DEFAULT_TEST_TIMEOUT,
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            resource_governor: Some(resource_governor),
         }
     }
 
@@ -107,6 +127,7 @@ impl NativeOpenSshTester {
             runtime_root,
             timeout,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            resource_governor: None,
         }
     }
 
@@ -251,6 +272,17 @@ impl NativeOpenSshTester {
             (session, Some(prompt_count))
         } else {
             self.discard(&key).await;
+            let resource_permit = match &self.resource_governor {
+                Some(governor) => Some(
+                    governor
+                        .acquire(
+                            MachineResourceKind::CodeReadWorker,
+                            MachineResourcePriority::Interactive,
+                        )
+                        .await?,
+                ),
+                None => None,
+            };
             let session = self
                 .start_session(
                     key.clone(),
@@ -260,6 +292,7 @@ impl NativeOpenSshTester {
                     process_lifetime,
                     input,
                     output,
+                    resource_permit,
                 )
                 .await?;
             (session, None)
@@ -288,6 +321,7 @@ impl NativeOpenSshTester {
         process_timeout: Duration,
         input: SshProcessInput,
         output: SshProcessOutput,
+        resource_permit: Option<MachineResourcePermit>,
     ) -> Result<Arc<ActiveSshSession>, String> {
         let prepared = Arc::new(PreparedSshSession::create(&self.runtime_root, &connection)?);
         let executable = ssh_executable()?;
@@ -347,6 +381,7 @@ impl NativeOpenSshTester {
             cancel,
             completion: Mutex::new(None),
             changed: Notify::new(),
+            _resource_permit: resource_permit,
         });
         {
             let mut sessions = self.sessions.lock().await;
@@ -513,6 +548,7 @@ struct ActiveSshSession {
     cancel: watch::Sender<bool>,
     completion: Mutex<Option<Result<ProcessOutcome, String>>>,
     changed: Notify,
+    _resource_permit: Option<MachineResourcePermit>,
 }
 
 impl ActiveSshSession {
@@ -579,7 +615,7 @@ struct PreparedSshSession {
 
 impl PreparedSshSession {
     fn create(root: &Path, material: &SshConnectionMaterial) -> Result<Self, String> {
-        fs::create_dir_all(root).map_err(|_| runtime_error())?;
+        ensure_owned_directory(root).map_err(|_| runtime_error())?;
         reject_reparse_point(root)?;
         let directory = root.join(format!("connection-test-{}", Uuid::new_v4()));
         fs::create_dir(&directory).map_err(|_| runtime_error())?;
@@ -612,19 +648,13 @@ impl PreparedSshSession {
     }
 
     fn write_verification_code(&self, code: &str) -> Result<(), String> {
-        let metadata =
-            fs::symlink_metadata(&self.verification_response).map_err(|_| runtime_error())?;
-        if !metadata.is_file() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
-            return Err(runtime_error());
-        }
-        let mut file = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&self.verification_response)
-            .map_err(|_| runtime_error())?;
-        file.write_all(code.as_bytes())
-            .map_err(|_| runtime_error())?;
-        file.sync_all().map_err(|_| runtime_error())
+        replace_owned_file(
+            &self.directory,
+            &self.verification_response,
+            ".ssh-verification-",
+            code.as_bytes(),
+        )
+        .map_err(|_| runtime_error())
     }
 }
 
@@ -838,11 +868,40 @@ async fn read_process_output(
             path,
             maximum_bytes,
         } => {
-            let mut file = tokio_fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)
-                .await?;
+            let parent = path
+                .parent()
+                .ok_or_else(|| std::io::Error::other("stream output parent is missing"))?;
+            let parent_metadata = tokio_fs::symlink_metadata(parent).await?;
+            if !parent_metadata.is_dir()
+                || parent_metadata.file_type().is_symlink()
+                || is_reparse_point(&parent_metadata)
+            {
+                return Err(std::io::Error::other(
+                    "stream output parent is not a regular directory",
+                ));
+            }
+            if path.file_name().is_none() {
+                return Err(std::io::Error::other("stream output file name is missing"));
+            }
+            let mut options = tokio_fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(windows)]
+            {
+                const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+                options
+                    .share_mode(0)
+                    .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            }
+            let mut file = options.open(path).await?;
+            let metadata = file.metadata().await?;
+            if !metadata.is_file()
+                || metadata.file_type().is_symlink()
+                || is_reparse_point(&metadata)
+            {
+                return Err(std::io::Error::other(
+                    "stream output file is not a regular file",
+                ));
+            }
             output_created.store(true, Ordering::SeqCst);
             let count = copy_bounded(reader, &mut file, maximum_bytes, exceeded).await?;
             file.flush().await?;
@@ -1509,12 +1568,22 @@ fn set_private_directory_permissions(path: &Path) -> Result<(), String> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))
             .map_err(|_| runtime_error())?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -1623,7 +1692,17 @@ fn append_prompt_log(prompt: &str) {
         })
         .take(4_096)
         .collect::<String>();
-    if let Ok(mut file) = OpenOptions::new().append(true).open(path) {
+    let mut options = OpenOptions::new();
+    options.append(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    if let Ok(mut file) = options.open(path) {
         let _ = writeln!(file, "{sanitized}");
     }
 }
@@ -1670,7 +1749,9 @@ fn wait_for_verification_code(path: &Path) -> Option<String> {
                 .ok()?;
             let code = code.trim();
             if !code.is_empty() && code.len() <= 1_024 && !code.contains(['\0', '\r', '\n']) {
-                let _ = OpenOptions::new().write(true).truncate(true).open(path);
+                if let Some(parent) = path.parent() {
+                    let _ = replace_owned_file(parent, path, ".ssh-verification-", &[]);
+                }
                 return Some(code.to_owned());
             }
             return None;
@@ -1826,8 +1907,30 @@ mod tests {
             .unwrap();
         file.write_all(b"654321").unwrap();
         file.sync_all().unwrap();
+        drop(file);
         assert_eq!(waiter.join().unwrap(), "654321");
         assert_eq!(fs::metadata(response).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn submitted_verification_code_replaces_the_private_response_atomically() {
+        let directory = tempfile::tempdir().unwrap();
+        let prepared = PreparedSshSession::create(directory.path(), &password_material()).unwrap();
+        fs::write(&prepared.verification_response, b"stale").unwrap();
+
+        prepared.write_verification_code("654321").unwrap();
+
+        assert_eq!(
+            fs::read(&prepared.verification_response).unwrap(),
+            b"654321"
+        );
+        let entries = fs::read_dir(&prepared.directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert!(entries
+            .iter()
+            .all(|name| { !name.to_string_lossy().starts_with(".ssh-verification-") }));
     }
 
     #[tokio::test]
@@ -1850,6 +1953,7 @@ mod tests {
             cancel,
             completion: Mutex::new(None),
             changed: Notify::new(),
+            _resource_permit: None,
         });
         tester
             .sessions
@@ -1889,6 +1993,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retained_session_keeps_resource_permit_until_drop() {
+        let directory = tempfile::tempdir().unwrap();
+        let tester = NativeOpenSshTester::with_timeout(
+            directory.path().join("runtime"),
+            Duration::from_secs(1),
+        );
+        let governor = MachineResourceGovernor::default();
+        let permit = governor
+            .acquire(
+                MachineResourceKind::CodeReadWorker,
+                MachineResourcePriority::Interactive,
+            )
+            .await
+            .unwrap();
+        let snapshot = serde_json::to_value(governor.snapshot()).unwrap();
+        assert_eq!(snapshot["usedResourceUnits"], 1);
+
+        let connection = password_material();
+        let prepared =
+            Arc::new(PreparedSshSession::create(&tester.runtime_root, &connection).unwrap());
+        let (cancel, _cancellation) = watch::channel(false);
+        let session = Arc::new(ActiveSshSession {
+            operation_fingerprint: "resource-permit".into(),
+            connection,
+            prepared,
+            cancel,
+            completion: Mutex::new(None),
+            changed: Notify::new(),
+            _resource_permit: Some(permit),
+        });
+        let snapshot = serde_json::to_value(governor.snapshot()).unwrap();
+        assert_eq!(snapshot["usedResourceUnits"], 1);
+        drop(session);
+        tokio::task::yield_now().await;
+        let snapshot = serde_json::to_value(governor.snapshot()).unwrap();
+        assert_eq!(snapshot["usedResourceUnits"], 0);
+    }
+
+    #[tokio::test]
     async fn submitted_mfa_code_never_starts_a_replacement_session() {
         let directory = tempfile::tempdir().unwrap();
         let tester = NativeOpenSshTester::with_timeout(
@@ -1924,6 +2067,7 @@ mod tests {
             cancel,
             completion: Mutex::new(None),
             changed: Notify::new(),
+            _resource_permit: None,
         });
         tester
             .sessions
@@ -1972,6 +2116,7 @@ mod tests {
             cancel,
             completion: Mutex::new(None),
             changed: Notify::new(),
+            _resource_permit: None,
         });
 
         tester.schedule_expiration("completed".into(), session.clone());
@@ -1999,6 +2144,7 @@ mod tests {
             cancel,
             completion: Mutex::new(Some(Err("cancelled".into()))),
             changed: Notify::new(),
+            _resource_permit: None,
         });
         tester
             .sessions
@@ -2135,6 +2281,35 @@ mod tests {
         assert!(!output.exists());
     }
 
+    #[tokio::test]
+    async fn streamed_output_is_created_under_a_verified_parent() {
+        let directory = tempfile::tempdir().unwrap();
+        let parent = directory.path().canonicalize().unwrap();
+        let output = parent.join("download.tmp");
+        let (mut writer, reader) = tokio::io::duplex(64);
+        let writer_task = tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            writer.write_all(b"payload").await.unwrap();
+            writer.shutdown().await.unwrap();
+        });
+        let exceeded = Arc::new(AtomicBool::new(false));
+        let created = Arc::new(AtomicBool::new(false));
+        let _ = read_process_output(
+            reader,
+            SshProcessOutput::File {
+                path: output.clone(),
+                maximum_bytes: 1_024,
+            },
+            exceeded,
+            created,
+        )
+        .await
+        .unwrap();
+        writer_task.await.unwrap();
+
+        assert_eq!(fs::read(&output).unwrap(), b"payload");
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn failed_create_new_never_removes_an_existing_download_target() {
@@ -2194,6 +2369,7 @@ mod tests {
         assert!(!session_path.exists());
     }
 
+    #[cfg(unix)]
     fn shell_quote(value: &str) -> String {
         format!("'{}'", value.replace('\'', "'\\''"))
     }

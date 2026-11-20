@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::{Extension, Json};
+use chrono::Utc;
+use serde::Deserialize;
 use serde::Serialize;
 
 use chatos_sandbox_contract::{
@@ -13,7 +15,7 @@ use chatos_sandbox_contract::{
 use crate::controlled_network::{
     allowed_hosts_from_managed_requirements, ControlledNetworkPolicyRequest,
 };
-use crate::models::CurrentUser;
+use crate::models::{CurrentUser, LocalConnectorWorkspace, WORKSPACE_STATUS_DISABLED};
 use crate::state::AppState;
 
 use super::ApiError;
@@ -24,6 +26,12 @@ pub(super) struct ControlledNetworkReadinessResponse {
     state: &'static str,
     permission_profile: Option<String>,
     allowed_host_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ControlledNetworkPolicyQuery {
+    workspace_id: String,
+    permission_profile: Option<String>,
 }
 
 struct ControlledNetworkPolicySource {
@@ -41,8 +49,13 @@ pub(super) async fn controlled_network_readiness(
     Extension(user): Extension<CurrentUser>,
     Path(device_id): Path<String>,
 ) -> Result<Json<ControlledNetworkReadinessResponse>, ApiError> {
-    let resolution =
-        resolve_controlled_network_policy_source(&state, &user, device_id.as_str()).await?;
+    let resolution = resolve_controlled_network_policy_source(
+        &state,
+        &user,
+        device_id.as_str(),
+        &ControlledNetworkPolicyRequest::default(),
+    )
+    .await?;
     let response = match resolution.source {
         Some(source) => ControlledNetworkReadinessResponse {
             available: true,
@@ -60,24 +73,72 @@ pub(super) async fn controlled_network_readiness(
     Ok(Json(response))
 }
 
+pub(super) async fn issue_controlled_network_policy(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+    Query(query): Query<ControlledNetworkPolicyQuery>,
+) -> Result<Json<crate::controlled_network::ControlledNetworkPolicyEnvelope>, ApiError> {
+    let device = super::load_owned_device(&state, &user, device_id.as_str(), true).await?;
+    let windows_user_sid = device.windows_user_sid.ok_or_else(|| {
+        ApiError::conflict(
+            "controlled_network_not_ready",
+            "Windows user SID is not registered for this device",
+        )
+    })?;
+    let workspace = state
+        .store
+        .get_workspace(query.workspace_id.trim())
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("Local Connector workspace not found"))?;
+    if workspace.owner_user_id != user.effective_owner_user_id() {
+        return Err(ApiError::forbidden(
+            "Local Connector workspace does not belong to current user",
+        ));
+    }
+    ensure_workspace_can_receive_policy(&workspace, device_id.as_str())?;
+    let request = ControlledNetworkPolicyRequest {
+        permission_profile: query.permission_profile,
+    };
+    let resolution =
+        resolve_controlled_network_policy_source(&state, &user, device_id.as_str(), &request)
+            .await?;
+    let source = resolution.source.ok_or_else(|| {
+        ApiError::service_unavailable(format!(
+            "Controlled Network policy is not ready: {}",
+            resolution.state
+        ))
+    })?;
+    let signer = state.controlled_network_signer.as_ref().ok_or_else(|| {
+        ApiError::service_unavailable("Controlled Network signing is not configured")
+    })?;
+    let policy = signer
+        .issue(
+            user.effective_owner_user_id(),
+            device_id.as_str(),
+            query.workspace_id.trim(),
+            windows_user_sid.as_str(),
+            source.allowed_hosts,
+            vec![80, 443],
+            Utc::now(),
+        )
+        .map_err(ApiError::internal)?;
+    Ok(Json(policy))
+}
+
 async fn resolve_controlled_network_policy_source(
     state: &AppState,
     user: &CurrentUser,
     device_id: &str,
+    request: &ControlledNetworkPolicyRequest,
 ) -> Result<ControlledNetworkPolicyResolution, ApiError> {
+    // Always authenticate and validate the device before exposing any readiness
+    // state. In particular, a missing signer must not turn an unknown, foreign,
+    // or revoked device into a successful readiness response.
+    let device = super::load_owned_device(state, user, device_id, true).await?;
     if state.controlled_network_signer.is_none() {
         return Ok(unavailable("signer_not_configured"));
-    }
-    let device = state
-        .store
-        .get_device(device_id)
-        .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| ApiError::not_found("Local Connector device not found"))?;
-    if device.owner_user_id != user.effective_owner_user_id() {
-        return Err(ApiError::forbidden(
-            "Local Connector device does not belong to current user",
-        ));
     }
     if device.windows_user_sid.is_none() {
         return Ok(unavailable("windows_sid_not_registered"));
@@ -118,9 +179,8 @@ async fn resolve_controlled_network_policy_source(
         tracing::warn!(device_id, error = %error, "merged Controlled network policy is invalid");
         return Ok(unavailable("managed_policy_invalid"));
     }
-    let request = ControlledNetworkPolicyRequest::default();
     let permission_profile = document.default_permissions.clone();
-    let allowed_hosts = match allowed_hosts_from_managed_requirements(&document, &request) {
+    let allowed_hosts = match allowed_hosts_from_managed_requirements(&document, request) {
         Ok(Some(value)) => value,
         Ok(None) => return Ok(unavailable("managed_allowlist_not_configured")),
         Err(error) => {
@@ -145,5 +205,65 @@ fn unavailable(state: &'static str) -> ControlledNetworkPolicyResolution {
     ControlledNetworkPolicyResolution {
         state,
         source: None,
+    }
+}
+
+fn ensure_workspace_can_receive_policy(
+    workspace: &LocalConnectorWorkspace,
+    device_id: &str,
+) -> Result<(), ApiError> {
+    if workspace.device_id != device_id {
+        return Err(ApiError::bad_request(
+            "Local Connector workspace is not attached to this device",
+        ));
+    }
+    if workspace.status == WORKSPACE_STATUS_DISABLED {
+        return Err(ApiError::bad_request(
+            "Local Connector workspace is disabled",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn workspace(device_id: &str, status: &str) -> LocalConnectorWorkspace {
+        LocalConnectorWorkspace {
+            id: "workspace-1".into(),
+            owner_user_id: "owner-1".into(),
+            device_id: device_id.into(),
+            display_name: "Workspace".into(),
+            local_path_alias: "workspace".into(),
+            local_path_fingerprint: "fingerprint".into(),
+            capabilities: vec![],
+            status: status.into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn only_active_workspace_attached_to_the_selected_device_can_receive_policy() {
+        assert!(
+            ensure_workspace_can_receive_policy(&workspace("device-1", "active"), "device-1")
+                .is_ok()
+        );
+        assert_eq!(
+            ensure_workspace_can_receive_policy(&workspace("device-2", "active"), "device-1")
+                .unwrap_err()
+                .message(),
+            "Local Connector workspace is not attached to this device"
+        );
+        assert_eq!(
+            ensure_workspace_can_receive_policy(
+                &workspace("device-1", WORKSPACE_STATUS_DISABLED),
+                "device-1"
+            )
+            .unwrap_err()
+            .message(),
+            "Local Connector workspace is disabled"
+        );
     }
 }

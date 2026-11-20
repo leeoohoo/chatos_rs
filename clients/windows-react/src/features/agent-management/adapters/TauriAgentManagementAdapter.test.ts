@@ -23,6 +23,37 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     });
   });
 
+  it("binds Agent document list, preview, and save to native integrity fields", async () => {
+    const artifact = {
+      artifactId: "artifact-1", name: "report.md", mimeType: "text/markdown", size: 4,
+      sha256: "a".repeat(64), status: "stored", createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    };
+    vi.mocked(invoke)
+      .mockResolvedValueOnce({ artifacts: [artifact], nextCursor: null })
+      .mockResolvedValueOnce({ artifactId: "artifact-1", markdown: "# Report" })
+      .mockResolvedValueOnce(true);
+    const adapter = new TauriAgentManagementAdapter();
+
+    await expect(adapter.listArtifacts("owner-1", 50, null)).resolves.toEqual({
+      artifacts: [artifact], nextCursor: null,
+    });
+    await expect(adapter.previewArtifact("owner-1", "artifact-1", 4, "a".repeat(64)))
+      .resolves.toEqual({ artifactId: "artifact-1", markdown: "# Report" });
+    await expect(adapter.saveArtifact("owner-1", "artifact-1", "report.md", 4, "a".repeat(64)))
+      .resolves.toBe(true);
+    expect(invoke).toHaveBeenNthCalledWith(1, "list_agent_artifacts", {
+      ownerUserId: "owner-1", limit: 50, cursor: null,
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "preview_agent_artifact", {
+      ownerUserId: "owner-1", artifactId: "artifact-1", expectedSize: 4,
+      expectedSha256: "a".repeat(64),
+    });
+    expect(invoke).toHaveBeenNthCalledWith(3, "save_agent_artifact", {
+      ownerUserId: "owner-1", artifactId: "artifact-1", name: "report.md", expectedSize: 4,
+      expectedSha256: "a".repeat(64),
+    });
+  });
+
   it("rejects unsafe picker projections and forwards scoped cleanup", async () => {
     vi.mocked(invoke).mockResolvedValueOnce({
       id: `reference_${"a".repeat(32)}`,
@@ -131,7 +162,7 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     vi.mocked(invoke).mockResolvedValueOnce({
       roomId,
       agentId: "agent-1",
-      conversationId: `agent-direct-${roomId}`,
+      conversationId: `agent-direct-v2-${roomId}`,
       title: "界面设计师",
       createdAtUnixMs: 10,
       updatedAtUnixMs: 20,
@@ -146,7 +177,7 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     vi.mocked(invoke).mockResolvedValueOnce({
       roomId,
       agentId: "agent-1",
-      conversationId: `agent-direct-${roomId}`,
+      conversationId: `agent-direct-v2-${roomId}`,
       conversationVersion: 1,
       hasActiveDelivery: false,
       items: [],
@@ -261,7 +292,7 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     vi.mocked(invoke).mockResolvedValueOnce({ teamId: team.id, messages: [], deliveries: [] });
     await adapter.loadTeamConversation("owner-1", team.id);
     expect(invoke).toHaveBeenLastCalledWith("load_agent_team_conversation", {
-      ownerUserId: "owner-1", teamId: team.id,
+      ownerUserId: "owner-1", teamId: team.id, beforeMessageId: null, limit: 50,
     });
 
     vi.mocked(invoke).mockResolvedValueOnce({
@@ -287,7 +318,7 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     vi.mocked(invoke).mockResolvedValueOnce({
       roomId: team.id,
       agentId: "agent-1",
-      conversationId: `agent-team-${team.id}-agent-1`,
+      conversationId: `agent-team-v2-${team.id}-agent-1`,
       conversationVersion: 0,
       hasActiveDelivery: false,
       items: [],
@@ -317,6 +348,20 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       ownerUserId: "owner-1", teamId: team.id,
     });
 
+    vi.mocked(invoke).mockResolvedValueOnce(null);
+    await adapter.cancelTeamRun("owner-1", team.id, "run-1");
+    expect(invoke).toHaveBeenLastCalledWith("cancel_agent_team_run", {
+      input: { ownerUserId: "owner-1", teamId: team.id, runId: "run-1" },
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce({ dashboard: null, pendingApprovalCount: 0 });
+    await expect(adapter.loadTeamDashboard("owner-1", team.id)).resolves.toEqual({
+      dashboard: null, pendingApprovalCount: 0,
+    });
+    expect(invoke).toHaveBeenLastCalledWith("load_agent_team_dashboard", {
+      ownerUserId: "owner-1", teamId: team.id,
+    });
+
     const asset = {
       id: "asset-1", teamId: team.id, category: "overview", title: "项目概览",
       markdown: "# Alpha", revision: 1, status: "active",
@@ -326,6 +371,21 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     vi.mocked(invoke).mockResolvedValueOnce([asset]);
     await adapter.listTeamAssets("owner-1", team.id);
     expect(invoke).toHaveBeenLastCalledWith("list_agent_team_assets", {
+      ownerUserId: "owner-1", teamId: team.id,
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce([{
+      id: "asset-review-1", teamId: team.id, todoId: "todo-1", todoTitle: "完成架构验证",
+      sourceAgentId: "agent-1", sourceAgentName: "架构师",
+      suggestion: {
+        category: "architecture", title: "事件驱动架构",
+        markdown: "采用事件驱动。", rationale: "集成测试已经验证。",
+      },
+      status: "pending", resolvedAssetId: null, resolvedAssetRevision: null,
+      reviewedByAgentId: null, reviewReason: "", createdAtUnixMs: 41, updatedAtUnixMs: 41,
+    }]);
+    await adapter.listTeamAssetReviews("owner-1", team.id);
+    expect(invoke).toHaveBeenLastCalledWith("list_agent_team_asset_reviews", {
       ownerUserId: "owner-1", teamId: team.id,
     });
 

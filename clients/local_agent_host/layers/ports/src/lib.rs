@@ -434,6 +434,11 @@ pub trait LocalPluginHookBundleStore: Send + Sync {
         owner_user_id: &str,
     ) -> Result<Vec<LocalPluginHookBundleRecord>, ClientStorageError>;
 
+    async fn list_all_plugin_hook_bundles(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<LocalPluginHookBundleRecord>, ClientStorageError>;
+
     /// Loads immutable trusted bundles by their exact event-time identities,
     /// regardless of their current activation state.
     async fn get_plugin_hook_bundles(

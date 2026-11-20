@@ -17,6 +17,7 @@ pub async fn deactivate_conversation_attachment_scope(
 #[tauri::command]
 pub async fn pick_conversation_attachments(
     manager: State<'_, AttachmentManager>,
+    resources: State<'_, MachineResourceGovernor>,
     input: AttachmentScope,
 ) -> Result<AttachmentImportResult, String> {
     let scope = input.validated()?;
@@ -28,15 +29,28 @@ pub async fn pick_conversation_attachments(
         .into_iter()
         .map(|handle| handle.path().to_path_buf())
         .collect();
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     Ok(manager.stage_paths(scope, paths).await)
 }
 
 #[tauri::command]
 pub async fn import_conversation_clipboard(
     manager: State<'_, AttachmentManager>,
+    resources: State<'_, MachineResourceGovernor>,
     input: AttachmentScope,
 ) -> Result<ClipboardImportResult, String> {
     let scope = input.validated()?;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let payload = tokio::task::spawn_blocking(read_clipboard_payload)
         .await
         .map_err(|error| format!("无法读取剪贴板：{error}"))??;

@@ -46,12 +46,13 @@ export function ContactConversationView({
   return (
     <div className="contact-conversation" aria-label={`${contact.title} 联系人会话`}>
       {contact.id === pluginInstallerContactId && (
-        <div className="contact-conversation__installer-note" role="note">
+        <div aria-label="插件安装能力范围" className="contact-conversation__installer-note" role="note">
           <span aria-hidden="true">◆</span>
-          <p>直接告诉我想安装的 MCP、npm 包名或本地 Plugin 文件夹；安装能力只在此对话可用。</p>
+          <p>告诉我想安装或更新的插件，支持平台插件市场、MCP、npm、Git 和本地 Plugin；安装能力只在此对话可用。</p>
         </div>
       )}
       <ConversationHistoryView
+        assistantName={contact.title}
         askUserPort={askUserPort}
         attachmentPort={attachmentPort}
         composerPort={composerPort}
@@ -61,6 +62,7 @@ export function ContactConversationView({
         realtimePort={realtimePort}
         runInspectorPort={runInspectorPort}
         runtimeSettingsPort={runtimeSettingsPort}
+        title={contact.title}
       />
     </div>
   );

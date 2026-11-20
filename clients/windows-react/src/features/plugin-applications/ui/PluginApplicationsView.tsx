@@ -14,6 +14,7 @@ interface PluginApplicationsViewProps {
   ownerUserId: string;
   port: PluginApplicationPort;
   onOpen(application: PluginApplication): void;
+  onOpenPluginManagement(): void;
 }
 
 export function PluginApplicationsView({
@@ -21,6 +22,7 @@ export function PluginApplicationsView({
   ownerUserId,
   port,
   onOpen,
+  onOpenPluginManagement,
 }: PluginApplicationsViewProps) {
   const applications = usePluginApplicationStore((state) => state.applications);
   const isLoading = usePluginApplicationStore((state) => state.isLoading);
@@ -60,6 +62,7 @@ export function PluginApplicationsView({
           icon="▦"
           title="还没有插件应用"
           description="请先在插件市场安装一个带页面的插件，并保持它处于启用状态。"
+          action={<button onClick={onOpenPluginManagement} type="button">打开插件管理</button>}
         />
       ) : (
         <>
@@ -277,12 +280,25 @@ function PluginApplicationIcon({
   application: PluginApplication;
   compact?: boolean;
 }) {
+  const [iconFailed, setIconFailed] = useState(false);
+
+  useEffect(() => setIconFailed(false), [application.iconPreviewUrl]);
+
   return (
     <span
       aria-hidden="true"
       className={`plugin-application-icon ${compact ? "plugin-application-icon--compact" : ""}`}
       style={application.brandColor ? { background: application.brandColor } : undefined}
-    >▦</span>
+    >
+      {application.iconPreviewUrl && !iconFailed ? (
+        <img
+          alt=""
+          className="plugin-application-icon__image"
+          onError={() => setIconFailed(true)}
+          src={application.iconPreviewUrl}
+        />
+      ) : "▦"}
+    </span>
   );
 }
 

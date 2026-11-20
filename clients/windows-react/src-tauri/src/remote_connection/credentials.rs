@@ -1,16 +1,15 @@
 use super::models::RemoteCredentialBundle;
+use crate::app_data_transaction::{ensure_owned_directory, replace_owned_file};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    fs::{self, File},
+    io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
-use uuid::Uuid;
-
 const CURRENT_VERSION: u32 = 1;
 const MAXIMUM_INDEX_BYTES: u64 = 4 * 1_024 * 1_024;
 const MAXIMUM_OWNERS: usize = 32;
@@ -122,15 +121,10 @@ impl PlatformRemoteCredentialVault {
             return Err(index_error());
         }
         let parent = self.path.parent().ok_or_else(index_error)?;
-        fs::create_dir_all(parent).map_err(|_| index_error())?;
+        ensure_owned_directory(parent).map_err(|_| index_error())?;
         reject_symbolic_link(&self.path)?;
-        let temporary = parent.join(format!(".credential-index-{}.tmp", Uuid::new_v4()));
-        let result =
-            write_private_file(&temporary, &bytes).and_then(|_| fs::rename(&temporary, &self.path));
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-            return Err(index_error());
-        }
+        replace_owned_file(parent, &self.path, ".credential-index-", &bytes)
+            .map_err(|_| index_error())?;
         if let Ok(directory) = File::open(parent) {
             let _ = directory.sync_all();
         }
@@ -275,19 +269,6 @@ fn reject_symbolic_link(path: &Path) -> Result<(), String> {
     }
 }
 
-fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
-}
-
 fn index_error() -> String {
     "无法读取或保存远端连接凭据索引。".into()
 }
@@ -378,5 +359,55 @@ pub(super) mod tests_support {
             path,
             Arc::new(MemoryRemoteSecretStore::default()),
         )
+    }
+
+    #[cfg(target_os = "windows")]
+    struct TestCredentialCleanup(keyring::Entry);
+
+    #[cfg(target_os = "windows")]
+    impl Drop for TestCredentialCleanup {
+        fn drop(&mut self) {
+            let _ = self.0.delete_credential();
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn production_vault_round_trips_only_secret_data_through_credential_manager() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let owner = format!("test-owner-{}", uuid::Uuid::new_v4());
+        let connection = format!("test-connection-{}", uuid::Uuid::new_v4());
+        let account = secret_account(&owner, &connection);
+        let credential = TestCredentialCleanup(
+            keyring::Entry::new(SECRET_SERVICE, &account)
+                .expect("remote connection credential entry"),
+        );
+        let vault = PlatformRemoteCredentialVault::new(directory.path().to_path_buf());
+        let secret = format!("remote-password-{}", uuid::Uuid::new_v4());
+        let bundle = RemoteCredentialBundle {
+            password: Some(secret.clone()),
+            ..RemoteCredentialBundle::default()
+        };
+
+        assert!(vault.load(&owner, &connection).unwrap().is_none());
+        vault
+            .save(&owner, &connection, &bundle)
+            .expect("save production remote credential");
+        assert!(vault.load(&owner, &connection).unwrap() == Some(bundle));
+
+        let index = fs::read_to_string(
+            directory
+                .path()
+                .join("remote-connections")
+                .join("credential-index.json"),
+        )
+        .expect("read non-secret credential index");
+        assert!(!index.contains(&secret));
+
+        vault
+            .delete(&owner, &connection)
+            .expect("delete production remote credential");
+        assert!(vault.load(&owner, &connection).unwrap().is_none());
+        drop(credential);
     }
 }

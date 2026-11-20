@@ -64,10 +64,19 @@ pub(super) fn classify_error(error: &str) -> &'static str {
         "timeout"
     } else if error.contains("response frame") || error.contains("early eof") {
         "invalid_transport"
-    } else if error.contains("protocol v50") || error.contains("protocol_version") {
+    } else if error.contains("protocol v52") || error.contains("protocol_version") {
         "protocol_mismatch"
     } else {
         "failed"
+    }
+}
+
+pub(super) fn classify_authentication_error(error: &str) -> &'static str {
+    match error {
+        "登录账号与本地服务账号不一致。" => "owner_mismatch",
+        "登录状态尚未准备好。" => "unavailable",
+        "账号会话已变化，请重试。" => "session_changed",
+        _ => "failed",
     }
 }
 
@@ -107,5 +116,21 @@ mod tests {
     fn diagnostic_errors_are_reduced_to_safe_categories() {
         assert_eq!(classify_error("Host health check timed out."), "timeout");
         assert_eq!(classify_error("token=secret-value"), "failed");
+    }
+
+    #[test]
+    fn authentication_errors_are_reduced_to_safe_categories() {
+        assert_eq!(
+            classify_authentication_error("登录状态尚未准备好。"),
+            "unavailable"
+        );
+        assert_eq!(
+            classify_authentication_error("登录账号与本地服务账号不一致。"),
+            "owner_mismatch"
+        );
+        assert_eq!(
+            classify_authentication_error("token=secret-value"),
+            "failed"
+        );
     }
 }

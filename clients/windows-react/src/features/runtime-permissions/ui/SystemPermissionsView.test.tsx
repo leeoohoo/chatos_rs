@@ -18,7 +18,11 @@ describe("SystemPermissionsView", () => {
 
   it("renders truthful Windows platform differences", async () => {
     renderView();
-    expect(await screen.findByText("本机终端执行")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "运行与系统权限" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "系统权限" })).toBeVisible();
+    expect(screen.getByText("每项权限都会说明准确的授权目标和当前状态。")).toBeVisible();
+    expect(screen.getByText("Windows 下 Skills 与 MCP 的系统访问状态")).toBeVisible();
+    expect(screen.getByText("本机终端执行")).toBeVisible();
     expect(screen.getByText("Computer Use")).toBeVisible();
     expect(screen.getAllByText("尚未提供")).toHaveLength(2);
     expect(screen.getByText(/没有 macOS“完全磁盘访问”的等价总开关/)).toBeVisible();
@@ -35,7 +39,7 @@ describe("SystemPermissionsView", () => {
     await screen.findByText("本机终端执行");
     fireEvent.click(screen.getByRole("button", { name: "重新检测" }));
     await waitFor(() => expect(port.load).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText(/Windows 11 下/)).toBeVisible();
+    expect(await screen.findByText("Windows 11 下 Skills 与 MCP 的系统访问状态")).toBeVisible();
   });
 
   it("opens only an explicitly requestable native authorization flow", async () => {

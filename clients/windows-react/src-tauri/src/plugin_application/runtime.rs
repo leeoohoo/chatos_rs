@@ -2,10 +2,23 @@ use super::{
     plugin_catalog_error, plugin_unavailable, valid_health_path, validate_text,
     PresentedPluginApplication, ResolvedPluginApplication,
 };
+#[cfg(windows)]
+use crate::windows_appcontainer::{WorkspaceAccess, WorkspaceLeaseManager};
 use crate::{
-    platform_execution_context::resolve_project_root, terminal_runtime::process::ProcessTermination,
+    app_data_transaction::ensure_owned_directory,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePermit,
+        MachineResourcePriority,
+    },
+    platform_execution_context::resolve_project_root,
+    terminal_runtime::process::ProcessTermination,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use reqwest::{redirect::Policy, Client};
+use ring::{
+    hmac,
+    rand::{SecureRandom, SystemRandom},
+};
 use rusqlite::{params, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,13 +33,14 @@ use std::{
     process::Stdio,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex as StandardMutex,
     },
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufStream},
+    net::{TcpListener as TokioTcpListener, TcpStream},
     process::{Child, Command},
-    sync::{Mutex, Notify},
+    sync::{Mutex, Notify, Semaphore},
     time::{sleep, timeout, Duration, Instant},
 };
 use uuid::Uuid;
@@ -41,7 +55,21 @@ const HEALTH_REQUEST_TIMEOUT_MS: u64 = 700;
 const HEALTH_RETRY_MS: u64 = 80;
 const TERMINATION_GRACE_MS: u64 = 2_000;
 const MAXIMUM_BRIDGE_REQUEST_BYTES: usize = 256 * 1_024;
+const MAXIMUM_STATIC_ENTRY_BYTES: u64 = 2 * 1_024 * 1_024;
+const MAXIMUM_STATIC_ASSET_BYTES: u64 = 8 * 1_024 * 1_024;
+const MAXIMUM_STATIC_TOTAL_BYTES: u64 = 32 * 1_024 * 1_024;
+const MAXIMUM_STATIC_REQUEST_BYTES: usize = 16 * 1_024;
+const MAXIMUM_STATIC_CONNECTIONS: usize = 64;
+const MAXIMUM_LOOPBACK_PROXY_CONNECTIONS: usize = 64;
+const MAXIMUM_LOOPBACK_PROXY_HEADER_BYTES: usize = 256 * 1_024;
+const LOOPBACK_PROXY_CONNECT_TIMEOUT_MS: u64 = 700;
+const LOOPBACK_PROXY_IDLE_TIMEOUT_MS: u64 = 300_000;
 const HOST_CONTEXT_READ_CAPABILITY: &str = "host.context.read";
+const PLUGIN_AUTHENTICATION_HEADER: &str = "x-chatos-plugin-token";
+const PLUGIN_HEALTH_CHALLENGE_HEADER: &str = "x-chatos-plugin-challenge";
+const PLUGIN_HEALTH_PROOF_HEADER: &str = "x-chatos-plugin-proof";
+const PLUGIN_SESSION_COOKIE: &str = "CHATOS_PLUGIN_APP_SESSION";
+const PLUGIN_SESSION_BOOTSTRAP_PATH: &str = "/__chatos_plugin_session";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -91,6 +119,9 @@ pub(super) struct PluginApplicationRuntime {
     epoch: Arc<AtomicU64>,
     state: Arc<Mutex<RuntimeState>>,
     health_client: Client,
+    resources: MachineResourceGovernor,
+    #[cfg(all(windows, not(test)))]
+    sandbox: Arc<Mutex<Option<Arc<WorkspaceLeaseManager>>>>,
 }
 
 #[derive(Default)]
@@ -158,9 +189,51 @@ struct RunningPluginApplication {
     version: String,
     base_url: String,
     health_path: String,
-    termination: ProcessTermination,
+    authentication_token: String,
+    termination: RuntimeTermination,
     alive: AtomicBool,
     finished: Notify,
+    resource_permit: StandardMutex<Option<MachineResourcePermit>>,
+}
+
+enum RuntimeTermination {
+    Process {
+        process: ProcessTermination,
+        proxy: Arc<LoopbackProxyShutdown>,
+    },
+    Static(Arc<StaticServerShutdown>),
+}
+
+#[derive(Default)]
+struct LoopbackProxyShutdown {
+    requested: AtomicBool,
+    wake: Notify,
+}
+
+impl LoopbackProxyShutdown {
+    fn request(&self) {
+        self.requested.store(true, Ordering::SeqCst);
+        self.wake.notify_waiters();
+    }
+}
+
+#[derive(Default)]
+struct StaticServerShutdown {
+    requested: AtomicBool,
+    wake: Notify,
+}
+
+impl StaticServerShutdown {
+    fn request(&self) {
+        self.requested.store(true, Ordering::SeqCst);
+        self.wake.notify_one();
+    }
+}
+
+#[derive(Clone)]
+struct StaticAsset {
+    bytes: Arc<Vec<u8>>,
+    content_type: &'static str,
 }
 
 #[derive(Clone)]
@@ -185,9 +258,16 @@ struct PreparedRuntimeProcess {
     arguments: Vec<OsString>,
     environment: BTreeMap<String, String>,
     installation_root: PathBuf,
+    data_directory: PathBuf,
+    cache_directory: PathBuf,
     base_url: String,
+    proxy_port: u16,
+    child_port: u16,
     health_path: String,
+    authentication_token: String,
     launch_timeout_ms: u64,
+    #[cfg(windows)]
+    network_policy: &'static str,
 }
 
 #[derive(Deserialize)]
@@ -209,7 +289,12 @@ struct PackageManifest {
 }
 
 impl PluginApplicationRuntime {
+    #[cfg(test)]
     pub(super) fn new(root: PathBuf) -> Self {
+        Self::new_with_resources(root, MachineResourceGovernor::default())
+    }
+
+    pub(super) fn new_with_resources(root: PathBuf, resources: MachineResourceGovernor) -> Self {
         Self {
             root,
             epoch: Arc::new(AtomicU64::new(1)),
@@ -219,11 +304,27 @@ impl PluginApplicationRuntime {
                 .no_proxy()
                 .build()
                 .expect("static loopback health client configuration"),
+            resources,
+            #[cfg(all(windows, not(test)))]
+            sandbox: Arc::new(Mutex::new(None)),
         }
     }
 
     pub(super) fn epoch(&self) -> u64 {
         self.epoch.load(Ordering::SeqCst)
+    }
+
+    #[cfg(all(windows, not(test)))]
+    async fn ensure_sandbox(&self) -> Result<Arc<WorkspaceLeaseManager>, String> {
+        if let Some(manager) = self.sandbox.lock().await.clone() {
+            return Ok(manager);
+        }
+        let manager = Arc::new(WorkspaceLeaseManager::open(&self.root)?);
+        let mut sandbox = self.sandbox.lock().await;
+        if sandbox.is_none() {
+            *sandbox = Some(manager.clone());
+        }
+        Ok(sandbox.clone().unwrap_or(manager))
     }
 
     pub(super) async fn launch(
@@ -286,16 +387,48 @@ impl PluginApplicationRuntime {
             self.release_reservation(&key).await;
             return Err(stale_launch_error());
         }
-        let prepared = match prepare_runtime_process(&resolved, &runtime_context) {
-            Ok(prepared) => prepared,
+        let resource_permit = if resolved.contribution.runtime.is_some() {
+            match self
+                .resources
+                .acquire(
+                    MachineResourceKind::CodeReadWorker,
+                    MachineResourcePriority::Interactive,
+                )
+                .await
+            {
+                Ok(permit) => Some(permit),
+                Err(error) => {
+                    self.release_reservation(&key).await;
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
+        if !self.accepts(expected_epoch, &request).await {
+            self.release_reservation(&key).await;
+            return Err(stale_launch_error());
+        }
+        #[cfg(all(windows, not(test)))]
+        let sandbox = match self.ensure_sandbox().await {
+            Ok(sandbox) => Some(sandbox),
             Err(error) => {
                 self.release_reservation(&key).await;
                 return Err(error);
             }
         };
-        let launch_timeout = prepared.launch_timeout_ms;
-        let process = match spawn_runtime_process(&resolved, prepared).await {
-            Ok(process) => process,
+        #[cfg(all(windows, test))]
+        let sandbox = None;
+        let (process, launch_timeout) = match spawn_application_runtime(
+            &resolved,
+            &runtime_context,
+            resource_permit,
+            #[cfg(windows)]
+            sandbox,
+        )
+        .await
+        {
+            Ok(result) => result,
             Err(error) => {
                 self.release_reservation(&key).await;
                 return Err(error);
@@ -476,7 +609,7 @@ impl PluginApplicationRuntime {
             session_id,
             host_session_nonce,
             storage_partition_id: storage_partition_id(&application.id(), &runtime_key.scope_key),
-            url: process.base_url.clone(),
+            url: authenticated_launch_url(&process),
             bridge_origin,
             bridge_capabilities,
             context: presented_context,
@@ -625,29 +758,92 @@ impl PluginApplicationRuntime {
             process.base_url.trim_end_matches('/'),
             process.health_path
         );
+        let Ok(challenge) = secure_random_token() else {
+            return false;
+        };
         let Ok(response) = self
             .health_client
             .get(url)
+            .header(PLUGIN_HEALTH_CHALLENGE_HEADER, &challenge)
             .timeout(Duration::from_millis(HEALTH_REQUEST_TIMEOUT_MS))
             .send()
             .await
         else {
             return false;
         };
+        let Some(proof) = response
+            .headers()
+            .get(PLUGIN_HEALTH_PROOF_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| URL_SAFE_NO_PAD.decode(value).ok())
+        else {
+            return false;
+        };
         response.status().is_success()
+            && hmac::verify(
+                &hmac::Key::new(hmac::HMAC_SHA256, process.authentication_token.as_bytes()),
+                challenge.as_bytes(),
+                &proof,
+            )
+            .is_ok()
     }
 }
 
+fn authenticated_launch_url(process: &RunningPluginApplication) -> String {
+    format!(
+        "{}{}?token={}",
+        process.base_url.trim_end_matches('/'),
+        PLUGIN_SESSION_BOOTSTRAP_PATH,
+        process.authentication_token
+    )
+}
+
+fn secure_random_token() -> Result<String, String> {
+    let mut bytes = [0_u8; 32];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| "无法生成 Plugin 应用启动凭据。".to_owned())?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn health_proof(authentication_token: &str, challenge: &str) -> String {
+    URL_SAFE_NO_PAD.encode(
+        hmac::sign(
+            &hmac::Key::new(hmac::HMAC_SHA256, authentication_token.as_bytes()),
+            challenge.as_bytes(),
+        )
+        .as_ref(),
+    )
+}
+
 impl RunningPluginApplication {
+    fn release_resource(&self) {
+        if let Ok(mut permit) = self.resource_permit.lock() {
+            permit.take();
+        }
+    }
+
     fn terminate_now(&self) {
-        let _ = self.termination.terminate(true);
+        match &self.termination {
+            RuntimeTermination::Process { process, proxy } => {
+                let _ = process.terminate(true);
+                proxy.request();
+            }
+            RuntimeTermination::Static(shutdown) => shutdown.request(),
+        }
     }
 
     async fn stop(&self) {
         if !self.alive.load(Ordering::SeqCst) {
             return;
         }
-        let _ = self.termination.terminate(false);
+        match &self.termination {
+            RuntimeTermination::Process { process, proxy } => {
+                let _ = process.terminate(false);
+                proxy.request();
+            }
+            RuntimeTermination::Static(shutdown) => shutdown.request(),
+        }
         if timeout(
             Duration::from_millis(TERMINATION_GRACE_MS),
             self.wait_finished(),
@@ -657,7 +853,13 @@ impl RunningPluginApplication {
         {
             return;
         }
-        let _ = self.termination.terminate(true);
+        match &self.termination {
+            RuntimeTermination::Process { process, proxy } => {
+                let _ = process.terminate(true);
+                proxy.request();
+            }
+            RuntimeTermination::Static(shutdown) => shutdown.request(),
+        }
         let _ = timeout(
             Duration::from_millis(TERMINATION_GRACE_MS),
             self.wait_finished(),
@@ -974,6 +1176,282 @@ fn resolve_runtime_context(
     })
 }
 
+async fn spawn_application_runtime(
+    resolved: &ResolvedPluginApplication,
+    context: &ResolvedRuntimeContext,
+    resource_permit: Option<MachineResourcePermit>,
+    #[cfg(windows)] sandbox: Option<Arc<WorkspaceLeaseManager>>,
+) -> Result<(Arc<RunningPluginApplication>, u64), String> {
+    if resolved.contribution.runtime.is_none() {
+        return spawn_static_runtime(resolved)
+            .await
+            .map(|process| (process, 2_000));
+    }
+    let prepared = prepare_runtime_process(resolved, context)?;
+    let launch_timeout = prepared.launch_timeout_ms;
+    let process = spawn_runtime_process(
+        resolved,
+        prepared,
+        resource_permit,
+        #[cfg(windows)]
+        sandbox,
+    )
+    .await?;
+    Ok((process, launch_timeout))
+}
+
+async fn spawn_static_runtime(
+    resolved: &ResolvedPluginApplication,
+) -> Result<Arc<RunningPluginApplication>, String> {
+    let assets = Arc::new(load_static_assets(resolved)?);
+    let authentication_token = secure_random_token()?;
+    let listener = TokioTcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .await
+        .map_err(|_| "无法启动静态 Plugin 应用服务。".to_owned())?;
+    let address = listener
+        .local_addr()
+        .map_err(|_| "无法读取静态 Plugin 应用地址。".to_owned())?;
+    let shutdown = Arc::new(StaticServerShutdown::default());
+    let process = Arc::new(RunningPluginApplication {
+        release_id: resolved.record.spec.release_id.clone(),
+        release_digest: resolved.record.spec.release_digest.clone(),
+        version: resolved.manifest.version.clone(),
+        base_url: format!("http://127.0.0.1:{}/", address.port()),
+        health_path: "/".into(),
+        authentication_token: authentication_token.clone(),
+        termination: RuntimeTermination::Static(shutdown.clone()),
+        alive: AtomicBool::new(true),
+        finished: Notify::new(),
+        resource_permit: StandardMutex::new(None),
+    });
+    tokio::spawn(run_static_server(
+        process.clone(),
+        listener,
+        assets,
+        authentication_token,
+        shutdown,
+    ));
+    Ok(process)
+}
+
+fn load_static_assets(
+    resolved: &ResolvedPluginApplication,
+) -> Result<HashMap<String, StaticAsset>, String> {
+    let source_path = resolved.contribution.source.path();
+    let source = static_asset(
+        &resolved.installation_root,
+        source_path,
+        MAXIMUM_STATIC_ENTRY_BYTES,
+    )?;
+    if source.content_type != "text/html; charset=utf-8" {
+        return Err(plugin_catalog_error());
+    }
+    let mut total_bytes = source.bytes.len() as u64;
+    let mut routes = HashMap::new();
+    routes.insert("/".to_owned(), source.clone());
+    insert_static_route(&mut routes, encoded_static_route(source_path)?, source)?;
+
+    let source_directory = source_path
+        .rsplit_once('/')
+        .map(|(directory, _)| directory)
+        .ok_or_else(plugin_catalog_error)?;
+    let source_prefix = format!("{source_directory}/");
+    for reference in &resolved.contribution.assets {
+        let path = reference.path();
+        let asset = static_asset(
+            &resolved.installation_root,
+            path,
+            MAXIMUM_STATIC_ASSET_BYTES,
+        )?;
+        total_bytes = total_bytes
+            .checked_add(asset.bytes.len() as u64)
+            .filter(|total| *total <= MAXIMUM_STATIC_TOTAL_BYTES)
+            .ok_or_else(plugin_catalog_error)?;
+        insert_static_route(&mut routes, encoded_static_route(path)?, asset.clone())?;
+        if let Some(relative) = path.strip_prefix(&source_prefix) {
+            insert_static_route(&mut routes, encoded_static_route(relative)?, asset)?;
+        }
+    }
+    Ok(routes)
+}
+
+fn static_asset(root: &Path, relative: &str, maximum: u64) -> Result<StaticAsset, String> {
+    let path = resolve_non_linked_file(root, relative)?;
+    let content_type = static_content_type(&path).ok_or_else(plugin_catalog_error)?;
+    Ok(StaticAsset {
+        bytes: Arc::new(bounded_file(&path, maximum)?),
+        content_type,
+    })
+}
+
+fn static_content_type(path: &Path) -> Option<&'static str> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "html" => Some("text/html; charset=utf-8"),
+        "js" | "mjs" => Some("text/javascript; charset=utf-8"),
+        "css" => Some("text/css; charset=utf-8"),
+        "json" => Some("application/json; charset=utf-8"),
+        "svg" => Some("image/svg+xml"),
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        "woff" => Some("font/woff"),
+        "woff2" => Some("font/woff2"),
+        _ => None,
+    }
+}
+
+fn encoded_static_route(relative: &str) -> Result<String, String> {
+    let relative = relative.strip_prefix("./").unwrap_or(relative);
+    let base = reqwest::Url::parse("http://127.0.0.1/").map_err(|_| plugin_catalog_error())?;
+    let url = base.join(relative).map_err(|_| plugin_catalog_error())?;
+    if url.host_str() != Some("127.0.0.1") || url.path().contains("..") {
+        return Err(plugin_catalog_error());
+    }
+    Ok(url.path().to_owned())
+}
+
+fn insert_static_route(
+    routes: &mut HashMap<String, StaticAsset>,
+    route: String,
+    asset: StaticAsset,
+) -> Result<(), String> {
+    if route == "/" || routes.insert(route, asset).is_some() {
+        return Err(plugin_catalog_error());
+    }
+    Ok(())
+}
+
+async fn run_static_server(
+    process: Arc<RunningPluginApplication>,
+    listener: TokioTcpListener,
+    assets: Arc<HashMap<String, StaticAsset>>,
+    authentication_token: String,
+    shutdown: Arc<StaticServerShutdown>,
+) {
+    let connections = Arc::new(Semaphore::new(MAXIMUM_STATIC_CONNECTIONS));
+    loop {
+        if shutdown.requested.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::select! {
+            _ = shutdown.wake.notified() => break,
+            accepted = listener.accept() => {
+                let Ok((stream, peer)) = accepted else { break };
+                if !peer.ip().is_loopback() {
+                    continue;
+                }
+                let Ok(permit) = connections.clone().try_acquire_owned() else {
+                    continue;
+                };
+                let assets = assets.clone();
+                let authentication_token = authentication_token.clone();
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    let _ = serve_static_request(stream, &assets, &authentication_token).await;
+                });
+            }
+        }
+    }
+    process.alive.store(false, Ordering::SeqCst);
+    process.release_resource();
+    process.finished.notify_waiters();
+}
+
+async fn serve_static_request(
+    mut stream: TcpStream,
+    assets: &HashMap<String, StaticAsset>,
+    authentication_token: &str,
+) -> Result<(), String> {
+    let mut request = Vec::with_capacity(1_024);
+    let mut buffer = [0_u8; 1_024];
+    loop {
+        let count = timeout(Duration::from_secs(2), stream.read(&mut buffer))
+            .await
+            .map_err(|_| plugin_runtime_error())?
+            .map_err(|_| plugin_runtime_error())?;
+        if count == 0 {
+            return Err(plugin_runtime_error());
+        }
+        request.extend_from_slice(&buffer[..count]);
+        if request.len() > MAXIMUM_STATIC_REQUEST_BYTES {
+            return write_static_response(
+                &mut stream,
+                "431 Request Header Fields Too Large",
+                None,
+                false,
+            )
+            .await;
+        }
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+    let request_text = std::str::from_utf8(&request).map_err(|_| plugin_runtime_error())?;
+    let first_line = request_text.lines().next().unwrap_or_default().trim_end();
+    let mut parts = first_line.split_ascii_whitespace();
+    let method = parts.next().unwrap_or_default();
+    let target = parts.next().unwrap_or_default();
+    let version = parts.next().unwrap_or_default();
+    if parts.next().is_some() || !matches!(version, "HTTP/1.0" | "HTTP/1.1") {
+        return write_static_response(&mut stream, "400 Bad Request", None, false).await;
+    }
+    match authorize_loopback_request(request_text, target, authentication_token, "/") {
+        Some(LoopbackRequestAuthorization::Bootstrap) => {
+            return write_session_bootstrap(&mut stream, authentication_token).await;
+        }
+        Some(LoopbackRequestAuthorization::Health(challenge)) => {
+            return write_health_response(
+                &mut stream,
+                &health_proof(authentication_token, &challenge),
+            )
+            .await;
+        }
+        Some(LoopbackRequestAuthorization::Session) => {}
+        None => return write_unauthorized_response(&mut stream).await,
+    }
+    if !matches!(method, "GET" | "HEAD") {
+        return write_static_response(&mut stream, "405 Method Not Allowed", None, false).await;
+    }
+    let route = target.split_once('?').map_or(target, |(path, _)| path);
+    if route.contains('#') || !route.starts_with('/') || route.contains("..") {
+        return write_static_response(&mut stream, "400 Bad Request", None, false).await;
+    }
+    match assets.get(route) {
+        Some(asset) => {
+            write_static_response(&mut stream, "200 OK", Some(asset), method == "HEAD").await
+        }
+        None => write_static_response(&mut stream, "404 Not Found", None, method == "HEAD").await,
+    }
+}
+
+async fn write_static_response(
+    stream: &mut TcpStream,
+    status: &str,
+    asset: Option<&StaticAsset>,
+    head_only: bool,
+) -> Result<(), String> {
+    let empty = Vec::new();
+    let bytes = asset.map_or(empty.as_slice(), |asset| asset.bytes.as_slice());
+    let content_type = asset.map_or("text/plain; charset=utf-8", |asset| asset.content_type);
+    let headers = format!(
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; navigate-to 'self'; base-uri 'none'\r\nCross-Origin-Resource-Policy: same-origin\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
+        bytes.len()
+    );
+    stream
+        .write_all(headers.as_bytes())
+        .await
+        .map_err(|_| plugin_runtime_error())?;
+    if !head_only {
+        stream
+            .write_all(bytes)
+            .await
+            .map_err(|_| plugin_runtime_error())?;
+    }
+    let _ = stream.shutdown().await;
+    Ok(())
+}
+
 fn prepare_runtime_process(
     resolved: &ResolvedPluginApplication,
     context: &ResolvedRuntimeContext,
@@ -982,11 +1460,15 @@ fn prepare_runtime_process(
         .contribution
         .runtime
         .as_ref()
-        .ok_or_else(|| "Windows 尚未准入静态 Plugin 应用页面。".to_owned())?;
+        .ok_or_else(plugin_runtime_error)?;
     let (executable, prefix_arguments) =
         resolve_package_executable(&resolved.installation_root, &runtime.bin)?;
-    let port = available_loopback_port()?;
-    let base_url = format!("http://127.0.0.1:{port}/");
+    let child_port = available_loopback_port()?;
+    let mut proxy_port = available_loopback_port()?;
+    while proxy_port == child_port {
+        proxy_port = available_loopback_port()?;
+    }
+    let base_url = format!("http://127.0.0.1:{proxy_port}/");
     let health_path = runtime
         .health_path
         .clone()
@@ -994,8 +1476,14 @@ fn prepare_runtime_process(
     if !valid_health_path(&health_path) {
         return Err(plugin_catalog_error());
     }
+    let authentication_token = secure_random_token()?;
     let mut environment = safe_process_environment();
     environment.extend(context.environment.clone());
+    let sandbox_label = if cfg!(windows) {
+        "windows-appcontainer"
+    } else {
+        "windows-job-lifecycle"
+    };
     environment.extend([
         (
             "CHATOS_PLUGIN_ROOT".into(),
@@ -1010,7 +1498,12 @@ fn prepare_runtime_process(
             context.cache_directory.to_string_lossy().into_owned(),
         ),
         ("CHATOS_PLUGIN_APP_HOST".into(), "127.0.0.1".into()),
-        ("CHATOS_PLUGIN_APP_PORT".into(), port.to_string()),
+        ("CHATOS_PLUGIN_APP_PORT".into(), child_port.to_string()),
+        ("CHATOS_PLUGIN_APP_HEALTH_PATH".into(), health_path.clone()),
+        (
+            "CHATOS_PLUGIN_APP_TOKEN".into(),
+            authentication_token.clone(),
+        ),
         (
             "CHATOS_PLUGIN_ID".into(),
             resolved.record.spec.plugin_id.clone(),
@@ -1032,32 +1525,410 @@ fn prepare_runtime_process(
             resolved.record.spec.release_digest.clone(),
         ),
         ("CHATOS_PLUGIN_FILE_WATCH_MODE".into(), "polling".into()),
-        (
-            "CHATOS_PLUGIN_SANDBOX".into(),
-            "windows-job-lifecycle".into(),
-        ),
+        ("CHATOS_PLUGIN_SANDBOX".into(), sandbox_label.into()),
     ]);
     let arguments = prefix_arguments
         .into_iter()
         .chain(runtime.args.iter().map(OsString::from))
         .collect();
+    #[cfg(windows)]
+    let network_policy = if resolved.manifest.permissions.iter().any(|permission| {
+        permission.permission == "network.client"
+            && permission.required
+            && (permission.components.is_empty()
+                || permission
+                    .components
+                    .contains(&resolved.contribution.component_key))
+    }) {
+        "controlled"
+    } else {
+        "loopback"
+    };
     Ok(PreparedRuntimeProcess {
         executable,
         arguments,
         environment,
         installation_root: resolved.installation_root.clone(),
+        data_directory: context.data_directory.clone(),
+        cache_directory: context.cache_directory.clone(),
         base_url,
+        proxy_port,
+        child_port,
         health_path,
+        authentication_token,
         launch_timeout_ms: runtime
             .launch_timeout_ms
             .unwrap_or(DEFAULT_LAUNCH_TIMEOUT_MS),
+        #[cfg(windows)]
+        network_policy,
     })
+}
+
+async fn start_loopback_proxy(
+    proxy_port: u16,
+    child_port: u16,
+    health_path: String,
+    authentication_token: String,
+) -> Result<Arc<LoopbackProxyShutdown>, String> {
+    let listener =
+        TokioTcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), proxy_port))
+            .await
+            .map_err(|_| "无法启动 Plugin 应用 loopback 代理。".to_owned())?;
+    let shutdown = Arc::new(LoopbackProxyShutdown::default());
+    tokio::spawn(run_loopback_proxy(
+        listener,
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), child_port),
+        health_path,
+        authentication_token,
+        shutdown.clone(),
+    ));
+    Ok(shutdown)
+}
+
+async fn run_loopback_proxy(
+    listener: TokioTcpListener,
+    target: SocketAddr,
+    health_path: String,
+    authentication_token: String,
+    shutdown: Arc<LoopbackProxyShutdown>,
+) {
+    let connections = Arc::new(Semaphore::new(MAXIMUM_LOOPBACK_PROXY_CONNECTIONS));
+    loop {
+        if shutdown.requested.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::select! {
+            _ = shutdown.wake.notified() => break,
+            accepted = listener.accept() => {
+                let Ok((stream, peer)) = accepted else { break };
+                if !peer.ip().is_loopback() {
+                    continue;
+                }
+                let Ok(permit) = connections.clone().try_acquire_owned() else {
+                    continue;
+                };
+                tokio::spawn(proxy_loopback_connection(
+                    stream,
+                    target,
+                    health_path.clone(),
+                    authentication_token.clone(),
+                    permit,
+                ));
+            }
+        }
+    }
+}
+
+async fn proxy_loopback_connection(
+    downstream: TcpStream,
+    target: SocketAddr,
+    health_path: String,
+    authentication_token: String,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+) {
+    let mut downstream = BufStream::new(downstream);
+    let Some(request_headers) = read_proxy_headers(&mut downstream).await else {
+        return;
+    };
+    if !valid_proxy_request(&request_headers) {
+        return;
+    }
+    let Ok(request_text) = std::str::from_utf8(&request_headers) else {
+        return;
+    };
+    let target_path = request_text
+        .lines()
+        .next()
+        .and_then(|line| line.split_ascii_whitespace().nth(1))
+        .unwrap_or_default();
+    match authorize_loopback_request(
+        request_text,
+        target_path,
+        &authentication_token,
+        &health_path,
+    ) {
+        Some(LoopbackRequestAuthorization::Bootstrap) => {
+            let _ = write_session_bootstrap(&mut downstream, &authentication_token).await;
+            return;
+        }
+        Some(LoopbackRequestAuthorization::Session)
+        | Some(LoopbackRequestAuthorization::Health(_)) => {}
+        None => {
+            let _ = write_unauthorized_response(&mut downstream).await;
+            return;
+        }
+    }
+    let Some(request_headers) =
+        inject_authentication_header(&request_headers, &authentication_token)
+    else {
+        return;
+    };
+    let Ok(Ok(upstream)) = timeout(
+        Duration::from_millis(LOOPBACK_PROXY_CONNECT_TIMEOUT_MS),
+        TcpStream::connect(target),
+    )
+    .await
+    else {
+        return;
+    };
+    let mut upstream = BufStream::new(upstream);
+    if upstream.write_all(&request_headers).await.is_err() || upstream.flush().await.is_err() {
+        return;
+    }
+    let Some(response_headers) = read_proxy_headers(&mut upstream).await else {
+        return;
+    };
+    if !valid_proxy_response(&response_headers)
+        || downstream.write_all(&response_headers).await.is_err()
+        || downstream.flush().await.is_err()
+    {
+        return;
+    }
+    let _ = timeout(
+        Duration::from_millis(LOOPBACK_PROXY_IDLE_TIMEOUT_MS),
+        tokio::io::copy_bidirectional(&mut downstream, &mut upstream),
+    )
+    .await;
+}
+
+async fn read_proxy_headers(stream: &mut BufStream<TcpStream>) -> Option<Vec<u8>> {
+    let mut headers = Vec::with_capacity(1_024);
+    let mut buffer = [0_u8; 4_096];
+    loop {
+        let count = timeout(Duration::from_secs(2), stream.read(&mut buffer))
+            .await
+            .ok()?
+            .ok()?;
+        if count == 0 {
+            return None;
+        }
+        headers.extend_from_slice(&buffer[..count]);
+        if headers.windows(4).any(|window| window == b"\r\n\r\n")
+            || headers.windows(2).any(|window| window == b"\n\n")
+        {
+            return Some(headers);
+        }
+        if headers.len() > MAXIMUM_LOOPBACK_PROXY_HEADER_BYTES {
+            return None;
+        }
+    }
+}
+
+fn valid_proxy_request(headers: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(headers) else {
+        return false;
+    };
+    let Some(first_line) = text.lines().next() else {
+        return false;
+    };
+    let mut parts = first_line.split_ascii_whitespace();
+    let method = parts.next().unwrap_or_default();
+    let target = parts.next().unwrap_or_default();
+    let version = parts.next().unwrap_or_default();
+    parts.next().is_none()
+        && !method.eq_ignore_ascii_case("CONNECT")
+        && target.starts_with('/')
+        && !target.starts_with("//")
+        && matches!(version, "HTTP/1.0" | "HTTP/1.1")
+}
+
+fn valid_proxy_response(headers: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(headers) else {
+        return false;
+    };
+    let Some(first_line) = text.lines().next() else {
+        return false;
+    };
+    let mut parts = first_line.split_ascii_whitespace();
+    let version = parts.next().unwrap_or_default();
+    let status = parts.next().unwrap_or_default();
+    matches!(version, "HTTP/1.0" | "HTTP/1.1")
+        && status.len() == 3
+        && status.as_bytes().iter().all(u8::is_ascii_digit)
+}
+
+enum LoopbackRequestAuthorization {
+    Bootstrap,
+    Health(String),
+    Session,
+}
+
+fn authorize_loopback_request(
+    request: &str,
+    target: &str,
+    authentication_token: &str,
+    health_path: &str,
+) -> Option<LoopbackRequestAuthorization> {
+    let method = request.lines().next()?.split_ascii_whitespace().next()?;
+    let bootstrap_prefix = format!("{PLUGIN_SESSION_BOOTSTRAP_PATH}?token=");
+    if method == "GET" {
+        if let Some(candidate) = target.strip_prefix(&bootstrap_prefix) {
+            if !candidate.contains('&') && secure_equal(candidate, authentication_token) {
+                return Some(LoopbackRequestAuthorization::Bootstrap);
+            }
+            return None;
+        }
+    }
+    let path = target.split_once('?').map_or(target, |(path, _)| path);
+    if path == health_path {
+        if let Some(challenge) = unique_header_value(request, PLUGIN_HEALTH_CHALLENGE_HEADER)
+            .filter(|challenge| valid_authentication_value(challenge))
+        {
+            return Some(LoopbackRequestAuthorization::Health(challenge.to_owned()));
+        }
+    }
+    let cookie = unique_header_value(request, "cookie")?;
+    let mut session_value = None;
+    for part in cookie.split(';') {
+        let Some((name, value)) = part.trim().split_once('=') else {
+            continue;
+        };
+        if name != PLUGIN_SESSION_COOKIE {
+            continue;
+        }
+        if session_value.replace(value).is_some() {
+            return None;
+        }
+    }
+    session_value
+        .filter(|value| secure_equal(value, authentication_token))
+        .map(|_| LoopbackRequestAuthorization::Session)
+}
+
+fn unique_header_value<'a>(request: &'a str, name: &str) -> Option<&'a str> {
+    let mut found = None;
+    for line in request.lines().skip(1) {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            break;
+        }
+        let (header_name, value) = line.split_once(':')?;
+        if header_name.eq_ignore_ascii_case(name) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(value.trim());
+        }
+    }
+    found
+}
+
+fn valid_authentication_value(value: &str) -> bool {
+    (32..=128).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn secure_equal(left: &str, right: &str) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let comparison_message = b"chatos-plugin-authentication-value";
+    let right_key = hmac::Key::new(hmac::HMAC_SHA256, right.as_bytes());
+    let left_key = hmac::Key::new(hmac::HMAC_SHA256, left.as_bytes());
+    let left_tag = hmac::sign(&left_key, comparison_message);
+    hmac::verify(&right_key, comparison_message, left_tag.as_ref()).is_ok()
+}
+
+fn inject_authentication_header(headers: &[u8], authentication_token: &str) -> Option<Vec<u8>> {
+    let request = std::str::from_utf8(headers).ok()?;
+    if has_header(request, PLUGIN_AUTHENTICATION_HEADER) {
+        return None;
+    }
+    let (boundary, separator) = headers
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|position| (position + 2, b"\r\n".as_slice()))
+        .or_else(|| {
+            headers
+                .windows(2)
+                .position(|window| window == b"\n\n")
+                .map(|position| (position + 1, b"\n".as_slice()))
+        })?;
+    let mut authenticated = Vec::with_capacity(headers.len() + authentication_token.len() + 32);
+    authenticated.extend_from_slice(&headers[..boundary]);
+    authenticated.extend_from_slice(PLUGIN_AUTHENTICATION_HEADER.as_bytes());
+    authenticated.extend_from_slice(b": ");
+    authenticated.extend_from_slice(authentication_token.as_bytes());
+    authenticated.extend_from_slice(separator);
+    authenticated.extend_from_slice(&headers[boundary..]);
+    Some(authenticated)
+}
+
+fn has_header(request: &str, name: &str) -> bool {
+    request
+        .lines()
+        .skip(1)
+        .take_while(|line| !line.trim().is_empty())
+        .any(|line| {
+            line.split_once(':')
+                .is_some_and(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
+        })
+}
+
+async fn write_session_bootstrap(
+    stream: &mut (impl AsyncWrite + Unpin),
+    authentication_token: &str,
+) -> Result<(), String> {
+    write_loopback_response(
+        stream,
+        &format!(
+            "HTTP/1.1 303 See Other\r\nLocation: /\r\nSet-Cookie: {PLUGIN_SESSION_COOKIE}={authentication_token}; HttpOnly; SameSite=Strict; Path=/\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ),
+    )
+    .await
+}
+
+async fn write_unauthorized_response(stream: &mut (impl AsyncWrite + Unpin)) -> Result<(), String> {
+    write_loopback_response(
+        stream,
+        "HTTP/1.1 401 Unauthorized\r\nCache-Control: no-store\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    )
+    .await
+}
+
+async fn write_health_response(
+    stream: &mut (impl AsyncWrite + Unpin),
+    proof: &str,
+) -> Result<(), String> {
+    write_loopback_response(
+        stream,
+        &format!(
+            "HTTP/1.1 200 OK\r\n{PLUGIN_HEALTH_PROOF_HEADER}: {proof}\r\nCache-Control: no-store\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ),
+    )
+    .await
+}
+
+async fn write_loopback_response(
+    stream: &mut (impl AsyncWrite + Unpin),
+    response: &str,
+) -> Result<(), String> {
+    stream
+        .write_all(response.as_bytes())
+        .await
+        .map_err(|_| plugin_runtime_error())?;
+    stream.flush().await.map_err(|_| plugin_runtime_error())
 }
 
 async fn spawn_runtime_process(
     resolved: &ResolvedPluginApplication,
     prepared: PreparedRuntimeProcess,
+    resource_permit: Option<MachineResourcePermit>,
+    #[cfg(windows)] sandbox: Option<Arc<WorkspaceLeaseManager>>,
 ) -> Result<Arc<RunningPluginApplication>, String> {
+    let proxy = start_loopback_proxy(
+        prepared.proxy_port,
+        prepared.child_port,
+        prepared.health_path.clone(),
+        prepared.authentication_token.clone(),
+    )
+    .await?;
+    #[cfg(windows)]
+    if let Some(sandbox) = sandbox {
+        return spawn_sandboxed_runtime(resolved, prepared, resource_permit, sandbox, proxy).await;
+    }
     let mut command = Command::new(&prepared.executable);
     command
         .args(&prepared.arguments)
@@ -1073,12 +1944,14 @@ async fn spawn_runtime_process(
         use std::os::unix::process::CommandExt;
         command.as_std_mut().process_group(0);
     }
-    let mut child = command
-        .spawn()
-        .map_err(|_| "Plugin 应用后端启动失败。".to_owned())?;
+    let mut child = command.spawn().map_err(|_| {
+        proxy.request();
+        "Plugin 应用后端启动失败。".to_owned()
+    })?;
     let termination = match ProcessTermination::attach(&child) {
         Ok(termination) => termination,
         Err(_) => {
+            proxy.request();
             let _ = child.start_kill();
             let _ = child.wait().await;
             return Err("无法隔离 Plugin 应用进程树。".into());
@@ -1092,9 +1965,14 @@ async fn spawn_runtime_process(
         version: resolved.manifest.version.clone(),
         base_url: prepared.base_url,
         health_path: prepared.health_path,
-        termination,
+        authentication_token: prepared.authentication_token,
+        termination: RuntimeTermination::Process {
+            process: termination,
+            proxy: proxy.clone(),
+        },
         alive: AtomicBool::new(true),
         finished: Notify::new(),
+        resource_permit: StandardMutex::new(resource_permit),
     });
     let stdout_task = stdout.map(|pipe| tokio::spawn(drain_pipe(pipe)));
     let stderr_task = stderr.map(|pipe| tokio::spawn(drain_pipe(pipe)));
@@ -1103,8 +1981,141 @@ async fn spawn_runtime_process(
         child,
         stdout_task,
         stderr_task,
+        proxy,
     ));
     Ok(process)
+}
+
+#[cfg(windows)]
+async fn spawn_sandboxed_runtime(
+    resolved: &ResolvedPluginApplication,
+    prepared: PreparedRuntimeProcess,
+    resource_permit: Option<MachineResourcePermit>,
+    sandbox: Arc<WorkspaceLeaseManager>,
+    proxy: Arc<LoopbackProxyShutdown>,
+) -> Result<Arc<RunningPluginApplication>, String> {
+    use std::sync::Mutex as StdMutex;
+
+    let arguments = prepared
+        .arguments
+        .iter()
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let environment = prepared
+        .environment
+        .iter()
+        .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+        .collect::<Vec<_>>();
+    let mut child = sandbox
+        .spawn_workspace_command_with_leases(
+            &prepared.installation_root,
+            &prepared.executable,
+            &arguments,
+            &[
+                (
+                    prepared.installation_root.clone(),
+                    WorkspaceAccess::ReadOnly,
+                ),
+                (prepared.data_directory.clone(), WorkspaceAccess::ReadWrite),
+                (prepared.cache_directory.clone(), WorkspaceAccess::ReadWrite),
+            ],
+            prepared.network_policy,
+            &environment,
+        )
+        .map_err(|error| {
+            proxy.request();
+            format!("Plugin 应用后端受限进程启动失败：{error}")
+        })?;
+    let stdout = match child.take_stdout().map(spawn_blocking_drain) {
+        Some(stdout) => stdout,
+        None => {
+            proxy.request();
+            let _ = child.restore();
+            return Err("Plugin 应用后端 stdout 不可用。".to_owned());
+        }
+    };
+    let stderr = match child.take_stderr().map(spawn_blocking_drain) {
+        Some(stderr) => stderr,
+        None => {
+            proxy.request();
+            let _ = child.restore();
+            return Err("Plugin 应用后端 stderr 不可用。".to_owned());
+        }
+    };
+    let child = Arc::new(StdMutex::new(Some(child)));
+    let termination = ProcessTermination::attach_sandboxed(child.clone());
+    let process = Arc::new(RunningPluginApplication {
+        release_id: resolved.record.spec.release_id.clone(),
+        release_digest: resolved.record.spec.release_digest.clone(),
+        version: resolved.manifest.version.clone(),
+        base_url: prepared.base_url,
+        health_path: prepared.health_path,
+        authentication_token: prepared.authentication_token,
+        termination: RuntimeTermination::Process {
+            process: termination,
+            proxy: proxy.clone(),
+        },
+        alive: AtomicBool::new(true),
+        finished: Notify::new(),
+        resource_permit: StandardMutex::new(resource_permit),
+    });
+    tokio::spawn(wait_for_sandboxed_process(
+        process.clone(),
+        child,
+        stdout,
+        stderr,
+        proxy,
+    ));
+    Ok(process)
+}
+
+#[cfg(windows)]
+fn spawn_blocking_drain(mut file: std::fs::File) -> tokio::task::JoinHandle<()> {
+    tokio::task::spawn_blocking(move || {
+        let mut buffer = [0_u8; 8 * 1_024];
+        loop {
+            match file.read(&mut buffer) {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
+        }
+    })
+}
+
+#[cfg(windows)]
+async fn wait_for_sandboxed_process(
+    process: Arc<RunningPluginApplication>,
+    child: Arc<std::sync::Mutex<Option<crate::windows_appcontainer::SandboxedChild>>>,
+    stdout: tokio::task::JoinHandle<()>,
+    stderr: tokio::task::JoinHandle<()>,
+    proxy: Arc<LoopbackProxyShutdown>,
+) {
+    let _ = tokio::task::spawn_blocking(move || loop {
+        let finished = child.lock().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .map(crate::windows_appcontainer::SandboxedChild::try_wait)
+        });
+        match finished {
+            Some(Ok(Some(_))) => {
+                let _ = child
+                    .lock()
+                    .ok()
+                    .and_then(|mut guard| guard.take())
+                    .map(crate::windows_appcontainer::SandboxedChild::restore);
+                return;
+            }
+            Some(Ok(None)) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Some(Err(_)) | None => return,
+        }
+    })
+    .await;
+    proxy.request();
+    process.alive.store(false, Ordering::SeqCst);
+    process.release_resource();
+    process.finished.notify_waiters();
+    let _ = timeout(Duration::from_secs(1), stdout).await;
+    let _ = timeout(Duration::from_secs(1), stderr).await;
 }
 
 async fn drain_pipe(mut pipe: impl AsyncRead + Unpin) {
@@ -1122,9 +2133,12 @@ async fn wait_for_process(
     mut child: Child,
     stdout: Option<tokio::task::JoinHandle<()>>,
     stderr: Option<tokio::task::JoinHandle<()>>,
+    proxy: Arc<LoopbackProxyShutdown>,
 ) {
     let _ = child.wait().await;
+    proxy.request();
     process.alive.store(false, Ordering::SeqCst);
+    process.release_resource();
     process.finished.notify_waiters();
     if let Some(task) = stdout {
         let _ = timeout(Duration::from_secs(1), task).await;
@@ -1278,7 +2292,7 @@ fn create_confined_directory(root: &Path, relative: &Path) -> Result<PathBuf, St
     {
         return Err(plugin_runtime_error());
     }
-    fs::create_dir_all(root).map_err(|_| plugin_runtime_error())?;
+    ensure_owned_directory(root).map_err(|_| plugin_runtime_error())?;
     let requested_root_metadata = fs::symlink_metadata(root).map_err(|_| plugin_runtime_error())?;
     if !requested_root_metadata.is_dir() || is_link_or_reparse_point(&requested_root_metadata) {
         return Err(plugin_runtime_error());
@@ -1412,7 +2426,9 @@ fn plugin_runtime_error() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin_application::{load_manifest, project_application, PluginRuntimeContext};
+    use crate::plugin_application::{
+        load_manifest, project_application, PathReference, PluginRuntimeContext,
+    };
     use chatos_local_agent_protocol::{LocalPluginInstallationRecord, LocalPluginInstallationSpec};
     use serde_json::json;
     use std::io::Write as _;
@@ -1534,6 +2550,8 @@ mod tests {
                 &record,
                 &manifest,
                 &contribution,
+                None,
+                &mut BTreeMap::new(),
             )
             .unwrap();
             Self {
@@ -1573,19 +2591,36 @@ mod tests {
         let Ok(port) = std::env::var("CHATOS_PLUGIN_APP_PORT") else {
             return;
         };
+        let authentication_token = std::env::var("CHATOS_PLUGIN_APP_TOKEN").unwrap();
+        let health_path = std::env::var("CHATOS_PLUGIN_APP_HEALTH_PATH").unwrap();
         let listener = std::net::TcpListener::bind(format!("127.0.0.1:{port}")).unwrap();
         for stream in listener.incoming() {
             let mut stream = stream.unwrap();
             let mut request = [0_u8; 8 * 1_024];
             let count = stream.read(&mut request).unwrap_or(0);
-            let success = request[..count].starts_with(b"GET /api/health ");
+            let request = std::str::from_utf8(&request[..count]).unwrap_or_default();
+            let authenticated = unique_header_value(request, PLUGIN_AUTHENTICATION_HEADER)
+                .is_some_and(|value| secure_equal(value, &authentication_token));
+            let health = request.starts_with(&format!("GET {health_path} "));
+            let application = request.starts_with("GET / ");
+            let success = authenticated && (health || application);
+            let challenge = unique_header_value(request, PLUGIN_HEALTH_CHALLENGE_HEADER);
             let (status, body) = if success {
                 ("200 OK", "ok")
             } else {
                 ("404 Not Found", "missing")
             };
+            let proof = challenge
+                .filter(|_| authenticated && health)
+                .map(|challenge| {
+                    format!(
+                        "{PLUGIN_HEALTH_PROOF_HEADER}: {}\r\n",
+                        health_proof(&authentication_token, challenge)
+                    )
+                })
+                .unwrap_or_default();
             let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status}\r\n{proof}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
             stream.write_all(response.as_bytes()).unwrap();
@@ -1609,7 +2644,9 @@ mod tests {
 
         assert_eq!(first.url, second.url);
         assert_ne!(first.session_id, second.session_id);
+        assert_eq!(runtime.resources.used_resource_units(), 1);
         assert!(first.url.starts_with("http://127.0.0.1:"));
+        assert!(first.url.contains(PLUGIN_SESSION_BOOTSTRAP_PATH));
         assert_eq!(second.bridge_capabilities, ["host.context.read"]);
         assert_eq!(second.host_session_nonce.len(), 64);
         assert!(second
@@ -1621,6 +2658,38 @@ mod tests {
         assert!(!serialized.contains(&fixture.app_data.to_string_lossy().to_string()));
         assert!(!serialized.contains("API_TOKEN"));
         assert!(!serialized.contains("secret-reference"));
+
+        let client = Client::builder()
+            .redirect(Policy::none())
+            .no_proxy()
+            .build()
+            .unwrap();
+        assert_eq!(
+            client
+                .get(format!("{}/", first.bridge_origin))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        let bootstrap = client.get(&first.url).send().await.unwrap();
+        assert_eq!(bootstrap.status(), reqwest::StatusCode::SEE_OTHER);
+        assert_eq!(bootstrap.headers()["location"], "/");
+        assert_eq!(bootstrap.headers()["referrer-policy"], "no-referrer");
+        let set_cookie = bootstrap.headers()["set-cookie"].to_str().unwrap();
+        assert!(set_cookie.contains("; HttpOnly;"));
+        assert!(set_cookie.contains("; SameSite=Strict;"));
+        assert!(set_cookie.ends_with("; Path=/"));
+        let cookie = set_cookie.split(';').next().unwrap();
+        assert!(client
+            .get(format!("{}/", first.bridge_origin))
+            .header("cookie", cookie)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
 
         let bridge_request = PluginApplicationBridgeRequest {
             owner_user_id: "owner-1".into(),
@@ -1668,6 +2737,203 @@ mod tests {
         runtime.reset().await;
         assert_ne!(runtime.epoch(), epoch);
         assert!(runtime.state.lock().await.processes.is_empty());
+        assert_eq!(runtime.resources.used_resource_units(), 0);
+        let stop_client = Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_millis(500))
+            .build()
+            .unwrap();
+        let mut stopped = false;
+        for _ in 0..20 {
+            if stop_client.get(&first.bridge_origin).send().await.is_err() {
+                stopped = true;
+                break;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+        assert!(stopped);
+    }
+
+    #[tokio::test]
+    async fn static_application_serves_only_declared_bounded_assets_and_keeps_bridge_binding() {
+        let mut fixture = RuntimeFixture::new();
+        fs::write(
+            fixture.installation.join("ui/index.html"),
+            "<script type=\"module\" src=\"./app.js\"></script><main>Static Plugin</main>",
+        )
+        .unwrap();
+        fs::write(
+            fixture.installation.join("ui/app.js"),
+            "window.staticReady = true;",
+        )
+        .unwrap();
+        fs::write(fixture.installation.join("ui/private.txt"), "not declared").unwrap();
+        fixture.resolved.contribution.runtime = None;
+        fixture.resolved.contribution.assets = vec![PathReference::Text("./ui/app.js".into())];
+        fixture.resolved.application.requires_local_runtime = false;
+        let runtime = fixture.runtime();
+        let launch = runtime
+            .launch(
+                runtime.epoch(),
+                fixture.request(1),
+                fixture.resolved.clone(),
+            )
+            .await
+            .unwrap();
+
+        let client = Client::builder()
+            .redirect(Policy::none())
+            .no_proxy()
+            .build()
+            .unwrap();
+        assert_eq!(
+            client
+                .get(format!("{}/", launch.bridge_origin))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        let bootstrap = client.get(&launch.url).send().await.unwrap();
+        assert_eq!(bootstrap.status(), reqwest::StatusCode::SEE_OTHER);
+        assert_eq!(bootstrap.headers()["location"], "/");
+        let cookie = bootstrap.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_owned();
+        assert!(!cookie.is_empty());
+        let entry = client
+            .get(format!("{}/", launch.bridge_origin))
+            .header("cookie", &cookie)
+            .send()
+            .await
+            .unwrap();
+        assert!(entry.status().is_success());
+        assert_eq!(
+            entry.headers()["x-content-type-options"].to_str().unwrap(),
+            "nosniff"
+        );
+        assert!(entry.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("connect-src 'none'"));
+        assert!(entry.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("navigate-to 'self'"));
+        assert!(entry.text().await.unwrap().contains("Static Plugin"));
+
+        let script = client
+            .get(format!("{}/app.js", launch.bridge_origin))
+            .header("cookie", &cookie)
+            .send()
+            .await
+            .unwrap();
+        assert!(script.status().is_success());
+        assert_eq!(
+            script.headers()["content-type"].to_str().unwrap(),
+            "text/javascript; charset=utf-8"
+        );
+        assert!(script.text().await.unwrap().contains("staticReady"));
+        assert_eq!(
+            client
+                .get(format!("{}/private.txt", launch.bridge_origin))
+                .header("cookie", &cookie)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::NOT_FOUND
+        );
+
+        let response = runtime
+            .bridge_request(PluginApplicationBridgeRequest {
+                owner_user_id: "owner-1".into(),
+                presentation_id: "presentation-1".into(),
+                generation: 1,
+                session_id: launch.session_id,
+                host_session_nonce: launch.host_session_nonce,
+                origin: launch.bridge_origin,
+                request_id: "static-context".into(),
+                method: "host.context.read".into(),
+                payload: json!({}),
+            })
+            .await
+            .unwrap();
+        assert_eq!(response.request_id, "static-context");
+        runtime.reset().await;
+        assert!(runtime.state.lock().await.processes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn authenticated_loopback_proxy_preserves_an_upgraded_bidirectional_stream() {
+        let authentication_token = "a".repeat(43);
+        let target_listener =
+            TokioTcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+                .await
+                .unwrap();
+        let target_port = target_listener.local_addr().unwrap().port();
+        let expected_token = authentication_token.clone();
+        let target = tokio::spawn(async move {
+            let (stream, _) = target_listener.accept().await.unwrap();
+            let mut stream = BufStream::new(stream);
+            let headers = read_proxy_headers(&mut stream).await.unwrap();
+            let request = std::str::from_utf8(&headers).unwrap();
+            assert_eq!(
+                unique_header_value(request, PLUGIN_AUTHENTICATION_HEADER),
+                Some(expected_token.as_str())
+            );
+            stream
+                .write_all(
+                    b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: chatos-test\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            stream.flush().await.unwrap();
+            let mut ping = [0_u8; 4];
+            stream.read_exact(&mut ping).await.unwrap();
+            assert_eq!(&ping, b"PING");
+            stream.write_all(b"PONG").await.unwrap();
+            stream.flush().await.unwrap();
+        });
+
+        let proxy_port = available_loopback_port().unwrap();
+        let proxy = start_loopback_proxy(
+            proxy_port,
+            target_port,
+            "/api/health".into(),
+            authentication_token.clone(),
+        )
+        .await
+        .unwrap();
+        let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, proxy_port))
+            .await
+            .unwrap();
+        let mut stream = BufStream::new(stream);
+        stream
+            .write_all(
+                format!(
+                    "GET /socket HTTP/1.1\r\nHost: 127.0.0.1:{proxy_port}\r\nCookie: {PLUGIN_SESSION_COOKIE}={authentication_token}\r\nConnection: Upgrade\r\nUpgrade: chatos-test\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        stream.flush().await.unwrap();
+        let response = read_proxy_headers(&mut stream).await.unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 101 Switching Protocols\r\n"));
+        stream.write_all(b"PING").await.unwrap();
+        stream.flush().await.unwrap();
+        let mut pong = [0_u8; 4];
+        stream.read_exact(&mut pong).await.unwrap();
+        assert_eq!(&pong, b"PONG");
+
+        target.await.unwrap();
+        proxy.request();
     }
 
     #[tokio::test]
@@ -1830,9 +3096,20 @@ mod tests {
         assert!(!prepared.environment.contains_key("API_TOKEN"));
         assert_eq!(
             prepared.environment["CHATOS_PLUGIN_SANDBOX"],
-            "windows-job-lifecycle"
+            if cfg!(windows) {
+                "windows-appcontainer"
+            } else {
+                "windows-job-lifecycle"
+            }
         );
         assert_eq!(prepared.environment["CHATOS_PLUGIN_APP_HOST"], "127.0.0.1");
+        assert_eq!(
+            prepared.environment["CHATOS_PLUGIN_APP_HEALTH_PATH"],
+            "/api/health"
+        );
+        assert!(valid_authentication_value(
+            &prepared.environment["CHATOS_PLUGIN_APP_TOKEN"]
+        ));
     }
 
     #[test]
@@ -1913,5 +3190,104 @@ mod tests {
         let mut oversized = request;
         oversized.payload = json!({"value": "x".repeat(MAXIMUM_BRIDGE_REQUEST_BYTES)});
         assert!(validate_bridge_request(&oversized).is_err());
+    }
+
+    #[test]
+    fn loopback_proxy_header_gate_rejects_connect_and_absolute_targets() {
+        assert!(valid_proxy_request(
+            b"GET /api/health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+        ));
+        assert!(!valid_proxy_request(
+            b"CONNECT 10.0.0.1:443 HTTP/1.1\r\n\r\n"
+        ));
+        assert!(!valid_proxy_request(
+            b"GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n"
+        ));
+        assert!(valid_proxy_response(b"HTTP/1.1 200 OK\r\n\r\n"));
+        assert!(!valid_proxy_response(b"not-http\r\n\r\n"));
+
+        let token = "a".repeat(43);
+        let bootstrap = format!(
+            "GET {PLUGIN_SESSION_BOOTSTRAP_PATH}?token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+        );
+        assert!(matches!(
+            authorize_loopback_request(
+                &bootstrap,
+                &format!("{PLUGIN_SESSION_BOOTSTRAP_PATH}?token={token}"),
+                &token,
+                "/api/health",
+            ),
+            Some(LoopbackRequestAuthorization::Bootstrap)
+        ));
+        let wrong_bootstrap = format!(
+            "GET {PLUGIN_SESSION_BOOTSTRAP_PATH}?token={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "z".repeat(43)
+        );
+        assert!(authorize_loopback_request(
+            &wrong_bootstrap,
+            &format!("{PLUGIN_SESSION_BOOTSTRAP_PATH}?token={}", "z".repeat(43)),
+            &token,
+            "/api/health",
+        )
+        .is_none());
+        let session = format!("GET / HTTP/1.1\r\nCookie: {PLUGIN_SESSION_COOKIE}={token}\r\n\r\n");
+        assert!(matches!(
+            authorize_loopback_request(&session, "/", &token, "/api/health"),
+            Some(LoopbackRequestAuthorization::Session)
+        ));
+        let duplicate_session = format!(
+            "GET / HTTP/1.1\r\nCookie: {PLUGIN_SESSION_COOKIE}={token}; {PLUGIN_SESSION_COOKIE}={token}\r\n\r\n"
+        );
+        assert!(
+            authorize_loopback_request(&duplicate_session, "/", &token, "/api/health").is_none()
+        );
+        let duplicate_cookie_headers = format!(
+            "GET / HTTP/1.1\r\nCookie: {PLUGIN_SESSION_COOKIE}={token}\r\nCookie: unrelated=value\r\n\r\n"
+        );
+        assert!(
+            authorize_loopback_request(&duplicate_cookie_headers, "/", &token, "/api/health")
+                .is_none()
+        );
+        assert!(authorize_loopback_request(
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "/",
+            &token,
+            "/api/health",
+        )
+        .is_none());
+        let health = format!(
+            "GET /api/health HTTP/1.1\r\n{PLUGIN_HEALTH_CHALLENGE_HEADER}: {}\r\n\r\n",
+            "b".repeat(43)
+        );
+        assert!(matches!(
+            authorize_loopback_request(&health, "/api/health", &token, "/api/health"),
+            Some(LoopbackRequestAuthorization::Health(_))
+        ));
+        let challenge = "b".repeat(43);
+        let proof = URL_SAFE_NO_PAD
+            .decode(health_proof(&token, &challenge))
+            .unwrap();
+        assert!(hmac::verify(
+            &hmac::Key::new(hmac::HMAC_SHA256, token.as_bytes()),
+            challenge.as_bytes(),
+            &proof,
+        )
+        .is_ok());
+        assert!(hmac::verify(
+            &hmac::Key::new(hmac::HMAC_SHA256, token.as_bytes()),
+            "c".repeat(43).as_bytes(),
+            &proof,
+        )
+        .is_err());
+        let injected = inject_authentication_header(session.as_bytes(), &token).unwrap();
+        assert!(std::str::from_utf8(&injected)
+            .unwrap()
+            .contains(&format!("{PLUGIN_AUTHENTICATION_HEADER}: {token}\r\n")));
+        assert!(inject_authentication_header(
+            format!("GET / HTTP/1.1\r\n{PLUGIN_AUTHENTICATION_HEADER}: attacker\r\n\r\n")
+                .as_bytes(),
+            &token,
+        )
+        .is_none());
     }
 }

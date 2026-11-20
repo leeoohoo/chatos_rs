@@ -7,6 +7,7 @@ interface AgentTeamConversationState {
   teamId: string | null;
   snapshot: AgentTeamConversationSnapshot | null;
   isLoading: boolean;
+  isLoadingOlder: boolean;
   isSending: boolean;
   isCycling: boolean;
   error: string | null;
@@ -14,6 +15,7 @@ interface AgentTeamConversationState {
   requestId: number;
   activate(port: AgentManagementPort, ownerUserId: string, teamId: string): Promise<void>;
   refresh(port: AgentManagementPort): Promise<void>;
+  loadOlder(port: AgentManagementPort): Promise<boolean>;
   send(
     port: AgentManagementPort,
     content: string,
@@ -28,6 +30,7 @@ export const useAgentTeamConversationStore = create<AgentTeamConversationState>(
   teamId: null,
   snapshot: null,
   isLoading: false,
+  isLoadingOlder: false,
   isSending: false,
   isCycling: false,
   error: null,
@@ -48,6 +51,7 @@ export const useAgentTeamConversationStore = create<AgentTeamConversationState>(
         teamId,
         snapshot: null,
         isLoading: false,
+        isLoadingOlder: false,
         isSending: false,
         isCycling: false,
         error: null,
@@ -76,11 +80,45 @@ export const useAgentTeamConversationStore = create<AgentTeamConversationState>(
       const snapshot = await cycleTeamConversation(port, ownerUserId, teamId);
       const state = get();
       if (state.ownerUserId !== ownerUserId || state.teamId !== teamId || state.requestId !== requestId) return;
-      set({ snapshot, isLoading: false, isCycling: false, requestId: 0 });
+      set({
+        snapshot: mergeConversationSnapshots(state.snapshot, snapshot, state.snapshot?.hasOlder),
+        isLoading: false,
+        isCycling: false,
+        requestId: 0,
+      });
     } catch (failure) {
       const state = get();
       if (state.ownerUserId !== ownerUserId || state.teamId !== teamId || state.requestId !== requestId) return;
       set({ isLoading: false, isCycling: false, error: errorMessage(failure), requestId: 0 });
+    }
+  },
+
+  async loadOlder(port) {
+    const current = get();
+    const firstMessageId = current.snapshot?.messages[0]?.id;
+    if (!current.ownerUserId || !current.teamId || !firstMessageId
+      || !current.snapshot?.hasOlder || current.isLoadingOlder || current.isCycling
+      || current.isSending || !supportsConversation(port)) return false;
+    const ownerUserId = current.ownerUserId;
+    const teamId = current.teamId;
+    const requestId = current.sequence + 1;
+    set({ sequence: requestId, requestId, isLoadingOlder: true, error: null });
+    try {
+      const older = await port.loadTeamConversation(ownerUserId, teamId, firstMessageId, 50);
+      const state = get();
+      if (state.ownerUserId !== ownerUserId || state.teamId !== teamId || state.requestId !== requestId) return false;
+      if (older.teamId !== teamId) throw new Error("Agent 团队消息身份不一致，请刷新后重试。");
+      set({
+        snapshot: mergeConversationSnapshots(state.snapshot, older, older.hasOlder),
+        isLoadingOlder: false,
+        requestId: 0,
+      });
+      return true;
+    } catch (failure) {
+      const state = get();
+      if (state.ownerUserId !== ownerUserId || state.teamId !== teamId || state.requestId !== requestId) return false;
+      set({ isLoadingOlder: false, error: errorMessage(failure), requestId: 0 });
+      return false;
     }
   },
 
@@ -111,7 +149,11 @@ export const useAgentTeamConversationStore = create<AgentTeamConversationState>(
       const snapshot = await cycleTeamConversation(port, ownerUserId, teamId);
       const state = get();
       if (state.ownerUserId !== ownerUserId || state.teamId !== teamId || state.requestId !== requestId) return false;
-      set({ snapshot, isSending: false, requestId: 0 });
+      set({
+        snapshot: mergeConversationSnapshots(state.snapshot, snapshot, state.snapshot?.hasOlder),
+        isSending: false,
+        requestId: 0,
+      });
       return true;
     } catch (failure) {
       const state = get();
@@ -127,6 +169,7 @@ export const useAgentTeamConversationStore = create<AgentTeamConversationState>(
       teamId: null,
       snapshot: null,
       isLoading: false,
+      isLoadingOlder: false,
       isSending: false,
       isCycling: false,
       error: null,
@@ -156,14 +199,20 @@ async function cycleTeamConversation(
   ownerUserId: string,
   teamId: string,
 ) {
-  let snapshot = await port.loadTeamConversation(ownerUserId, teamId);
+  let snapshot = await runConversationCycleStage(
+    "读取团队消息",
+    () => port.loadTeamConversation(ownerUserId, teamId, null, 50),
+  );
   if (snapshot.teamId !== teamId) throw new Error("Agent 团队消息身份不一致，请刷新后重试。");
   const runningAgentIds = [...new Set(snapshot.deliveries
     .filter((delivery) => delivery.status === "running")
     .map((delivery) => delivery.targetAgentId))];
   if (runningAgentIds.length > 0) {
     await Promise.all(runningAgentIds.map(async (agentId) => {
-      const activity = await port.loadTeamMemberActivity(ownerUserId, teamId, agentId);
+      const activity = await runConversationCycleStage(
+        "对账团队 Agent 运行",
+        () => port.loadTeamMemberActivity(ownerUserId, teamId, agentId),
+      );
       if (activity.roomId !== teamId || activity.agentId !== agentId) {
         throw new Error("团队 Agent 运行身份不一致，请刷新后重试。");
       }
@@ -171,16 +220,52 @@ async function cycleTeamConversation(
   }
   let dispatched = false;
   for (let count = 0; count < 100; count += 1) {
-    const delivery = await port.dispatchNextTeamDelivery(ownerUserId, teamId);
+    const delivery = await runConversationCycleStage(
+      "调度团队 Delivery",
+      () => port.dispatchNextTeamDelivery(ownerUserId, teamId),
+    );
     if (!delivery) break;
     if (delivery.teamId !== teamId) throw new Error("Agent Delivery 团队身份不一致，请刷新后重试。");
     dispatched = true;
   }
   if (runningAgentIds.length > 0 || dispatched) {
-    snapshot = await port.loadTeamConversation(ownerUserId, teamId);
+    snapshot = await runConversationCycleStage(
+      "刷新团队消息",
+      () => port.loadTeamConversation(ownerUserId, teamId, null, 50),
+    );
     if (snapshot.teamId !== teamId) throw new Error("Agent 团队消息身份不一致，请刷新后重试。");
   }
   return snapshot;
+}
+
+async function runConversationCycleStage<T>(label: string, operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (failure) {
+    throw new Error(`${label}失败：${errorMessage(failure)}`);
+  }
+}
+
+function mergeConversationSnapshots(
+  current: AgentTeamConversationSnapshot | null,
+  incoming: AgentTeamConversationSnapshot,
+  hasOlder = incoming.hasOlder,
+): AgentTeamConversationSnapshot {
+  if (!current || current.teamId !== incoming.teamId) return incoming;
+  const messages = new Map(current.messages.map((message) => [message.id, message]));
+  for (const message of incoming.messages) messages.set(message.id, message);
+  const deliveries = new Map(current.deliveries.map((delivery) => [delivery.id, delivery]));
+  for (const delivery of incoming.deliveries) deliveries.set(delivery.id, delivery);
+  return {
+    teamId: incoming.teamId,
+    messages: [...messages.values()].sort((left, right) => (
+      left.createdAtUnixMs - right.createdAtUnixMs || left.id.localeCompare(right.id)
+    )),
+    deliveries: [...deliveries.values()].sort((left, right) => (
+      right.createdAtUnixMs - left.createdAtUnixMs || right.id.localeCompare(left.id)
+    )),
+    hasOlder,
+  };
 }
 
 function errorMessage(error: unknown) {

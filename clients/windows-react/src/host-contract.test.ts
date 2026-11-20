@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import healthFailure from "../../contracts/local-agent/v50/fixtures/health-failure.json";
-import healthRequest from "../../contracts/local-agent/v50/fixtures/health-request.json";
-import healthSuccess from "../../contracts/local-agent/v50/fixtures/health-success.json";
+import healthFailure from "../../contracts/local-agent/v52/fixtures/health-failure.json";
+import healthRequest from "../../contracts/local-agent/v52/fixtures/health-request.json";
+import healthSuccess from "../../contracts/local-agent/v52/fixtures/health-success.json";
 import {
   healthRequestSchema,
   healthResponseSchema,
@@ -9,7 +9,7 @@ import {
   LOCAL_AGENT_MAX_MESSAGE_BYTES,
 } from "./features/host-lifecycle/domain/hostContract";
 
-describe("Local Agent Host v50 shared fixtures", () => {
+describe("Local Agent Host v52 shared fixtures", () => {
   it("parses the canonical health request", () => {
     expect(healthRequestSchema.parse(healthRequest).command.type).toBe("health");
   });
@@ -27,6 +27,9 @@ describe("Local Agent Host v50 shared fixtures", () => {
         active_work_items: 2,
         idle_workers: 2,
         queued_ready_work_items: 3,
+        accepting_new_work: true,
+        active_memory_sync_items: 0,
+        admission_in_flight_work_items: 0,
       });
     }
   });

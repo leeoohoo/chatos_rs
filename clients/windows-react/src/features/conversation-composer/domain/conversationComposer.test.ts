@@ -31,7 +31,7 @@ function history(status: "running" | "succeeded" = "succeeded"): ConversationHis
     }],
     messages: [],
     attachments: [],
-    next_before_ordinal: null,
+    next_before_cursor: null,
   };
 }
 

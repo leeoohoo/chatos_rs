@@ -44,6 +44,18 @@ describe("project Git store lifecycle", () => {
     expect(useProjectGitStore.getState().selectedDiff?.path).toBe("Sources/App.ts");
   });
 
+  it("clears a displayed diff when the repository snapshot is refreshed", async () => {
+    const port = stubProjectGitPort();
+    await activate(port);
+    await useProjectGitStore.getState().showDiff(port, gitChange(), true);
+    expect(useProjectGitStore.getState().selectedDiff?.path).toBe("README.md");
+
+    port.loadSnapshot = vi.fn(async () => gitSnapshot({ changes: [] }));
+    await useProjectGitStore.getState().load(port);
+
+    expect(useProjectGitStore.getState().selectedDiff).toBeNull();
+  });
+
   it("invalidates load and diff requests when a mutation starts", async () => {
     const load = deferred<ProjectGitSnapshot>();
     const diff = deferred<ProjectGitDiff>();

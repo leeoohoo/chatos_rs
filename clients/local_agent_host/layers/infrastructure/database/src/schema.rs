@@ -852,3 +852,17 @@ pub(super) const SCHEMA_V48: &[&str] = &[
 /// Checkpoints may use the v1 compressed BLOB. Bump the schema gate so an
 /// older binary cannot silently interpret those bytes as model history.
 pub(super) const SCHEMA_V49: &[&str] = &[];
+
+/// A native Agent can have one direct conversation plus one conversation per
+/// project team. They intentionally share the same Agent-bound Contact
+/// resource so transcript identity remains stable, while project resources
+/// keep their one-conversation invariant.
+pub(super) const SCHEMA_V50: &[&str] = &[
+    "DROP INDEX IF EXISTS local_conversations_owner_resource",
+    "CREATE INDEX IF NOT EXISTS local_conversations_owner_resource ON local_conversations(\
+       owner_user_id, resource_kind, resource_id\
+     ) WHERE resource_kind IS NOT NULL AND resource_id IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS local_conversations_owner_project_resource ON local_conversations(\
+       owner_user_id, resource_id\
+     ) WHERE resource_kind = 'project' AND resource_id IS NOT NULL",
+];

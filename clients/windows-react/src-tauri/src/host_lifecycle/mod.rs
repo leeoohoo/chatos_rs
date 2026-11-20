@@ -6,17 +6,24 @@ use crate::{
     agent_conversation::{
         team_todo::recover_agent_team_run_control_journal, AgentConversationStore,
     },
+    app_data_transaction::ensure_owned_directory,
     attachment_tool_worker::AttachmentToolWorker,
-    authentication::AuthenticationManager,
+    authentication::{runtime_api_base_url, AuthenticationManager},
     connector_state, control_plane,
     local_terminal::LocalTerminalRegistry,
+    machine_resource_governor::MachineResourceGovernor,
     plugin_application::PluginApplicationManager,
     terminal_tool_worker::TerminalToolWorker,
     tool_approval::session::ApprovalSessionAllowlist,
 };
-use chatos_local_agent_protocol::{HostCommand, HostResult, LOCAL_AGENT_PROTOCOL_VERSION};
-use diagnostics::{classify_error, HostDiagnostics, HostDiagnosticsSnapshot};
-use process::spawn;
+use chatos_local_agent_protocol::{
+    HostCommand, HostResult, LocalAgentHostSchedulerSnapshot, LocalAgentResourcePressureLevel,
+    SetSchedulerPressureCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+};
+use diagnostics::{
+    classify_authentication_error, classify_error, HostDiagnostics, HostDiagnosticsSnapshot,
+};
+use process::{spawn, spawn_with_memory, HostConcurrencyConfiguration, MemoryLaunchConfig};
 use serde::Serialize;
 use std::{collections::BTreeMap, path::PathBuf};
 use tauri::{AppHandle, Manager, State};
@@ -55,12 +62,24 @@ impl HostLifecycleSnapshot {
     }
 }
 
-#[derive(Default)]
 pub struct HostManager {
     process: Mutex<Option<ManagedHost>>,
     model_catalog: Mutex<Option<(String, Vec<control_plane::ControlPlaneModelOption>)>>,
+    scheduler_pressure: Mutex<LocalAgentResourcePressureLevel>,
     diagnostics: HostDiagnostics,
     approval_sessions: ApprovalSessionAllowlist,
+}
+
+impl Default for HostManager {
+    fn default() -> Self {
+        Self {
+            process: Mutex::new(None),
+            model_catalog: Mutex::new(None),
+            scheduler_pressure: Mutex::new(LocalAgentResourcePressureLevel::Normal),
+            diagnostics: HostDiagnostics::default(),
+            approval_sessions: ApprovalSessionAllowlist::default(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -84,6 +103,87 @@ impl HostManager {
         self.diagnostics.record("host_shutdown", "requested").await;
         self.terminate_process().await;
         self.diagnostics.record("host_shutdown", "stopped").await;
+    }
+
+    async fn current_scheduler_pressure(&self) -> LocalAgentResourcePressureLevel {
+        *self.scheduler_pressure.lock().await
+    }
+
+    pub(crate) async fn update_scheduler_pressure(
+        &self,
+        pressure_level: LocalAgentResourcePressureLevel,
+    ) -> Result<(), String> {
+        *self.scheduler_pressure.lock().await = pressure_level;
+        self.apply_scheduler_update(pressure_level, None)
+            .await
+            .map(|_| ())
+    }
+
+    pub(crate) async fn update_scheduler_target(&self, target: usize) -> Result<bool, String> {
+        let pressure = self.current_scheduler_pressure().await;
+        self.apply_scheduler_update(pressure, Some(target)).await
+    }
+
+    async fn apply_scheduler_update(
+        &self,
+        pressure_level: LocalAgentResourcePressureLevel,
+        requested_target: Option<usize>,
+    ) -> Result<bool, String> {
+        let mut process = self.process.lock().await;
+        let Some(host) = process.as_mut() else {
+            return Ok(false);
+        };
+        let Some(current) = host.scheduler.clone() else {
+            terminate(host).await;
+            *process = None;
+            drop(process);
+            *self.model_catalog.lock().await = None;
+            self.approval_sessions.reset();
+            return Err("Local Agent Host scheduler snapshot is unavailable.".to_string());
+        };
+        let target = requested_target.unwrap_or(current.target_concurrent_work_items);
+        if !(1..=current.maximum_concurrent_work_items).contains(&target) {
+            return Ok(false);
+        }
+        let response = request(
+            host,
+            HostCommand::SetSchedulerPressure(SetSchedulerPressureCommand {
+                pressure_level,
+                target_concurrent_work_items: target,
+            }),
+        )
+        .await;
+        let valid = match response {
+            Ok(HostResult::SchedulerPressureUpdated {
+                pressure_level: applied,
+                target_concurrent_work_items: applied_target,
+                effective_maximum_concurrent_work_items,
+            }) if applied == pressure_level
+                && applied_target == target
+                && (1..=current.maximum_concurrent_work_items)
+                    .contains(&effective_maximum_concurrent_work_items)
+                && effective_maximum_concurrent_work_items <= applied_target =>
+            {
+                if let Some(scheduler) = host.scheduler.as_mut() {
+                    scheduler.pressure_level = applied;
+                    scheduler.target_concurrent_work_items = applied_target;
+                    scheduler.effective_maximum_concurrent_work_items =
+                        effective_maximum_concurrent_work_items;
+                }
+                return Ok(true);
+            }
+            Ok(_) => "Local Agent Host scheduler pressure response is invalid.".to_string(),
+            Err(error) => error.message,
+        };
+        terminate(host).await;
+        *process = None;
+        drop(process);
+        *self.model_catalog.lock().await = None;
+        self.approval_sessions.reset();
+        self.diagnostics
+            .record("host_scheduler_update", classify_error(&valid))
+            .await;
+        Err(valid)
     }
 
     pub(crate) async fn execute(&self, command: HostCommand) -> Result<HostResult, String> {
@@ -171,6 +271,23 @@ impl HostManager {
         }
         running
     }
+
+    pub(crate) async fn scheduler_snapshot(&self) -> Option<LocalAgentHostSchedulerSnapshot> {
+        let mut process = self.process.lock().await;
+        let host = process.as_mut()?;
+        if let Err(error) = health_check(host).await {
+            terminate(host).await;
+            *process = None;
+            drop(process);
+            *self.model_catalog.lock().await = None;
+            self.approval_sessions.reset();
+            self.diagnostics
+                .record("host_scheduler_snapshot", classify_error(&error))
+                .await;
+            return None;
+        }
+        host.scheduler.clone()
+    }
 }
 
 #[tauri::command]
@@ -255,6 +372,7 @@ pub async fn start_local_agent_host(
     local_terminals: State<'_, LocalTerminalRegistry>,
     plugin_applications: State<'_, PluginApplicationManager>,
     authentication: State<'_, AuthenticationManager>,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
 ) -> Result<HostLifecycleSnapshot, String> {
     if let Err(error) = validate_owner(&owner_user_id) {
@@ -264,9 +382,16 @@ pub async fn start_local_agent_host(
             .await;
         return Err(error);
     }
-    authentication
-        .access_token_for_owner(&owner_user_id)
-        .await?;
+    let access_token = match authentication.access_token_for_owner(&owner_user_id).await {
+        Ok(token) => token,
+        Err(error) => {
+            manager
+                .diagnostics
+                .record("host_authentication", classify_authentication_error(&error))
+                .await;
+            return Err(error);
+        }
+    };
     manager.diagnostics.record("host_start", "requested").await;
     let mut process = manager.process.lock().await;
     if let Some(host) = process.as_mut() {
@@ -278,17 +403,20 @@ pub async fn start_local_agent_host(
             .is_some_and(|(owner, options)| owner == &owner_user_id && !options.is_empty());
         if host.owner_user_id == owner_user_id && catalog_ready && health_check(host).await.is_ok()
         {
-            attachment_worker
-                .configure(app.clone(), owner_user_id.clone())
-                .await;
-            terminal_worker
-                .configure(app.clone(), owner_user_id.clone())
-                .await;
-            manager
-                .diagnostics
-                .record("host_start", "already_ready")
-                .await;
-            return Ok(HostLifecycleSnapshot::ready());
+            let pressure = manager.current_scheduler_pressure().await;
+            if apply_scheduler_pressure(host, pressure).await.is_ok() {
+                attachment_worker
+                    .configure(app.clone(), owner_user_id.clone())
+                    .await;
+                terminal_worker
+                    .configure(app.clone(), owner_user_id.clone())
+                    .await;
+                manager
+                    .diagnostics
+                    .record("host_start", "already_ready")
+                    .await;
+                return Ok(HostLifecycleSnapshot::ready());
+            }
         }
         terminate(host).await;
         *process = None;
@@ -316,7 +444,7 @@ pub async fn start_local_agent_host(
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?;
-    std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
+    ensure_owned_directory(&data_dir).map_err(|error| error.to_string())?;
     let state_data_dir = data_dir.clone();
     let state_owner = owner_user_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -326,15 +454,21 @@ pub async fn start_local_agent_host(
     .map_err(|_| "本地工作区状态准备任务异常退出。".to_owned())??;
     let database = data_dir.join("local-agent").join("agent.sqlite3");
     if let Some(parent) = database.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        ensure_owned_directory(parent).map_err(|error| error.to_string())?;
     }
     let empty_environment = BTreeMap::new();
+    let concurrency_budget = resources.concurrency_budget();
+    let host_concurrency = HostConcurrencyConfiguration {
+        maximum: concurrency_budget.maximum_host_work_items,
+        initial: concurrency_budget.base_host_work_items,
+    };
     let mut bootstrap_host = match spawn(
         &executable,
         &database,
         owner_user_id.clone(),
         &empty_environment,
         false,
+        host_concurrency,
     )
     .await
     {
@@ -391,12 +525,28 @@ pub async fn start_local_agent_host(
 
     let model_options = prepared.model_options;
     let mut credential_environment = prepared.credential_environment;
-    let spawn_result = spawn(
+    let memory_base_url = match memory_base_url() {
+        Ok(url) => url,
+        Err(error) => {
+            manager
+                .diagnostics
+                .record("host_memory_configuration", "invalid")
+                .await;
+            return Err(error);
+        }
+    };
+    let spawn_result = spawn_with_memory(
         &executable,
         &database,
         owner_user_id,
         &credential_environment,
         true,
+        host_concurrency,
+        Some(MemoryLaunchConfig {
+            base_url: &memory_base_url,
+            source_id: MEMORY_SOURCE_ID,
+            access_token: &access_token,
+        }),
     )
     .await;
     for credential in credential_environment.values_mut() {
@@ -417,6 +567,16 @@ pub async fn start_local_agent_host(
         manager
             .diagnostics
             .record("host_worker_handshake", classify_error(&error))
+            .await;
+        return Err(error);
+    }
+    if let Err(error) =
+        apply_scheduler_pressure(&mut host, manager.current_scheduler_pressure().await).await
+    {
+        terminate(&mut host).await;
+        manager
+            .diagnostics
+            .record("host_scheduler_pressure", classify_error(&error))
             .await;
         return Err(error);
     }
@@ -455,6 +615,78 @@ pub async fn start_local_agent_host(
         .record("host_start_handshake", "ready")
         .await;
     Ok(HostLifecycleSnapshot::ready())
+}
+
+const MEMORY_SOURCE_ID: &str = "chatos";
+
+fn memory_base_url() -> Result<String, String> {
+    let configured = std::env::var("CHATOS_MEMORY_BASE_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(runtime_api_base_url);
+    let mut url =
+        reqwest::Url::parse(&configured).map_err(|_| "剧情规划历史服务地址无效。".to_string())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("剧情规划历史服务地址无效。".to_string());
+    }
+    if std::env::var("CHATOS_MEMORY_BASE_URL")
+        .ok()
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        let prefix = url.path().trim_matches('/').to_owned();
+        let path = if prefix.is_empty() {
+            "/api/memory".to_owned()
+        } else {
+            format!("/{prefix}/api/memory")
+        };
+        url.set_path(&path);
+    }
+    Ok(url.as_str().trim_end_matches('/').to_owned())
+}
+
+async fn apply_scheduler_pressure(
+    host: &mut ManagedHost,
+    pressure_level: LocalAgentResourcePressureLevel,
+) -> Result<(), String> {
+    let target_concurrent_work_items = host
+        .scheduler
+        .as_ref()
+        .map(|scheduler| scheduler.target_concurrent_work_items)
+        .unwrap_or(1);
+    match request(
+        host,
+        HostCommand::SetSchedulerPressure(SetSchedulerPressureCommand {
+            pressure_level,
+            target_concurrent_work_items,
+        }),
+    )
+    .await
+    .map_err(|error| error.message)?
+    {
+        HostResult::SchedulerPressureUpdated {
+            pressure_level: applied,
+            target_concurrent_work_items: applied_target,
+            effective_maximum_concurrent_work_items,
+        } if applied == pressure_level
+            && applied_target == target_concurrent_work_items
+            && (1..=16).contains(&effective_maximum_concurrent_work_items) =>
+        {
+            if let Some(scheduler) = host.scheduler.as_mut() {
+                scheduler.pressure_level = applied;
+                scheduler.target_concurrent_work_items = applied_target;
+                scheduler.effective_maximum_concurrent_work_items =
+                    effective_maximum_concurrent_work_items;
+            }
+            Ok(())
+        }
+        _ => Err("Local Agent Host scheduler pressure response is invalid.".to_string()),
+    }
 }
 
 async fn host_owner_for_recovery(manager: &HostManager) -> Option<String> {
@@ -533,6 +765,13 @@ mod tests {
         assert!(validate_owner("user-1").is_ok());
     }
 
+    #[test]
+    fn memory_base_url_derives_from_runtime_api_without_credentials() {
+        let url = memory_base_url().expect("runtime memory URL");
+        assert!(url.ends_with("/api/memory"));
+        assert!(!url.contains('@'));
+    }
+
     #[tokio::test]
     async fn shutdown_clears_in_memory_approval_session() {
         let manager = HostManager::default();
@@ -542,5 +781,18 @@ mod tests {
             .insert_if_current(generation, "v2:test-scope".into()));
         manager.shutdown().await;
         assert!(manager.approval_sessions().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pressure_is_retained_before_the_host_is_started() {
+        let manager = HostManager::default();
+        manager
+            .update_scheduler_pressure(LocalAgentResourcePressureLevel::Serious)
+            .await
+            .expect("store pressure without a running Host");
+        assert_eq!(
+            manager.current_scheduler_pressure().await,
+            LocalAgentResourcePressureLevel::Serious
+        );
     }
 }

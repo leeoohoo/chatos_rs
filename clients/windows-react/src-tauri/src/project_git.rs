@@ -9,7 +9,7 @@ use std::{
     },
     time::Duration,
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     process::Command,
@@ -17,7 +17,11 @@ use tokio::{
 };
 
 use crate::{
-    host_lifecycle::validate_owner, platform_execution_context::resolve_project_root,
+    host_lifecycle::validate_owner,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
+    platform_execution_context::resolve_project_root,
     terminal_runtime::process::ProcessTermination,
 };
 
@@ -165,9 +169,11 @@ struct GitProcessOutput {
 #[tauri::command]
 pub async fn load_project_git_snapshot(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
 ) -> Result<ProjectGitSnapshot, String> {
+    let _permit = acquire_git_permit(&resources).await?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
     load_snapshot(&context).await
 }
@@ -175,14 +181,24 @@ pub async fn load_project_git_snapshot(
 #[tauri::command]
 pub async fn load_project_git_diff(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     path: String,
     staged: bool,
 ) -> Result<ProjectGitDiff, String> {
+    let _permit = acquire_git_permit(&resources).await?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
+    load_git_diff(&context, path, staged).await
+}
+
+async fn load_git_diff(
+    context: &GitProjectContext,
+    path: String,
+    staged: bool,
+) -> Result<ProjectGitDiff, String> {
     let path = normalized_relative_path(&path)?;
-    let current = required_snapshot(&context).await?;
+    let current = required_snapshot(context).await?;
     let change = current
         .snapshot
         .changes
@@ -200,12 +216,7 @@ pub async fn load_project_git_diff(
             "--no-ext-diff".to_owned(),
             "--".to_owned(),
             null_device_path().to_owned(),
-            current
-                .repository
-                .root
-                .join(&path)
-                .to_string_lossy()
-                .into_owned(),
+            path.clone(),
         ]
     } else {
         let mut arguments = vec![
@@ -229,7 +240,7 @@ pub async fn load_project_git_diff(
     )
     .await?;
     Ok(ProjectGitDiff {
-        project_id: context.project_id,
+        project_id: context.project_id.clone(),
         path,
         is_staged: staged,
         content: output_text(output.stdout)?,
@@ -239,9 +250,11 @@ pub async fn load_project_git_diff(
 #[tauri::command]
 pub async fn initialize_project_git_repository(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
 ) -> Result<ProjectGitMutationResult, String> {
+    let _permit = acquire_git_permit(&resources).await?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
     run_git(
         &["init".into(), "-b".into(), "main".into()],
@@ -258,10 +271,12 @@ pub async fn initialize_project_git_repository(
 #[tauri::command]
 pub async fn stage_project_git_paths(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     paths: Vec<String>,
 ) -> Result<ProjectGitMutationResult, String> {
+    let _permit = acquire_git_permit(&resources).await?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
     let current = required_snapshot(&context).await?;
     let paths = validate_requested_paths(&paths, &current.snapshot, false)?;
@@ -284,10 +299,12 @@ pub async fn stage_project_git_paths(
 #[tauri::command]
 pub async fn unstage_project_git_paths(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     paths: Vec<String>,
 ) -> Result<ProjectGitMutationResult, String> {
+    let _permit = acquire_git_permit(&resources).await?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
     let current = required_snapshot(&context).await?;
     let paths = validate_requested_paths(&paths, &current.snapshot, true)?;
@@ -314,10 +331,12 @@ pub async fn unstage_project_git_paths(
 #[tauri::command]
 pub async fn commit_project_git(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     message: String,
 ) -> Result<ProjectGitMutationResult, String> {
+    let _permit = acquire_git_permit(&resources).await?;
     let message = normalized_commit_message(message)?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
     let repository = required_repository(&context).await?;
@@ -336,10 +355,12 @@ pub async fn commit_project_git(
 #[tauri::command]
 pub async fn switch_project_git_branch(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     branch: String,
 ) -> Result<ProjectGitMutationResult, String> {
+    let _permit = acquire_git_permit(&resources).await?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
     let repository = required_repository(&context).await?;
     let branch = validated_branch(&repository, branch).await?;
@@ -358,11 +379,13 @@ pub async fn switch_project_git_branch(
 #[tauri::command]
 pub async fn create_project_git_branch(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     name: String,
     switch_to_branch: bool,
 ) -> Result<ProjectGitMutationResult, String> {
+    let _permit = acquire_git_permit(&resources).await?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
     let repository = required_repository(&context).await?;
     let name = validated_branch(&repository, name).await?;
@@ -386,10 +409,12 @@ pub async fn create_project_git_branch(
 #[tauri::command]
 pub async fn merge_project_git_branch(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     branch: String,
 ) -> Result<ProjectGitMutationResult, String> {
+    let _permit = acquire_git_permit(&resources).await?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
     let repository = required_repository(&context).await?;
     let branch = validated_branch(&repository, branch).await?;
@@ -408,12 +433,14 @@ pub async fn merge_project_git_branch(
 #[tauri::command]
 pub async fn save_project_git_remote(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     original_name: Option<String>,
     name: String,
     url: Option<String>,
 ) -> Result<ProjectGitMutationResult, String> {
+    let _permit = acquire_git_permit(&resources).await?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
     let current = required_snapshot(&context).await?;
     let name = validated_remote_name(&current.repository, name).await?;
@@ -473,10 +500,12 @@ pub async fn save_project_git_remote(
 #[tauri::command]
 pub async fn remove_project_git_remote(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
     name: String,
 ) -> Result<ProjectGitMutationResult, String> {
+    let _permit = acquire_git_permit(&resources).await?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
     let current = required_snapshot(&context).await?;
     let name = validated_remote_name(&current.repository, name).await?;
@@ -503,9 +532,11 @@ pub async fn remove_project_git_remote(
 #[tauri::command]
 pub async fn pull_project_git(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
 ) -> Result<ProjectGitMutationResult, String> {
+    let _permit = acquire_git_permit(&resources).await?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
     let repository = required_repository(&context).await?;
     run_git(
@@ -523,9 +554,11 @@ pub async fn pull_project_git(
 #[tauri::command]
 pub async fn push_project_git(
     app: AppHandle,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     project_id: String,
 ) -> Result<ProjectGitMutationResult, String> {
+    let _permit = acquire_git_permit(&resources).await?;
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
     let current = required_snapshot(&context).await?;
     let arguments = if current.snapshot.upstream.is_some() {
@@ -558,6 +591,17 @@ pub async fn push_project_git(
     )
     .await?;
     refresh_after_mutation(&context).await
+}
+
+async fn acquire_git_permit(
+    resources: &MachineResourceGovernor,
+) -> Result<crate::machine_resource_governor::MachineResourcePermit, String> {
+    resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await
 }
 
 async fn resolve_git_project(
@@ -1205,6 +1249,7 @@ fn sanitize_remote_url(value: &str) -> (String, bool) {
         }
     }
     if Path::new(without_suffix).is_absolute()
+        || without_suffix.starts_with('/')
         || without_suffix.starts_with('\\')
         || without_suffix
             .as_bytes()
@@ -1378,7 +1423,9 @@ fn invalid_git_output() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, process::Command as StdCommand, time::Instant};
+    #[cfg(unix)]
+    use std::time::Instant;
+    use std::{fs, process::Command as StdCommand};
 
     fn context(root: &Path) -> GitProjectContext {
         let root = fs::canonicalize(root).unwrap();
@@ -1446,6 +1493,14 @@ mod tests {
             .unwrap();
         assert_eq!(change.kind, ProjectGitChangeKind::Untracked);
         assert!(change.has_working_tree_changes);
+        let untracked_diff = load_git_diff(&project, "README.md".into(), false)
+            .await
+            .unwrap();
+        assert!(untracked_diff.content.contains("+# First"));
+        assert!(untracked_diff.content.contains("+++ b/README.md"));
+        assert!(!untracked_diff
+            .content
+            .contains(directory.path().to_string_lossy().as_ref()));
 
         let current = required_snapshot(&project).await.unwrap();
         let paths =

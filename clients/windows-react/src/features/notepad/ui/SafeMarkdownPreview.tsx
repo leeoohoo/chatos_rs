@@ -16,13 +16,17 @@ export function SafeMarkdownPreview({ markdown }: SafeMarkdownPreviewProps) {
 function MarkdownBlock({ block }: { block: string }) {
   const value = block.trim();
   if (!value) return null;
-  const heading = /^(#{1,6})\s+(.+)$/u.exec(value);
+  const heading = /^(#{1,6})\s+([^\n]+)(?:\n([\s\S]+))?$/u.exec(value);
   if (heading) {
     const level = Math.min(heading[1].length, 4);
-    if (level === 1) return <h1>{heading[2]}</h1>;
-    if (level === 2) return <h2>{heading[2]}</h2>;
-    if (level === 3) return <h3>{heading[2]}</h3>;
-    return <h4>{heading[2]}</h4>;
+    const title = level === 1
+      ? <h1>{heading[2]}</h1>
+      : level === 2
+        ? <h2>{heading[2]}</h2>
+        : level === 3
+          ? <h3>{heading[2]}</h3>
+          : <h4>{heading[2]}</h4>;
+    return <>{title}{heading[3] && <MarkdownBlock block={heading[3]} />}</>;
   }
   const image = /^!\[(.*)\]\(<(data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+)>\)$/u.exec(value);
   if (image && image[2].length <= 700_000) {

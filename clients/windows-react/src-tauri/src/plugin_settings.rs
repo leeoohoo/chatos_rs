@@ -1,7 +1,9 @@
 use chatos_local_agent_protocol::{
-    GetPluginInstallationCommand, HostCommand, HostResult, ListPluginInstallationsCommand,
-    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalPluginInstallationSummary,
-    PutPluginInstallationCommand, RemovePluginInstallationCommand,
+    GetPluginInstallationCommand, HostCommand, HostResult, ListPluginHookBundleRecordsCommand,
+    ListPluginHookBundlesCommand, ListPluginInstallationsCommand, LocalPluginHookBundleRecord,
+    LocalPluginHookBundleSpec, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
+    LocalPluginInstallationSummary, PutPluginHookBundleCommand, PutPluginInstallationCommand,
+    RemovePluginInstallationCommand, SetActivePluginHookBundlesCommand,
 };
 use chatos_plugin_management_sdk::{
     parse_plugin_manifest, validate_plugin_manifest, PluginInstallSource, PluginInstallSourceList,
@@ -9,24 +11,41 @@ use chatos_plugin_management_sdk::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     future::Future,
+    io::Read,
     path::{Path, PathBuf},
     pin::Pin,
+    sync::{Arc, Mutex},
 };
 use tauri::{AppHandle, Manager, State};
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
+    app_data_transaction::ensure_owned_directory,
     authentication::AuthenticationManager,
-    computer_use_worker::TrustedComputerUseLaunch,
+    computer_use_worker::{diagnose as diagnose_computer_use, TrustedComputerUseLaunch},
     connector_state,
     host_lifecycle::HostManager,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePermit,
+        MachineResourcePriority,
+    },
     plugin_application::PluginApplicationManager,
-    plugin_installer::{install_marketplace_package, resolve_executable},
+    plugin_credentials::{environment_secret_references, secret_name},
+    plugin_installer::{
+        inspect_local_package_source, install_git_package, install_local_package,
+        install_marketplace_package, install_npm_mcp, install_npm_package_source,
+        install_program_mcp as install_program_mcp_package, resolve_executable,
+        trusted_local_hook_bundles, CommittedPluginPackage, LocalPluginHookSummary, NpmMcpDraft,
+        NpmMcpInspection, ProgramMcpDraft, ProgramMcpInspection,
+    },
     plugin_integrity::{
-        requires_installation_integrity, secure_component_revision, verify_installation_integrity,
+        recover_interrupted_installations, requires_installation_integrity,
+        secure_component_revision, verify_installation_integrity,
     },
 };
 
@@ -49,14 +68,198 @@ impl PluginSettingsHost for HostManager {
 #[derive(Clone)]
 pub(crate) struct PluginSettingsManager {
     plugin_root: PathBuf,
+    manual_selections: Arc<Mutex<BTreeMap<String, ManualPluginSelection>>>,
+    installation_transactions: Arc<AsyncMutex<()>>,
+    resources: MachineResourceGovernor,
 }
 
 impl PluginSettingsManager {
+    #[cfg(test)]
     pub(crate) fn new(app_data_directory: PathBuf) -> Self {
+        Self::new_with_resources(app_data_directory, MachineResourceGovernor::default())
+    }
+
+    pub(crate) fn new_with_resources(
+        app_data_directory: PathBuf,
+        resources: MachineResourceGovernor,
+    ) -> Self {
         Self {
             plugin_root: app_data_directory.join("NativeConnector").join("Plugins"),
+            manual_selections: Arc::new(Mutex::new(BTreeMap::new())),
+            installation_transactions: Arc::new(AsyncMutex::new(())),
+            resources,
         }
     }
+
+    async fn acquire_install_resource(&self) -> Result<MachineResourcePermit, String> {
+        self.resources
+            .acquire(
+                MachineResourceKind::CodeReadWorker,
+                MachineResourcePriority::Interactive,
+            )
+            .await
+    }
+
+    pub(crate) fn plugin_root(&self) -> &Path {
+        &self.plugin_root
+    }
+
+    fn stage_manual_selection(
+        &self,
+        owner_user_id: &str,
+        presentation_id: &str,
+        generation: u64,
+        canonical_root: PathBuf,
+        directory_name: String,
+    ) -> Result<ManualPluginDirectorySelection, String> {
+        let selection_id = format!("plugin-source-{}", uuid::Uuid::new_v4().simple());
+        let mut selections = self
+            .manual_selections
+            .lock()
+            .map_err(|_| "Plugin 手动安装状态不可用。".to_owned())?;
+        for selection in selections.values_mut().filter(|selection| {
+            selection.owner_user_id == owner_user_id
+                && selection.presentation_id == presentation_id
+                && selection.operation_id.is_some()
+        }) {
+            selection.discard_after_operation = true;
+        }
+        selections.retain(|_, selection| {
+            selection.owner_user_id != owner_user_id
+                || selection.presentation_id != presentation_id
+                || selection.operation_id.is_some()
+        });
+        while selections.len() >= 64 {
+            let removable = selections
+                .iter()
+                .find_map(|(key, selection)| selection.operation_id.is_none().then(|| key.clone()))
+                .ok_or_else(|| "Plugin 手动安装操作过多，请稍后重试。".to_owned())?;
+            selections.remove(&removable);
+        }
+        selections.insert(
+            selection_id.clone(),
+            ManualPluginSelection {
+                owner_user_id: owner_user_id.to_owned(),
+                presentation_id: presentation_id.to_owned(),
+                generation,
+                canonical_root,
+                directory_name: directory_name.clone(),
+                inspected_fingerprint: None,
+                operation_id: None,
+                discard_after_operation: false,
+            },
+        );
+        Ok(ManualPluginDirectorySelection {
+            selection_id,
+            directory_name,
+        })
+    }
+
+    fn begin_manual_operation(
+        &self,
+        input: &ManualPluginSelectionInput,
+        generation: u64,
+        expected_fingerprint: Option<&str>,
+    ) -> Result<(ManualPluginSelection, String), String> {
+        let mut selections = self
+            .manual_selections
+            .lock()
+            .map_err(|_| "Plugin 手动安装状态不可用。".to_owned())?;
+        let selection = selections
+            .get_mut(&input.selection_id)
+            .filter(|selection| {
+                selection.owner_user_id == input.owner_user_id
+                    && selection.presentation_id == input.presentation_id
+                    && selection.generation == generation
+            })
+            .ok_or_else(manual_selection_expired)?;
+        if selection.operation_id.is_some() {
+            return Err("Plugin 来源正在处理，请等待当前操作完成。".into());
+        }
+        if let Some(expected) = expected_fingerprint {
+            if selection.inspected_fingerprint.as_deref() != Some(expected) {
+                return Err("Plugin 预检结果已失效，请重新预检。".into());
+            }
+        }
+        let operation_id = uuid::Uuid::new_v4().to_string();
+        selection.operation_id = Some(operation_id.clone());
+        Ok((selection.clone(), operation_id))
+    }
+
+    fn finish_manual_inspection(
+        &self,
+        selection_id: &str,
+        operation_id: &str,
+        fingerprint: Option<String>,
+    ) {
+        let Ok(mut selections) = self.manual_selections.lock() else {
+            return;
+        };
+        let Some(selection) = selections.get_mut(selection_id) else {
+            return;
+        };
+        if selection.operation_id.as_deref() != Some(operation_id) {
+            return;
+        }
+        if selection.discard_after_operation {
+            selections.remove(selection_id);
+            return;
+        }
+        selection.operation_id = None;
+        selection.inspected_fingerprint = fingerprint;
+    }
+
+    fn finish_manual_install(&self, selection_id: &str, operation_id: &str, installed: bool) {
+        let Ok(mut selections) = self.manual_selections.lock() else {
+            return;
+        };
+        if selections
+            .get(selection_id)
+            .and_then(|selection| selection.operation_id.as_deref())
+            != Some(operation_id)
+        {
+            return;
+        }
+        if installed
+            || selections
+                .get(selection_id)
+                .is_some_and(|selection| selection.discard_after_operation)
+        {
+            selections.remove(selection_id);
+        } else if let Some(selection) = selections.get_mut(selection_id) {
+            selection.operation_id = None;
+        }
+    }
+
+    fn discard_manual_selection(&self, owner_user_id: &str, presentation_id: &str) {
+        let Ok(mut selections) = self.manual_selections.lock() else {
+            return;
+        };
+        for selection in selections.values_mut().filter(|selection| {
+            selection.owner_user_id == owner_user_id
+                && selection.presentation_id == presentation_id
+                && selection.operation_id.is_some()
+        }) {
+            selection.discard_after_operation = true;
+        }
+        selections.retain(|_, selection| {
+            selection.owner_user_id != owner_user_id
+                || selection.presentation_id != presentation_id
+                || selection.operation_id.is_some()
+        });
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ManualPluginSelection {
+    owner_user_id: String,
+    presentation_id: String,
+    generation: u64,
+    canonical_root: PathBuf,
+    directory_name: String,
+    inspected_fingerprint: Option<String>,
+    operation_id: Option<String>,
+    discard_after_operation: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -191,12 +394,25 @@ struct PresentedPlugin {
     has_ui: bool,
     source: &'static str,
     runtime_status: &'static str,
+    runtime_tool_count: Option<usize>,
+    runtime_last_checked_at: Option<String>,
+    runtime_error: Option<String>,
     mcp_server_count: usize,
+    hook_count: usize,
+    hook_runtime_status: Option<&'static str>,
     skills: Vec<String>,
     permissions: Vec<PresentedPluginPermission>,
     installation_issue: Option<&'static str>,
     windows_compatible: bool,
     install_action_available: bool,
+    credentials: Vec<PresentedPluginCredential>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct PresentedPluginCredential {
+    name: String,
+    configured: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -206,6 +422,15 @@ struct PresentedPluginPermission {
     required: bool,
     reason: Option<String>,
     status: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PluginRuntimeHealthProjection {
+    status: &'static str,
+    checked_at: String,
+    error: Option<String>,
+    process_spawn_status: &'static str,
+    computer_control_status: &'static str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -223,17 +448,558 @@ pub struct PluginEnabledInput {
     enabled: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginCredentialsInput {
+    owner_user_id: String,
+    plugin_id: String,
+    credentials: BTreeMap<String, Option<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualPluginDirectorySelection {
+    selection_id: String,
+    directory_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualPluginInspection {
+    selection_id: String,
+    directory_name: String,
+    display_name: String,
+    version: String,
+    description: String,
+    fingerprint: String,
+    components: Vec<ManualPluginComponent>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct ManualPluginComponent {
+    kind: &'static str,
+    display_name: String,
+    hook_count: Option<usize>,
+    events: Vec<String>,
+    runtime_status: Option<&'static str>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManualPluginSelectionInput {
+    owner_user_id: String,
+    presentation_id: String,
+    selection_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManualPluginInstallInput {
+    owner_user_id: String,
+    presentation_id: String,
+    selection_id: String,
+    expected_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct LocalPluginInstallResult {
+    pub(crate) plugin_id: String,
+    pub(crate) display_name: String,
+    pub(crate) version: String,
+    pub(crate) component_count: usize,
+    pub(crate) fingerprint: String,
+}
+
+pub(crate) async fn install_local_plugin_source(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    source_path: String,
+    subdirectory: Option<String>,
+    expected_fingerprint: String,
+) -> Result<LocalPluginInstallResult, String> {
+    let generation = authentication
+        .session_generation_for_owner(owner_user_id)
+        .await?;
+    let _transaction = settings.installation_transactions.lock().await;
+    if source_path.is_empty() || source_path.len() > 4_096 || source_path.contains('\0') {
+        return Err("本地 Plugin 来源路径无效。".into());
+    }
+    let plugin_root = settings.plugin_root.clone();
+    let package = tauri::async_runtime::spawn_blocking(move || {
+        install_local_package(
+            &plugin_root,
+            Path::new(&source_path),
+            subdirectory.as_deref(),
+            &expected_fingerprint,
+        )
+    })
+    .await
+    .map_err(|_| "本地 Plugin 安装任务异常退出。".to_owned())??;
+    finish_local_plugin_install(
+        authentication,
+        host,
+        settings,
+        applications,
+        owner_user_id,
+        generation,
+        package,
+    )
+    .await
+}
+
+pub(crate) async fn install_git_plugin_source(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    repository_url: String,
+    git_reference: Option<String>,
+    subdirectory: Option<String>,
+    expected_fingerprint: String,
+) -> Result<LocalPluginInstallResult, String> {
+    let _resource_permit = settings.acquire_install_resource().await?;
+    let generation = authentication
+        .session_generation_for_owner(owner_user_id)
+        .await?;
+    let _transaction = settings.installation_transactions.lock().await;
+    let package = install_git_package(
+        &settings.plugin_root,
+        &repository_url,
+        git_reference.as_deref(),
+        subdirectory.as_deref(),
+        &expected_fingerprint,
+    )
+    .await?;
+    finish_local_plugin_install(
+        authentication,
+        host,
+        settings,
+        applications,
+        owner_user_id,
+        generation,
+        package,
+    )
+    .await
+}
+
+pub(crate) async fn install_npm_plugin_source(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    package_name: String,
+    exact_version: String,
+    subdirectory: Option<String>,
+    expected_fingerprint: String,
+) -> Result<LocalPluginInstallResult, String> {
+    let _resource_permit = settings.acquire_install_resource().await?;
+    let generation = authentication
+        .session_generation_for_owner(owner_user_id)
+        .await?;
+    let _transaction = settings.installation_transactions.lock().await;
+    let package = install_npm_package_source(
+        &settings.plugin_root,
+        &package_name,
+        &exact_version,
+        subdirectory.as_deref(),
+        &expected_fingerprint,
+    )
+    .await?;
+    finish_local_plugin_install(
+        authentication,
+        host,
+        settings,
+        applications,
+        owner_user_id,
+        generation,
+        package,
+    )
+    .await
+}
+
+pub(crate) async fn install_custom_npm_mcp(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    draft: NpmMcpDraft,
+    expected_fingerprint: String,
+) -> Result<(LocalPluginInstallResult, NpmMcpInspection), String> {
+    let _resource_permit = settings.acquire_install_resource().await?;
+    let generation = authentication
+        .session_generation_for_owner(owner_user_id)
+        .await?;
+    let _transaction = settings.installation_transactions.lock().await;
+    let (package, inspection) =
+        install_npm_mcp(&settings.plugin_root, &draft, &expected_fingerprint).await?;
+    let result = finish_local_plugin_install(
+        authentication,
+        host,
+        settings,
+        applications,
+        owner_user_id,
+        generation,
+        package,
+    )
+    .await?;
+    Ok((result, inspection))
+}
+
+pub(crate) async fn install_program_mcp_source(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    draft: ProgramMcpDraft,
+    expected_fingerprint: String,
+) -> Result<(LocalPluginInstallResult, ProgramMcpInspection), String> {
+    let _resource_permit = settings.acquire_install_resource().await?;
+    let generation = authentication
+        .session_generation_for_owner(owner_user_id)
+        .await?;
+    let _transaction = settings.installation_transactions.lock().await;
+    let (package, inspection) =
+        install_program_mcp_package(&settings.plugin_root, &draft, &expected_fingerprint).await?;
+    let result = finish_local_plugin_install(
+        authentication,
+        host,
+        settings,
+        applications,
+        owner_user_id,
+        generation,
+        package,
+    )
+    .await?;
+    Ok((result, inspection))
+}
+
+async fn finish_local_plugin_install(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    generation: u64,
+    package: CommittedPluginPackage,
+) -> Result<LocalPluginInstallResult, String> {
+    if let Err(error) = authentication
+        .require_session_generation(owner_user_id, generation)
+        .await
+    {
+        package.rollback();
+        return Err(error);
+    }
+    let plugin_id = format!(
+        "local-plugin-{:x}",
+        Sha256::digest(package.manifest.name.as_bytes())
+    );
+    let release_id = format!("local-release-{}", package.artifact_sha256);
+    let hook_bundles =
+        match trusted_local_hook_bundles(&package, owner_user_id, &plugin_id, &release_id) {
+            Ok(bundles) => bundles,
+            Err(error) => {
+                package.rollback();
+                return Err(error);
+            }
+        };
+    let records = match list_installation_records(host, owner_user_id).await {
+        Ok(records) => records,
+        Err(error) => {
+            package.rollback();
+            return Err(error);
+        }
+    };
+    let previous = records
+        .clone()
+        .into_iter()
+        .filter(|record| record.spec.plugin_id == plugin_id)
+        .collect::<Vec<_>>();
+    let bundles_before = match list_hook_bundle_records(host, owner_user_id).await {
+        Ok(bundles) => bundles,
+        Err(error) => {
+            package.rollback();
+            return Err(error);
+        }
+    };
+    let previous_roots = installation_roots(&settings.plugin_root, &previous).unwrap_or_default();
+    if let Err(error) = publish_inactive_hook_bundles(host, owner_user_id, &hook_bundles).await {
+        package.rollback();
+        return Err(error);
+    }
+    if let Err(error) = authentication
+        .require_session_generation(owner_user_id, generation)
+        .await
+    {
+        package.rollback();
+        return Err(error);
+    }
+    let specs =
+        match local_installation_specs(owner_user_id, &plugin_id, &release_id, &package, &previous)
+        {
+            Ok(specs) => specs,
+            Err(error) => {
+                package.rollback();
+                return Err(error);
+            }
+        };
+    let component_count = specs.len();
+    applications.reset().await;
+    if let Err(error) = replace_installation_records(host, previous, specs).await {
+        package.rollback();
+        return Err(error);
+    }
+    let records_after = match list_installation_records(host, owner_user_id).await {
+        Ok(records) => records,
+        Err(error) => {
+            let _ = deactivate_hook_bundles(host, owner_user_id).await;
+            eprintln!("Hook Bundle reconciliation skipped: {error}");
+            Vec::new()
+        }
+    };
+    if !records_after.is_empty() {
+        let mut bundles_to_reconcile = bundles_before;
+        bundles_to_reconcile.extend(hook_bundles.iter().cloned().map(|bundle| {
+            LocalPluginHookBundleRecord {
+                spec: bundle,
+                created_at_unix_ms: 0,
+            }
+        }));
+        if let Err(error) = reconcile_active_hook_bundles(
+            host,
+            owner_user_id,
+            &settings.plugin_root,
+            &records_after,
+            &bundles_to_reconcile,
+        )
+        .await
+        {
+            let _ = deactivate_hook_bundles(host, owner_user_id).await;
+            eprintln!("Hook Bundle activation skipped: {error}");
+        }
+    }
+    let result = LocalPluginInstallResult {
+        plugin_id,
+        display_name: safe_text(
+            &package.manifest.interface.display_name,
+            &package.manifest.name,
+        ),
+        version: package.manifest.version.clone(),
+        component_count,
+        fingerprint: package.artifact_sha256.clone(),
+    };
+    let installed_root = package.installation_root.clone();
+    let _ = package.finish();
+    let stale_roots = previous_roots
+        .into_iter()
+        .filter(|path| path != &installed_root)
+        .collect();
+    let _ = remove_installation_roots(&settings.plugin_root, stale_roots).await;
+    applications.reset().await;
+    Ok(result)
+}
+
+async fn publish_inactive_hook_bundles(
+    host: &dyn PluginSettingsHost,
+    owner_user_id: &str,
+    bundles: &[LocalPluginHookBundleSpec],
+) -> Result<(), String> {
+    let result = host
+        .execute(HostCommand::SetActivePluginHookBundles(
+            SetActivePluginHookBundlesCommand {
+                owner_user_id: owner_user_id.to_owned(),
+                bundle_ids: Vec::new(),
+            },
+        ))
+        .await?;
+    if !matches!(
+        result,
+        HostResult::ActivePluginHookBundlesUpdated { active_bundle_ids }
+            if active_bundle_ids.is_empty()
+    ) {
+        return Err("Local Agent Host 未确认 Hook Bundle 安全停用。".into());
+    }
+    for bundle in bundles {
+        let result = host
+            .execute(HostCommand::PutPluginHookBundle(
+                PutPluginHookBundleCommand {
+                    bundle: bundle.clone(),
+                },
+            ))
+            .await?;
+        if !matches!(
+            result,
+            HostResult::PluginHookBundle { bundle: record }
+                if record.spec == *bundle
+        ) {
+            return Err("Local Agent Host 返回了无效的 Hook Bundle 记录。".into());
+        }
+    }
+    Ok(())
+}
+
+async fn list_hook_bundle_records(
+    host: &dyn PluginSettingsHost,
+    owner_user_id: &str,
+) -> Result<Vec<LocalPluginHookBundleRecord>, String> {
+    match host
+        .execute(HostCommand::ListPluginHookBundles(
+            ListPluginHookBundlesCommand {
+                owner_user_id: owner_user_id.to_owned(),
+            },
+        ))
+        .await?
+    {
+        HostResult::PluginHookBundles { bundles } => Ok(bundles),
+        _ => Err("Local Agent Host 返回了无效的 Hook Bundle 清单。".into()),
+    }
+}
+
+async fn list_all_hook_bundle_records(
+    host: &dyn PluginSettingsHost,
+    owner_user_id: &str,
+) -> Result<Vec<LocalPluginHookBundleRecord>, String> {
+    match host
+        .execute(HostCommand::ListPluginHookBundleRecords(
+            ListPluginHookBundleRecordsCommand {
+                owner_user_id: owner_user_id.to_owned(),
+            },
+        ))
+        .await?
+    {
+        HostResult::PluginHookBundles { bundles } => Ok(bundles),
+        _ => Err("Local Agent Host 返回了无效的 Hook Bundle 记录清单。".into()),
+    }
+}
+
+async fn reconcile_current_hook_bundles(
+    host: &dyn PluginSettingsHost,
+    plugin_root: &Path,
+    owner_user_id: &str,
+) -> Result<(), String> {
+    let records = list_installation_records(host, owner_user_id).await?;
+    let bundles = list_all_hook_bundle_records(host, owner_user_id).await?;
+    reconcile_active_hook_bundles(host, owner_user_id, plugin_root, &records, &bundles).await
+}
+
+async fn reconcile_active_hook_bundles(
+    host: &dyn PluginSettingsHost,
+    owner_user_id: &str,
+    plugin_root: &Path,
+    records: &[LocalPluginInstallationRecord],
+    candidates: &[LocalPluginHookBundleRecord],
+) -> Result<(), String> {
+    let mut active_ids = BTreeSet::new();
+    for bundle in candidates {
+        if bundle.spec.owner_user_id != owner_user_id
+            || !bundle_matches_installation(plugin_root, records, &bundle.spec)
+        {
+            continue;
+        }
+        active_ids.insert(bundle.spec.bundle_id.clone());
+    }
+    let bundle_ids = active_ids.into_iter().collect::<Vec<_>>();
+    match host
+        .execute(HostCommand::SetActivePluginHookBundles(
+            SetActivePluginHookBundlesCommand {
+                owner_user_id: owner_user_id.to_owned(),
+                bundle_ids: bundle_ids.clone(),
+            },
+        ))
+        .await?
+    {
+        HostResult::ActivePluginHookBundlesUpdated { active_bundle_ids }
+            if active_bundle_ids == bundle_ids =>
+        {
+            Ok(())
+        }
+        _ => Err("Local Agent Host 未确认 Hook Bundle reconciliation。".into()),
+    }
+}
+
+async fn deactivate_hook_bundles(
+    host: &dyn PluginSettingsHost,
+    owner_user_id: &str,
+) -> Result<(), String> {
+    match host
+        .execute(HostCommand::SetActivePluginHookBundles(
+            SetActivePluginHookBundlesCommand {
+                owner_user_id: owner_user_id.to_owned(),
+                bundle_ids: Vec::new(),
+            },
+        ))
+        .await?
+    {
+        HostResult::ActivePluginHookBundlesUpdated { active_bundle_ids }
+            if active_bundle_ids.is_empty() =>
+        {
+            Ok(())
+        }
+        _ => Err("Local Agent Host 未确认 Hook Bundle 停用。".into()),
+    }
+}
+
+fn bundle_matches_installation(
+    plugin_root: &Path,
+    records: &[LocalPluginInstallationRecord],
+    bundle: &LocalPluginHookBundleSpec,
+) -> bool {
+    if !bundle.enabled || bundle.validate().is_err() {
+        return false;
+    }
+    let Ok(bundle_root) = Path::new(&bundle.installation_root).canonicalize() else {
+        return false;
+    };
+    let Some(record) = records.iter().find(|record| {
+        record.spec.owner_user_id == bundle.owner_user_id
+            && record.spec.plugin_id == bundle.plugin_id
+            && record.spec.release_id == bundle.release_id
+            && record.spec.enabled
+            && record.spec.release_digest == format!("sha256:{}", bundle.artifact_sha256)
+            && record
+                .spec
+                .working_directory
+                .as_deref()
+                .is_some_and(|path| {
+                    Path::new(path)
+                        .canonicalize()
+                        .ok()
+                        .is_some_and(|root| root == bundle_root)
+                })
+    }) else {
+        return false;
+    };
+    let Some(working_directory) = record.spec.working_directory.as_deref() else {
+        return false;
+    };
+    let Ok(installation_root) = Path::new(working_directory).canonicalize() else {
+        return false;
+    };
+    verify_installation_integrity(plugin_root, &installation_root, &record.spec.release_digest)
+        .is_ok()
+}
+
 #[tauri::command]
 pub async fn load_plugin_settings(
     authentication: State<'_, AuthenticationManager>,
     host: State<'_, HostManager>,
     manager: State<'_, PluginSettingsManager>,
+    applications: State<'_, PluginApplicationManager>,
     owner_user_id: String,
 ) -> Result<PluginSettingsSnapshot, String> {
     let owner_user_id = required_identifier("owner_user_id", owner_user_id)?;
     let generation = authentication
         .session_generation_for_owner(&owner_user_id)
         .await?;
+    let _transaction = manager.installation_transactions.lock().await;
     let (sources, records) = tokio::join!(
         authentication.plugin_install_sources_for_owner(&owner_user_id),
         list_installation_records(&*host, &owner_user_id),
@@ -246,12 +1012,200 @@ pub async fn load_plugin_settings(
             "Plugin Marketplace 与本机安装目录均不可用，请检查网络和 Local Agent Host。".into(),
         );
     }
-    project_snapshot(
+    if let Ok(records) = &records {
+        let expected =
+            records
+                .iter()
+                .filter(|record| requires_installation_integrity(&record.spec.component_revision))
+                .filter_map(|record| {
+                    record.spec.working_directory.as_ref().map(|directory| {
+                        (PathBuf::from(directory), record.spec.release_digest.clone())
+                    })
+                })
+                .collect::<Vec<_>>();
+        let plugin_root = manager.plugin_root.clone();
+        let recovered = tauri::async_runtime::spawn_blocking(move || {
+            recover_interrupted_installations(&plugin_root, &expected)
+        })
+        .await
+        .map_err(|_| plugin_catalog_error())??;
+        if recovered > 0 {
+            applications.reset().await;
+        }
+    }
+    let runtime_health = computer_use_runtime_health(&host, &manager, &owner_user_id).await;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let mut snapshot = project_snapshot(
         &manager.plugin_root,
         sources.map_err(|error| error.message),
         records,
         &owner_user_id,
+        &applications,
+    )?;
+    apply_computer_use_runtime_health(&mut snapshot, runtime_health);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub async fn pick_manual_plugin_directory(
+    authentication: State<'_, AuthenticationManager>,
+    settings: State<'_, PluginSettingsManager>,
+    owner_user_id: String,
+    presentation_id: String,
+) -> Result<Option<ManualPluginDirectorySelection>, String> {
+    let owner_user_id = required_identifier("owner_user_id", owner_user_id)?;
+    let presentation_id = required_identifier("presentation_id", presentation_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let selected = rfd::AsyncFileDialog::new()
+        .set_title("选择 Plugin / MCP 根目录")
+        .pick_folder()
+        .await;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let requested = selected.path().to_path_buf();
+    let (canonical_root, directory_name) =
+        tauri::async_runtime::spawn_blocking(move || prepare_manual_plugin_directory(&requested))
+            .await
+            .map_err(|_| "Plugin 目录选择任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    settings
+        .stage_manual_selection(
+            &owner_user_id,
+            &presentation_id,
+            generation,
+            canonical_root,
+            directory_name,
+        )
+        .map(Some)
+}
+
+#[tauri::command]
+pub async fn inspect_manual_plugin_directory(
+    authentication: State<'_, AuthenticationManager>,
+    settings: State<'_, PluginSettingsManager>,
+    input: ManualPluginSelectionInput,
+) -> Result<ManualPluginInspection, String> {
+    let input = validated_manual_selection_input(input)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let (selection, operation_id) = settings.begin_manual_operation(&input, generation, None)?;
+    let plugin_root = settings.plugin_root.clone();
+    let source_root = selection.canonical_root.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        inspect_local_package_source(&plugin_root, &source_root, None)
+    })
+    .await
+    .map_err(|_| "Plugin 预检任务异常退出。".to_owned())
+    .and_then(|result| result);
+    if let Err(error) = authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await
+    {
+        settings.finish_manual_inspection(&input.selection_id, &operation_id, None);
+        return Err(error);
+    }
+    match result {
+        Ok(inspection) => {
+            let components = manual_plugin_components(&inspection.manifest, &inspection.hooks);
+            let presented = ManualPluginInspection {
+                selection_id: input.selection_id.clone(),
+                directory_name: selection.directory_name,
+                display_name: safe_text(
+                    &inspection.manifest.interface.display_name,
+                    &inspection.manifest.name,
+                ),
+                version: inspection.manifest.version,
+                description: inspection.manifest.description,
+                fingerprint: inspection.fingerprint.clone(),
+                components,
+            };
+            settings.finish_manual_inspection(
+                &input.selection_id,
+                &operation_id,
+                Some(inspection.fingerprint),
+            );
+            Ok(presented)
+        }
+        Err(error) => {
+            settings.finish_manual_inspection(&input.selection_id, &operation_id, None);
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn install_manual_plugin_directory(
+    authentication: State<'_, AuthenticationManager>,
+    host: State<'_, HostManager>,
+    settings: State<'_, PluginSettingsManager>,
+    applications: State<'_, PluginApplicationManager>,
+    input: ManualPluginInstallInput,
+) -> Result<PluginSettingsSnapshot, String> {
+    let selection_input = validated_manual_selection_input(ManualPluginSelectionInput {
+        owner_user_id: input.owner_user_id,
+        presentation_id: input.presentation_id,
+        selection_id: input.selection_id,
+    })?;
+    if input.expected_fingerprint.len() != 64
+        || !input
+            .expected_fingerprint
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err("Plugin 预检指纹无效。".into());
+    }
+    let generation = authentication
+        .session_generation_for_owner(&selection_input.owner_user_id)
+        .await?;
+    let (selection, operation_id) = settings.begin_manual_operation(
+        &selection_input,
+        generation,
+        Some(&input.expected_fingerprint),
+    )?;
+    let result = install_local_plugin_source(
+        &authentication,
+        &host,
+        &settings,
+        &applications,
+        &selection_input.owner_user_id,
+        selection.canonical_root.to_string_lossy().into_owned(),
+        None,
+        input.expected_fingerprint,
     )
+    .await;
+    settings.finish_manual_install(&selection_input.selection_id, &operation_id, result.is_ok());
+    result?;
+    load_snapshot(
+        &authentication,
+        &host,
+        &settings,
+        &selection_input.owner_user_id,
+        &applications,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn discard_manual_plugin_directory(
+    settings: State<'_, PluginSettingsManager>,
+    owner_user_id: String,
+    presentation_id: String,
+) -> Result<(), String> {
+    let owner_user_id = required_identifier("owner_user_id", owner_user_id)?;
+    let presentation_id = required_identifier("presentation_id", presentation_id)?;
+    settings.discard_manual_selection(&owner_user_id, &presentation_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -279,7 +1233,13 @@ pub async fn update_plugin_enabled(
             .iter()
             .any(|source| source.catalog.id == plugin_id)
     });
-    if sources.is_err() {
+    // Local installs are intentionally independent from the Marketplace. A
+    // transient Marketplace outage must not prevent users from enabling or
+    // disabling a package that is already installed and integrity-checked on
+    // this machine. Keep the source gate for every Marketplace-looking
+    // installation so a missing source cannot weaken signed package checks.
+    let is_local = targets.iter().all(is_local_plugin_installation);
+    if sources.is_err() && !is_local {
         return Err("无法确认 Plugin 来源，未更改本机运行状态。".into());
     }
 
@@ -312,15 +1272,65 @@ pub async fn update_plugin_enabled(
         }
         return Err(error);
     }
+    if let Err(error) =
+        reconcile_current_hook_bundles(&*host, &settings.plugin_root, &owner_user_id).await
+    {
+        let _ = deactivate_hook_bundles(&*host, &owner_user_id).await;
+        eprintln!("Hook Bundle 状态同步失败，已停用 active set: {error}");
+    }
     applications.reset().await;
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
     load_snapshot(
         &authentication,
-        &*host,
-        &settings.plugin_root,
+        &host,
+        &settings,
         &owner_user_id,
+        &applications,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn update_plugin_credentials(
+    authentication: State<'_, AuthenticationManager>,
+    host: State<'_, HostManager>,
+    settings: State<'_, PluginSettingsManager>,
+    applications: State<'_, PluginApplicationManager>,
+    input: PluginCredentialsInput,
+) -> Result<PluginSettingsSnapshot, String> {
+    let owner_user_id = required_identifier("owner_user_id", input.owner_user_id)?;
+    let plugin_id = required_identifier("plugin_id", input.plugin_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let records = matching_records(
+        list_installation_records(&*host, &owner_user_id).await?,
+        &plugin_id,
+    )?;
+    let manifest = records
+        .iter()
+        .max_by_key(|record| record.updated_at_unix_ms)
+        .ok_or_else(|| "Plugin 尚未安装。".to_owned())
+        .and_then(|record| load_installed_manifest(&settings.plugin_root, record))?;
+    let declared = declared_secret_names(&manifest)?;
+    if declared.is_empty() || input.credentials.keys().cloned().collect::<BTreeSet<_>>() != declared
+    {
+        return Err("提交的 Plugin 凭据名称与已安装清单不一致。".into());
+    }
+    validate_secret_bindings(&owner_user_id, &plugin_id, &manifest, &records)?;
+    applications.update_credentials(&owner_user_id, &plugin_id, &input.credentials)?;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    applications.reset().await;
+    load_snapshot(
+        &authentication,
+        &host,
+        &settings,
+        &owner_user_id,
+        &applications,
     )
     .await
 }
@@ -340,9 +1350,20 @@ pub async fn uninstall_plugin(
         .await?;
     let records = list_installation_records(&*host, &owner_user_id).await?;
     let targets = matching_records(records, &plugin_id)?;
+    let manifest = targets
+        .iter()
+        .max_by_key(|record| record.updated_at_unix_ms)
+        .ok_or_else(|| "Plugin 尚未安装。".to_owned())
+        .and_then(|record| load_installed_manifest(&settings.plugin_root, record))?;
+    let credential_names = declared_secret_names(&manifest)?;
+    validate_secret_bindings(&owner_user_id, &plugin_id, &manifest, &targets)?;
     let installation_roots = installation_roots(&settings.plugin_root, &targets)?;
+    let bundles_before = list_all_hook_bundle_records(&*host, &owner_user_id).await?;
+    deactivate_hook_bundles(&*host, &owner_user_id).await?;
+    let deleted_credentials =
+        applications.delete_credentials(&owner_user_id, &plugin_id, &credential_names)?;
     for record in &targets {
-        let result = host
+        let result = match host
             .execute(HostCommand::RemovePluginInstallation(
                 RemovePluginInstallationCommand {
                     owner_user_id: owner_user_id.clone(),
@@ -350,26 +1371,71 @@ pub async fn uninstall_plugin(
                     expected_version: record.version,
                 },
             ))
-            .await?;
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                let restored = applications
+                    .update_credentials(&owner_user_id, &plugin_id, &deleted_credentials)
+                    .is_ok();
+                return Err(if restored {
+                    error
+                } else {
+                    "Plugin 卸载失败，且系统凭据回滚未完全成功。".into()
+                });
+            }
+        };
         let HostResult::PluginInstallation { installation } = result else {
-            return Err(metadata_response_error());
+            let restored = applications
+                .update_credentials(&owner_user_id, &plugin_id, &deleted_credentials)
+                .is_ok();
+            return Err(if restored {
+                metadata_response_error()
+            } else {
+                "Plugin 卸载响应无效，且系统凭据回滚未完全成功。".into()
+            });
         };
         if installation.spec.installation_id != record.spec.installation_id
             || installation.spec.owner_user_id != owner_user_id
         {
-            return Err(metadata_response_error());
+            let restored = applications
+                .update_credentials(&owner_user_id, &plugin_id, &deleted_credentials)
+                .is_ok();
+            return Err(if restored {
+                metadata_response_error()
+            } else {
+                "Plugin 卸载响应无效，且系统凭据回滚未完全成功。".into()
+            });
         }
     }
     applications.reset().await;
     remove_installation_roots(&settings.plugin_root, installation_roots).await?;
+    let reconciliation = match list_installation_records(&*host, &owner_user_id).await {
+        Ok(records) => {
+            reconcile_active_hook_bundles(
+                &*host,
+                &owner_user_id,
+                &settings.plugin_root,
+                &records,
+                &bundles_before,
+            )
+            .await
+        }
+        Err(error) => Err(error),
+    };
+    if let Err(error) = reconciliation {
+        let _ = deactivate_hook_bundles(&*host, &owner_user_id).await;
+        eprintln!("卸载后 Hook Bundle 状态同步失败，active set 保持为空: {error}");
+    }
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
     load_snapshot(
         &authentication,
-        &*host,
-        &settings.plugin_root,
+        &host,
+        &settings,
         &owner_user_id,
+        &applications,
     )
     .await
 }
@@ -384,11 +1450,33 @@ pub async fn install_marketplace_plugin(
 ) -> Result<PluginSettingsSnapshot, String> {
     let owner_user_id = required_identifier("owner_user_id", input.owner_user_id)?;
     let plugin_id = required_identifier("plugin_id", input.plugin_id)?;
+    install_marketplace_for_owner(
+        &authentication,
+        &host,
+        &settings,
+        &applications,
+        &owner_user_id,
+        &plugin_id,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn install_marketplace_for_owner(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    plugin_id: &str,
+    expected_release_id: Option<&str>,
+) -> Result<PluginSettingsSnapshot, String> {
     let generation = authentication
-        .session_generation_for_owner(&owner_user_id)
+        .session_generation_for_owner(owner_user_id)
         .await?;
+    let _transaction = settings.installation_transactions.lock().await;
     let sources = authentication
-        .plugin_install_sources_for_owner(&owner_user_id)
+        .plugin_install_sources_for_owner(owner_user_id)
         .await
         .map_err(|error| error.message)?;
     let source = sources
@@ -397,7 +1485,10 @@ pub async fn install_marketplace_plugin(
         .find(|source| source.catalog.id == plugin_id)
         .cloned()
         .ok_or_else(|| "Marketplace 中没有找到这个 Plugin。".to_owned())?;
-    let records = list_installation_records(&*host, &owner_user_id).await?;
+    if expected_release_id.is_some_and(|expected| expected != source.release.id) {
+        return Err("Marketplace Release 已变化，请重新搜索并确认后再安装。".into());
+    }
+    let records = list_installation_records(host, owner_user_id).await?;
     let previous = records
         .into_iter()
         .filter(|record| record.spec.plugin_id == plugin_id)
@@ -406,12 +1497,12 @@ pub async fn install_marketplace_plugin(
     // Do not let an unreadable old directory prevent a signed replacement from being staged.
     let previous_roots = installation_roots(&settings.plugin_root, &previous).unwrap_or_default();
     let response = authentication
-        .download_plugin_artifact_for_owner(&owner_user_id, &source.catalog.id, &source.release.id)
+        .download_plugin_artifact_for_owner(owner_user_id, &source.catalog.id, &source.release.id)
         .await
         .map_err(|error| error.message)?;
     let package =
         install_marketplace_package(settings.plugin_root.clone(), source.clone(), response).await?;
-    let specs = match installation_specs(&owner_user_id, &source, &package, &previous) {
+    let specs = match installation_specs(owner_user_id, &source, &package, &previous) {
         Ok(specs) => specs,
         Err(error) => {
             package.rollback();
@@ -419,7 +1510,7 @@ pub async fn install_marketplace_plugin(
         }
     };
     applications.reset().await;
-    if let Err(error) = replace_installation_records(&*host, previous, specs).await {
+    if let Err(error) = replace_installation_records(host, previous, specs).await {
         package.rollback();
         return Err(error);
     }
@@ -432,15 +1523,9 @@ pub async fn install_marketplace_plugin(
     let _ = remove_installation_roots(&settings.plugin_root, stale_roots).await;
     applications.reset().await;
     authentication
-        .require_session_generation(&owner_user_id, generation)
+        .require_session_generation(owner_user_id, generation)
         .await?;
-    load_snapshot(
-        &authentication,
-        &*host,
-        &settings.plugin_root,
-        &owner_user_id,
-    )
-    .await
+    load_snapshot(authentication, host, settings, owner_user_id, applications).await
 }
 
 fn installation_specs(
@@ -470,6 +1555,7 @@ fn installation_specs(
             component_key,
             bin,
             args,
+            env,
             ..
         } = server
         else {
@@ -492,7 +1578,11 @@ fn installation_specs(
             executable_path: executable.to_string_lossy().into_owned(),
             args: args.clone(),
             working_directory: Some(package.installation_root.to_string_lossy().into_owned()),
-            environment_secret_refs: BTreeMap::new(),
+            environment_secret_refs: environment_secret_references(
+                owner_user_id,
+                &source.catalog.id,
+                env,
+            )?,
             tool_prefix: None,
             allowed_tools: None,
             enabled,
@@ -501,8 +1591,131 @@ fn installation_specs(
             .map_err(|_| "Plugin 安装记录无效。".to_owned())?;
         specs.push(spec);
     }
+    if specs.is_empty()
+        && package.manifest.mcp_servers.is_empty()
+        && (!package.manifest.skills.is_empty() || !package.manifest.hooks.is_empty())
+    {
+        let component_key = if package.manifest.skills.is_empty() {
+            "hooks-only"
+        } else {
+            "skills-only"
+        };
+        let manifest_path = package.installation_root.join("chatos.plugin.json");
+        let installation_id = previous_by_component
+            .get(component_key)
+            .map(|record| record.spec.installation_id.clone())
+            .unwrap_or_else(|| format!("plugin-install-{}", uuid::Uuid::new_v4().simple()));
+        let spec = LocalPluginInstallationSpec {
+            installation_id,
+            owner_user_id: owner_user_id.to_owned(),
+            plugin_id: source.catalog.id.clone(),
+            release_id: source.release.id.clone(),
+            release_digest: format!("sha256:{}", source.release.artifact_sha256),
+            component_id: component_key.into(),
+            component_revision: secure_component_revision(&source.release.artifact_sha256)?,
+            server_id: component_key.into(),
+            executable_path: manifest_path.to_string_lossy().into_owned(),
+            args: Vec::new(),
+            working_directory: Some(package.installation_root.to_string_lossy().into_owned()),
+            environment_secret_refs: BTreeMap::new(),
+            tool_prefix: None,
+            allowed_tools: None,
+            enabled,
+        };
+        spec.validate()
+            .map_err(|_| "Plugin Skill 安装记录无效。".to_owned())?;
+        specs.push(spec);
+    }
     if specs.is_empty() {
-        return Err("Plugin 没有 Windows 可运行的 stdio MCP 组件。".into());
+        return Err("Plugin 没有 Windows 可运行的 stdio MCP 或有效 Skill。".into());
+    }
+    Ok(specs)
+}
+
+fn local_installation_specs(
+    owner_user_id: &str,
+    plugin_id: &str,
+    release_id: &str,
+    package: &crate::plugin_installer::CommittedPluginPackage,
+    previous: &[LocalPluginInstallationRecord],
+) -> Result<Vec<LocalPluginInstallationSpec>, String> {
+    let mut previous_by_component = BTreeMap::<String, &LocalPluginInstallationRecord>::new();
+    for record in previous {
+        previous_by_component.insert(record.spec.server_id.clone(), record);
+    }
+    let mut specs = Vec::new();
+    for server in &package.manifest.mcp_servers {
+        let PluginMcpServer::Stdio {
+            component_key,
+            bin,
+            args,
+            env,
+            ..
+        } = server
+        else {
+            continue;
+        };
+        let executable = resolve_executable(&package.installation_root, bin)?;
+        let spec = LocalPluginInstallationSpec {
+            installation_id: previous_by_component
+                .get(component_key)
+                .map(|record| record.spec.installation_id.clone())
+                .unwrap_or_else(|| format!("plugin-install-{}", uuid::Uuid::new_v4().simple())),
+            owner_user_id: owner_user_id.to_owned(),
+            plugin_id: plugin_id.to_owned(),
+            release_id: release_id.to_owned(),
+            release_digest: format!("sha256:{}", package.artifact_sha256),
+            component_id: component_key.clone(),
+            component_revision: secure_component_revision(&package.artifact_sha256)?,
+            server_id: component_key.clone(),
+            executable_path: executable.to_string_lossy().into_owned(),
+            args: args.clone(),
+            working_directory: Some(package.installation_root.to_string_lossy().into_owned()),
+            environment_secret_refs: environment_secret_references(owner_user_id, plugin_id, env)?,
+            tool_prefix: None,
+            allowed_tools: None,
+            enabled: true,
+        };
+        spec.validate()
+            .map_err(|_| "Plugin 安装记录无效。".to_owned())?;
+        specs.push(spec);
+    }
+    if specs.is_empty()
+        && package.manifest.mcp_servers.is_empty()
+        && (!package.manifest.skills.is_empty() || !package.manifest.hooks.is_empty())
+    {
+        let component_key = if package.manifest.skills.is_empty() {
+            "hooks-only"
+        } else {
+            "skills-only"
+        };
+        let manifest_path = package.installation_root.join("chatos.plugin.json");
+        let spec = LocalPluginInstallationSpec {
+            installation_id: previous_by_component
+                .get(component_key)
+                .map(|record| record.spec.installation_id.clone())
+                .unwrap_or_else(|| format!("plugin-install-{}", uuid::Uuid::new_v4().simple())),
+            owner_user_id: owner_user_id.to_owned(),
+            plugin_id: plugin_id.to_owned(),
+            release_id: release_id.to_owned(),
+            release_digest: format!("sha256:{}", package.artifact_sha256),
+            component_id: component_key.into(),
+            component_revision: secure_component_revision(&package.artifact_sha256)?,
+            server_id: component_key.into(),
+            executable_path: manifest_path.to_string_lossy().into_owned(),
+            args: Vec::new(),
+            working_directory: Some(package.installation_root.to_string_lossy().into_owned()),
+            environment_secret_refs: BTreeMap::new(),
+            tool_prefix: None,
+            allowed_tools: None,
+            enabled: true,
+        };
+        spec.validate()
+            .map_err(|_| "Plugin Skill 安装记录无效。".to_owned())?;
+        specs.push(spec);
+    }
+    if specs.is_empty() {
+        return Err("Plugin 没有 Windows 可运行的 stdio MCP 或有效 Skill。".into());
     }
     Ok(specs)
 }
@@ -612,20 +1825,31 @@ async fn rollback_installation_records(
 
 async fn load_snapshot(
     authentication: &AuthenticationManager,
-    host: &dyn PluginSettingsHost,
-    plugin_root: &Path,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
     owner_user_id: &str,
+    applications: &PluginApplicationManager,
 ) -> Result<PluginSettingsSnapshot, String> {
+    let generation = authentication
+        .session_generation_for_owner(owner_user_id)
+        .await?;
     let (sources, records) = tokio::join!(
         authentication.plugin_install_sources_for_owner(owner_user_id),
         list_installation_records(host, owner_user_id),
     );
-    project_snapshot(
-        plugin_root,
+    let runtime_health = computer_use_runtime_health(host, settings, owner_user_id).await;
+    authentication
+        .require_session_generation(owner_user_id, generation)
+        .await?;
+    let mut snapshot = project_snapshot(
+        &settings.plugin_root,
         sources.map_err(|error| error.message),
         records,
         owner_user_id,
-    )
+        applications,
+    )?;
+    apply_computer_use_runtime_health(&mut snapshot, runtime_health);
+    Ok(snapshot)
 }
 
 fn project_snapshot(
@@ -633,6 +1857,7 @@ fn project_snapshot(
     sources: Result<PluginInstallSourceList, String>,
     records: Result<Vec<LocalPluginInstallationRecord>, String>,
     owner_user_id: &str,
+    applications: &PluginApplicationManager,
 ) -> Result<PluginSettingsSnapshot, String> {
     let marketplace_available = sources.is_ok();
     let local_catalog_available = records.is_ok();
@@ -647,14 +1872,20 @@ fn project_snapshot(
             .map_err(|_| "Marketplace 返回了无效的 Plugin 清单。".to_owned())?;
         plugins.insert(
             source.catalog.id.clone(),
-            project_marketplace_plugin(source, grouped.get(&source.catalog.id), plugin_root),
+            project_marketplace_plugin(
+                source,
+                grouped.get(&source.catalog.id),
+                plugin_root,
+                owner_user_id,
+                applications,
+            )?,
         );
     }
     for (plugin_id, records) in &grouped {
         if !plugins.contains_key(plugin_id) {
             plugins.insert(
                 plugin_id.clone(),
-                project_local_plugin(plugin_id, records, plugin_root),
+                project_local_plugin(plugin_id, records, plugin_root, owner_user_id, applications)?,
             );
         }
     }
@@ -677,7 +1908,7 @@ fn project_snapshot(
         marketplace_error,
         local_catalog_error,
         secure_marketplace_install_available: true,
-        manual_install_available: false,
+        manual_install_available: true,
     })
 }
 
@@ -685,7 +1916,9 @@ fn project_marketplace_plugin(
     source: &PluginInstallSource,
     installed: Option<&Vec<LocalPluginInstallationRecord>>,
     plugin_root: &Path,
-) -> PresentedPlugin {
+    owner_user_id: &str,
+    applications: &PluginApplicationManager,
+) -> Result<PresentedPlugin, String> {
     let manifest = &source.release.normalized_manifest;
     let installed_projection = installed.map(|records| installed_projection(plugin_root, records));
     let installed_version = installed_projection.as_ref().and_then(|projection| {
@@ -700,7 +1933,19 @@ fn project_marketplace_plugin(
     let installed = installed.is_some();
     let compatible = windows_compatible(&source.release.supported_platforms)
         && windows_compatible(&manifest.dependencies.supported_platforms);
-    PresentedPlugin {
+    let credentials = match installed_projection
+        .as_ref()
+        .and_then(|projection| projection.manifest.as_ref())
+    {
+        Some(installed_manifest) => presented_credentials(
+            installed_manifest,
+            owner_user_id,
+            &source.catalog.id,
+            applications,
+        )?,
+        None => Vec::new(),
+    };
+    Ok(PresentedPlugin {
         id: source.catalog.id.clone(),
         package_name: Some(source.catalog.name.clone()),
         plugin_key: Some(source.catalog.plugin_key.clone()),
@@ -717,27 +1962,41 @@ fn project_marketplace_plugin(
         has_ui: source.catalog.has_ui || !manifest.ui.is_empty(),
         source: "marketplace",
         runtime_status: runtime_status(installed, enabled),
+        runtime_tool_count: None,
+        runtime_last_checked_at: None,
+        runtime_error: None,
         mcp_server_count: manifest.mcp_servers.len(),
+        hook_count: manifest.hooks.len(),
+        hook_runtime_status: (!manifest.hooks.is_empty()).then_some("ready"),
         skills: presented_skills(manifest),
         permissions: presented_permissions(&manifest.permissions),
         installation_issue: installed_projection.and_then(|projection| projection.issue),
         windows_compatible: compatible,
         install_action_available: compatible
-            && manifest
+            && (manifest
                 .mcp_servers
                 .iter()
-                .any(|server| matches!(server, PluginMcpServer::Stdio { .. })),
-    }
+                .any(|server| matches!(server, PluginMcpServer::Stdio { .. }))
+                || !manifest.skills.is_empty()
+                || !manifest.hooks.is_empty()),
+        credentials,
+    })
 }
 
 fn project_local_plugin(
     plugin_id: &str,
     records: &[LocalPluginInstallationRecord],
     plugin_root: &Path,
-) -> PresentedPlugin {
+    owner_user_id: &str,
+    applications: &PluginApplicationManager,
+) -> Result<PresentedPlugin, String> {
     let projection = installed_projection(plugin_root, records);
     let manifest = projection.manifest.as_ref();
-    PresentedPlugin {
+    let credentials = match manifest {
+        Some(manifest) => presented_credentials(manifest, owner_user_id, plugin_id, applications)?,
+        None => Vec::new(),
+    };
+    Ok(PresentedPlugin {
         id: plugin_id.to_owned(),
         package_name: manifest.map(|manifest| manifest.name.clone()),
         plugin_key: None,
@@ -763,7 +2022,14 @@ fn project_local_plugin(
         has_ui: manifest.is_some_and(|manifest| !manifest.ui.is_empty()),
         source: "local",
         runtime_status: runtime_status(true, projection.enabled),
+        runtime_tool_count: None,
+        runtime_last_checked_at: None,
+        runtime_error: None,
         mcp_server_count: manifest.map_or(0, |manifest| manifest.mcp_servers.len()),
+        hook_count: manifest.map_or(0, |manifest| manifest.hooks.len()),
+        hook_runtime_status: manifest
+            .is_some_and(|manifest| !manifest.hooks.is_empty())
+            .then_some("ready"),
         skills: manifest.map_or_else(Vec::new, presented_skills),
         permissions: manifest.map_or_else(Vec::new, |manifest| {
             presented_permissions(&manifest.permissions)
@@ -772,7 +2038,72 @@ fn project_local_plugin(
         windows_compatible: manifest
             .is_none_or(|manifest| windows_compatible(&manifest.dependencies.supported_platforms)),
         install_action_available: false,
+        credentials,
+    })
+}
+
+fn presented_credentials(
+    manifest: &PluginManifest,
+    owner_user_id: &str,
+    plugin_id: &str,
+    applications: &PluginApplicationManager,
+) -> Result<Vec<PresentedPluginCredential>, String> {
+    declared_secret_names(manifest)?
+        .into_iter()
+        .map(|name| {
+            Ok(PresentedPluginCredential {
+                configured: applications.credential_is_configured(
+                    owner_user_id,
+                    plugin_id,
+                    &name,
+                )?,
+                name,
+            })
+        })
+        .collect()
+}
+
+fn declared_secret_names(manifest: &PluginManifest) -> Result<BTreeSet<String>, String> {
+    let mut names = BTreeSet::new();
+    for server in &manifest.mcp_servers {
+        let PluginMcpServer::Stdio { env, .. } = server else {
+            continue;
+        };
+        for template in env.values() {
+            names.insert(secret_name(template)?.to_owned());
+        }
     }
+    Ok(names)
+}
+
+fn validate_secret_bindings(
+    owner_user_id: &str,
+    plugin_id: &str,
+    manifest: &PluginManifest,
+    records: &[LocalPluginInstallationRecord],
+) -> Result<(), String> {
+    for record in records {
+        let environment = manifest.mcp_servers.iter().find_map(|server| match server {
+            PluginMcpServer::Stdio {
+                component_key, env, ..
+            } if component_key == &record.spec.server_id => Some(env),
+            _ => None,
+        });
+        let expected = match environment {
+            Some(environment) => {
+                environment_secret_references(owner_user_id, plugin_id, environment)?
+            }
+            None if record.spec.server_id == "skills-only" => BTreeMap::new(),
+            None => return Err("Plugin 凭据绑定与已安装清单不一致。".into()),
+        };
+        if record.spec.owner_user_id != owner_user_id
+            || record.spec.plugin_id != plugin_id
+            || record.spec.environment_secret_refs != expected
+        {
+            return Err("Plugin 凭据绑定与已安装清单不一致。".into());
+        }
+    }
+    Ok(())
 }
 
 struct InstalledProjection {
@@ -860,6 +2191,77 @@ fn runtime_status(installed: bool, enabled: bool) -> &'static str {
     }
 }
 
+async fn computer_use_runtime_health(
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    owner_user_id: &str,
+) -> Option<PluginRuntimeHealthProjection> {
+    let checked_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    match resolve_computer_use_installation(host, settings, owner_user_id).await {
+        Ok(ComputerUseInstallation::Missing) => None,
+        Ok(ComputerUseInstallation::Disabled) => Some(PluginRuntimeHealthProjection {
+            status: "disabled",
+            checked_at,
+            error: None,
+            process_spawn_status: "disabled",
+            computer_control_status: "disabled",
+        }),
+        Ok(ComputerUseInstallation::Ready(launch)) => {
+            match diagnose_computer_use(&launch, &settings.resources).await {
+                Ok(diagnostics) => Some(PluginRuntimeHealthProjection {
+                    status: "ready",
+                    checked_at,
+                    error: None,
+                    process_spawn_status: "granted",
+                    computer_control_status: if diagnostics.all_granted {
+                        "granted"
+                    } else {
+                        "needs_attention"
+                    },
+                }),
+                Err(error) => Some(PluginRuntimeHealthProjection {
+                    status: "unavailable",
+                    checked_at,
+                    error: Some(error),
+                    process_spawn_status: "unavailable",
+                    computer_control_status: "unavailable",
+                }),
+            }
+        }
+        Err(error) => Some(PluginRuntimeHealthProjection {
+            status: "unavailable",
+            checked_at,
+            error: Some(error),
+            process_spawn_status: "unavailable",
+            computer_control_status: "unavailable",
+        }),
+    }
+}
+
+fn apply_computer_use_runtime_health(
+    snapshot: &mut PluginSettingsSnapshot,
+    health: Option<PluginRuntimeHealthProjection>,
+) {
+    let Some(plugin) = snapshot.plugins.iter_mut().find(|plugin| {
+        plugin.installed && plugin.package_name.as_deref() == Some("open-computer-use")
+    }) else {
+        return;
+    };
+    let Some(health) = health else {
+        return;
+    };
+    plugin.runtime_status = health.status;
+    plugin.runtime_last_checked_at = Some(health.checked_at);
+    plugin.runtime_error = health.error;
+    for permission in &mut plugin.permissions {
+        permission.status = match permission.id.as_str() {
+            "process.spawn" => health.process_spawn_status,
+            "computer.control" => health.computer_control_status,
+            _ => permission.status,
+        };
+    }
+}
+
 fn windows_compatible(platforms: &[String]) -> bool {
     platforms.is_empty()
         || platforms.iter().any(|platform| {
@@ -903,6 +2305,27 @@ fn group_records(
             .push(record);
     }
     Ok(grouped)
+}
+
+pub(crate) async fn list_installation_records_for_owner(
+    host: &HostManager,
+    owner_user_id: &str,
+) -> Result<Vec<LocalPluginInstallationRecord>, String> {
+    list_installation_records(host, owner_user_id).await
+}
+
+/// Return the user-facing Plugin version from an installed manifest without exposing
+/// the installation path or any manifest credentials to callers.  Installation
+/// records intentionally store a monotonically increasing host record version, not
+/// the semantic Plugin version, so callers that present installed metadata should
+/// use this helper when the manifest is still readable.
+pub(crate) fn installed_manifest_version(
+    plugin_root: &Path,
+    records: &[LocalPluginInstallationRecord],
+) -> Option<String> {
+    installed_projection(plugin_root, records)
+        .manifest
+        .map(|manifest| manifest.version)
 }
 
 async fn list_installation_records(
@@ -1012,6 +2435,11 @@ fn matching_records(
     }
 }
 
+fn is_local_plugin_installation(record: &LocalPluginInstallationRecord) -> bool {
+    record.spec.plugin_id.starts_with("local-plugin-")
+        && record.spec.release_id.starts_with("local-release-")
+}
+
 async fn set_records_enabled(
     host: &dyn PluginSettingsHost,
     records: Vec<LocalPluginInstallationRecord>,
@@ -1071,7 +2499,17 @@ fn load_installed_manifest(
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAXIMUM_MANIFEST_BYTES {
         return Err(plugin_catalog_error());
     }
-    let raw = fs::read_to_string(manifest_path).map_err(|_| plugin_catalog_error())?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize + 1);
+    fs::File::open(&manifest_path)
+        .and_then(|file| {
+            file.take(MAXIMUM_MANIFEST_BYTES + 1)
+                .read_to_end(&mut bytes)
+        })
+        .map_err(|_| plugin_catalog_error())?;
+    if bytes.len() as u64 > MAXIMUM_MANIFEST_BYTES {
+        return Err(plugin_catalog_error());
+    }
+    let raw = String::from_utf8(bytes).map_err(|_| plugin_catalog_error())?;
     parse_plugin_manifest(&raw).map_err(|_| plugin_catalog_error())
 }
 
@@ -1108,7 +2546,7 @@ fn installation_manifest_path(
 }
 
 fn confined_plugin_root(plugin_root: &Path) -> Result<PathBuf, String> {
-    fs::create_dir_all(plugin_root).map_err(|_| plugin_catalog_error())?;
+    ensure_owned_directory(plugin_root).map_err(|_| plugin_catalog_error())?;
     let root = plugin_root
         .canonicalize()
         .map_err(|_| plugin_catalog_error())?;
@@ -1198,6 +2636,99 @@ fn required_identifier(field: &str, value: String) -> Result<String, String> {
     Ok(value.to_owned())
 }
 
+fn validated_manual_selection_input(
+    input: ManualPluginSelectionInput,
+) -> Result<ManualPluginSelectionInput, String> {
+    Ok(ManualPluginSelectionInput {
+        owner_user_id: required_identifier("owner_user_id", input.owner_user_id)?,
+        presentation_id: required_identifier("presentation_id", input.presentation_id)?,
+        selection_id: required_identifier("selection_id", input.selection_id)?,
+    })
+}
+
+fn prepare_manual_plugin_directory(path: &Path) -> Result<(PathBuf, String), String> {
+    if !path.is_absolute() {
+        return Err("Plugin 来源必须是绝对目录。".into());
+    }
+    let metadata = fs::symlink_metadata(path).map_err(|_| "Plugin 来源目录不存在。".to_owned())?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || metadata_is_reparse(&metadata) {
+        return Err("Plugin 来源必须是普通目录，不能是链接或重解析点。".into());
+    }
+    let canonical = path
+        .canonicalize()
+        .map_err(|_| "Plugin 来源目录不可用。".to_owned())?;
+    let directory_name = canonical
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| {
+            !value.is_empty() && value.len() <= 240 && !value.chars().any(char::is_control)
+        })
+        .ok_or_else(|| "Plugin 来源目录名称无效。".to_owned())?
+        .to_owned();
+    Ok((canonical, directory_name))
+}
+
+fn metadata_is_reparse(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = metadata;
+        false
+    }
+}
+
+fn manual_plugin_components(
+    manifest: &PluginManifest,
+    hook_summaries: &[LocalPluginHookSummary],
+) -> Vec<ManualPluginComponent> {
+    let mut components = manifest
+        .mcp_servers
+        .iter()
+        .map(|server| ManualPluginComponent {
+            kind: "mcp",
+            display_name: server.component_key().to_owned(),
+            hook_count: None,
+            events: Vec::new(),
+            runtime_status: None,
+        })
+        .chain(manifest.skills.iter().map(|skill| {
+            ManualPluginComponent {
+                kind: "skill",
+                display_name: Path::new(&skill.path)
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("Skill")
+                    .to_owned(),
+                hook_count: None,
+                events: Vec::new(),
+                runtime_status: None,
+            }
+        }))
+        .chain(hook_summaries.iter().map(|hook| ManualPluginComponent {
+            kind: "hook",
+            display_name: hook.component_key.clone(),
+            hook_count: Some(hook.hook_count),
+            events: hook.events.clone(),
+            runtime_status: Some("ready"),
+        }))
+        .collect::<Vec<_>>();
+    components.sort_by(|left, right| {
+        left.kind
+            .cmp(right.kind)
+            .then_with(|| left.display_name.cmp(&right.display_name))
+    });
+    components
+}
+
+fn manual_selection_expired() -> String {
+    "Plugin 目录选择已失效，请重新选择。".into()
+}
+
 fn metadata_response_error() -> String {
     "Local Agent Host 返回了无效的 Plugin 安装记录。".into()
 }
@@ -1209,6 +2740,465 @@ fn plugin_catalog_error() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone, Copy)]
+    enum HookHostBehavior {
+        Success,
+        Error,
+        WrongActiveReply,
+        WrongBundleReply,
+    }
+
+    struct HookHost {
+        behavior: HookHostBehavior,
+        commands: Mutex<Vec<HostCommand>>,
+    }
+
+    impl HookHost {
+        fn new(behavior: HookHostBehavior) -> Self {
+            Self {
+                behavior,
+                commands: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl PluginSettingsHost for HookHost {
+        fn execute(&self, command: HostCommand) -> PluginHostFuture<'_> {
+            self.commands.lock().unwrap().push(command.clone());
+            let behavior = self.behavior;
+            Box::pin(async move {
+                match (behavior, command) {
+                    (HookHostBehavior::Error, _) => Err("host unavailable".into()),
+                    (
+                        _,
+                        HostCommand::ListPluginHookBundles(_)
+                        | HostCommand::ListPluginHookBundleRecords(_),
+                    ) => Ok(HostResult::PluginHookBundles {
+                        bundles: Vec::new(),
+                    }),
+                    (
+                        HookHostBehavior::WrongActiveReply,
+                        HostCommand::SetActivePluginHookBundles(_),
+                    ) => Ok(HostResult::ActivePluginHookBundlesUpdated {
+                        active_bundle_ids: vec!["unexpected-active-bundle".into()],
+                    }),
+                    (
+                        _,
+                        HostCommand::SetActivePluginHookBundles(
+                            SetActivePluginHookBundlesCommand { bundle_ids, .. },
+                        ),
+                    ) => Ok(HostResult::ActivePluginHookBundlesUpdated {
+                        active_bundle_ids: bundle_ids,
+                    }),
+                    (HookHostBehavior::WrongBundleReply, HostCommand::PutPluginHookBundle(_)) => {
+                        Ok(HostResult::ActivePluginHookBundlesUpdated {
+                            active_bundle_ids: Vec::new(),
+                        })
+                    }
+                    (_, HostCommand::PutPluginHookBundle(command)) => {
+                        Ok(HostResult::PluginHookBundle {
+                            bundle: chatos_local_agent_protocol::LocalPluginHookBundleRecord {
+                                spec: command.bundle,
+                                created_at_unix_ms: 1,
+                            },
+                        })
+                    }
+                    _ => panic!("unexpected host command"),
+                }
+            })
+        }
+    }
+
+    fn hook_bundle_fixture() -> LocalPluginHookBundleSpec {
+        LocalPluginHookBundleSpec {
+            bundle_id: "bundle-1".into(),
+            owner_user_id: "owner-1".into(),
+            plugin_id: "plugin-1".into(),
+            release_id: "release-1".into(),
+            component_key: "lifecycle".into(),
+            artifact_sha256: "a".repeat(64),
+            content_sha256: "b".repeat(64),
+            normalized_hook_sha256: "c".repeat(64),
+            command_sha256: "d".repeat(64),
+            permission_snapshot_sha256: "e".repeat(64),
+            runner_policy_version: 1,
+            installation_root: r"C:\ChatOS\Plugins\plugin-1".into(),
+            permissions: vec!["process.spawn".into()],
+            hooks: vec![chatos_local_agent_protocol::LocalPluginHookDefinition {
+                hook_id: "SessionStart-0-0".into(),
+                event: "SessionStart".into(),
+                matcher: None,
+                command: "node hook.js".into(),
+                is_async: false,
+                timeout_ms: 5_000,
+                additional_context_limit: 65_536,
+            }],
+            enabled: true,
+            trusted_at_unix_ms: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn hook_bundles_are_deactivated_before_they_are_published() {
+        let host = HookHost::new(HookHostBehavior::Success);
+        let bundle = hook_bundle_fixture();
+
+        publish_inactive_hook_bundles(&host, "owner-1", std::slice::from_ref(&bundle))
+            .await
+            .unwrap();
+
+        let commands = host.commands.lock().unwrap();
+        assert_eq!(commands.len(), 2);
+        assert!(matches!(
+            &commands[0],
+            HostCommand::SetActivePluginHookBundles(command)
+                if command.owner_user_id == "owner-1" && command.bundle_ids.is_empty()
+        ));
+        assert!(matches!(
+            &commands[1],
+            HostCommand::PutPluginHookBundle(command) if command.bundle == bundle
+        ));
+    }
+
+    #[tokio::test]
+    async fn hook_bundle_publication_rejects_host_errors_and_wrong_replies() {
+        let bundle = hook_bundle_fixture();
+        for behavior in [
+            HookHostBehavior::Error,
+            HookHostBehavior::WrongActiveReply,
+            HookHostBehavior::WrongBundleReply,
+        ] {
+            let host = HookHost::new(behavior);
+            assert!(
+                publish_inactive_hook_bundles(&host, "owner-1", std::slice::from_ref(&bundle))
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn package_without_hooks_still_confirms_an_empty_active_set() {
+        let host = HookHost::new(HookHostBehavior::Success);
+        publish_inactive_hook_bundles(&host, "owner-1", &[])
+            .await
+            .unwrap();
+        assert!(matches!(
+            host.commands.lock().unwrap().as_slice(),
+            [HostCommand::SetActivePluginHookBundles(command)] if command.bundle_ids.is_empty()
+        ));
+    }
+
+    #[tokio::test]
+    async fn reconciliation_activates_only_integrity_verified_installations() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin_root = directory.path().join("plugins");
+        let installation_root = plugin_root.join("local-plugin-1");
+        fs::create_dir_all(&installation_root).unwrap();
+        let executable = installation_root.join("plugin.exe");
+        fs::write(&executable, b"fixture").unwrap();
+        let artifact = "a".repeat(64);
+        crate::plugin_integrity::write_installation_integrity(
+            &plugin_root,
+            &installation_root,
+            &artifact,
+        )
+        .unwrap();
+        let mut bundle = hook_bundle_fixture();
+        bundle.installation_root = installation_root
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into();
+        bundle.artifact_sha256 = artifact.clone();
+        bundle.release_id = "release-1".into();
+        let record = LocalPluginInstallationRecord {
+            spec: LocalPluginInstallationSpec {
+                installation_id: "installation-1".into(),
+                owner_user_id: "owner-1".into(),
+                plugin_id: "plugin-1".into(),
+                release_id: "release-1".into(),
+                release_digest: format!("sha256:{artifact}"),
+                component_id: "component-1".into(),
+                component_revision: format!("integrity-v1-{artifact}"),
+                server_id: "component-1".into(),
+                executable_path: executable.to_string_lossy().into(),
+                args: Vec::new(),
+                working_directory: Some(installation_root.to_string_lossy().into()),
+                environment_secret_refs: BTreeMap::new(),
+                tool_prefix: None,
+                allowed_tools: None,
+                enabled: true,
+            },
+            version: 1,
+            created_at_unix_ms: 1,
+            updated_at_unix_ms: 1,
+        };
+        let host = HookHost::new(HookHostBehavior::Success);
+        reconcile_active_hook_bundles(
+            &host,
+            "owner-1",
+            &plugin_root,
+            std::slice::from_ref(&record),
+            &[chatos_local_agent_protocol::LocalPluginHookBundleRecord {
+                spec: bundle,
+                created_at_unix_ms: 1,
+            }],
+        )
+        .await
+        .unwrap();
+        let commands = host.commands.lock().unwrap();
+        assert!(matches!(
+            commands.last(),
+            Some(HostCommand::SetActivePluginHookBundles(command))
+                if command.bundle_ids == ["bundle-1"]
+        ));
+    }
+
+    #[tokio::test]
+    async fn reconciliation_drops_disabled_or_invalid_bundles() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin_root = directory.path().join("plugins");
+        let installation_root = plugin_root.join("local-plugin-1");
+        fs::create_dir_all(&installation_root).unwrap();
+        let executable = installation_root.join("plugin.exe");
+        fs::write(&executable, b"fixture").unwrap();
+        let artifact = "a".repeat(64);
+        crate::plugin_integrity::write_installation_integrity(
+            &plugin_root,
+            &installation_root,
+            &artifact,
+        )
+        .unwrap();
+        let mut disabled = hook_bundle_fixture();
+        disabled.installation_root = installation_root.to_string_lossy().into();
+        disabled.artifact_sha256 = artifact.clone();
+        disabled.release_id = "release-1".into();
+        disabled.enabled = false;
+        let mut malformed = disabled.clone();
+        malformed.bundle_id = "bundle-2".into();
+        malformed.enabled = true;
+        malformed.hooks[0].event = "UnsupportedEvent".into();
+        let record = LocalPluginInstallationRecord {
+            spec: LocalPluginInstallationSpec {
+                installation_id: "installation-1".into(),
+                owner_user_id: "owner-1".into(),
+                plugin_id: "plugin-1".into(),
+                release_id: "release-1".into(),
+                release_digest: format!("sha256:{artifact}"),
+                component_id: "component-1".into(),
+                component_revision: format!("integrity-v1-{artifact}"),
+                server_id: "component-1".into(),
+                executable_path: executable.to_string_lossy().into(),
+                args: Vec::new(),
+                working_directory: Some(installation_root.to_string_lossy().into()),
+                environment_secret_refs: BTreeMap::new(),
+                tool_prefix: None,
+                allowed_tools: None,
+                enabled: true,
+            },
+            version: 1,
+            created_at_unix_ms: 1,
+            updated_at_unix_ms: 1,
+        };
+        let host = HookHost::new(HookHostBehavior::Success);
+        reconcile_active_hook_bundles(
+            &host,
+            "owner-1",
+            &plugin_root,
+            std::slice::from_ref(&record),
+            &[
+                LocalPluginHookBundleRecord {
+                    spec: disabled,
+                    created_at_unix_ms: 1,
+                },
+                LocalPluginHookBundleRecord {
+                    spec: malformed,
+                    created_at_unix_ms: 1,
+                },
+            ],
+        )
+        .await
+        .unwrap();
+        let commands = host.commands.lock().unwrap();
+        assert!(matches!(
+            commands.last(),
+            Some(HostCommand::SetActivePluginHookBundles(command))
+                if command.bundle_ids.is_empty()
+        ));
+    }
+
+    fn manual_manager() -> (tempfile::TempDir, PluginSettingsManager) {
+        let directory = tempfile::tempdir().unwrap();
+        let manager = PluginSettingsManager::new(directory.path().join("app-data"));
+        (directory, manager)
+    }
+
+    fn stage_manual(
+        manager: &PluginSettingsManager,
+        source_root: &Path,
+    ) -> ManualPluginDirectorySelection {
+        manager
+            .stage_manual_selection(
+                "owner-1",
+                "presentation-1",
+                7,
+                source_root.to_path_buf(),
+                "source-plugin".into(),
+            )
+            .unwrap()
+    }
+
+    fn manual_input(selection_id: &str) -> ManualPluginSelectionInput {
+        ManualPluginSelectionInput {
+            owner_user_id: "owner-1".into(),
+            presentation_id: "presentation-1".into(),
+            selection_id: selection_id.into(),
+        }
+    }
+
+    #[test]
+    fn manual_selection_is_bound_to_owner_presentation_and_session_generation() {
+        let (directory, manager) = manual_manager();
+        let selection = stage_manual(&manager, directory.path());
+        let mut input = manual_input(&selection.selection_id);
+
+        input.owner_user_id = "owner-2".into();
+        assert!(manager.begin_manual_operation(&input, 7, None).is_err());
+        input.owner_user_id = "owner-1".into();
+        input.presentation_id = "presentation-2".into();
+        assert!(manager.begin_manual_operation(&input, 7, None).is_err());
+        input.presentation_id = "presentation-1".into();
+        assert!(manager.begin_manual_operation(&input, 8, None).is_err());
+
+        let (_, operation_id) = manager.begin_manual_operation(&input, 7, None).unwrap();
+        manager.finish_manual_inspection(&selection.selection_id, &operation_id, None);
+    }
+
+    #[test]
+    fn manual_install_requires_the_exact_preflight_fingerprint() {
+        let (directory, manager) = manual_manager();
+        let selection = stage_manual(&manager, directory.path());
+        let input = manual_input(&selection.selection_id);
+        let (_, operation_id) = manager.begin_manual_operation(&input, 7, None).unwrap();
+        manager.finish_manual_inspection(
+            &selection.selection_id,
+            &operation_id,
+            Some("a".repeat(64)),
+        );
+
+        assert!(manager
+            .begin_manual_operation(&input, 7, Some(&"b".repeat(64)))
+            .is_err());
+        assert!(manager
+            .begin_manual_operation(&input, 7, Some(&"a".repeat(64)))
+            .is_ok());
+    }
+
+    #[test]
+    fn manual_selection_rejects_concurrent_operations() {
+        let (directory, manager) = manual_manager();
+        let selection = stage_manual(&manager, directory.path());
+        let input = manual_input(&selection.selection_id);
+        let (_, operation_id) = manager.begin_manual_operation(&input, 7, None).unwrap();
+
+        assert_eq!(
+            manager.begin_manual_operation(&input, 7, None).unwrap_err(),
+            "Plugin 来源正在处理，请等待当前操作完成。"
+        );
+        manager.finish_manual_inspection(&selection.selection_id, &operation_id, None);
+    }
+
+    #[test]
+    fn successful_manual_install_consumes_the_selection() {
+        let (directory, manager) = manual_manager();
+        let selection = stage_manual(&manager, directory.path());
+        let input = manual_input(&selection.selection_id);
+        let (_, operation_id) = manager.begin_manual_operation(&input, 7, None).unwrap();
+        manager.finish_manual_install(&selection.selection_id, &operation_id, true);
+
+        assert!(manager.begin_manual_operation(&input, 7, None).is_err());
+    }
+
+    #[test]
+    fn discard_does_not_remove_a_leased_manual_operation() {
+        let (directory, manager) = manual_manager();
+        let selection = stage_manual(&manager, directory.path());
+        let input = manual_input(&selection.selection_id);
+        let (_, operation_id) = manager.begin_manual_operation(&input, 7, None).unwrap();
+        manager.discard_manual_selection("owner-1", "presentation-1");
+        let replacement = stage_manual(&manager, directory.path());
+
+        assert!(manager
+            .manual_selections
+            .lock()
+            .unwrap()
+            .contains_key(&selection.selection_id));
+        assert_ne!(replacement.selection_id, selection.selection_id);
+        manager.finish_manual_install(&selection.selection_id, &operation_id, false);
+        assert!(!manager
+            .manual_selections
+            .lock()
+            .unwrap()
+            .contains_key(&selection.selection_id));
+    }
+
+    #[test]
+    fn manual_directory_preflight_rejects_non_directories_and_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let ordinary = directory.path().join("ordinary-plugin");
+        fs::create_dir(&ordinary).unwrap();
+        let (canonical, name) = prepare_manual_plugin_directory(&ordinary).unwrap();
+        assert_eq!(canonical, ordinary.canonicalize().unwrap());
+        assert_eq!(name, "ordinary-plugin");
+
+        let file = directory.path().join("not-a-directory");
+        fs::write(&file, b"plugin").unwrap();
+        assert!(prepare_manual_plugin_directory(&file).is_err());
+        assert!(prepare_manual_plugin_directory(Path::new("relative-plugin")).is_err());
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_dir;
+            let link = directory.path().join("linked-plugin");
+            if symlink_dir(&ordinary, &link).is_ok() {
+                assert!(prepare_manual_plugin_directory(&link).is_err());
+                assert!(metadata_is_reparse(&fs::symlink_metadata(&link).unwrap()));
+            }
+        }
+    }
+
+    #[test]
+    fn plugin_secret_references_are_opaque_owner_and_plugin_scoped() {
+        let environment = BTreeMap::from([
+            ("API_TOKEN".into(), "${credential:primary-token}".into()),
+            (
+                "SECONDARY_TOKEN".into(),
+                "${credential:primary-token}".into(),
+            ),
+        ]);
+        let first = environment_secret_references("owner-1", "plugin-1", &environment).unwrap();
+        let same = environment_secret_references("owner-1", "plugin-1", &environment).unwrap();
+        let other_owner =
+            environment_secret_references("owner-2", "plugin-1", &environment).unwrap();
+        let other_plugin =
+            environment_secret_references("owner-1", "plugin-2", &environment).unwrap();
+
+        assert_eq!(first, same);
+        assert_eq!(first["API_TOKEN"], first["SECONDARY_TOKEN"]);
+        assert_ne!(first["API_TOKEN"], other_owner["API_TOKEN"]);
+        assert_ne!(first["API_TOKEN"], other_plugin["API_TOKEN"]);
+        assert!(!first["API_TOKEN"].contains("owner-1"));
+        assert!(!first["API_TOKEN"].contains("plugin-1"));
+        assert!(!first["API_TOKEN"].contains("primary-token"));
+        assert!(environment_secret_references(
+            "owner-1",
+            "plugin-1",
+            &BTreeMap::from([("API_TOKEN".into(), "plaintext".into())]),
+        )
+        .is_err());
+    }
 
     #[test]
     fn platform_gate_only_accepts_windows_or_universal_plugins() {
@@ -1253,6 +3243,204 @@ mod tests {
         assert_eq!(runtime_status(false, false), "not_installed");
         assert_eq!(runtime_status(true, false), "disabled");
         assert_eq!(runtime_status(true, true), "not_checked");
+    }
+
+    #[test]
+    fn computer_use_health_updates_runtime_and_declared_permission_truthfully() {
+        let mut snapshot = PluginSettingsSnapshot {
+            plugins: vec![PresentedPlugin {
+                id: "computer-use".into(),
+                package_name: Some("open-computer-use".into()),
+                plugin_key: None,
+                display_name: "Visual Computer Use".into(),
+                description: String::new(),
+                category: "Developer Tools".into(),
+                publisher: "Open Computer Use".into(),
+                latest_version: "0.9.0".into(),
+                installed_version: Some("0.9.0".into()),
+                installed: true,
+                update_available: false,
+                enabled: true,
+                has_ui: false,
+                source: "local",
+                runtime_status: "not_checked",
+                runtime_tool_count: None,
+                runtime_last_checked_at: None,
+                runtime_error: None,
+                mcp_server_count: 1,
+                hook_count: 0,
+                hook_runtime_status: None,
+                skills: Vec::new(),
+                permissions: vec![
+                    PresentedPluginPermission {
+                        id: "process.spawn".into(),
+                        required: true,
+                        reason: None,
+                        status: "declared_not_checked",
+                    },
+                    PresentedPluginPermission {
+                        id: "computer.control".into(),
+                        required: true,
+                        reason: None,
+                        status: "declared_not_checked",
+                    },
+                ],
+                installation_issue: None,
+                windows_compatible: true,
+                install_action_available: false,
+                credentials: Vec::new(),
+            }],
+            marketplace_available: true,
+            local_catalog_available: true,
+            marketplace_error: None,
+            local_catalog_error: None,
+            secure_marketplace_install_available: true,
+            manual_install_available: true,
+        };
+        apply_computer_use_runtime_health(
+            &mut snapshot,
+            Some(PluginRuntimeHealthProjection {
+                status: "ready",
+                checked_at: "2026-11-19T00:00:00.000Z".into(),
+                error: None,
+                process_spawn_status: "granted",
+                computer_control_status: "needs_attention",
+            }),
+        );
+        let plugin = &snapshot.plugins[0];
+        assert_eq!(plugin.runtime_status, "ready");
+        assert_eq!(
+            plugin.runtime_last_checked_at.as_deref(),
+            Some("2026-11-19T00:00:00.000Z")
+        );
+        assert_eq!(plugin.permissions[0].status, "granted");
+        assert_eq!(plugin.permissions[1].status, "needs_attention");
+    }
+
+    #[test]
+    fn local_installations_do_not_depend_on_marketplace_source_availability() {
+        let local = LocalPluginInstallationRecord {
+            spec: LocalPluginInstallationSpec {
+                installation_id: "installation-1".into(),
+                owner_user_id: "owner-1".into(),
+                plugin_id: "local-plugin-a".into(),
+                release_id: "local-release-a".into(),
+                release_digest: "sha256:a".into(),
+                component_id: "component-1".into(),
+                component_revision: "integrity-v1-a".into(),
+                server_id: "component-1".into(),
+                executable_path: "C:\\plugins\\local\\plugin.exe".into(),
+                args: Vec::new(),
+                working_directory: Some("C:\\plugins\\local".into()),
+                environment_secret_refs: BTreeMap::new(),
+                tool_prefix: None,
+                allowed_tools: None,
+                enabled: true,
+            },
+            version: 1,
+            created_at_unix_ms: 1,
+            updated_at_unix_ms: 1,
+        };
+        assert!(is_local_plugin_installation(&local));
+
+        let mut marketplace = local.clone();
+        marketplace.spec.plugin_id = "marketplace-plugin".into();
+        marketplace.spec.release_id = "release-1".into();
+        assert!(!is_local_plugin_installation(&marketplace));
+    }
+
+    #[test]
+    fn skill_only_package_receives_a_non_executable_host_record() {
+        let directory = tempfile::tempdir().unwrap();
+        let installation_root = directory.path().join("installed");
+        fs::create_dir_all(&installation_root).unwrap();
+        fs::write(installation_root.join("chatos.plugin.json"), "{}").unwrap();
+        let manifest = parse_plugin_manifest(
+            r#"{
+                "schemaVersion": 3,
+                "name": "skill-only",
+                "version": "1.0.0",
+                "description": "Skill only",
+                "author": { "name": "Local" },
+                "skills": ["./skills/helper"],
+                "mcpServers": {},
+                "interface": {
+                    "displayName": "Skill Only",
+                    "shortDescription": "Skill only",
+                    "longDescription": "Skill only",
+                    "developerName": "Local",
+                    "category": "Developer Tools"
+                },
+                "permissions": []
+            }"#,
+        )
+        .unwrap();
+        let package = crate::plugin_installer::CommittedPluginPackage {
+            plugin_root: directory.path().to_path_buf(),
+            installation_root: installation_root.clone(),
+            manifest,
+            artifact_sha256: "a".repeat(64),
+            backup_root: None,
+        };
+        let specs =
+            local_installation_specs("owner-1", "plugin-1", "release-1", &package, &[]).unwrap();
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].server_id, "skills-only");
+        assert_eq!(specs[0].component_id, "skills-only");
+        assert!(specs[0].args.is_empty());
+        assert!(specs[0].allowed_tools.is_none());
+        assert_eq!(
+            Path::new(&specs[0].executable_path).file_name(),
+            Some(std::ffi::OsStr::new("chatos.plugin.json"))
+        );
+    }
+
+    #[test]
+    fn hook_only_package_receives_a_non_executable_host_record() {
+        let directory = tempfile::tempdir().unwrap();
+        let installation_root = directory.path().join("installed");
+        fs::create_dir_all(&installation_root).unwrap();
+        fs::write(installation_root.join("chatos.plugin.json"), "{}").unwrap();
+        let manifest = parse_plugin_manifest(
+            r#"{
+                "schemaVersion": 3,
+                "name": "hook-only",
+                "version": "1.0.0",
+                "description": "Hook only",
+                "author": { "name": "Local" },
+                "hooks": [{ "componentKey": "lifecycle", "source": "hooks/lifecycle.json" }],
+                "mcpServers": {},
+                "interface": {
+                    "displayName": "Hook Only",
+                    "shortDescription": "Hook only",
+                    "longDescription": "Hook only",
+                    "developerName": "Local",
+                    "category": "Developer Tools"
+                },
+                "permissions": []
+            }"#,
+        )
+        .unwrap();
+        let package = crate::plugin_installer::CommittedPluginPackage {
+            plugin_root: directory.path().to_path_buf(),
+            installation_root: installation_root.clone(),
+            manifest,
+            artifact_sha256: "a".repeat(64),
+            backup_root: None,
+        };
+        let specs =
+            local_installation_specs("owner-1", "plugin-1", "release-1", &package, &[]).unwrap();
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].server_id, "hooks-only");
+        assert_eq!(specs[0].component_id, "hooks-only");
+        assert!(specs[0].args.is_empty());
+        assert!(specs[0].allowed_tools.is_none());
+        assert_eq!(
+            Path::new(&specs[0].executable_path).file_name(),
+            Some(std::ffi::OsStr::new("chatos.plugin.json"))
+        );
     }
 
     #[test]

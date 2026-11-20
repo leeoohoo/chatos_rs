@@ -15,6 +15,8 @@ describe("GeneralSettingsView", () => {
     render(<GeneralSettingsView displayName="Alice" onLogout={vi.fn()} ownerUserId="owner-1" port={port} role="user" username="alice" />);
     expect(await screen.findByRole("heading", { name: "常规与账号" })).toBeInTheDocument();
     expect(screen.getByText("运行与电源")).toBeInTheDocument();
+    expect(screen.getByText("内部上下文语言")).toBeInTheDocument();
+    expect(screen.getByText("当前登录的 ChatOS 平台身份。")).toBeInTheDocument();
     fireEvent.change(screen.getAllByLabelText("Language")[0]!, { target: { value: "en-US" } });
     expect(screen.getByRole("heading", { name: "General & Account" })).toBeInTheDocument();
     await waitFor(() => expect(port.update).toHaveBeenCalled());

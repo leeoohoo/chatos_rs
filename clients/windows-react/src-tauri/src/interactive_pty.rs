@@ -12,6 +12,8 @@ use std::{
 };
 use tokio::sync::Notify;
 
+use crate::machine_resource_governor::MachineResourcePermit;
+
 pub(crate) const MAXIMUM_INPUT_BYTES: usize = 64 * 1_024;
 pub(crate) const MAXIMUM_OUTPUT_EVENTS: usize = 512;
 pub(crate) const MAXIMUM_RETAINED_OUTPUT_BYTES: usize = 2 * 1_024 * 1_024;
@@ -41,10 +43,13 @@ pub(crate) struct PtyMessages {
 pub(crate) struct ManagedPtySession {
     master: StandardMutex<Option<Box<dyn MasterPty + Send>>>,
     writer: StandardMutex<Option<Box<dyn Write + Send>>>,
+    #[cfg(windows)]
+    slave: StandardMutex<Option<Box<dyn portable_pty::SlavePty + Send>>>,
     termination: Arc<PtyProcessTermination>,
     state: StandardMutex<PtySessionState>,
     changed: Notify,
     closed: AtomicBool,
+    resource_permit: StandardMutex<Option<MachineResourcePermit>>,
     messages: PtyMessages,
 }
 
@@ -92,6 +97,16 @@ impl ManagedPtySession {
         rows: u16,
         messages: PtyMessages,
     ) -> Result<Arc<Self>, String> {
+        Self::spawn_with_permit(command, columns, rows, messages, None)
+    }
+
+    pub(crate) fn spawn_with_permit(
+        command: PtyCommand,
+        columns: u16,
+        rows: u16,
+        messages: PtyMessages,
+        resource_permit: Option<MachineResourcePermit>,
+    ) -> Result<Arc<Self>, String> {
         let pty = native_pty_system()
             .openpty(PtySize {
                 rows,
@@ -115,11 +130,12 @@ impl ManagedPtySession {
             builder.env(key, value);
         }
         builder.cwd(&command.working_directory);
-        let mut child = pty
-            .slave
+        let slave = pty.slave;
+        let mut child = slave
             .spawn_command(builder)
             .map_err(|_| messages.launch_error.to_owned())?;
-        drop(pty.slave);
+        #[cfg(not(windows))]
+        drop(slave);
         let process_group = process_group(&*pty.master);
         let termination = match PtyProcessTermination::attach(&*child, process_group) {
             Ok(termination) => Arc::new(termination),
@@ -131,6 +147,8 @@ impl ManagedPtySession {
         let session = Arc::new(Self {
             master: StandardMutex::new(Some(pty.master)),
             writer: StandardMutex::new(Some(writer)),
+            #[cfg(windows)]
+            slave: StandardMutex::new(Some(slave)),
             termination: termination.clone(),
             state: StandardMutex::new(PtySessionState {
                 running: true,
@@ -141,6 +159,7 @@ impl ManagedPtySession {
             }),
             changed: Notify::new(),
             closed: AtomicBool::new(false),
+            resource_permit: StandardMutex::new(resource_permit),
             messages,
         });
         let (reader_done_tx, reader_done_rx) = std::sync::mpsc::channel();
@@ -259,6 +278,11 @@ impl ManagedPtySession {
         if let Ok(mut master) = self.master.lock() {
             master.take();
         }
+        #[cfg(windows)]
+        if let Ok(mut slave) = self.slave.lock() {
+            slave.take();
+        }
+        self.release_resource();
         drop(state);
         self.changed.notify_waiters();
     }
@@ -274,7 +298,18 @@ impl ManagedPtySession {
         if let Ok(mut writer) = self.writer.lock() {
             writer.take();
         }
+        #[cfg(windows)]
+        if let Ok(mut slave) = self.slave.lock() {
+            slave.take();
+        }
+        self.release_resource();
         self.changed.notify_waiters();
+    }
+
+    fn release_resource(&self) {
+        if let Ok(mut permit) = self.resource_permit.lock() {
+            permit.take();
+        }
     }
 
     fn is_running(&self) -> bool {

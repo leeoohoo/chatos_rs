@@ -54,6 +54,15 @@ export function SystemPermissionsView({
 
   return (
     <div className="settings-page runtime-permissions-page" aria-label="运行与权限">
+      <header className="settings-page__title">
+        <h2>运行与系统权限</h2>
+        {(isLoading || requestingPermissionId != null) && (
+          <div>
+            <span className="mini-spinner" aria-hidden="true" />
+            {requestingPermissionId != null ? "正在打开…" : "检测中…"}
+          </div>
+        )}
+      </header>
       {(loadError || mutationError) && (
         <div className="settings-alert" role="alert">
           <span aria-hidden="true">!</span>
@@ -68,11 +77,8 @@ export function SystemPermissionsView({
 
       <section className="settings-card">
         <header className="settings-card__header">
-          <span aria-hidden="true">⌁</span>
-          <div>
-            <h2>系统权限</h2>
-            <p>{snapshot.platformLabel} 下 Skills 与 MCP 的系统访问状态</p>
-          </div>
+          <span aria-hidden="true">⬡</span>
+          <h3>系统权限</h3>
           <button
             className="settings-link-button"
             disabled={isLoading || requestingPermissionId != null}
@@ -81,7 +87,7 @@ export function SystemPermissionsView({
           >重新检测</button>
         </header>
         <div className="settings-card__body">
-          <p className="settings-help">每项能力都由 Tauri 原生层或通过完整性校验的 Plugin Worker 报告；未安装、已停用、运行检查失败和桌面不可用会分别显示。</p>
+          <p className="settings-help">每项权限都会说明准确的授权目标和当前状态。</p>
           <div className="system-permission-list">
             {snapshot.items.map((permission) => (
               <PermissionRow
@@ -93,6 +99,7 @@ export function SystemPermissionsView({
             ))}
           </div>
         </div>
+        <p className="settings-card__footnote">{snapshot.platformLabel} 下 Skills 与 MCP 的系统访问状态</p>
       </section>
     </div>
   );

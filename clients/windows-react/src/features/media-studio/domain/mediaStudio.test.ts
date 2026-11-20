@@ -26,9 +26,11 @@ describe("media studio domain", () => {
       name: "Image Model",
       provider: "openai-compatible",
       modelName: "gpt-image-1",
+      workload: "image",
       enabled: true,
       taskEnabled: true,
       hasApiKey: true,
+      supportsImageInput: true,
     };
     expect(mediaStudioModelSchema.parse(model).id).toBe("image-model");
     expect(() => mediaStudioModelSchema.parse({ ...model, apiKey: "secret" })).toThrow();

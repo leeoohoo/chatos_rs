@@ -11,6 +11,14 @@ describe("SafeMarkdownPreview", () => {
     expect(document.querySelector("script")).toBeNull();
   });
 
+  it("renders a heading followed immediately by its body", () => {
+    render(<SafeMarkdownPreview markdown={"## 范围\n仅限真实 Windows 回归"} />);
+
+    expect(screen.getByRole("heading", { name: "范围", level: 2 })).toBeVisible();
+    expect(screen.getByText("仅限真实 Windows 回归")).toBeVisible();
+    expect(screen.queryByText("## 范围")).not.toBeInTheDocument();
+  });
+
   it("renders only bounded supported image data URLs", () => {
     render(<SafeMarkdownPreview markdown="![screen](<data:image/png;base64,iVBORw==>)" />);
     expect(screen.getByRole("img", { name: "screen" })).toHaveAttribute("src", "data:image/png;base64,iVBORw==");

@@ -12,11 +12,59 @@ describe("PluginApplicationsView", () => {
   it("renders the macOS catalog hierarchy and opens an application", async () => {
     const adapter = port({ list: vi.fn(async () => [pluginApplicationFixture()]) });
     const onOpen = vi.fn();
-    render(<PluginApplicationsView hostReady ownerUserId="alice" port={adapter} onOpen={onOpen} />);
+    render(
+      <PluginApplicationsView
+        hostReady
+        ownerUserId="alice"
+        port={adapter}
+        onOpen={onOpen}
+        onOpenPluginManagement={() => undefined}
+      />,
+    );
     expect(await screen.findByRole("button", { name: /Canvas/ })).toBeVisible();
     expect(screen.getByText("本地服务")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
     expect(onOpen).toHaveBeenCalledWith(pluginApplicationFixture());
+  });
+
+  it("opens plugin management from the empty state like macOS", async () => {
+    const onOpenPluginManagement = vi.fn();
+    render(
+      <PluginApplicationsView
+        hostReady
+        ownerUserId="alice"
+        port={port()}
+        onOpen={() => undefined}
+        onOpenPluginManagement={onOpenPluginManagement}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "还没有插件应用" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "打开插件管理" }));
+    expect(onOpenPluginManagement).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the native safe icon preview and falls back when loading fails", async () => {
+    const iconPreviewUrl = "http://chatos-plugin-icon.localhost/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222";
+    const adapter = port({
+      list: vi.fn(async () => [pluginApplicationFixture({ iconPreviewUrl })]),
+    });
+    const { container } = render(
+      <PluginApplicationsView
+        hostReady
+        ownerUserId="alice"
+        port={adapter}
+        onOpen={() => undefined}
+        onOpenPluginManagement={() => undefined}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: /Canvas/ })).toBeVisible();
+    const image = container.querySelector<HTMLImageElement>(".plugin-application-icon__image");
+    expect(image).toHaveAttribute("src", iconPreviewUrl);
+    fireEvent.error(image!);
+    expect(container.querySelector(".plugin-application-icon__image")).toBeNull();
+    expect(container.querySelector(".plugin-application-icon")).toHaveTextContent("▦");
   });
 
   it("offers shared and project contexts before launching", async () => {

@@ -1,6 +1,9 @@
 use crate::interactive_pty::MAXIMUM_INPUT_BYTES;
 #[cfg(test)]
 use crate::interactive_pty::{MAXIMUM_OUTPUT_EVENTS, MAXIMUM_POLL_EVENTS};
+use crate::machine_resource_governor::{
+    MachineResourceGovernor, MachineResourceKind, MachineResourcePermit, MachineResourcePriority,
+};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::Serialize;
 use std::{
@@ -51,12 +54,34 @@ struct LocalTerminalRegistryState {
     sessions: HashMap<String, Arc<ManagedLocalTerminal>>,
 }
 
-#[derive(Default)]
 pub(crate) struct LocalTerminalRegistry {
     state: Mutex<LocalTerminalRegistryState>,
+    resources: MachineResourceGovernor,
+}
+
+impl Default for LocalTerminalRegistry {
+    fn default() -> Self {
+        Self::new(MachineResourceGovernor::default())
+    }
 }
 
 impl LocalTerminalRegistry {
+    pub(crate) fn new(resources: MachineResourceGovernor) -> Self {
+        Self {
+            state: Mutex::new(LocalTerminalRegistryState::default()),
+            resources,
+        }
+    }
+
+    async fn acquire_resource(&self) -> Result<MachineResourcePermit, String> {
+        self.resources
+            .acquire(
+                MachineResourceKind::CodeReadWorker,
+                MachineResourcePriority::Interactive,
+            )
+            .await
+    }
+
     async fn begin_start(
         &self,
         owner_user_id: &str,
@@ -340,7 +365,7 @@ impl LocalTerminalLaunch {
         ];
         Ok(Self {
             executable,
-            arguments: vec!["-NoLogo".into()],
+            arguments: vec!["-NoLogo".into(), "-NoProfile".into()],
             environment,
             initial_working_directory: working_directory.to_string_lossy().into_owned(),
             working_directory,
@@ -395,8 +420,15 @@ pub struct PresentedLocalTerminalStart {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PresentedLocalTerminalEvent {
-    Output { cursor: u64, data_base64: String },
-    Terminated { cursor: u64, exit_code: Option<i32> },
+    Output {
+        cursor: u64,
+        #[serde(rename = "dataBase64")]
+        data_base64: String,
+    },
+    Terminated {
+        cursor: u64,
+        exit_code: Option<i32>,
+    },
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -433,6 +465,7 @@ pub async fn start_local_terminal(
         .begin_start(&owner_user_id, &presentation_id)
         .await?;
     let result = async {
+        let resource_permit = registry.acquire_resource().await?;
         let launch = tauri::async_runtime::spawn_blocking(LocalTerminalLaunch::system)
             .await
             .map_err(|_| terminal_launch_error())??;
@@ -447,7 +480,13 @@ pub async fn start_local_terminal(
             generation: token.generation,
         };
         let session = tauri::async_runtime::spawn_blocking(move || {
-            ManagedLocalTerminal::spawn(identity, launch, columns, rows)
+            ManagedLocalTerminal::spawn_with_permit(
+                identity,
+                launch,
+                columns,
+                rows,
+                Some(resource_permit),
+            )
         })
         .await
         .map_err(|_| terminal_launch_error())??;

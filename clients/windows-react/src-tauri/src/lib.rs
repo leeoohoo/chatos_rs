@@ -1,10 +1,14 @@
 mod access_control;
+mod agent_artifacts;
 mod agent_conversation;
 mod agent_management;
 mod agent_plugin_runtime;
 mod agent_professions;
 mod agent_skill_management;
 mod ai_model_settings;
+mod app_data_maintenance;
+mod app_data_transaction;
+mod app_owned_export;
 mod ask_user;
 mod atomic_file;
 mod attachment_tool_worker;
@@ -14,6 +18,7 @@ mod computer_use_worker;
 mod connector_state;
 mod connector_storage;
 mod control_plane;
+mod controlled_network_policy;
 mod conversation_attachments;
 mod conversation_composer;
 mod conversation_history;
@@ -25,14 +30,19 @@ mod global_utilities;
 mod host_lifecycle;
 mod interactive_pty;
 mod local_terminal;
+mod machine_concurrency_allocator;
+mod machine_resource_governor;
 mod media_studio;
 mod model_selection;
 mod notepad;
 mod pet;
 mod platform_execution_context;
 mod plugin_application;
+mod plugin_credentials;
 mod plugin_installer;
+mod plugin_installer_tool_worker;
 mod plugin_integrity;
+mod plugin_repository;
 mod plugin_settings;
 mod product_skill_runtime;
 mod project_conversation;
@@ -45,16 +55,21 @@ mod project_run;
 mod quick_search;
 mod remote_connection;
 mod requirement_survey;
+mod resource_pressure;
 mod run_inspector;
+mod single_instance;
 mod story_studio;
 mod system_permissions;
 mod terminal_runtime;
 mod terminal_tool_worker;
 mod tool_approval;
 mod wechat_companion;
+#[cfg(target_os = "windows")]
+mod windows_appcontainer;
 mod workspace_index;
 
 use access_control::load_access_control;
+use agent_artifacts::{list_agent_artifacts, preview_agent_artifact, save_agent_artifact};
 use agent_conversation::proposals::{
     list_agent_staffing_proposals, resolve_agent_staffing_proposal,
 };
@@ -63,10 +78,11 @@ use agent_conversation::team_todo::{
     list_agent_team_todos, reorder_agent_team_todos, retry_agent_team_run, update_agent_team_todo,
 };
 use agent_conversation::{
-    archive_agent_team_asset, create_agent_team, dispatch_next_agent_team_delivery,
-    invite_agent_to_team, list_agent_team_asset_revisions, list_agent_team_assets,
-    list_agent_teams, load_agent_conversation_activity, load_agent_profile_activity,
-    load_agent_team, load_agent_team_conversation, load_agent_team_member_activity,
+    archive_agent_team_asset, cancel_agent_team_run, create_agent_team,
+    dispatch_next_agent_team_delivery, invite_agent_to_team, list_agent_team_asset_reviews,
+    list_agent_team_asset_revisions, list_agent_team_assets, list_agent_teams,
+    load_agent_conversation_activity, load_agent_profile_activity, load_agent_team,
+    load_agent_team_conversation, load_agent_team_dashboard, load_agent_team_member_activity,
     load_agent_team_runs, prepare_agent_conversation, queue_agent_team_message,
     remove_agent_from_team, save_agent_team_asset, send_agent_conversation_draft,
     set_agent_team_default_agent, set_agent_team_project_manager, update_agent_team_member,
@@ -125,19 +141,21 @@ use local_terminal::{
     poll_local_terminal, resize_local_terminal, send_local_terminal_input, start_local_terminal,
     LocalTerminalRegistry,
 };
+use machine_resource_governor::{machine_resource_snapshot, MachineResourceGovernor};
 use media_studio::{
-    cancel_media_studio_video_generation, discard_media_studio_presentation,
-    discard_media_studio_reference_images, discard_media_studio_video_reference_audio,
-    generate_media_studio_image, list_media_studio_models, load_media_studio_image_history,
+    cancel_media_studio_video_generation, delete_media_studio_workflow,
+    discard_media_studio_presentation, discard_media_studio_reference_images,
+    discard_media_studio_video_reference_audio, generate_media_studio_image,
+    list_media_studio_models, list_media_studio_workflows, load_media_studio_image_history,
     load_media_studio_video_history, media_studio_protocol, pick_agent_avatar,
     pick_media_studio_reference_images, pick_media_studio_video_reference_audio,
-    poll_media_studio_video_generation, stage_media_studio_history_references,
-    start_media_studio_video_generation, MediaStudioManager,
+    poll_media_studio_video_generation, run_media_studio_workflow, save_media_studio_workflow,
+    stage_media_studio_history_references, start_media_studio_video_generation, MediaStudioManager,
 };
 use notepad::{
-    create_notepad_folder, create_notepad_note, delete_notepad_folder, delete_notepad_note,
-    get_notepad_note, import_notepad_image, load_notepad, rename_notepad_folder,
-    update_notepad_note,
+    copy_notepad_text, create_notepad_folder, create_notepad_note, delete_notepad_folder,
+    delete_notepad_note, export_notepad_markdown, get_notepad_note, import_notepad_image,
+    load_notepad, rename_notepad_folder, update_notepad_note,
 };
 use pet::{
     load_pet_preferences, pet_asset_protocol, refresh_pet_presentation, reset_pet_position,
@@ -145,11 +163,14 @@ use pet::{
 };
 use plugin_application::{
     discard_plugin_application_presentation, handle_plugin_application_bridge_request,
-    launch_plugin_application, list_plugin_applications, PluginApplicationManager,
+    launch_plugin_application, list_plugin_applications, plugin_application_icon_protocol,
+    PluginApplicationIconStore, PluginApplicationManager,
 };
 use plugin_settings::{
-    install_marketplace_plugin, load_plugin_settings, uninstall_plugin, update_plugin_enabled,
-    PluginSettingsManager,
+    discard_manual_plugin_directory, inspect_manual_plugin_directory,
+    install_manual_plugin_directory, install_marketplace_plugin, load_plugin_settings,
+    pick_manual_plugin_directory, uninstall_plugin, update_plugin_credentials,
+    update_plugin_enabled, PluginSettingsManager,
 };
 use project_conversation::prepare_project_conversation;
 use project_creation::{
@@ -245,6 +266,7 @@ pub fn run() {
         .expect("failed to configure Agent conversation store");
     let agent_skill_store =
         AgentSkillStore::from_runtime().expect("failed to configure Agent Skill store");
+    let agent_skill_cleanup_root = agent_skill_store.temporary_cleanup_root();
     let protocol_attachment_manager = attachment_manager.clone();
     let protocol_media_studio_manager = media_studio_manager.clone();
     let protocol_story_studio_manager = story_studio_manager.clone();
@@ -255,8 +277,18 @@ pub fn run() {
     let protocol_pet_asset_store = pet_asset_store.clone();
     let clipboard_history_manager = ClipboardHistoryManager::default();
     let protocol_clipboard_history_manager = clipboard_history_manager.clone();
+    let plugin_application_icons = PluginApplicationIconStore::default();
+    let setup_plugin_application_icons = plugin_application_icons.clone();
+    let protocol_plugin_application_icons = plugin_application_icons.clone();
     let drop_attachment_manager = attachment_manager.clone();
+    let machine_resource_governor = MachineResourceGovernor::default();
+    let drop_resource_governor = machine_resource_governor.clone();
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(
+            |app, _arguments, _cwd| {
+                single_instance::present_main_window(app);
+            },
+        ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(authentication)
         .manage(attachment_manager)
@@ -268,15 +300,20 @@ pub fn run() {
         .manage(wechat_companion_manager)
         .manage(pet_asset_store)
         .manage(clipboard_history_manager)
+        .manage(LocalTerminalRegistry::new(
+            machine_resource_governor.clone(),
+        ))
+        .manage(ProjectRunManager::new_with_resources(
+            machine_resource_governor.clone(),
+        ))
+        .manage(machine_resource_governor)
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
         .manage(ApprovalReviewer::default())
-        .manage(LocalTerminalRegistry::default())
         .manage(ConversationRuntimeSettingsManager::default())
         .manage(ProjectCreationManager::default())
-        .manage(ProjectRunManager::default())
-        .setup(|app| {
+        .setup(move |app| {
             let data_dir = app
                 .path()
                 .app_data_dir()
@@ -288,7 +325,10 @@ pub fn run() {
             app.manage(journal);
             app.manage(ApprovalSettingsStore::new(data_dir.clone()));
             app.manage(ProjectRunPreferencesStore::new(data_dir.clone()));
-            app.manage(RemoteConnectionManager::new(data_dir.clone()));
+            app.manage(RemoteConnectionManager::new(
+                data_dir.clone(),
+                app.state::<MachineResourceGovernor>().inner().clone(),
+            ));
             app.manage(ProjectFavoriteStore::new(data_dir.clone()));
             app.manage(GeneralSettingsStore::new(data_dir.clone()));
             app.manage(GlobalUtilityPreferencesStore::new(data_dir.clone()));
@@ -297,8 +337,19 @@ pub fn run() {
                 .open(data_dir.join("clipboard-history"))
                 .map_err(std::io::Error::other)?;
             app.manage(PetPreferencesStore::new(data_dir.clone()));
-            app.manage(PluginSettingsManager::new(data_dir.clone()));
-            app.manage(PluginApplicationManager::new(data_dir));
+            app.manage(PluginSettingsManager::new_with_resources(
+                data_dir.clone(),
+                app.state::<MachineResourceGovernor>().inner().clone(),
+            ));
+            let app_data_maintenance_root = data_dir.clone();
+            app.manage(
+                PluginApplicationManager::try_new_with_resources_and_icons(
+                    data_dir,
+                    app.state::<MachineResourceGovernor>().inner().clone(),
+                    setup_plugin_application_icons.clone(),
+                )
+                .map_err(std::io::Error::other)?,
+            );
             let resource_directory = app
                 .path()
                 .resource_dir()
@@ -306,6 +357,35 @@ pub fn run() {
             app.state::<PetAssetStore>()
                 .load(&resource_directory)
                 .map_err(std::io::Error::other)?;
+            let attachment_manager = app.state::<AttachmentManager>().inner().clone();
+            let media_studio_manager = app.state::<MediaStudioManager>().inner().clone();
+            let story_studio_manager = app.state::<StoryStudioManager>().inner().clone();
+            let agent_conversation_store = app.state::<AgentConversationStore>().inner().clone();
+            let machine_resources = app.state::<MachineResourceGovernor>().inner().clone();
+            tauri::async_runtime::spawn(async move {
+                let Ok(_permit) = machine_resources
+                    .acquire(
+                        machine_resource_governor::MachineResourceKind::CodeReadWorker,
+                        machine_resource_governor::MachineResourcePriority::Background,
+                    )
+                    .await
+                else {
+                    return;
+                };
+                let _ = attachment_manager.cleanup_stale_temporaries().await;
+                let _ = media_studio_manager.cleanup_stale_temporaries().await;
+                let _ = story_studio_manager.cleanup_stale_temporaries().await;
+                let _ = agent_conversation_store
+                    .cleanup_stale_attachment_files()
+                    .await;
+                let _ = app_data_maintenance::cleanup_stale_temporaries(app_data_maintenance_root)
+                    .await;
+                let _ =
+                    app_data_maintenance::cleanup_agent_skill_temporaries(agent_skill_cleanup_root)
+                        .await;
+            });
+            resource_pressure::start_monitor(app.handle().clone());
+            machine_concurrency_allocator::start_allocator(app.handle().clone());
             #[cfg(target_os = "windows")]
             if std::env::var_os("CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP").as_deref()
                 == Some(std::ffi::OsStr::new("1"))
@@ -330,6 +410,9 @@ pub fn run() {
         .register_uri_scheme_protocol("chatos-agent", move |_context, request| {
             agent_avatar_protocol(protocol_agent_profile_store.clone(), request)
         })
+        .register_uri_scheme_protocol("chatos-plugin-icon", move |_context, request| {
+            plugin_application_icon_protocol(protocol_plugin_application_icons.clone(), request)
+        })
         .register_uri_scheme_protocol("chatos-wechat", move |_context, request| {
             wechat_qr_protocol(protocol_wechat_companion_manager.clone(), request)
         })
@@ -339,6 +422,7 @@ pub fn run() {
         .register_uri_scheme_protocol("chatos-clipboard", move |_context, request| {
             clipboard_history_protocol(protocol_clipboard_history_manager.clone(), request)
         })
+        .on_window_event(single_instance::handle_main_window_event)
         .on_webview_event(move |webview, event| {
             let emit_drag_state = |targeted| {
                 let _ = webview.emit(
@@ -359,9 +443,30 @@ pub fn run() {
                         return;
                     };
                     let manager = drop_attachment_manager.clone();
+                    let resources = drop_resource_governor.clone();
                     let webview = webview.clone();
                     let paths = paths.clone();
                     tauri::async_runtime::spawn(async move {
+                        let _permit = match resources
+                            .acquire(
+                                machine_resource_governor::MachineResourceKind::CodeReadWorker,
+                                machine_resource_governor::MachineResourcePriority::Interactive,
+                            )
+                            .await
+                        {
+                            Ok(permit) => permit,
+                            Err(error) => {
+                                let _ = webview.emit(
+                                    "conversation-attachments-staged",
+                                    serde_json::json!({
+                                        "scope": &scope,
+                                        "attachments": [],
+                                        "errors": [error],
+                                    }),
+                                );
+                                return;
+                            }
+                        };
                         let result = manager.stage_paths(scope.clone(), paths).await;
                         if manager.active_scope().as_ref() != Some(&scope) {
                             manager.discard_import_result(&result);
@@ -381,12 +486,18 @@ pub fn run() {
             logout,
             list_local_projects,
             list_agent_profiles,
+            list_agent_artifacts,
+            preview_agent_artifact,
+            save_agent_artifact,
             list_agent_teams,
             create_agent_team,
             load_agent_team,
             load_agent_team_conversation,
             load_agent_team_runs,
+            cancel_agent_team_run,
+            load_agent_team_dashboard,
             list_agent_team_assets,
+            list_agent_team_asset_reviews,
             save_agent_team_asset,
             archive_agent_team_asset,
             list_agent_team_asset_revisions,
@@ -511,6 +622,8 @@ pub fn run() {
             update_notepad_note,
             delete_notepad_note,
             import_notepad_image,
+            copy_notepad_text,
+            export_notepad_markdown,
             list_tool_approvals,
             decide_tool_approval,
             load_tool_approval_settings,
@@ -566,9 +679,14 @@ pub fn run() {
             close_local_terminal,
             discard_local_terminal_presentation,
             list_plugin_applications,
+            pick_manual_plugin_directory,
+            inspect_manual_plugin_directory,
+            install_manual_plugin_directory,
+            discard_manual_plugin_directory,
             install_marketplace_plugin,
             load_plugin_settings,
             update_plugin_enabled,
+            update_plugin_credentials,
             uninstall_plugin,
             list_media_studio_models,
             load_media_studio_image_history,
@@ -584,6 +702,10 @@ pub fn run() {
             start_media_studio_video_generation,
             poll_media_studio_video_generation,
             cancel_media_studio_video_generation,
+            list_media_studio_workflows,
+            save_media_studio_workflow,
+            delete_media_studio_workflow,
+            run_media_studio_workflow,
             load_story_projects,
             load_story_project,
             preview_story_media_batch,
@@ -625,6 +747,7 @@ pub fn run() {
             host_lifecycle_snapshot,
             start_local_agent_host,
             stop_local_agent_host,
+            machine_resource_snapshot,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build ChatOS Windows client");

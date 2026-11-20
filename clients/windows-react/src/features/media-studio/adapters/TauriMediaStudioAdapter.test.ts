@@ -1,8 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { MediaWorkflow } from "../domain/mediaWorkflow";
 import { TauriMediaStudioAdapter } from "./TauriMediaStudioAdapter";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
 const OWNER_ID = "alice";
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
@@ -13,7 +16,10 @@ const CONTENT_TOKEN = "a".repeat(32);
 const REFERENCE_ID = `reference_${"b".repeat(32)}`;
 
 describe("TauriMediaStudioAdapter", () => {
-  beforeEach(() => vi.mocked(invoke).mockReset());
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(listen).mockReset();
+  });
 
   it("parses the model catalog and rejects native secrets", async () => {
     const model = {
@@ -21,9 +27,11 @@ describe("TauriMediaStudioAdapter", () => {
       name: "Image Model",
       provider: "openai-compatible",
       modelName: "gpt-image-1",
+      workload: "image",
       enabled: true,
       taskEnabled: true,
       hasApiKey: true,
+      supportsImageInput: true,
     };
     vi.mocked(invoke).mockResolvedValueOnce([model]);
     await expect(new TauriMediaStudioAdapter().listModels(OWNER_ID)).resolves.toEqual([model]);
@@ -31,6 +39,106 @@ describe("TauriMediaStudioAdapter", () => {
 
     vi.mocked(invoke).mockResolvedValueOnce([{ ...model, apiKey: "secret" }]);
     await expect(new TauriMediaStudioAdapter().listModels(OWNER_ID)).rejects.toThrow();
+  });
+
+  it("keeps workflow persistence behind strict typed commands", async () => {
+    const workflow: MediaWorkflow = {
+      id: "55555555-5555-4555-8555-555555555555",
+      name: "workflow",
+      inputPrompt: "input",
+      inputImages: [],
+      nodes: [{
+        id: "66666666-6666-4666-8666-666666666666",
+        kind: "image" as const,
+        modelConfigId: "image-model",
+        prompt: "draw",
+        referenceImages: [],
+        imageSize: "1024x1024",
+        videoSize: "768P",
+        videoRatio: "16:9",
+        videoSeconds: 4,
+      }],
+      createdAtUnixMs: 1,
+      updatedAtUnixMs: 2,
+    };
+    vi.mocked(invoke).mockResolvedValueOnce([workflow]);
+    const adapter = new TauriMediaStudioAdapter();
+    await expect(adapter.listWorkflows(OWNER_ID)).resolves.toEqual([workflow]);
+    expect(invoke).toHaveBeenCalledWith("list_media_studio_workflows", { ownerUserId: OWNER_ID });
+    vi.mocked(invoke).mockResolvedValueOnce(true);
+    await expect(adapter.saveWorkflow(OWNER_ID, workflow)).resolves.toBe(true);
+    expect(invoke).toHaveBeenLastCalledWith("save_media_studio_workflow", {
+      ownerUserId: OWNER_ID,
+      workflow,
+    });
+    await adapter.deleteWorkflow(OWNER_ID, workflow.id);
+    expect(invoke).toHaveBeenLastCalledWith("delete_media_studio_workflow", {
+      input: { ownerUserId: OWNER_ID, workflowId: workflow.id },
+    });
+  });
+
+  it("runs a workflow through the typed native envelope", async () => {
+    const result = {
+      workflowId: "55555555-5555-4555-8555-555555555555",
+      clientRequestId: "request-1",
+      status: "completed" as const,
+      finalText: "done",
+      imageRecordIds: [],
+      videoRecordIds: [],
+      nodeResults: [],
+      errorMessage: null,
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(result);
+    await expect(new TauriMediaStudioAdapter().runWorkflow({
+      ownerUserId: OWNER_ID,
+      workflowId: result.workflowId,
+      clientRequestId: result.clientRequestId,
+    })).resolves.toEqual(result);
+    expect(invoke).toHaveBeenCalledWith("run_media_studio_workflow", {
+      request: {
+        ownerUserId: OWNER_ID,
+        workflowId: result.workflowId,
+        clientRequestId: result.clientRequestId,
+      },
+    });
+  });
+
+  it("filters workflow node events to the exact owner and run", async () => {
+    const workflowId = "55555555-5555-4555-8555-555555555555";
+    const nodeId = "66666666-6666-4666-8666-666666666666";
+    const clientRequestId = "request-1";
+    const listener = vi.fn();
+    vi.mocked(listen).mockImplementationOnce(async (_name, callback) => {
+      callback({ payload: {
+        ownerUserId: "bob",
+        workflowId,
+        clientRequestId,
+        nodeId,
+        phase: "running",
+        progress: null,
+        result: null,
+        errorMessage: null,
+      } } as never);
+      callback({ payload: {
+        ownerUserId: OWNER_ID,
+        workflowId,
+        clientRequestId,
+        nodeId,
+        phase: "completed",
+        progress: null,
+        result: { type: "text", text: "done" },
+        errorMessage: null,
+      } } as never);
+      return () => undefined;
+    });
+
+    await new TauriMediaStudioAdapter().watchWorkflowRun(
+      { ownerUserId: OWNER_ID, workflowId, clientRequestId },
+      listener,
+    );
+    expect(listen).toHaveBeenCalledWith("media-workflow-run", expect.any(Function));
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ phase: "completed" }));
   });
 
   it("loads a bounded page with explicit nullable native arguments", async () => {

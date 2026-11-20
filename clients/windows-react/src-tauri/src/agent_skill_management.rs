@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
-    io::Write,
+    io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
 };
@@ -11,7 +11,8 @@ use tauri::State;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    atomic_file::replace_file, authentication::AuthenticationManager,
+    app_data_transaction::{ensure_owned_directory, replace_owned_file},
+    authentication::AuthenticationManager,
     host_lifecycle::validate_owner,
 };
 
@@ -213,6 +214,13 @@ impl AgentSkillStore {
         Self::new(file)
     }
 
+    pub(crate) fn temporary_cleanup_root(&self) -> PathBuf {
+        self.file
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default()
+    }
+
     fn catalog(&self, owner_user_id: &str) -> Result<Vec<AgentSkillDefinition>, String> {
         let catalog = catalog_payload()?;
         let payload = self.payload.lock().map_err(|_| storage_error())?;
@@ -239,14 +247,19 @@ impl AgentSkillStore {
                 label: definition.label,
                 skill_ref: definition.skill_ref,
                 instructions_sha256: definition.instructions_sha256,
-                markdown: definition.markdown,
+                // The Host execution-context contract rejects leading/trailing
+                // whitespace, while the shared macOS catalog intentionally
+                // stores Markdown with a final newline.  The hash is already
+                // computed from the trimmed content, so keep the runtime
+                // payload consistent with that canonical representation.
+                markdown: definition.markdown.trim().to_owned(),
             }),
             "en-US" => Ok(AgentProfessionRuntimeSnapshot {
                 key: definition.key,
                 label: definition.label_en,
                 skill_ref: definition.skill_ref_en,
                 instructions_sha256: definition.instructions_sha256_en,
-                markdown: definition.markdown_en,
+                markdown: definition.markdown_en.trim().to_owned(),
             }),
             _ => Err("内部上下文语言无效。".into()),
         }
@@ -923,7 +936,13 @@ fn load_payload(file: &Path) -> Result<OverridePayload, String> {
     if !metadata.is_file() || metadata.len() > MAXIMUM_PAYLOAD_BYTES {
         return Err("Skill 配置不是普通文件或超过本地存储上限。".to_owned());
     }
-    let bytes = fs::read(file).map_err(|_| storage_error())?;
+    let mut bytes = Vec::with_capacity(metadata.len().min(MAXIMUM_PAYLOAD_BYTES) as usize + 1);
+    fs::File::open(file)
+        .and_then(|file| file.take(MAXIMUM_PAYLOAD_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|_| storage_error())?;
+    if bytes.len() as u64 > MAXIMUM_PAYLOAD_BYTES {
+        return Err("Skill 配置超过本地存储上限。".to_owned());
+    }
     let mut payload: OverridePayload =
         serde_json::from_slice(&bytes).map_err(|_| storage_error())?;
     if !(1..=2).contains(&payload.schema_version) {
@@ -935,7 +954,7 @@ fn load_payload(file: &Path) -> Result<OverridePayload, String> {
 
 fn persist_payload(file: &Path, payload: &OverridePayload) -> Result<(), String> {
     let parent = file.parent().ok_or_else(storage_error)?;
-    fs::create_dir_all(parent).map_err(|_| storage_error())?;
+    ensure_owned_directory(parent).map_err(|_| storage_error())?;
     reject_symlink(parent)?;
     if symlink_safe_metadata(file)?.is_some() {
         reject_symlink(file)?;
@@ -944,14 +963,7 @@ fn persist_payload(file: &Path, payload: &OverridePayload) -> Result<(), String>
     if bytes.len() as u64 > MAXIMUM_PAYLOAD_BYTES {
         return Err("Skill 配置超过本地存储上限。".to_owned());
     }
-    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|_| storage_error())?;
-    temporary.write_all(&bytes).map_err(|_| storage_error())?;
-    temporary
-        .as_file()
-        .sync_all()
-        .map_err(|_| storage_error())?;
-    replace_file(temporary.into_temp_path().as_ref(), file).map_err(|_| storage_error())?;
-    Ok(())
+    replace_owned_file(parent, file, ".agent-skill-overrides-", &bytes).map_err(|_| storage_error())
 }
 
 fn symlink_safe_metadata(path: &Path) -> Result<Option<fs::Metadata>, String> {
@@ -1060,6 +1072,23 @@ mod tests {
         assert!(store
             .profession_runtime_snapshot("alice", "project_manager", "fr-FR")
             .is_err());
+    }
+
+    #[test]
+    fn runtime_snapshot_trims_shared_catalog_markdown_for_host_context() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = AgentSkillStore::new(directory.path().join("overrides.json")).unwrap();
+
+        let snapshot = store
+            .profession_runtime_snapshot("alice", "general_member", "zh-CN")
+            .unwrap();
+
+        assert!(!snapshot.markdown.is_empty());
+        assert_eq!(snapshot.markdown, snapshot.markdown.trim());
+        assert_eq!(
+            snapshot.instructions_sha256,
+            sha256(snapshot.markdown.trim())
+        );
     }
 
     #[test]

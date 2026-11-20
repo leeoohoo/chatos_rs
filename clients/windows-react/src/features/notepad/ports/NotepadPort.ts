@@ -27,6 +27,8 @@ export interface NotepadPort {
   getNote(ownerUserId: string, noteId: string): Promise<NotepadNoteDetail>;
   updateNote(ownerUserId: string, draft: UpdateNotepadNoteDraft): Promise<NotepadNoteDetail>;
   deleteNote(ownerUserId: string, noteId: string, expectedVersion: number): Promise<string>;
+  copyText(text: string): Promise<void>;
+  exportMarkdown(ownerUserId: string, title: string, content: string): Promise<boolean>;
   importImage(
     ownerUserId: string,
     noteId: string,

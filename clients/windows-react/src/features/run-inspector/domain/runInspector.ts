@@ -1,8 +1,39 @@
 import { z } from "zod";
-import type { MessageTaskGraph } from "../../../contracts/conversationRunContract";
+import {
+  messageTaskGraphSchema,
+  taskDisplayStatusSchema,
+} from "../../../contracts/conversationRunContract";
 
-export type RunInspectorGraph = MessageTaskGraph;
-export type RunInspectorSection = "detail" | "process" | "run";
+export const runInspectorGraphSchema = messageTaskGraphSchema.extend({
+  nodes: z.array(messageTaskGraphSchema.shape.nodes.element.extend({
+    display_status: taskDisplayStatusSchema,
+  })),
+});
+
+export type RunInspectorGraph = z.infer<typeof runInspectorGraphSchema>;
+export type RunInspectorSection = "detail" | "process" | "capabilities" | "run";
+
+export const taskCapabilityUsageSchema = z.object({
+  version: z.number().int().positive(),
+  plugins: z.array(z.object({
+    id: z.string().min(1),
+    key: z.string().min(1),
+    component_key: z.string().min(1),
+    display_name: z.string().min(1),
+    call_count: z.number().int().nonnegative(),
+    status: z.string().min(1),
+  })),
+  tools: z.array(z.object({
+    name: z.string().min(1),
+    display_name: z.string().min(1),
+    route: z.string().min(1),
+    plugin_id: z.string().nullable(),
+    plugin_name: z.string().nullable(),
+    status: z.string().min(1),
+    call_count: z.number().int().nonnegative(),
+    latest_at_unix_ms: z.number().nonnegative(),
+  })),
+});
 
 export const runInspectorProcessEntrySchema = z.object({
   id: z.string().min(1),
@@ -38,6 +69,7 @@ export const taskInspectorDetailSchema = z.object({
     lastRunId: z.string().min(1).nullable(),
     modelConfigRef: z.string().min(1),
     thinkingLevel: z.string().nullable(),
+    capabilityUsage: taskCapabilityUsageSchema.nullable().optional(),
     createdAtUnixMs: z.number().int().nonnegative(),
     updatedAtUnixMs: z.number().int().nonnegative(),
   }),
@@ -54,6 +86,14 @@ export const runInspectorDetailSchema = z.object({
     status: z.string().nullable(),
     createdAtUnixMs: z.number().int().nonnegative(),
   })),
+  toolCalls: z.array(z.object({
+    callId: z.string().min(1),
+    toolName: z.string().min(1),
+    displayName: z.string().min(1),
+    route: z.string().nullable(),
+    status: z.string().min(1),
+    resultSizeBytes: z.number().int().nonnegative().nullable(),
+  })).optional(),
   eventsHasMore: z.boolean(),
   nextOffset: z.number().int().nonnegative(),
 });
@@ -85,5 +125,49 @@ export function isRecoverableTaskStatus(status: string) {
 }
 
 export function graphHasActiveTasks(graph: RunInspectorGraph) {
-  return graph.nodes.some(({ task }) => ["pending", "ready", "running"].includes(task.status));
+  return graph.nodes.some(({ display_status: status }) => [
+    "pending", "ready", "queued", "running", "reviewing_followup", "waiting_confirmation",
+  ].includes(normalizedTaskStatus(status)));
+}
+
+const taskTimelinePriority = [
+  "waiting_confirmation",
+  "reviewing_followup",
+  "blocked",
+  "failed",
+  "running",
+  "queued",
+  "ready",
+  "pending",
+  "succeeded",
+  "cancelled",
+] as const;
+
+export function primaryTaskDisplayStatus(graph: RunInspectorGraph) {
+  const statuses = new Set(graph.nodes.map(({ display_status: status }) => normalizedTaskStatus(status)));
+  return taskTimelinePriority.find((status) => statuses.has(status)) ?? null;
+}
+
+export function normalizedTaskStatus(status: string) {
+  return status.trim().toLowerCase();
+}
+
+export function isTaskExecutionActive(status: string) {
+  return ["queued", "running", "reviewing_followup", "waiting_confirmation"]
+    .includes(normalizedTaskStatus(status));
+}
+
+export function taskExecutionPendingMessage(status: string) {
+  switch (normalizedTaskStatus(status)) {
+    case "reviewing_followup":
+      return "后续执行已暂停，正在审查追加要求。";
+    case "waiting_confirmation":
+      return "后续执行已暂停，等待你确认要求。";
+    default:
+      return "本次运行仍在执行，模型输出将在完成后显示。";
+  }
+}
+
+export function isTaskAttentionStatus(status: string) {
+  return ["reviewing_followup", "waiting_confirmation"].includes(normalizedTaskStatus(status));
 }

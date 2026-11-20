@@ -1,5 +1,9 @@
 import { create } from "zustand";
-import { localTerminalTitleForDirectory, type LocalTerminalEvent } from "../domain/localTerminal";
+import {
+  localTerminalTitleForDirectory,
+  localTerminalTitleFromShell,
+  type LocalTerminalEvent,
+} from "../domain/localTerminal";
 import type { LocalTerminalPort, LocalTerminalSessionScope } from "../ports/LocalTerminalPort";
 
 export type LocalTerminalPhase = "starting" | "running" | "exited" | "failed" | "closed";
@@ -59,7 +63,6 @@ interface SessionContext extends WorkspaceContext {
   tabGeneration: number;
 }
 
-const maximumTabs = 4;
 const maximumRetainedEvents = 512;
 const maximumRetainedOutputBytes = 2 * 1_024 * 1_024;
 let tabSequence = 0;
@@ -117,7 +120,7 @@ export const useLocalTerminalStore = create<LocalTerminalWorkspaceState>((set, g
 
   createTerminal(port) {
     const state = get();
-    if (!state.ownerUserId || !state.hostAvailable || state.tabs.length >= maximumTabs) return;
+    if (!state.ownerUserId || !state.hostAvailable) return;
     tabSequence += 1;
     const id = `terminal-${tabSequence}`;
     const presentationId = `local-terminal-tab-${tabSequence}-${Date.now().toString(36)}`;
@@ -233,8 +236,10 @@ export const useLocalTerminalStore = create<LocalTerminalWorkspaceState>((set, g
   },
 
   updateTitle(tabId, value) {
-    const title = value.trim();
-    if (title) updateTab(set, tabId, (tab) => ({ ...tab, title }));
+    updateTab(set, tabId, (tab) => {
+      const title = localTerminalTitleFromShell(value, tab.workingDirectory);
+      return title ? { ...tab, title } : tab;
+    });
   },
 
   updateWorkingDirectory(tabId, value) {

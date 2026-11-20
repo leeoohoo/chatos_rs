@@ -8,23 +8,34 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
-    io::{Cursor, Read, Write},
+    io::{Cursor, Read},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{http, State};
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
-use crate::host_lifecycle::HostManager;
+use crate::{
+    app_data_transaction::{create_owned_file, ensure_owned_directory, replace_owned_file},
+    app_owned_export::try_remove_stale_owned_file,
+    host_lifecycle::HostManager,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
+};
 
 const MAXIMUM_ATTACHMENT_COUNT: usize = 20;
 const MAXIMUM_ATTACHMENT_BYTES: usize = 20 * 1_024 * 1_024;
+const MAXIMUM_ATTACHMENT_METADATA_BYTES: usize = 64 * 1_024;
 const LONG_PASTE_CHARACTER_THRESHOLD: usize = 4_000;
 const LONG_PASTE_BYTE_THRESHOLD: usize = 8_000;
 const MAXIMUM_TEXT_PREVIEW_BYTES: usize = 16 * 1_024;
 const REFERENCE_PREFIX: &str = "local-attachment:";
+const STALE_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const MAXIMUM_CLEANUP_ENTRIES: usize = 20_000;
+const MAXIMUM_CLEANUP_DEPTH: usize = 2;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
@@ -235,7 +246,8 @@ impl AttachmentManager {
 
     pub fn new(root: PathBuf) -> Result<Self, String> {
         if let Some(parent) = root.parent() {
-            fs::create_dir_all(parent).map_err(|error| format!("无法创建应用数据目录：{error}"))?;
+            ensure_owned_directory(parent)
+                .map_err(|error| format!("无法创建应用数据目录：{error}"))?;
         }
         ensure_private_directory(&root)?;
         let root =
@@ -266,6 +278,18 @@ impl AttachmentManager {
         self.state().ok()?.active_scope.clone()
     }
 
+    pub async fn cleanup_stale_temporaries(&self) -> usize {
+        let root = self.inner.root.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let cutoff = SystemTime::now()
+                .checked_sub(STALE_TEMPORARY_AGE)
+                .unwrap_or(UNIX_EPOCH);
+            cleanup_attachment_temporaries(&root, cutoff)
+        })
+        .await
+        .unwrap_or_default()
+    }
+
     pub fn discard_import_result(&self, result: &AttachmentImportResult) {
         let _ = self.discard(AttachmentIDsInput {
             scope: result.scope.clone(),
@@ -294,25 +318,35 @@ impl AttachmentManager {
             }
         };
         let _guard = self.inner.import_lock.lock().await;
-        let mut attachments = Vec::new();
-        let mut errors = Vec::new();
-        if paths.len() > MAXIMUM_ATTACHMENT_COUNT {
-            errors.push(format!("单次最多添加 {MAXIMUM_ATTACHMENT_COUNT} 个附件"));
-        }
-        for path in paths.into_iter().take(MAXIMUM_ATTACHMENT_COUNT) {
-            match read_file_candidate(&path) {
-                Ok(candidate) => match self.stage_candidate(&scope, candidate) {
-                    Ok(attachment) => attachments.push(attachment),
-                    Err(error) => errors.push(error),
-                },
-                Err(error) => errors.push(error),
+        let manager = self.clone();
+        let failed_scope = scope.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut attachments = Vec::new();
+            let mut errors = Vec::new();
+            if paths.len() > MAXIMUM_ATTACHMENT_COUNT {
+                errors.push(format!("单次最多添加 {MAXIMUM_ATTACHMENT_COUNT} 个附件"));
             }
-        }
-        AttachmentImportResult {
-            scope,
-            attachments,
-            errors,
-        }
+            for path in paths.into_iter().take(MAXIMUM_ATTACHMENT_COUNT) {
+                match read_file_candidate(&path) {
+                    Ok(candidate) => match manager.stage_candidate(&scope, candidate) {
+                        Ok(attachment) => attachments.push(attachment),
+                        Err(error) => errors.push(error),
+                    },
+                    Err(error) => errors.push(error),
+                }
+            }
+            AttachmentImportResult {
+                scope,
+                attachments,
+                errors,
+            }
+        })
+        .await
+        .unwrap_or_else(|_| AttachmentImportResult {
+            scope: failed_scope,
+            attachments: Vec::new(),
+            errors: vec!["附件读取任务异常退出。".into()],
+        })
     }
 
     async fn stage_candidate_for_scope(
@@ -332,18 +366,28 @@ impl AttachmentManager {
             }
         };
         let _guard = self.inner.import_lock.lock().await;
-        match self.stage_candidate(&scope, candidate) {
-            Ok(attachment) => AttachmentImportResult {
-                scope,
-                attachments: vec![attachment],
-                errors: vec![],
-            },
-            Err(error) => AttachmentImportResult {
-                scope,
-                attachments: vec![],
-                errors: vec![error],
-            },
-        }
+        let manager = self.clone();
+        let failed_scope = scope.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            match manager.stage_candidate(&scope, candidate) {
+                Ok(attachment) => AttachmentImportResult {
+                    scope,
+                    attachments: vec![attachment],
+                    errors: vec![],
+                },
+                Err(error) => AttachmentImportResult {
+                    scope,
+                    attachments: vec![],
+                    errors: vec![error],
+                },
+            }
+        })
+        .await
+        .unwrap_or_else(|_| AttachmentImportResult {
+            scope: failed_scope,
+            attachments: Vec::new(),
+            errors: vec!["附件保存任务异常退出。".into()],
+        })
     }
 
     fn stage_candidate(
@@ -378,15 +422,8 @@ impl AttachmentManager {
         let attachment_id = format!("attachment_{token}");
         let directory = self.ensure_scope_directory(&scope_key)?;
         let file = directory.join(&token);
-        let temporary_file = directory.join(format!("{token}.tmp"));
-        if let Err(error) = write_private_file(&temporary_file, &candidate.bytes) {
-            let _ = fs::remove_file(&temporary_file);
-            return Err(error);
-        }
-        fs::rename(&temporary_file, &file).map_err(|error| {
-            let _ = fs::remove_file(&temporary_file);
-            format!("无法保存附件：{error}")
-        })?;
+        create_owned_file(&directory, &file, ".attachment-payload-", &candidate.bytes)
+            .map_err(|error| format!("无法保存附件：{error}"))?;
         let metadata = VaultMetadata {
             attachment_id: attachment_id.clone(),
             token: token.clone(),
@@ -826,6 +863,104 @@ impl AttachmentManager {
             .lock()
             .map_err(|_| "附件状态不可用。".to_string())
     }
+}
+
+fn cleanup_attachment_temporaries(root: &Path, cutoff: SystemTime) -> usize {
+    let mut visited = 0;
+    let mut removed = 0;
+    cleanup_attachment_directory(root, 0, cutoff, &mut visited, &mut removed);
+    removed
+}
+
+fn cleanup_attachment_directory(
+    directory: &Path,
+    depth: usize,
+    cutoff: SystemTime,
+    visited: &mut usize,
+    removed: &mut usize,
+) {
+    if *visited >= MAXIMUM_CLEANUP_ENTRIES || validate_cleanup_directory(directory).is_err() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if *visited >= MAXIMUM_CLEANUP_ENTRIES {
+            return;
+        }
+        *visited += 1;
+        let path = entry.path();
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.file_type().is_dir()
+            && !metadata.file_type().is_symlink()
+            && !is_windows_reparse_point(&metadata)
+            && depth < MAXIMUM_CLEANUP_DEPTH
+        {
+            cleanup_attachment_directory(&path, depth + 1, cutoff, visited, removed);
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if !canonical_attachment_temporary_name(&name)
+            || !metadata.file_type().is_file()
+            || metadata.file_type().is_symlink()
+            || is_windows_reparse_point(&metadata)
+            || !metadata.modified().is_ok_and(|modified| modified <= cutoff)
+        {
+            continue;
+        }
+        if try_remove_stale_owned_file(&path, cutoff) {
+            *removed += 1;
+        }
+    }
+}
+
+fn validate_cleanup_directory(path: &Path) -> Result<(), ()> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| ())?;
+    if metadata.file_type().is_dir()
+        && !metadata.file_type().is_symlink()
+        && !is_windows_reparse_point(&metadata)
+    {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+fn canonical_attachment_temporary_name(name: &str) -> bool {
+    let legacy_token = name
+        .strip_suffix(".json.tmp")
+        .or_else(|| name.strip_suffix(".tmp"));
+    if legacy_token.is_some_and(valid_attachment_temporary_token) {
+        return true;
+    }
+    [".attachment-payload-", ".attachment-metadata-"]
+        .iter()
+        .any(|prefix| {
+            name.strip_prefix(prefix)
+                .and_then(|value| value.strip_suffix(".tmp"))
+                .is_some_and(valid_attachment_temporary_token)
+        })
+}
+
+fn valid_attachment_temporary_token(value: &str) -> bool {
+    Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value)
+}
+
+#[cfg(windows)]
+fn is_windows_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_windows_reparse_point(_: &fs::Metadata) -> bool {
+    false
 }
 
 include!("conversation_attachments/platform.rs");

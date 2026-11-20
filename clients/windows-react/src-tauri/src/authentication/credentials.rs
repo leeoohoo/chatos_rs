@@ -219,4 +219,47 @@ mod tests {
             Err(keyring::Error::NoEntry)
         ));
     }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_model_credentials_use_the_owner_scoped_production_vault() {
+        let owner = format!("test-owner-{}", uuid::Uuid::new_v4());
+        let other_owner = format!("test-owner-{}", uuid::Uuid::new_v4());
+        let model = format!("test-model-{}", uuid::Uuid::new_v4());
+        let account = model_credential_account(&owner, &model);
+        let other_account = model_credential_account(&other_owner, &model);
+        let credential = TestCredentialCleanup(
+            credential_entry(MODEL_SERVICE, &account).expect("model credential entry"),
+        );
+        let other_credential = TestCredentialCleanup(
+            credential_entry(MODEL_SERVICE, &other_account)
+                .expect("other owner model credential entry"),
+        );
+        let store = PlatformCredentialStore;
+        let secret = format!("model-credential-{}", uuid::Uuid::new_v4());
+
+        assert_eq!(store.load_model_credential(&owner, &model).unwrap(), None);
+        assert_eq!(
+            store.load_model_credential(&other_owner, &model).unwrap(),
+            None
+        );
+        store
+            .save_model_credential(&owner, &model, &secret)
+            .expect("save production model credential");
+        assert_eq!(
+            store.load_model_credential(&owner, &model).unwrap(),
+            Some(secret)
+        );
+        assert_eq!(
+            store.load_model_credential(&other_owner, &model).unwrap(),
+            None
+        );
+
+        credential
+            .0
+            .delete_credential()
+            .expect("delete production model credential");
+        assert_eq!(store.load_model_credential(&owner, &model).unwrap(), None);
+        drop(other_credential);
+    }
 }

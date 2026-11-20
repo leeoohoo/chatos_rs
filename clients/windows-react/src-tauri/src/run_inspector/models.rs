@@ -1,5 +1,8 @@
-use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalTaskRecord};
+use chatos_local_agent_protocol::{
+    LocalAgentRunRecord, LocalMessageTaskGraph, LocalMessageTaskGraphEdge, LocalTaskRecord,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +34,51 @@ pub struct TaskMutationInput {
 }
 
 #[derive(Debug, Serialize)]
+pub struct MessageTaskGraphProjection {
+    pub root_task_ids: Vec<String>,
+    pub nodes: Vec<MessageTaskGraphNodeProjection>,
+    pub edges: Vec<LocalMessageTaskGraphEdge>,
+    pub source_conversation_id: String,
+    pub source_turn_id: String,
+    pub source_user_message_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MessageTaskGraphNodeProjection {
+    pub task: LocalTaskRecord,
+    pub display_status: String,
+    pub depth: u32,
+    pub is_root: bool,
+    pub is_current_message: bool,
+}
+
+impl MessageTaskGraphProjection {
+    pub fn from_graph(graph: LocalMessageTaskGraph) -> Self {
+        Self {
+            root_task_ids: graph.root_task_ids,
+            nodes: graph
+                .nodes
+                .into_iter()
+                .map(|node| {
+                    let display_status = super::projection::display_status(&node.task);
+                    MessageTaskGraphNodeProjection {
+                        task: node.task,
+                        display_status,
+                        depth: node.depth,
+                        is_root: node.is_root,
+                        is_current_message: node.is_current_message,
+                    }
+                })
+                .collect(),
+            edges: graph.edges,
+            source_conversation_id: graph.source_conversation_id,
+            source_turn_id: graph.source_turn_id,
+            source_user_message_id: graph.source_user_message_id,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskInspectorDetail {
     pub task: TaskInspectorTask,
@@ -51,6 +99,7 @@ pub struct TaskInspectorTask {
     pub last_run_id: Option<String>,
     pub model_config_ref: String,
     pub thinking_level: Option<String>,
+    pub capability_usage: Option<Value>,
     pub created_at_unix_ms: i64,
     pub updated_at_unix_ms: i64,
 }
@@ -69,6 +118,7 @@ pub struct RunInspectorProcessEntry {
 pub struct RunInspectorDetail {
     pub run: RunInspectorRun,
     pub events: Vec<RunInspectorEvent>,
+    pub tool_calls: Vec<RunInspectorToolCall>,
     pub events_has_more: bool,
     pub next_offset: usize,
 }
@@ -98,6 +148,17 @@ pub struct RunInspectorEvent {
     pub summary: Option<String>,
     pub status: Option<String>,
     pub created_at_unix_ms: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunInspectorToolCall {
+    pub call_id: String,
+    pub tool_name: String,
+    pub display_name: String,
+    pub route: Option<String>,
+    pub status: String,
+    pub result_size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]

@@ -7,7 +7,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{connector_state, control_plane::ControlPlaneModelOption};
+use crate::{
+    app_data_transaction::replace_owned_file, connector_state,
+    control_plane::ControlPlaneModelOption,
+};
 
 use super::models::{
     ToolApproval, ToolApprovalDecision, ToolApprovalHistoryEntry, ToolApprovalMode,
@@ -289,15 +292,8 @@ impl ApprovalSettingsStore {
         if bytes.len() as u64 > MAXIMUM_HISTORY_BYTES {
             return Err("审批记录文件过大。".into());
         }
-        let mut temporary =
-            tempfile::NamedTempFile::new_in(directory).map_err(|_| "无法写入审批记录。")?;
-        std::io::Write::write_all(&mut temporary, &bytes)
-            .and_then(|()| temporary.as_file().sync_all())
-            .map_err(|_| "无法写入审批记录。".to_owned())?;
-        temporary
-            .persist(path)
-            .map_err(|_| "无法发布审批记录。".to_owned())?;
-        Ok(())
+        replace_owned_file(directory, &path, ".approval-history-", &bytes)
+            .map_err(|_| "无法发布审批记录。".to_owned())
     }
 
     fn history_path(&self, owner_user_id: &str) -> Result<PathBuf, String> {

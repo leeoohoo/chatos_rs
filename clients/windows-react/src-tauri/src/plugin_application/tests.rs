@@ -1,11 +1,72 @@
 use super::*;
+use base64::Engine as _;
 use chatos_local_agent_protocol::{LocalPluginInstallationPage, LocalPluginInstallationSpec};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, VecDeque},
     fs,
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
+
+#[derive(Default)]
+struct MemoryPluginCredentialStore {
+    values: Mutex<BTreeMap<String, String>>,
+    fail_save_for: Mutex<Option<String>>,
+}
+
+impl PluginCredentialStore for MemoryPluginCredentialStore {
+    fn load(&self, reference: &str) -> Result<Option<String>, String> {
+        Ok(self.values.lock().unwrap().get(reference).cloned())
+    }
+
+    fn save(&self, reference: &str, value: &str) -> Result<(), String> {
+        if self.fail_save_for.lock().unwrap().as_deref() == Some(reference) {
+            return Err("injected credential failure".into());
+        }
+        self.values
+            .lock()
+            .unwrap()
+            .insert(reference.to_owned(), value.to_owned());
+        Ok(())
+    }
+
+    fn delete(&self, reference: &str) -> Result<(), String> {
+        self.values.lock().unwrap().remove(reference);
+        Ok(())
+    }
+}
+
+#[test]
+fn credential_update_rolls_back_values_when_a_later_save_fails() {
+    let fixture = CatalogFixture::new();
+    let credentials = Arc::new(MemoryPluginCredentialStore::default());
+    let alpha = secret_reference("owner-1", "plugin-1", "alpha").unwrap();
+    let beta = secret_reference("owner-1", "plugin-1", "beta").unwrap();
+    credentials.values.lock().unwrap().extend([
+        (alpha.clone(), "old-alpha".into()),
+        (beta.clone(), "old-beta".into()),
+    ]);
+    *credentials.fail_save_for.lock().unwrap() = Some(beta.clone());
+    let manager = PluginApplicationManager::with_credential_store(
+        fixture.app_data.clone(),
+        credentials.clone(),
+    );
+
+    assert!(manager
+        .update_credentials(
+            "owner-1",
+            "plugin-1",
+            &BTreeMap::from([
+                ("alpha".into(), Some("new-alpha".into())),
+                ("beta".into(), Some("new-beta".into())),
+            ]),
+        )
+        .is_err());
+
+    let values = credentials.values.lock().unwrap();
+    assert_eq!(values[&alpha], "old-alpha");
+    assert_eq!(values[&beta], "old-beta");
+}
 
 struct ScriptedMetadataClient {
     responses: Mutex<VecDeque<Result<HostResult, String>>>,
@@ -237,6 +298,168 @@ async fn catalog_projects_only_valid_owner_scoped_metadata_without_local_paths()
 }
 
 #[tokio::test]
+async fn catalog_normalizes_logo_behind_an_opaque_revocable_preview() {
+    let fixture = CatalogFixture::new();
+    let logo = fixture.installation.join("logo.svg");
+    fs::write(
+        &logo,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 320"><rect width="640" height="320" fill="#145ab4"/></svg>"##,
+    )
+    .unwrap();
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["interface"]["logo"] = json!("./logo.svg");
+    fixture.write_manifest(manifest);
+    let record = fixture.record();
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let applications = manager
+        .list(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+
+    let preview = applications[0].icon_preview_url.as_deref().unwrap();
+    assert!(preview.starts_with(if cfg!(target_os = "windows") {
+        "http://chatos-plugin-icon.localhost/"
+    } else {
+        "chatos-plugin-icon://localhost/"
+    }));
+    assert!(!preview.contains(&fixture.app_data.to_string_lossy().to_string()));
+    let preview = url::Url::parse(preview).unwrap();
+    let png = manager.icons.protocol_body(preview.path()).unwrap();
+    assert_eq!(image::guess_format(&png).unwrap(), image::ImageFormat::Png);
+    let dimensions =
+        image::ImageReader::with_format(std::io::Cursor::new(&png), image::ImageFormat::Png)
+            .into_dimensions()
+            .unwrap();
+    assert_eq!(dimensions, (256, 128));
+    let response = manager.icons.protocol_response(
+        http::Request::builder()
+            .method(http::Method::GET)
+            .uri(preview.path())
+            .body(Vec::new())
+            .unwrap(),
+    );
+    assert_eq!(response.status(), http::StatusCode::OK);
+    assert_eq!(response.headers()[http::header::CONTENT_TYPE], "image/png");
+    assert_eq!(response.headers()["X-Content-Type-Options"], "nosniff");
+    assert_eq!(response.headers()[http::header::CACHE_CONTROL], "no-store");
+    let response = manager.icons.protocol_response(
+        http::Request::builder()
+            .method(http::Method::POST)
+            .uri(preview.path())
+            .body(Vec::new())
+            .unwrap(),
+    );
+    assert_eq!(response.status(), http::StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(response.headers()[http::header::ALLOW], "GET");
+
+    let refreshed = manager
+        .list(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+    assert_ne!(
+        refreshed[0].icon_preview_url,
+        applications[0].icon_preview_url
+    );
+    assert!(manager.icons.protocol_body(preview.path()).is_ok());
+
+    manager.reset().await;
+    assert_eq!(
+        manager.icons.protocol_body(preview.path()).unwrap_err(),
+        http::StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn invalid_logo_falls_back_without_hiding_the_application_or_leaking_a_path() {
+    let fixture = CatalogFixture::new();
+    fs::write(fixture.installation.join("logo.svg"), "not an image").unwrap();
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["interface"]["logo"] = json!("./logo.svg");
+    fixture.write_manifest(manifest);
+    let record = fixture.record();
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let applications = manager
+        .list(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+
+    assert_eq!(applications.len(), 1);
+    let preview = url::Url::parse(applications[0].icon_preview_url.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        manager.icons.protocol_body(preview.path()).unwrap_err(),
+        http::StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+    assert!(!serde_json::to_string(&applications)
+        .unwrap()
+        .contains(&fixture.app_data.to_string_lossy().to_string()));
+}
+
+#[test]
+fn svg_icons_never_resolve_scripts_or_embedded_and_external_images() {
+    let fixture = CatalogFixture::new();
+    let local_image = fixture.installation.join("external.png");
+    let mut local_png = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        1,
+        1,
+        image::Rgba([0, 255, 0, 255]),
+    ))
+    .write_to(&mut local_png, image::ImageFormat::Png)
+    .unwrap();
+    fs::write(&local_image, local_png.get_ref()).unwrap();
+    let local_href = local_image.to_string_lossy().replace('\\', "/");
+    let data_href = base64::engine::general_purpose::STANDARD.encode(local_png.get_ref());
+    let safe = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="#ff0000"/></svg>"##;
+    let untrusted = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+            <rect width="16" height="16" fill="#ff0000"/>
+            <script>throw new Error("must not run")</script>
+            <image href="{local_href}" width="16" height="16"/>
+            <image href="https://127.0.0.1:9/never-fetch.png" width="16" height="16"/>
+            <image href="data:image/png;base64,{data_href}" width="16" height="16"/>
+        </svg>"##
+    );
+
+    assert_eq!(
+        normalize_plugin_application_svg(safe).unwrap(),
+        normalize_plugin_application_svg(untrusted.as_bytes()).unwrap()
+    );
+}
+
+#[test]
+fn svg_icons_reject_oversized_and_malformed_documents() {
+    assert!(normalize_plugin_application_svg(
+        br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 5000 5000"><rect width="5000" height="5000"/></svg>"##
+    )
+    .is_err());
+    assert!(normalize_plugin_application_svg(
+        br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path"##
+    )
+    .is_err());
+}
+
+#[test]
+fn production_plugin_svg_logos_render_to_bounded_pngs() {
+    let logos: [&[u8]; 3] = [
+        include_bytes!("../../../../../plugins/diagram-studio/assets/logo.svg"),
+        include_bytes!("../../../../../plugins/solution-studio/assets/logo.svg"),
+        include_bytes!("../../../../../plugins/web-design-studio/assets/logo.svg"),
+    ];
+
+    for logo in logos {
+        let png = normalize_plugin_application_svg(logo).unwrap();
+        assert!(png.len() <= MAXIMUM_ICON_PNG_BYTES);
+        let dimensions =
+            image::ImageReader::with_format(Cursor::new(&png), image::ImageFormat::Png)
+                .into_dimensions()
+                .unwrap();
+        assert_eq!(dimensions, (256, 256));
+    }
+}
+
+#[tokio::test]
 async fn agent_catalog_freezes_only_manifest_backed_stdio_components() {
     let fixture = CatalogFixture::new();
     let mut record = fixture.record();
@@ -262,6 +485,135 @@ async fn agent_catalog_freezes_only_manifest_backed_stdio_components() {
         .frozen_identity()
         .contains(&fixture.app_data.to_string_lossy().to_string()));
     assert_eq!(client.remaining(), 0);
+}
+
+#[tokio::test]
+async fn skill_only_plugin_is_selectable_and_resolves_without_an_executable() {
+    let fixture = CatalogFixture::new();
+    let skill = fixture.installation.join("skills").join("portable-helper");
+    fs::create_dir_all(skill.join("references")).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: portable-helper\ndescription: Portable helper rules\n---\nFollow the portable rules.\n",
+    )
+    .unwrap();
+    fs::write(skill.join("references/guide.md"), "Guide").unwrap();
+    fixture.write_manifest(json!({
+        "schemaVersion": 3,
+        "name": "portable-helper",
+        "version": "1.0.0",
+        "description": "Portable helper rules.",
+        "skills": ["skills/portable-helper"],
+        "mcpServers": {},
+        "interface": {"displayName": "Portable Helper"},
+        "permissions": []
+    }));
+    let mut record = fixture.record();
+    record.spec.component_id = "skills-only".into();
+    record.spec.server_id = "skills-only".into();
+    record.spec.executable_path = fixture
+        .installation
+        .join("chatos.plugin.json")
+        .to_string_lossy()
+        .into_owned();
+    record.spec.args.clear();
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let options = manager
+        .list_agent_plugins(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].component_key, "skills-only");
+    assert_eq!(options[0].display_name, "Portable Helper");
+
+    let client = ScriptedMetadataClient::new(vec![Ok(record_result(record))]);
+    let resolved = manager
+        .resolve_agent_plugin(&client, "owner-1", &options[0])
+        .await
+        .unwrap();
+    assert!(resolved.executable.is_none());
+    assert!(resolved.args.is_empty());
+    assert!(resolved.environment.is_empty());
+    assert_eq!(resolved.network_policy, "disabled");
+    assert_eq!(resolved.skill_snapshot.len(), 1);
+}
+
+#[tokio::test]
+async fn agent_plugin_network_permission_selects_the_sandbox_policy() {
+    let fixture = CatalogFixture::new();
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["permissions"] = json!([
+        {
+            "permission": "process.spawn",
+            "required": true,
+            "components": ["server-1"]
+        },
+        {
+            "permission": "network.client",
+            "required": true,
+            "components": ["server-1"]
+        }
+    ]);
+    fixture.write_manifest(manifest);
+    let mut record = fixture.record();
+    record.spec.args = vec!["mcp".into()];
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+    let options = manager
+        .list_agent_plugins(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+    assert_eq!(options.len(), 1);
+
+    let client = ScriptedMetadataClient::new(vec![Ok(record_result(record))]);
+    let resolved = manager
+        .resolve_agent_plugin(&client, "owner-1", &options[0])
+        .await
+        .unwrap();
+    assert_eq!(resolved.network_policy, "controlled");
+}
+
+#[tokio::test]
+async fn hook_only_plugin_is_selectable_and_resolves_without_an_executable() {
+    let fixture = CatalogFixture::new();
+    fixture.write_manifest(json!({
+        "schemaVersion": 3,
+        "name": "hook-only",
+        "version": "1.0.0",
+        "description": "Lifecycle hooks.",
+        "hooks": [{"componentKey": "lifecycle", "source": "hooks/lifecycle.json"}],
+        "mcpServers": {},
+        "interface": {"displayName": "Hook Only"},
+        "permissions": []
+    }));
+    let mut record = fixture.record();
+    record.spec.component_id = "hooks-only".into();
+    record.spec.server_id = "hooks-only".into();
+    record.spec.executable_path = fixture
+        .installation
+        .join("chatos.plugin.json")
+        .to_string_lossy()
+        .into_owned();
+    record.spec.args.clear();
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let options = manager
+        .list_agent_plugins(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].component_key, "hooks-only");
+    assert_eq!(options[0].display_name, "Hook Only");
+
+    let client = ScriptedMetadataClient::new(vec![Ok(record_result(record))]);
+    let resolved = manager
+        .resolve_agent_plugin(&client, "owner-1", &options[0])
+        .await
+        .unwrap();
+    assert!(resolved.executable.is_none());
+    assert!(resolved.args.is_empty());
+    assert!(resolved.environment.is_empty());
+    assert_eq!(resolved.skill_snapshot.len(), 0);
 }
 
 #[tokio::test]
@@ -298,6 +650,19 @@ async fn agent_catalog_hides_unresolvable_secret_or_argument_bindings() {
         .unwrap()
         .is_empty());
 
+    let mut unbound_manifest = CatalogFixture::valid_manifest();
+    unbound_manifest["mcpServers"]["server-1"]["env"] =
+        json!({"API_TOKEN": "${credential:primary-token}"});
+    fixture.write_manifest(unbound_manifest);
+    let mut unbound_record = fixture.record();
+    unbound_record.spec.args = vec!["mcp".into()];
+    assert!(manager
+        .list_agent_plugins(&catalog_client(&unbound_record), "owner-1")
+        .await
+        .unwrap()
+        .is_empty());
+
+    fixture.write_manifest(CatalogFixture::valid_manifest());
     let mut drifted_record = fixture.record();
     drifted_record.spec.args = vec!["different-mode".into()];
     assert!(manager
@@ -332,7 +697,7 @@ async fn agent_runtime_resolves_only_the_exact_frozen_installation() {
         .unwrap();
 
     assert_eq!(resolved.identity, expected);
-    assert_eq!(resolved.executable, fixture.executable);
+    assert_eq!(resolved.executable, Some(fixture.executable));
     assert_eq!(resolved.args, ["mcp"]);
     assert!(resolved.environment.is_empty());
     assert_eq!(resolved.skill_snapshot.len(), 1);
@@ -388,6 +753,53 @@ async fn agent_runtime_fails_closed_without_a_windows_secret_resolver() {
         .resolve_agent_plugin(&client, "owner-1", &expected)
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn configured_secret_is_resolved_only_into_the_runtime_environment() {
+    let fixture = CatalogFixture::new();
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["mcpServers"]["server-1"]["env"] = json!({"API_TOKEN": "${credential:primary-token}"});
+    fixture.write_manifest(manifest);
+    let mut record = fixture.record();
+    record.spec.args = vec!["mcp".into()];
+    record.spec.environment_secret_refs = environment_secret_references(
+        "owner-1",
+        "plugin-1",
+        &BTreeMap::from([(
+            "API_TOKEN".to_owned(),
+            "${credential:primary-token}".to_owned(),
+        )]),
+    )
+    .unwrap();
+    let credentials = Arc::new(MemoryPluginCredentialStore::default());
+    let reference = record.spec.environment_secret_refs["API_TOKEN"].clone();
+    credentials
+        .save(&reference, "runtime-secret-value")
+        .unwrap();
+    let manager =
+        PluginApplicationManager::with_credential_store(fixture.app_data.clone(), credentials);
+
+    let options = manager
+        .list_agent_plugins(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+    assert_eq!(options.len(), 1);
+    let resolved = manager
+        .resolve_agent_plugin(
+            &ScriptedMetadataClient::new(vec![Ok(record_result(record))]),
+            "owner-1",
+            &options[0],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resolved.environment["API_TOKEN"], "runtime-secret-value");
+    let public_projection = format!("{options:?}");
+    assert!(!public_projection.contains("runtime-secret-value"));
+    assert!(!public_projection.contains(&reference));
+    assert!(!public_projection.contains("primary-token"));
+    assert!(!format!("{resolved:?}").contains("runtime-secret-value"));
 }
 
 #[tokio::test]
@@ -554,6 +966,50 @@ async fn local_http_application_requires_component_scoped_process_spawn() {
 }
 
 #[tokio::test]
+async fn catalog_admits_static_workbench_with_only_declared_ui_assets() {
+    let fixture = CatalogFixture::new();
+    fs::write(
+        fixture.installation.join("ui/app.js"),
+        "window.ready = true;",
+    )
+    .unwrap();
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["ui"][0].as_object_mut().unwrap().remove("runtime");
+    manifest["ui"][0]["assets"] = json!(["./ui/app.js"]);
+    manifest["permissions"] = json!([]);
+    fixture.write_manifest(manifest);
+    let record = fixture.record();
+    let client = catalog_client(&record);
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let applications = manager.list(&client, "owner-1").await.unwrap();
+
+    assert_eq!(applications.len(), 1);
+    assert!(!applications[0].requires_local_runtime);
+}
+
+#[tokio::test]
+async fn catalog_rejects_static_assets_outside_the_declared_ui_tree() {
+    let fixture = CatalogFixture::new();
+    fs::write(
+        fixture.installation.join("private.js"),
+        "window.secret = true;",
+    )
+    .unwrap();
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["ui"][0].as_object_mut().unwrap().remove("runtime");
+    manifest["ui"][0]["assets"] = json!(["./private.js"]);
+    fixture.write_manifest(manifest);
+    let record = fixture.record();
+    let client = catalog_client(&record);
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let applications = manager.list(&client, "owner-1").await.unwrap();
+
+    assert!(applications.is_empty());
+}
+
+#[tokio::test]
 async fn unsafe_runtime_health_path_is_not_admitted() {
     let fixture = CatalogFixture::new();
     let mut manifest = CatalogFixture::valid_manifest();
@@ -584,7 +1040,14 @@ fn blank_titles_fall_back_to_the_trimmed_interface_name() {
         .unwrap();
     let (installation, manifest) = load_manifest(&plugin_root, &record).unwrap();
 
-    let applications = project_applications(&plugin_root, &installation, &record, &manifest);
+    let applications = project_applications(
+        &plugin_root,
+        &installation,
+        &record,
+        &manifest,
+        None,
+        &mut BTreeMap::new(),
+    );
 
     assert_eq!(applications[0].display_name, "Plugin Interface");
 }

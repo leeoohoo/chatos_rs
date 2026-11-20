@@ -117,12 +117,14 @@ export function LoginView({ authentication }: LoginViewProps) {
           </header>
 
           <AuthField
+            id="auth-username"
             label={mode === "signIn" ? text("account") : text("email")}
             error={errors.username?.message}
           >
             <input
               autoFocus
               autoComplete="username"
+              id="auth-username"
               placeholder="name@example.com"
               {...register("username")}
             />
@@ -130,17 +132,19 @@ export function LoginView({ authentication }: LoginViewProps) {
 
           {mode === "register" && (
             <>
-              <AuthField label={text("inviteCode")} error={errors.inviteCode?.message}>
+              <AuthField id="auth-invite-code" label={text("inviteCode")} error={errors.inviteCode?.message}>
                 <input
                   autoComplete="off"
+                  id="auth-invite-code"
                   placeholder={text("inviteCodePlaceholder")}
                   {...register("inviteCode")}
                 />
               </AuthField>
-              <AuthField label={text("emailCode")} error={errors.verificationCode?.message}>
+              <AuthField id="auth-verification-code" label={text("emailCode")} error={errors.verificationCode?.message}>
                 <div className="verification-row">
                   <input
                     autoComplete="one-time-code"
+                    id="auth-verification-code"
                     inputMode="numeric"
                     maxLength={6}
                     placeholder={text("emailCodePlaceholder")}
@@ -159,9 +163,10 @@ export function LoginView({ authentication }: LoginViewProps) {
             </>
           )}
 
-          <AuthField label={text("password")} error={errors.password?.message}>
+          <AuthField id="auth-password" label={text("password")} error={errors.password?.message}>
             <input
               autoComplete={mode === "signIn" ? "current-password" : "new-password"}
+              id="auth-password"
               placeholder={mode === "signIn" ? text("password") : text("passwordLength")}
               type="password"
               {...register("password")}
@@ -169,9 +174,10 @@ export function LoginView({ authentication }: LoginViewProps) {
           </AuthField>
 
           {mode === "register" && (
-            <AuthField label={text("confirmPassword")} error={errors.confirmPassword?.message}>
+            <AuthField id="auth-confirm-password" label={text("confirmPassword")} error={errors.confirmPassword?.message}>
               <input
                 autoComplete="new-password"
+                id="auth-confirm-password"
                 placeholder={text("confirmPasswordPlaceholder")}
                 type="password"
                 {...register("confirmPassword")}
@@ -204,16 +210,18 @@ export function LoginView({ authentication }: LoginViewProps) {
 }
 
 function AuthField({
+  id,
   label,
   error,
   children,
 }: {
+  id: string;
   label: string;
   error?: string;
   children: ReactNode;
 }) {
   return (
-    <label className="auth-field">
+    <label className="auth-field" htmlFor={id}>
       <span>{label}</span>
       {children}
       {error && <small>{error}</small>}

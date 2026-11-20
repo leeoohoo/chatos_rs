@@ -64,8 +64,8 @@ export const useConversationHistoryStore = create<ConversationHistoryState>((set
   async loadOlder(port) {
     const current = get();
     if (!current.ownerUserId || !current.conversationId || current.phase.kind !== "ready") return;
-    const beforeOrdinal = current.phase.snapshot.next_before_ordinal;
-    if (current.phase.isLoadingOlder || beforeOrdinal == null) return;
+    const beforeCursor = current.phase.snapshot.next_before_cursor;
+    if (current.phase.isLoadingOlder || beforeCursor == null) return;
     const requestId = current.requestSequence + 1;
     const snapshot = current.phase.snapshot;
     set({
@@ -77,7 +77,7 @@ export const useConversationHistoryStore = create<ConversationHistoryState>((set
       const older = await port.loadHistory(
         current.ownerUserId,
         current.conversationId,
-        beforeOrdinal,
+        beforeCursor,
       );
       if (!accepts(get, current.ownerUserId, current.conversationId, requestId)) return;
       set({

@@ -44,7 +44,9 @@ describe("ProjectDirectoryView", () => {
   it("searches names and content then opens a matching line", async () => {
     const port = stubPort();
     render(<ProjectDirectoryView ownerUserId="owner-1" port={port} projectId="project-1" />);
-    fireEvent.change(await screen.findByRole("searchbox", { name: "搜索项目文件" }), { target: { value: "hello" } });
+    const search = await screen.findByRole("searchbox", { name: "搜索项目文件" });
+    fireEvent.change(search, { target: { value: "hello" } });
+    expect(screen.getByText("正在搜索文件内容…")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: /README.md 第 1 行/ }));
     expect(await screen.findByLabelText("README.md 文件内容")).toHaveTextContent("# Hello");
     expect(port.searchEntries).toHaveBeenCalledWith(expect.objectContaining({ query: "hello", limit: 100 }));
@@ -125,9 +127,46 @@ describe("ProjectWorkspaceSurface", () => {
       />,
     );
     expect(screen.getByText("Conversation surface")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "项目设置" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "项目目录" }));
+    const workspaceTabs = screen.getByRole("tablist", { name: "项目工作面" });
+    expect(within(workspaceTabs).getByRole("tab", { name: "用户消息" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "用户消息" })).toHaveTextContent("Conversation surface");
+    expect(within(workspaceTabs).getByRole("tab", { name: "项目设置" })).toBeEnabled();
+    fireEvent.click(within(workspaceTabs).getByRole("tab", { name: "项目目录" }));
     expect(await screen.findByRole("treeitem", { name: /Sources/ })).toBeInTheDocument();
+    expect(within(workspaceTabs).getByRole("tab", { name: "项目目录" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "项目目录" })).toBeInTheDocument();
+  });
+
+  it("supports roving keyboard focus for both segmented tab groups", async () => {
+    render(
+      <ProjectWorkspaceSurface
+        directoryPort={stubPort()}
+        gitPort={stubProjectGitPort()}
+        runPort={stubProjectRunPort()}
+        messages={<div>Conversation surface</div>}
+        onProjectRemoved={vi.fn()}
+        ownerUserId="owner-1"
+        projectId="project-1"
+        projectName="Project One"
+      />,
+    );
+    const workspaceTabs = screen.getByRole("tablist", { name: "项目工作面" });
+    const messagesTab = within(workspaceTabs).getByRole("tab", { name: "用户消息" });
+    messagesTab.focus();
+    fireEvent.keyDown(messagesTab, { key: "ArrowLeft" });
+    const directoryTab = within(workspaceTabs).getByRole("tab", { name: "项目目录" });
+    await waitFor(() => expect(directoryTab).toHaveFocus());
+    expect(directoryTab).toHaveAttribute("aria-selected", "true");
+    expect(messagesTab).toHaveAttribute("tabindex", "-1");
+
+    const directoryTabs = await screen.findByRole("tablist", { name: "项目目录视图" });
+    const filesTab = within(directoryTabs).getByRole("tab", { name: "文件" });
+    filesTab.focus();
+    fireEvent.keyDown(filesTab, { key: "End" });
+    const gitTab = within(directoryTabs).getByRole("tab", { name: "Git" });
+    await waitFor(() => expect(gitTab).toHaveFocus());
+    expect(gitTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Git" })).toBeInTheDocument();
   });
 
   it("opens a Git diff then returns to the matching project file", async () => {
@@ -144,7 +183,10 @@ describe("ProjectWorkspaceSurface", () => {
         projectName="Project One"
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    fireEvent.click(screen.getByRole("tab", { name: "项目目录" }));
+    const directoryTabs = await screen.findByRole("tablist", { name: "项目目录视图" });
+    fireEvent.click(within(directoryTabs).getByRole("tab", { name: "Git" }));
+    await waitFor(() => expect(within(directoryTabs).getByRole("tab", { name: "Git" })).toHaveTextContent("Git 2"));
     fireEvent.click(await screen.findByRole("button", { name: "README.md 暂存区差异" }));
     fireEvent.click(await screen.findByRole("button", { name: "打开文件" }));
     expect(await screen.findByLabelText("README.md 文件内容")).toHaveTextContent("# Hello");

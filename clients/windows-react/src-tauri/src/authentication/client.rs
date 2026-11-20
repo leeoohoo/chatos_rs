@@ -3,6 +3,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
 
 use super::{AuthSession, AuthUser, RegistrationCodeDelivery};
+use crate::controlled_network_policy::ControlledNetworkPolicyEnvelope;
 use chatos_plugin_management_sdk::{PluginInstallSourceList, UpdateUserPluginPreferenceResponse};
 
 const MAXIMUM_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
@@ -12,7 +13,9 @@ const MAXIMUM_PLUGIN_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 pub struct AuthenticationApiClient {
     client: Client,
     user_service_url: Url,
+    #[cfg_attr(not(test), allow(dead_code))]
     gateway_url: Url,
+    connector_url: Url,
 }
 
 #[derive(Debug)]
@@ -109,12 +112,6 @@ pub(crate) struct GatewayManagedModelConfig {
     pub task_thinking_level: Option<String>,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
-    pub model_capability_revision: Option<String>,
-    pub context_window_tokens: Option<i64>,
-    pub output_reserve_tokens: Option<i64>,
-    pub protocol_overhead_estimator_id: Option<String>,
-    pub tokenizer_id: Option<String>,
-    pub responses_compaction_threshold: Option<i64>,
     pub enabled: bool,
     #[serde(default)]
     pub task_enabled: Option<bool>,
@@ -210,6 +207,44 @@ pub(crate) struct GatewayAgentCapability {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GatewayManagedRuntimeConfig {
+    #[serde(default)]
+    pub native_agent_runtime_settings: Option<GatewayNativeAgentRuntimeSettings>,
+    #[serde(default)]
+    pub local_task_execution_settings: Option<GatewayLocalTaskExecutionSettings>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GatewayLocalTaskExecutionSettings {
+    pub max_iterations: usize,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GatewayNativeAgentRuntimeSettings {
+    pub maximum_model_calls: usize,
+    pub maximum_request_retries: usize,
+    pub request_timeout_seconds: usize,
+    pub run_timeout_seconds: usize,
+    pub maximum_no_progress_rounds: usize,
+    // The managed runtime endpoint is shared with macOS and no longer carries
+    // model-specific context limits. Keep the fields for the story policy
+    // compatibility path, but default them to the product policy values when
+    // older Windows callers receive the current gateway shape.
+    #[serde(default = "default_story_context_window_tokens")]
+    pub context_window_tokens: usize,
+    #[serde(default = "default_story_output_reserve_tokens")]
+    pub output_reserve_tokens: usize,
+}
+
+fn default_story_context_window_tokens() -> usize {
+    2_000_000
+}
+
+fn default_story_output_reserve_tokens() -> usize {
+    30_000
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub(crate) struct GatewayResolvedCapability {
     pub binding: GatewayCapabilityBinding,
     #[serde(default)]
@@ -239,10 +274,15 @@ struct ErrorPayload {
 
 impl AuthenticationApiClient {
     pub fn from_runtime() -> Result<Self, String> {
-        Self::new(&runtime_api_base_url())
+        Self::new_with_connector(&runtime_api_base_url(), &runtime_connector_base_url())
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn new(base_url: &str) -> Result<Self, String> {
+        Self::new_with_connector(base_url, base_url)
+    }
+
+    fn new_with_connector(base_url: &str, connector_base_url: &str) -> Result<Self, String> {
         let mut url = Url::parse(base_url).map_err(|_| "ChatOS API 地址无效。".to_owned())?;
         if !matches!(url.scheme(), "http" | "https")
             || url.host_str().is_none()
@@ -264,6 +304,26 @@ impl AuthenticationApiClient {
         gateway_url.set_path(&gateway_path);
         gateway_url.set_query(None);
         gateway_url.set_fragment(None);
+        let mut connector_url = Url::parse(connector_base_url)
+            .map_err(|_| "ChatOS Connector API 地址无效。".to_owned())?;
+        if !matches!(connector_url.scheme(), "http" | "https")
+            || connector_url.host_str().is_none()
+            || !connector_url.username().is_empty()
+            || connector_url.password().is_some()
+            || connector_url.query().is_some()
+            || connector_url.fragment().is_some()
+        {
+            return Err("ChatOS Connector API 地址无效。".into());
+        }
+        let connector_prefix = connector_url.path().trim_matches('/').to_owned();
+        let connector_path = if connector_prefix.is_empty() {
+            "/".to_owned()
+        } else {
+            format!("/{connector_prefix}/")
+        };
+        connector_url.set_path(&connector_path);
+        connector_url.set_query(None);
+        connector_url.set_fragment(None);
         let path = if prefix.is_empty() {
             "/api/user/".to_owned()
         } else {
@@ -280,6 +340,7 @@ impl AuthenticationApiClient {
                 .map_err(|_| "无法初始化 ChatOS 网络客户端。".to_owned())?,
             user_service_url: url,
             gateway_url,
+            connector_url,
         })
     }
 
@@ -508,6 +569,43 @@ impl AuthenticationApiClient {
         .await
     }
 
+    pub(crate) async fn managed_runtime_config(
+        &self,
+        access_token: &str,
+    ) -> Result<GatewayManagedRuntimeConfig, ApiError> {
+        self.control_plane_request("api/local-connectors/config/runtime", None, access_token)
+            .await
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn controlled_network_policy(
+        &self,
+        access_token: &str,
+        device_id: &str,
+        workspace_id: &str,
+        permission_profile: Option<&str>,
+    ) -> Result<ControlledNetworkPolicyEnvelope, ApiError> {
+        let device_id = device_id.trim();
+        let workspace_id = workspace_id.trim();
+        if device_id.is_empty() || workspace_id.is_empty() {
+            return Err(ApiError {
+                message: "Controlled Network 策略上下文无效。".into(),
+                unauthorized: false,
+            });
+        }
+        let url = controlled_network_policy_url(
+            &self.connector_url,
+            device_id,
+            workspace_id,
+            permission_profile,
+        )?;
+        let reply = self
+            .send::<(), ControlledNetworkPolicyEnvelope>(url, "GET", None, Some(access_token))
+            .await?;
+        Ok(reply.value)
+    }
+
+    #[allow(dead_code)]
     pub(crate) async fn plugin_install_sources(
         &self,
         access_token: &str,
@@ -526,7 +624,7 @@ impl AuthenticationApiClient {
         plugin_id: &str,
         release_id: &str,
     ) -> Result<reqwest::Response, ApiError> {
-        let mut url = self.gateway_url.clone();
+        let mut url = self.connector_url.clone();
         {
             let mut segments = url.path_segments_mut().map_err(|_| ApiError {
                 message: "ChatOS API 地址无效。".into(),
@@ -639,7 +737,7 @@ impl AuthenticationApiClient {
         base_path: &str,
         tail_and_query: Option<(&str, &str)>,
     ) -> Result<Url, ApiError> {
-        let mut url = self.gateway_url.clone();
+        let mut url = self.connector_url.clone();
         {
             let mut segments = url.path_segments_mut().map_err(|_| ApiError {
                 message: "ChatOS API 地址无效。".into(),
@@ -685,6 +783,7 @@ impl AuthenticationApiClient {
         body: Option<&B>,
         access_token: Option<&str>,
     ) -> Result<ApiReply<R>, ApiError> {
+        let endpoint = url.path().to_owned();
         let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| ApiError {
             message: "请求方法无效。".into(),
             unauthorized: false,
@@ -741,8 +840,8 @@ impl AuthenticationApiClient {
         } else {
             bytes.as_ref()
         };
-        let value = serde_json::from_slice(source).map_err(|_| ApiError {
-            message: "服务器返回了无法识别的数据。".into(),
+        let value = serde_json::from_slice(source).map_err(|error| ApiError {
+            message: response_decode_error(&endpoint, &error),
             unauthorized: false,
         })?;
         Ok(ApiReply {
@@ -750,6 +849,42 @@ impl AuthenticationApiClient {
             refreshed_token,
         })
     }
+}
+
+fn controlled_network_policy_url(
+    connector_url: &Url,
+    device_id: &str,
+    workspace_id: &str,
+    permission_profile: Option<&str>,
+) -> Result<Url, ApiError> {
+    let mut url = connector_url.clone();
+    url.set_query(None);
+    url.set_fragment(None);
+    {
+        let mut segments = url.path_segments_mut().map_err(|_| ApiError {
+            message: "ChatOS API 地址无效。".into(),
+            unauthorized: false,
+        })?;
+        segments.pop_if_empty();
+        for segment in [
+            "api",
+            "local-connectors",
+            "devices",
+            device_id,
+            "controlled-network",
+            "policy",
+        ] {
+            segments.push(segment);
+        }
+    }
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("workspace_id", workspace_id);
+        if let Some(profile) = permission_profile.map(str::trim).filter(|v| !v.is_empty()) {
+            query.append_pair("permission_profile", profile);
+        }
+    }
+    Ok(url)
 }
 
 pub(crate) fn runtime_api_base_url() -> String {
@@ -762,6 +897,21 @@ pub(crate) fn runtime_api_base_url() -> String {
         || !cfg!(debug_assertions)
     {
         "https://gateway.jgoool.com".into()
+    } else {
+        "http://127.0.0.1:9080".into()
+    }
+}
+
+pub(crate) fn runtime_connector_base_url() -> String {
+    if let Ok(value) = std::env::var("CHATOS_CONNECTOR_BASE_URL") {
+        if !value.trim().is_empty() {
+            return value;
+        }
+    }
+    if std::env::var("CHATOS_DEPLOYMENT_PROFILE").as_deref() == Ok("production")
+        || !cfg!(debug_assertions)
+    {
+        "https://connector.jgoool.com".into()
     } else {
         "http://127.0.0.1:9080".into()
     }
@@ -812,6 +962,14 @@ fn non_empty_owned(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_owned())
 }
 
+fn response_decode_error(endpoint: &str, error: &serde_json::Error) -> String {
+    if error.is_syntax() || error.is_eof() {
+        format!("服务器返回了无法识别的数据（接口：{endpoint}）。")
+    } else {
+        format!("服务器返回的数据格式与当前客户端不兼容（接口：{endpoint}）。")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -827,6 +985,23 @@ mod tests {
     }
 
     #[test]
+    fn keeps_user_auth_and_connector_control_plane_on_separate_hosts() {
+        let client = AuthenticationApiClient::new_with_connector(
+            "https://gateway.example.test",
+            "https://connector.example.test",
+        )
+        .unwrap();
+        assert_eq!(
+            client.user_service_url.as_str(),
+            "https://gateway.example.test/api/user/"
+        );
+        assert_eq!(
+            client.connector_url.as_str(),
+            "https://connector.example.test/"
+        );
+    }
+
+    #[test]
     fn login_response_accepts_both_token_field_names() {
         for field in ["token", "access_token"] {
             let body = format!(
@@ -839,7 +1014,153 @@ mod tests {
     }
 
     #[test]
+    fn decodes_current_connector_model_config_shape_without_echoing_secrets() {
+        let model: GatewayModelConfig = serde_json::from_value(serde_json::json!({
+            "id": "provider_model_1",
+            "owner_user_id": "owner-1",
+            "name": "my_api / gpt-6.1-sol",
+            "provider": "gpt",
+            "model": "gpt-6.1-sol",
+            "api_key": "redacted-test-key",
+            "base_url": "https://example.test/v1",
+            "task_thinking_level": null,
+            "temperature": null,
+            "max_output_tokens": null,
+            "model_capability_revision": "vendor-common-2026-11-12-v1",
+            "context_window_tokens": 400000,
+            "output_reserve_tokens": 128000,
+            "protocol_overhead_estimator_id": "responses-json-v1",
+            "tokenizer_id": null,
+            "responses_compaction_threshold": null,
+            "enabled": true,
+            "task_enabled": true,
+            "has_api_key": true,
+            "supports_images": false,
+            "supports_reasoning": true,
+            "supports_responses": true,
+            "model_name": "gpt-6.1-sol",
+            "task_usage_scenario": "chat",
+            "created_at": "2026-11-02T02:12:04Z",
+            "updated_at": "2026-11-12T02:12:04Z"
+        }))
+        .unwrap();
+        assert_eq!(model.model, "gpt-6.1-sol");
+        assert_eq!(
+            model.model_capability_revision.as_deref(),
+            Some("vendor-common-2026-11-12-v1")
+        );
+        assert_eq!(model.context_window_tokens, Some(400000));
+        assert!(model.supports_responses);
+    }
+
+    #[test]
+    fn response_decode_error_is_endpoint_scoped_without_response_body() {
+        let error =
+            serde_json::from_str::<Vec<String>>("{\"secret\":\"do-not-echo\"}").unwrap_err();
+        let message = response_decode_error("/api/model-configs/provider_model_1", &error);
+        assert!(message.contains("/api/model-configs/provider_model_1"));
+        assert!(!message.contains("do-not-echo"));
+    }
+
+    #[test]
+    fn managed_runtime_config_decodes_native_agent_settings() {
+        let config: GatewayManagedRuntimeConfig = serde_json::from_value(serde_json::json!({
+            "native_agent_runtime_settings": {
+                "maximum_model_calls": 725,
+                "maximum_request_retries": 3,
+                "request_timeout_seconds": 240,
+                "run_timeout_seconds": 8000,
+                "maximum_no_progress_rounds": 9,
+                "context_window_tokens": 1500000,
+                "output_reserve_tokens": 40000
+            },
+            "local_task_execution_settings": { "max_iterations": 725 }
+        }))
+        .unwrap();
+        let settings = config.native_agent_runtime_settings.unwrap();
+        assert_eq!(settings.maximum_model_calls, 725);
+        assert_eq!(settings.maximum_request_retries, 3);
+        assert_eq!(
+            settings.context_window_tokens - settings.output_reserve_tokens,
+            1460000
+        );
+    }
+
+    #[test]
+    fn managed_runtime_config_decodes_current_gateway_shape_without_model_limits() {
+        let config: GatewayManagedRuntimeConfig = serde_json::from_value(serde_json::json!({
+            "native_agent_runtime_settings": {
+                "maximum_model_calls": 600,
+                "maximum_request_retries": 2,
+                "request_timeout_seconds": 180,
+                "run_timeout_seconds": 7200,
+                "maximum_no_progress_rounds": 8
+            },
+            "local_task_execution_settings": {
+                "max_iterations": 600,
+                "review_read_only_iterations": 8,
+                "review_missing_read_failures": 2,
+                "review_repeat_interval_iterations": 8,
+                "prompt_cache_enabled": true,
+                "prompt_cache_retention_enabled": true
+            },
+            "remote_control_trust": {
+                "require_signed_messages": true,
+                "signature_max_skew_seconds": 300,
+                "trusted_relay_public_keys": { "relay-key-1": "public-key" }
+            }
+        }))
+        .expect("current gateway runtime config should decode");
+        let settings = config
+            .native_agent_runtime_settings
+            .as_ref()
+            .expect("native runtime settings");
+        assert_eq!(settings.maximum_model_calls, 600);
+        assert_eq!(settings.context_window_tokens, 2_000_000);
+        assert_eq!(settings.output_reserve_tokens, 30_000);
+        assert_eq!(
+            config
+                .local_task_execution_settings
+                .as_ref()
+                .expect("task settings")
+                .max_iterations,
+            600
+        );
+    }
+
+    #[test]
     fn rejects_urls_with_embedded_credentials() {
         assert!(AuthenticationApiClient::new("https://user:secret@example.test").is_err());
+    }
+
+    #[test]
+    fn controlled_network_policy_url_encodes_context_and_preserves_prefix() {
+        let base = Url::parse("https://connector.example.test/deploy/").unwrap();
+        let url = controlled_network_policy_url(
+            &base,
+            "device id/1?",
+            "workspace id/2?",
+            Some(" profile/name? "),
+        )
+        .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://connector.example.test/deploy/api/local-connectors/devices/device%20id%2F1%3F/controlled-network/policy?workspace_id=workspace+id%2F2%3F&permission_profile=profile%2Fname%3F"
+        );
+    }
+
+    #[test]
+    fn controlled_network_policy_url_omits_blank_profile_and_base_query_fragment() {
+        let base = Url::parse("https://connector.example.test/deploy/?stale=1#fragment").unwrap();
+        let url = controlled_network_policy_url(&base, "device", "workspace", Some("  ")).unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://connector.example.test/deploy/api/local-connectors/devices/device/controlled-network/policy?workspace_id=workspace"
+        );
+        let url = controlled_network_policy_url(&base, "device", "workspace", None).unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://connector.example.test/deploy/api/local-connectors/devices/device/controlled-network/policy?workspace_id=workspace"
+        );
     }
 }

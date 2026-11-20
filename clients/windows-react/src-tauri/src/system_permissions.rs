@@ -6,6 +6,7 @@ use crate::{
         diagnose, open_onboarding, ComputerUseDiagnostics, TrustedComputerUseLaunch,
     },
     host_lifecycle::HostManager,
+    machine_resource_governor::MachineResourceGovernor,
     plugin_settings::{
         resolve_computer_use_installation, ComputerUseInstallation, PluginSettingsManager,
     },
@@ -48,13 +49,14 @@ pub struct SystemPermissions {
 pub async fn load_system_permissions(
     manager: State<'_, HostManager>,
     plugins: State<'_, PluginSettingsManager>,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
 ) -> Result<SystemPermissions, String> {
     let owner_user_id = required("owner_user_id", owner_user_id)?;
     if !manager.is_running_for(&owner_user_id).await {
         return Err("Local Agent Host 尚未就绪。".into());
     }
-    let computer_use = detect_computer_use(&manager, &plugins, &owner_user_id).await;
+    let computer_use = detect_computer_use(&manager, &plugins, &owner_user_id, &resources).await;
     Ok(windows_permissions(&computer_use))
 }
 
@@ -62,6 +64,7 @@ pub async fn load_system_permissions(
 pub async fn request_system_permission(
     manager: State<'_, HostManager>,
     plugins: State<'_, PluginSettingsManager>,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     permission_id: String,
 ) -> Result<SystemPermissions, String> {
@@ -70,7 +73,7 @@ pub async fn request_system_permission(
     if !manager.is_running_for(&owner_user_id).await {
         return Err("Local Agent Host 尚未就绪。".into());
     }
-    let computer_use = detect_computer_use(&manager, &plugins, &owner_user_id).await;
+    let computer_use = detect_computer_use(&manager, &plugins, &owner_user_id, &resources).await;
     let snapshot = windows_permissions(&computer_use);
     let permission = snapshot
         .items
@@ -83,7 +86,7 @@ pub async fn request_system_permission(
     let ComputerUseCapability::Diagnosed { launch, .. } = computer_use else {
         return Err("Computer Use 处理指引当前不可用。".into());
     };
-    open_onboarding(&launch)?;
+    open_onboarding(&launch, &resources).await?;
     Ok(snapshot)
 }
 
@@ -102,11 +105,12 @@ async fn detect_computer_use(
     manager: &HostManager,
     plugins: &PluginSettingsManager,
     owner_user_id: &str,
+    resources: &MachineResourceGovernor,
 ) -> ComputerUseCapability {
     match resolve_computer_use_installation(manager, plugins, owner_user_id).await {
         Ok(ComputerUseInstallation::Missing) => ComputerUseCapability::Missing,
         Ok(ComputerUseInstallation::Disabled) => ComputerUseCapability::Disabled,
-        Ok(ComputerUseInstallation::Ready(launch)) => match diagnose(&launch).await {
+        Ok(ComputerUseInstallation::Ready(launch)) => match diagnose(&launch, resources).await {
             Ok(diagnostics) => ComputerUseCapability::Diagnosed {
                 launch,
                 diagnostics,

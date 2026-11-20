@@ -1105,6 +1105,7 @@ fn store_error() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn store() -> (tempfile::TempDir, AgentProfileStore) {
         let directory = tempfile::tempdir().unwrap();
@@ -1342,6 +1343,34 @@ mod tests {
             store.protocol_body(&path).unwrap_err(),
             http::StatusCode::UNAUTHORIZED
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confined_connector_directory_rejects_symlinked_roots() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let actual = directory.path().join("actual");
+        fs::create_dir(&actual).unwrap();
+        let linked_root = directory.path().join("linked-root");
+        symlink(&actual, &linked_root).unwrap();
+        assert!(confined_connector_directory(&linked_root).is_err());
+
+        let root = directory.path().join("root");
+        fs::create_dir(&root).unwrap();
+        let target = root.join("target");
+        fs::create_dir(&target).unwrap();
+        symlink(&target, root.join("NativeConnector")).unwrap();
+        assert!(confined_connector_directory(&root).is_err());
+    }
+
+    #[test]
+    fn confined_connector_directory_rejects_non_directory_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("not-a-directory");
+        fs::write(&file, b"file").unwrap();
+        assert!(connector_storage::reject_link_or_non_directory(&file).is_err());
     }
 
     fn mutation() -> AgentProfileMutationInput {

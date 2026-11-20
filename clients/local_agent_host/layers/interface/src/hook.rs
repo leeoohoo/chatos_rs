@@ -114,7 +114,7 @@ impl LocalPluginHookBundleSpec {
             return Err("runner_policy_version must be greater than zero".to_string());
         }
         validate_text("installation_root", &self.installation_root, 4_096)?;
-        if !self.installation_root.starts_with('/') {
+        if !absolute_plugin_path(&self.installation_root) {
             return Err("installation_root must be an absolute path".to_string());
         }
         if self.permissions.len() > 256 {
@@ -169,6 +169,11 @@ impl PutPluginHookBundleCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ListPluginHookBundlesCommand {
+    pub owner_user_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListPluginHookBundleRecordsCommand {
     pub owner_user_id: String,
 }
 
@@ -298,8 +303,23 @@ impl ListPluginHookBundlesCommand {
     }
 }
 
+impl ListPluginHookBundleRecordsCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)
+    }
+}
+
 const fn default_true() -> bool {
     true
+}
+
+fn absolute_plugin_path(value: &str) -> bool {
+    value.starts_with('/')
+        || value.starts_with("\\\\")
+        || (value.len() >= 3
+            && value.as_bytes()[0].is_ascii_alphabetic()
+            && value.as_bytes()[1] == b':'
+            && matches!(value.as_bytes()[2], b'/' | b'\\'))
 }
 
 #[cfg(test)]
@@ -313,6 +333,17 @@ mod tests {
         assert!(bundle.validate().is_err());
         let mut bundle = fixture();
         bundle.hooks[0].event = "PreCompact".to_string();
+        assert!(bundle.validate().is_err());
+    }
+
+    #[test]
+    fn bundle_accepts_windows_drive_and_unc_installation_roots() {
+        let mut bundle = fixture();
+        bundle.installation_root = r"C:\ChatOS\Plugins\plugin-1".to_string();
+        assert!(bundle.validate().is_ok());
+        bundle.installation_root = r"\\server\plugins\plugin-1".to_string();
+        assert!(bundle.validate().is_ok());
+        bundle.installation_root = r"C:relative\plugin-1".to_string();
         assert!(bundle.validate().is_err());
     }
 

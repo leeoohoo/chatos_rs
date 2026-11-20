@@ -38,6 +38,21 @@ export function HostReadyGate({
   }
 
   const working = workingPhases.has(snapshot.phase);
+  const diagnosticText = (entry: HostDiagnosticEntry) => {
+    if (entry.event !== "host_authentication") {
+      return `${entry.event}: ${entry.outcome}`;
+    }
+    switch (entry.outcome) {
+      case "unavailable":
+        return text("hostAuthUnavailable");
+      case "owner_mismatch":
+        return text("hostAuthOwnerMismatch");
+      case "session_changed":
+        return text("hostAuthSessionChanged");
+      default:
+        return text("hostDiagnosticFailed");
+    }
+  };
   return (
     <div className="ready-gate">
       <section className="gate-card" aria-live="polite">
@@ -57,8 +72,7 @@ export function HostReadyGate({
             <ol>
               {diagnostics.slice(-5).map((entry) => (
                 <li key={entry.sequence}>
-                  <code>{entry.event}</code>
-                  <span>{entry.outcome}</span>
+                  <span>{diagnosticText(entry)}</span>
                 </li>
               ))}
             </ol>

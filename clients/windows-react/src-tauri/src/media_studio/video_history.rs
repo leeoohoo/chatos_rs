@@ -7,6 +7,8 @@ use std::{
 };
 use uuid::Uuid;
 
+use crate::app_data_transaction::{ensure_owned_directory, replace_owned_file_cancellable};
+
 use super::{
     history::owner_hash,
     video_provider::{VideoGenerationResult, MAXIMUM_VIDEO_BYTES},
@@ -14,6 +16,7 @@ use super::{
 
 const MANIFEST_VERSION: u32 = 1;
 const MAXIMUM_MANIFEST_BYTES: usize = 2 * 1_024 * 1_024;
+const MAXIMUM_HISTORY_DIRECTORY_ENTRIES: usize = 20_000;
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +81,10 @@ impl MediaStudioVideoHistoryStore {
     #[cfg(test)]
     fn for_tests(root: PathBuf) -> Self {
         Self { root }
+    }
+
+    pub(super) fn temporary_cleanup_root(&self) -> PathBuf {
+        self.root.clone()
     }
 
     pub(super) fn persist_video(
@@ -158,7 +165,13 @@ impl MediaStudioVideoHistoryStore {
         }
         validate_private_directory(&account_directory)?;
         let mut candidates = Vec::with_capacity(limit.saturating_add(1));
-        for entry in fs::read_dir(&account_directory).map_err(|_| video_history_error())? {
+        for (visited, entry) in fs::read_dir(&account_directory)
+            .map_err(|_| video_history_error())?
+            .enumerate()
+        {
+            if visited >= MAXIMUM_HISTORY_DIRECTORY_ENTRIES {
+                return Err(video_history_error());
+            }
             let Ok(entry) = entry else { continue };
             let Ok(file_type) = entry.file_type() else {
                 continue;
@@ -358,14 +371,21 @@ fn commit_manifest(
     if bytes.len() > MAXIMUM_MANIFEST_BYTES {
         return Err(video_history_error());
     }
-    let temporary = directory.join("record.json.tmp");
     let target = directory.join("record.json");
-    write_private_file_cancellable(&temporary, &bytes, cancelled)?;
+    replace_owned_file_cancellable(directory, &target, ".video-history-", &bytes, || {
+        cancelled.load(Ordering::Acquire)
+    })
+    .map_err(|error| {
+        if cancelled.load(Ordering::Acquire) || error.kind() == std::io::ErrorKind::Interrupted {
+            "视频生成已取消。".to_owned()
+        } else {
+            video_history_error()
+        }
+    })?;
     if cancelled.load(Ordering::Acquire) {
-        let _ = fs::remove_file(&temporary);
+        let _ = fs::remove_file(&target);
         return Err("视频生成已取消。".into());
     }
-    fs::rename(&temporary, &target).map_err(|_| video_history_error())?;
     if let Ok(record) = File::open(directory) {
         let _ = record.sync_all();
     }
@@ -379,6 +399,14 @@ fn write_private_file_cancellable(
 ) -> Result<(), String> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -437,7 +465,7 @@ fn read_private_file(path: &Path, maximum_bytes: usize) -> Result<Vec<u8>, Strin
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path).map_err(|_| video_history_error())?;
+    ensure_owned_directory(path).map_err(|_| video_history_error())?;
     let metadata = fs::symlink_metadata(path).map_err(|_| video_history_error())?;
     if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
         return Err(video_history_error());

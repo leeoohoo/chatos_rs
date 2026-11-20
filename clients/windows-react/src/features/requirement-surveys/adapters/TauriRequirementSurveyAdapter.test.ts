@@ -46,7 +46,7 @@ describe("TauriRequirementSurveyAdapter", () => {
     vi.mocked(invoke).mockResolvedValueOnce({
       surveyId: "survey-1", surveyVersion: 2,
       followUp: { status: "processing", markdown: null },
-      plan: null, planFollowUp: null,
+      plan: null, planFollowUp: null, sourceTeamRoute: null,
     });
     await adapter.loadFollowUp("owner-1", "project-1", "survey-1");
     expect(invoke).toHaveBeenLastCalledWith("load_requirement_survey_follow_up", {

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { z } from "zod";
 import {
   isReferencePreviewForPresentation,
@@ -16,6 +17,13 @@ import {
   mediaStudioVideoHistoryPageSchema,
   mediaStudioVideoJobSnapshotSchema,
 } from "../domain/mediaStudio";
+import {
+  mediaWorkflowListSchema,
+  mediaWorkflowRunEventSchema,
+  mediaWorkflowRunResultSchema,
+  mediaWorkflowSchema,
+  type MediaWorkflow,
+} from "../domain/mediaWorkflow";
 import type {
   MediaStudioHistoryReference,
   MediaStudioPort,
@@ -29,6 +37,63 @@ const historyReferenceSchema = z.object({
 }).strict();
 
 export class TauriMediaStudioAdapter implements MediaStudioPort {
+  async listWorkflows(ownerUserId: string) {
+    return mediaWorkflowListSchema.parse(
+      await invoke("list_media_studio_workflows", { ownerUserId: ownerUserIdSchema.parse(ownerUserId) }),
+    );
+  }
+
+  async saveWorkflow(ownerUserId: string, workflow: MediaWorkflow) {
+    const input = mediaWorkflowSchema.parse(workflow);
+    return z.boolean().parse(await invoke("save_media_studio_workflow", {
+      ownerUserId: ownerUserIdSchema.parse(ownerUserId),
+      workflow: input,
+    }));
+  }
+
+  async deleteWorkflow(ownerUserId: string, workflowId: string) {
+    await invoke("delete_media_studio_workflow", {
+      input: {
+        ownerUserId: ownerUserIdSchema.parse(ownerUserId),
+        workflowId: mediaWorkflowSchema.shape.id.parse(workflowId),
+      },
+    });
+  }
+
+  async watchWorkflowRun(
+    request: Parameters<MediaStudioPort["watchWorkflowRun"]>[0],
+    listener: Parameters<MediaStudioPort["watchWorkflowRun"]>[1],
+  ) {
+    const expected = {
+      ownerUserId: ownerUserIdSchema.parse(request.ownerUserId),
+      workflowId: mediaWorkflowSchema.shape.id.parse(request.workflowId),
+      clientRequestId: ownerUserIdSchema.parse(request.clientRequestId),
+    };
+    return listen<unknown>("media-workflow-run", (event) => {
+      const parsed = mediaWorkflowRunEventSchema.safeParse(event.payload);
+      if (!parsed.success
+        || parsed.data.ownerUserId !== expected.ownerUserId
+        || parsed.data.workflowId !== expected.workflowId
+        || parsed.data.clientRequestId !== expected.clientRequestId) return;
+      listener(parsed.data);
+    });
+  }
+
+  async runWorkflow(request: Parameters<MediaStudioPort["runWorkflow"]>[0]) {
+    const ownerUserId = ownerUserIdSchema.parse(request.ownerUserId);
+    const workflowId = mediaWorkflowSchema.shape.id.parse(request.workflowId);
+    const clientRequestId = ownerUserIdSchema.parse(request.clientRequestId);
+    const result = mediaWorkflowRunResultSchema.parse(
+      await invoke("run_media_studio_workflow", {
+        request: { ownerUserId, workflowId, clientRequestId },
+      }),
+    );
+    if (result.workflowId !== workflowId || result.clientRequestId !== clientRequestId) {
+      throw new Error("工作流运行结果与当前请求不匹配。");
+    }
+    return result;
+  }
+
   async listModels(ownerUserId: string) {
     return mediaStudioModelListSchema.parse(
       await invoke("list_media_studio_models", {

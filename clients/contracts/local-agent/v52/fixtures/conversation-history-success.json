@@ -80,7 +80,7 @@
           "created_at_unix_ms": 1792454401000
         }
       ],
-      "next_before_ordinal": null
+      "next_before_cursor": null
     }
   },
   "error": null

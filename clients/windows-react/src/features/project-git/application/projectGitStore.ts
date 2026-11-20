@@ -153,7 +153,13 @@ export const useProjectGitStore = create<ProjectGitState>((set, get) => ({
       const snapshot = await port.loadSnapshot({ ownerUserId, projectId });
       if (!acceptsLoad(get(), ownerUserId, projectId, generation, requestId)) return;
       if (snapshot.projectId !== projectId) throw new Error("Git 状态返回了其他项目的数据。");
-      set({ snapshot, isLoading: false, activeLoadRequest: null, hasLoaded: true });
+      set({
+        snapshot,
+        selectedDiff: null,
+        isLoading: false,
+        activeLoadRequest: null,
+        hasLoaded: true,
+      });
     } catch (error) {
       if (!acceptsLoad(get(), ownerUserId, projectId, generation, requestId)) return;
       set({

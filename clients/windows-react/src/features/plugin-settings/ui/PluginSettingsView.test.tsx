@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useGeneralSettingsStore } from "../../general-settings/application/generalSettingsStore";
 import { pluginSettingsPort } from "../../../test/pluginSettingsFixture";
+import { pluginSettingsSnapshot } from "../../../test/pluginSettingsFixture";
 import { usePluginSettingsStore } from "../application/pluginSettingsStore";
 import { PluginSettingsView } from "./PluginSettingsView";
 
@@ -22,6 +23,38 @@ describe("PluginSettingsView", () => {
     expect(screen.getByText("process.spawn")).toBeInTheDocument();
   });
 
+  it("shows verified runtime health and permission results instead of a pending placeholder", async () => {
+    const snapshot = pluginSettingsSnapshot();
+    snapshot.plugins[0]!.packageName = "open-computer-use";
+    snapshot.plugins[0]!.runtimeStatus = "ready";
+    snapshot.plugins[0]!.runtimeLastCheckedAt = "2026-11-19T00:00:00.000Z";
+    snapshot.plugins[0]!.permissions = [
+      { id: "process.spawn", required: true, reason: "Launch worker", status: "granted" },
+      { id: "computer.control", required: true, reason: "Control apps", status: "needs_attention" },
+    ];
+    render(<PluginSettingsView ownerUserId="owner-1" port={pluginSettingsPort({ load: vi.fn(async () => snapshot) })} onOpenInstallationAssistant={vi.fn()} />);
+
+    expect(await screen.findByText("运行检查通过")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Skills 与权限"));
+    expect(screen.getByText("已验证的 Windows Worker 成功启动并返回一致的能力快照。")).toBeInTheDocument();
+    expect(screen.getByText("已验证 · Windows 运行检查通过")).toBeInTheDocument();
+    expect(screen.getByText("已声明 · Windows 能力需要处理")).toBeInTheDocument();
+  });
+
+  it("surfaces a failed runtime check without claiming the Plugin is ready", async () => {
+    const snapshot = pluginSettingsSnapshot();
+    snapshot.plugins[0]!.runtimeStatus = "unavailable";
+    snapshot.plugins[0]!.runtimeLastCheckedAt = "2026-11-19T00:00:00.000Z";
+    snapshot.plugins[0]!.runtimeError = "Computer Use 运行检查失败。";
+    snapshot.plugins[0]!.permissions[0]!.status = "unavailable";
+    render(<PluginSettingsView ownerUserId="owner-1" port={pluginSettingsPort({ load: vi.fn(async () => snapshot) })} onOpenInstallationAssistant={vi.fn()} />);
+
+    expect(await screen.findByText("运行检查失败")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Skills 与权限"));
+    expect(screen.getByText("Computer Use 运行检查失败。")).toBeInTheDocument();
+    expect(screen.getByText("已声明 · Windows 运行检查失败")).toBeInTheDocument();
+  });
+
   it("filters by Skill and opens the installation assistant", async () => {
     const onOpen = vi.fn();
     render(<PluginSettingsView ownerUserId="owner-1" port={pluginSettingsPort()} onOpenInstallationAssistant={onOpen} />);
@@ -38,5 +71,99 @@ describe("PluginSettingsView", () => {
     const toggle = await screen.findByLabelText("Diagram Studio enabled");
     fireEvent.click(toggle);
     await waitFor(() => expect(toggle).not.toBeChecked());
+  });
+
+  it("shows validated Hooks with the Windows runner ready", async () => {
+    const snapshot = pluginSettingsSnapshot();
+    snapshot.plugins[0]!.hookCount = 1;
+    snapshot.plugins[0]!.hookRuntimeStatus = "ready";
+    const port = pluginSettingsPort({ load: vi.fn(async () => snapshot) });
+    render(<PluginSettingsView ownerUserId="owner-1" port={port} onOpenInstallationAssistant={vi.fn()} />);
+
+    expect(await screen.findByText("Hook runner 已就绪")).toBeInTheDocument();
+    expect(screen.getByText("1 Hook Bundle")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Skills 与权限"));
+    expect(screen.getByText("生命周期 Hooks")).toBeInTheDocument();
+    expect(screen.getByText(/Plugin 启用后会在 Windows AppContainer 中执行/)).toBeInTheDocument();
+  });
+
+  it("keeps plugin secrets local to the password dialog and clears them when closed", async () => {
+    const snapshot = pluginSettingsSnapshot();
+    snapshot.plugins[0]!.credentials = [{ name: "primary-token", configured: false }];
+    const port = pluginSettingsPort({ load: vi.fn(async () => snapshot), updateCredentials: vi.fn(async () => ({ ...snapshot, plugins: snapshot.plugins.map((plugin) => ({ ...plugin, credentials: [{ name: "primary-token", configured: true }] })) })) });
+    render(<PluginSettingsView ownerUserId="owner-1" port={port} onOpenInstallationAssistant={vi.fn()} />);
+    await screen.findByText("需要配置凭据");
+    fireEvent.click(screen.getByRole("button", { name: "配置凭据…" }));
+    const input = screen.getByLabelText("primary-token");
+    expect(input).toHaveValue("");
+    fireEvent.change(input, { target: { value: "secret-value" } });
+    fireEvent.click(screen.getByRole("button", { name: "关闭凭据配置" }));
+    fireEvent.click(screen.getByRole("button", { name: "配置凭据…" }));
+    expect(screen.getByLabelText("primary-token")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("primary-token"), { target: { value: "new-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "安全保存" }));
+    await waitFor(() => expect(port.updateCredentials).toHaveBeenCalledWith(
+      "owner-1",
+      "plugin-1",
+      { "primary-token": "new-secret" },
+    ));
+  });
+
+  it("preflights a native folder before enabling manual installation", async () => {
+    const port = pluginSettingsPort({
+      pickManualDirectory: vi.fn(async () => ({ selectionId: "selection-private", directoryName: "safe-plugin" })),
+      inspectManualDirectory: vi.fn(async (_ownerUserId, _presentationId, selectionId) => ({
+        selectionId,
+        directoryName: "safe-plugin",
+        displayName: "Safe Plugin",
+        version: "2.1.0",
+        description: "Verified locally.",
+        fingerprint: "b".repeat(64),
+        components: [
+          { kind: "skill" as const, displayName: "safe-skill", hookCount: null, events: [], runtimeStatus: null },
+          { kind: "hook" as const, displayName: "lifecycle", hookCount: 3, events: ["SessionStart", "UserPromptSubmit"], runtimeStatus: "ready" as const },
+        ],
+      })),
+      installManualDirectory: vi.fn(async () => pluginSettingsPort().load("owner-1")),
+    });
+    render(<PluginSettingsView ownerUserId="owner-1" port={port} onOpenInstallationAssistant={vi.fn()} />);
+    await screen.findByText("Diagram Studio");
+
+    fireEvent.click(screen.getByRole("button", { name: "手动安装…" }));
+    const installButton = screen.getByRole("button", { name: "确认安装" });
+    expect(installButton).toBeDisabled();
+    expect(screen.queryByText(/C:\\/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "选择根目录" }));
+    expect(await screen.findByText("safe-plugin")).toBeInTheDocument();
+    expect(installButton).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "预检" }));
+    expect(await screen.findByText("Safe Plugin · 2.1.0")).toBeInTheDocument();
+    expect(screen.getByText("safe-skill")).toBeInTheDocument();
+    expect(screen.getByText("lifecycle")).toBeInTheDocument();
+    expect(screen.getByText(/3 个处理器.*Windows runner 已就绪/)).toBeInTheDocument();
+    expect(screen.getByText("b".repeat(64))).toBeInTheDocument();
+    expect(installButton).toBeEnabled();
+
+    fireEvent.click(installButton);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(port.installManualDirectory).toHaveBeenCalledWith(
+      "owner-1",
+      expect.stringMatching(/^plugin-manual-/),
+      "selection-private",
+      "b".repeat(64),
+    );
+  });
+
+  it("discards the native selection when the manual sheet closes", async () => {
+    const port = pluginSettingsPort({ discardManualDirectory: vi.fn(async () => undefined) });
+    render(<PluginSettingsView ownerUserId="owner-1" port={port} onOpenInstallationAssistant={vi.fn()} />);
+    await screen.findByText("Diagram Studio");
+    fireEvent.click(screen.getByRole("button", { name: "手动安装…" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭手动安装" }));
+    await waitFor(() => expect(port.discardManualDirectory).toHaveBeenCalledWith(
+      "owner-1",
+      expect.stringMatching(/^plugin-manual-/),
+    ));
   });
 });

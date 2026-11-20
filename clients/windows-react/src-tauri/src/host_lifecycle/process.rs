@@ -2,7 +2,7 @@ use super::transport::ManagedHost;
 use std::{collections::BTreeMap, path::Path, process::Stdio};
 use tokio::process::Command;
 
-const READ_ONLY_TOOL_NAMES: [&str; 23] = [
+const READ_ONLY_TOOL_NAMES: [&str; 31] = [
     "local_attachment_read",
     "read_file_raw",
     "read_file_range",
@@ -15,8 +15,16 @@ const READ_ONLY_TOOL_NAMES: [&str; 23] = [
     "todo_dependency_options",
     "todo_list",
     "todo_read_progress",
+    "team_asset_list",
+    "team_asset_get",
+    "team_asset_review_list",
+    "project_dashboard_get",
     "capability_search",
     "capability_describe",
+    "plugin_installer_search_npm",
+    "plugin_installer_resolve_npm",
+    "plugin_installer_inspect_npm",
+    "plugin_installer_inspect_source",
     "agent_skill_activate",
     "agent_skill_read_resource",
     "agent_workspace_snapshot",
@@ -27,7 +35,7 @@ const READ_ONLY_TOOL_NAMES: [&str; 23] = [
     "process_log",
     "process_wait",
 ];
-const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 16] = [
+const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 17] = [
     "open_edit_session",
     "stage_edit_batch",
     "abort_edit_session",
@@ -44,6 +52,7 @@ const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 16] = [
     "chat_send_message",
     "chat_heartbeat_complete",
     "agent_cycle_complete",
+    "plugin_installer_install_source",
 ];
 
 pub(super) async fn spawn(
@@ -52,6 +61,40 @@ pub(super) async fn spawn(
     owner_user_id: String,
     credential_environment: &BTreeMap<String, String>,
     workers_enabled: bool,
+    concurrency: HostConcurrencyConfiguration,
+) -> Result<ManagedHost, String> {
+    spawn_with_memory(
+        executable,
+        database,
+        owner_user_id,
+        credential_environment,
+        workers_enabled,
+        concurrency,
+        None,
+    )
+    .await
+}
+
+pub(super) struct MemoryLaunchConfig<'a> {
+    pub(super) base_url: &'a str,
+    pub(super) source_id: &'a str,
+    pub(super) access_token: &'a str,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct HostConcurrencyConfiguration {
+    pub(super) maximum: usize,
+    pub(super) initial: usize,
+}
+
+pub(super) async fn spawn_with_memory(
+    executable: &Path,
+    database: &Path,
+    owner_user_id: String,
+    credential_environment: &BTreeMap<String, String>,
+    workers_enabled: bool,
+    concurrency: HostConcurrencyConfiguration,
+    memory: Option<MemoryLaunchConfig<'_>>,
 ) -> Result<ManagedHost, String> {
     let mut command = Command::new(executable);
     command
@@ -63,6 +106,14 @@ pub(super) async fn spawn(
     if !workers_enabled {
         command.arg("--disable-workers");
     }
+    if let Some(memory) = memory.as_ref() {
+        command
+            .arg("--memory-base-url")
+            .arg(memory.base_url)
+            .arg("--memory-source-id")
+            .arg(memory.source_id);
+    }
+    configure_concurrency(&mut command, concurrency);
     command
         .arg("--stdio")
         .stdin(Stdio::piped())
@@ -70,7 +121,10 @@ pub(super) async fn spawn(
         .stderr(Stdio::null())
         .kill_on_drop(true);
     command.env_clear();
-    command.envs(safe_environment(credential_environment));
+    command.envs(safe_environment(
+        credential_environment,
+        memory.as_ref().map(|value| value.access_token),
+    ));
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     let input = child
         .stdin
@@ -92,7 +146,18 @@ fn configure_tool_policy(command: &mut Command) {
     }
 }
 
-fn safe_environment(credential_environment: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+fn configure_concurrency(command: &mut Command, concurrency: HostConcurrencyConfiguration) {
+    command
+        .arg("--max-concurrent-work-items")
+        .arg(concurrency.maximum.to_string())
+        .arg("--initial-concurrent-work-items")
+        .arg(concurrency.initial.to_string());
+}
+
+fn safe_environment(
+    credential_environment: &BTreeMap<String, String>,
+    memory_access_token: Option<&str>,
+) -> BTreeMap<String, String> {
     const ALLOWED: &[&str] = &[
         "APPDATA",
         "ComSpec",
@@ -127,14 +192,55 @@ fn safe_environment(credential_environment: &BTreeMap<String, String>) -> BTreeM
             .iter()
             .map(|(name, value)| (name.clone(), value.clone())),
     );
+    if let Some(token) = memory_access_token.filter(|value| !value.trim().is_empty()) {
+        environment.insert("CHATOS_MEMORY_ACCESS_TOKEN".into(), token.into());
+    }
     environment
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host_lifecycle::transport::{health_check, request, terminate};
-    use chatos_local_agent_protocol::{HostCommand, HostResult, ListConversationsCommand};
+    use crate::host_lifecycle::{
+        apply_scheduler_pressure,
+        transport::{health_check, request, terminate},
+    };
+    use chatos_local_agent_protocol::{
+        HostCommand, HostResult, ListConversationsCommand, LocalAgentResourcePressureLevel,
+    };
+
+    fn test_concurrency() -> HostConcurrencyConfiguration {
+        HostConcurrencyConfiguration {
+            maximum: 2,
+            initial: 2,
+        }
+    }
+
+    #[test]
+    fn host_launch_receives_distinct_maximum_and_initial_concurrency() {
+        let mut command = Command::new("host-test");
+        configure_concurrency(
+            &mut command,
+            HostConcurrencyConfiguration {
+                maximum: 9,
+                initial: 5,
+            },
+        );
+        let arguments = command
+            .as_std()
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            arguments,
+            vec![
+                "--max-concurrent-work-items",
+                "9",
+                "--initial-concurrent-work-items",
+                "5",
+            ]
+        );
+    }
 
     #[tokio::test]
     #[ignore = "requires CHATOS_LOCAL_AGENT_HOST_TEST_PATH"]
@@ -144,19 +250,111 @@ mod tests {
             .expect("CHATOS_LOCAL_AGENT_HOST_TEST_PATH");
         let directory = tempfile::tempdir().expect("temporary database directory");
         let database = directory.path().join("agent.sqlite3");
-        let mut host = spawn(
+        let mut host = spawn_with_memory(
             &executable,
             &database,
             "windows-integration-owner".to_string(),
             &BTreeMap::new(),
             true,
+            test_concurrency(),
+            Some(MemoryLaunchConfig {
+                base_url: "http://127.0.0.1:1/api/memory",
+                source_id: "chatos",
+                access_token: "test-memory-token",
+            }),
         )
         .await
         .expect("spawn prepared Host");
 
-        health_check(&mut host).await.expect("v50 health handshake");
+        health_check(&mut host).await.expect("v52 health handshake");
+        apply_scheduler_pressure(&mut host, LocalAgentResourcePressureLevel::Serious)
+            .await
+            .expect("apply serious resource pressure");
+        let health = request(&mut host, HostCommand::Health)
+            .await
+            .expect("pressure-aware health");
+        let HostResult::Health {
+            scheduler: Some(scheduler),
+            ..
+        } = health
+        else {
+            panic!("expected scheduler health snapshot")
+        };
+        assert_eq!(
+            scheduler.pressure_level,
+            LocalAgentResourcePressureLevel::Serious
+        );
+        assert_eq!(
+            scheduler.effective_maximum_concurrent_work_items,
+            scheduler.maximum_concurrent_work_items.div_ceil(2)
+        );
         terminate(&mut host).await;
 
+        assert!(host.child.try_wait().expect("child status").is_some());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHATOS_LOCAL_AGENT_HOST_TEST_PATH"]
+    async fn prepared_sidecar_applies_distinct_initial_and_dynamic_targets() {
+        let executable = std::env::var_os("CHATOS_LOCAL_AGENT_HOST_TEST_PATH")
+            .map(std::path::PathBuf::from)
+            .expect("CHATOS_LOCAL_AGENT_HOST_TEST_PATH");
+        let directory = tempfile::tempdir().expect("temporary database directory");
+        let database = directory.path().join("agent.sqlite3");
+        let mut host = spawn_with_memory(
+            &executable,
+            &database,
+            "windows-concurrency-owner".to_string(),
+            &BTreeMap::new(),
+            true,
+            HostConcurrencyConfiguration {
+                maximum: 9,
+                initial: 5,
+            },
+            Some(MemoryLaunchConfig {
+                base_url: "http://127.0.0.1:1/api/memory",
+                source_id: "chatos",
+                access_token: "test-memory-token",
+            }),
+        )
+        .await
+        .expect("spawn prepared Host");
+
+        health_check(&mut host).await.expect("v53 health handshake");
+        let initial = host.scheduler.clone().expect("initial scheduler snapshot");
+        assert_eq!(initial.maximum_concurrent_work_items, 9);
+        assert_eq!(initial.target_concurrent_work_items, 5);
+
+        let updated = request(
+            &mut host,
+            HostCommand::SetSchedulerPressure(
+                chatos_local_agent_protocol::SetSchedulerPressureCommand {
+                    pressure_level: LocalAgentResourcePressureLevel::Normal,
+                    target_concurrent_work_items: 7,
+                },
+            ),
+        )
+        .await
+        .expect("dynamic target update");
+        assert!(matches!(
+            updated,
+            HostResult::SchedulerPressureUpdated {
+                pressure_level: LocalAgentResourcePressureLevel::Normal,
+                target_concurrent_work_items: 7,
+                effective_maximum_concurrent_work_items: 7,
+            }
+        ));
+        health_check(&mut host)
+            .await
+            .expect("health after target update");
+        let refreshed = host
+            .scheduler
+            .clone()
+            .expect("refreshed scheduler snapshot");
+        assert_eq!(refreshed.maximum_concurrent_work_items, 9);
+        assert_eq!(refreshed.target_concurrent_work_items, 7);
+
+        terminate(&mut host).await;
         assert!(host.child.try_wait().expect("child status").is_some());
     }
 
@@ -169,17 +367,23 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary database directory");
         let database = directory.path().join("agent.sqlite3");
         let owner = "windows-integration-owner";
-        let mut host = spawn(
+        let mut host = spawn_with_memory(
             &executable,
             &database,
             owner.to_string(),
             &BTreeMap::new(),
             true,
+            test_concurrency(),
+            Some(MemoryLaunchConfig {
+                base_url: "http://127.0.0.1:1/api/memory",
+                source_id: "chatos",
+                access_token: "test-memory-token",
+            }),
         )
         .await
         .expect("spawn prepared Host");
 
-        health_check(&mut host).await.expect("v50 health handshake");
+        health_check(&mut host).await.expect("v52 health handshake");
         let result = request(
             &mut host,
             HostCommand::ListConversations(ListConversationsCommand {
@@ -223,7 +427,7 @@ mod tests {
             "CHATOS_LOCAL_AGENT_MODEL_TEST".to_string(),
             "secret".to_string(),
         )]);
-        let environment = safe_environment(&credentials);
+        let environment = safe_environment(&credentials, None);
         assert_eq!(
             environment.get("CHATOS_LOCAL_AGENT_MODEL_TEST"),
             Some(&"secret".to_string())
@@ -268,6 +472,14 @@ mod tests {
         assert!(READ_ONLY_TOOL_NAMES.contains(&"capability_describe"));
         assert!(READ_ONLY_TOOL_NAMES.contains(&"agent_skill_activate"));
         assert!(READ_ONLY_TOOL_NAMES.contains(&"agent_skill_read_resource"));
+        assert!(READ_ONLY_TOOL_NAMES.contains(&"team_asset_list"));
+        assert!(READ_ONLY_TOOL_NAMES.contains(&"team_asset_get"));
+        assert!(READ_ONLY_TOOL_NAMES.contains(&"team_asset_review_list"));
+        assert!(READ_ONLY_TOOL_NAMES.contains(&"project_dashboard_get"));
+        assert!(!READ_ONLY_TOOL_NAMES.contains(&"project_dashboard_update"));
+        assert!(!APPROVAL_EXEMPT_TOOL_NAMES.contains(&"team_asset_create"));
+        assert!(!APPROVAL_EXEMPT_TOOL_NAMES.contains(&"team_asset_update"));
+        assert!(!APPROVAL_EXEMPT_TOOL_NAMES.contains(&"team_asset_review_resolve"));
         assert!(!READ_ONLY_TOOL_NAMES.contains(&"capability_invoke"));
         assert!(!APPROVAL_EXEMPT_TOOL_NAMES.contains(&"capability_invoke"));
     }

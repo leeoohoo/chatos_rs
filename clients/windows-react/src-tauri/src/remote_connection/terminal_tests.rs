@@ -1,6 +1,7 @@
+#[cfg(unix)]
+use super::process::ManagedRemoteTerminal;
 use super::process::{
-    snapshot_state, trim_events, ManagedRemoteTerminal, RemoteTerminalEvent,
-    RemoteTerminalSessionState,
+    snapshot_state, trim_events, RemoteTerminalEvent, RemoteTerminalSessionState,
 };
 use super::*;
 use crate::remote_connection::{
@@ -138,6 +139,17 @@ fn dimensions_match_macos_bounds() {
     assert_eq!(validate_dimensions(1_000, 1_000).unwrap(), (1_000, 1_000));
     assert!(validate_dimensions(0, 24).is_err());
     assert!(validate_dimensions(80, 1_001).is_err());
+}
+
+#[test]
+fn presented_output_event_uses_the_react_wire_field_name() {
+    let value = serde_json::to_value(PresentedRemoteTerminalEvent::Output {
+        cursor: 1,
+        data_base64: "YQ==".into(),
+    })
+    .unwrap();
+    assert_eq!(value["dataBase64"], "YQ==");
+    assert!(value.get("data_base64").is_none());
 }
 
 #[test]

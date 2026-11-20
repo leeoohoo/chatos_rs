@@ -55,6 +55,7 @@ describe("requirement survey domain", () => {
         title: "方案", markdown: "# 方案", createdAtUnixMs: 30, confirmedAtUnixMs: null,
       },
       planFollowUp: { status: "completed_without_reply", markdown: null },
+      sourceTeamRoute: null,
     };
     expect(requirementSurveyFollowUpSnapshotSchema.parse(valid).plan?.revision).toBe(1);
     expect(() => requirementSurveyFollowUpSnapshotSchema.parse({
@@ -65,6 +66,12 @@ describe("requirement survey domain", () => {
     })).toThrow();
     expect(() => requirementSurveyFollowUpSnapshotSchema.parse({
       ...valid, planFollowUp: null,
+    })).toThrow();
+    expect(requirementSurveyFollowUpSnapshotSchema.parse({
+      ...valid, sourceTeamRoute: { roomId: "team-1", todoId: "todo-1" },
+    }).sourceTeamRoute).toEqual({ roomId: "team-1", todoId: "todo-1" });
+    expect(() => requirementSurveyFollowUpSnapshotSchema.parse({
+      ...valid, sourceTeamRoute: { roomId: "team-1", todoId: "todo\u0000forged" },
     })).toThrow();
   });
 });

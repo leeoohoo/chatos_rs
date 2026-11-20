@@ -1,4 +1,6 @@
-use std::{fs, io, path::Path};
+#[cfg(not(windows))]
+use std::fs;
+use std::{io, path::Path};
 
 #[cfg(not(windows))]
 pub(crate) fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {

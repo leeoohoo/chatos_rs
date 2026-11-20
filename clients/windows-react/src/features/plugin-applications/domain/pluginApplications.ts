@@ -20,12 +20,18 @@ const bridgeCapabilitySchema = z.string()
   .max(256)
   .regex(/^[A-Za-z0-9._-]+$/u);
 
+const pluginIconPreviewUrlSchema = z.string().max(256).regex(
+  /^http:\/\/chatos-plugin-icon\.localhost\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+  "插件图标不是受信的本机预览地址。",
+);
+
 export const pluginApplicationSchema = z.object({
   pluginId: identifierSchema,
   componentKey: identifierSchema,
   displayName: safeText(1_024).min(1),
   description: safeText(16 * 1_024),
   brandColor: z.string().regex(/^#[0-9a-fA-F]{6}$/u).nullable(),
+  iconPreviewUrl: pluginIconPreviewUrlSchema.nullable(),
   requiresLocalRuntime: z.boolean(),
   contextScope: z.enum(["device", "workspace", "project"]).nullable(),
   missingContext: z.enum(["device", "reject"]).nullable(),

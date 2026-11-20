@@ -5,6 +5,23 @@ import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const indexPath = path.join(root, "dist", "index.html");
+const tauriConfigPath = path.join(root, "src-tauri", "tauri.conf.json");
+const tauriConfig = JSON.parse(await readFile(tauriConfigPath, "utf8"));
+if (tauriConfig.bundle?.windows?.allowDowngrades !== false) {
+  throw new Error(
+    "Windows 安装包必须显式设置 bundle.windows.allowDowngrades=false，避免旧版本覆盖新版本。",
+  );
+}
+const wixTemplate = tauriConfig.bundle?.windows?.wix?.template;
+if (typeof wixTemplate !== "string" || wixTemplate.length === 0) {
+  throw new Error("Windows MSI 必须使用仓库内受审计的 WiX 模板。");
+}
+const wixTemplateSource = await readFile(path.join(root, "src-tauri", wixTemplate), "utf8");
+if (!wixTemplateSource.includes('Schedule="afterInstallExecute"') || wixTemplateSource.includes('Schedule="afterInstallInitialize"')) {
+  throw new Error(
+    "Windows MSI 必须在 InstallExecute 后移除旧版本，确保升级中途失败时可完整回滚。",
+  );
+}
 const indexHtml = await readFile(indexPath, "utf8").catch(() => {
   throw new Error("dist/index.html 不存在；请先运行 npm run build。");
 });

@@ -80,7 +80,7 @@ export function QuickSearchSurface({ port }: { port: QuickSearchPort }) {
     </header>
 
     {state.error && <div className="quick-search-surface__error" role="alert">
-      <span>!</span><p>{state.error}</p><button onClick={state.clearError} type="button">×</button>
+      <span>!</span><p>{state.error}</p><button aria-label={english ? "Dismiss error" : "关闭错误"} onClick={state.clearError} type="button">×</button>
     </div>}
 
     <section className="quick-search-surface__content">

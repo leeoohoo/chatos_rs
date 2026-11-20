@@ -6,7 +6,8 @@ mod tests;
 
 use authorization::TaskToolAuthorization;
 use chatos_local_agent_protocol::{
-    GetConversationCommand, GetRunCommand, HostCommand, HostResult, LocalConversationResourceKind,
+    GetConversationCommand, GetRunCommand, HostCommand, HostResult,
+    LocalConversationResourceBinding, LocalConversationResourceKind,
 };
 use filesystem::resolve_contact_root;
 pub(crate) use filesystem::{resolve_execution_directory, resolve_project_root};
@@ -74,38 +75,31 @@ pub(crate) async fn resolve_platform_execution_context(
     {
         return Err(invalid_context());
     }
-    let resource = conversation
-        .conversation
-        .resource
-        .ok_or_else(invalid_context)?;
-    if let Some(binding) = team_executor {
-        if resource.kind != LocalConversationResourceKind::Project
-            || resource.resource_id != binding.project_id
-        {
-            return Err(invalid_context());
-        }
+    if let Some(binding) = team_executor.as_ref() {
         let store = app.state::<AgentConversationStore>().inner().clone();
         let owner = owner_user_id.to_owned();
+        let team_id = binding.team_id.clone();
+        let agent_id = binding.agent_id.clone();
+        let project_id = binding.project_id.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            store.validate_team_executor_binding(
-                &owner,
-                &binding.team_id,
-                &binding.agent_id,
-                &binding.project_id,
-            )
+            store.validate_team_executor_binding(&owner, &team_id, &agent_id, &project_id)
         })
         .await
         .map_err(|_| invalid_context())??;
     }
+    let execution_scope = resolve_execution_scope(
+        conversation.conversation.resource.as_ref(),
+        team_executor.as_ref(),
+    )?;
     let data_dir = app.path().app_data_dir().map_err(|_| invalid_context())?;
     let connector_directory = data_dir.join("NativeConnector");
     let owner = owner_user_id.to_owned();
     let conversation = conversation_id.to_owned();
-    let resolved = tauri::async_runtime::spawn_blocking(move || match resource.kind {
-        LocalConversationResourceKind::Project => {
-            resolve_project_root(&connector_directory, &owner, &resource.resource_id)
+    let resolved = tauri::async_runtime::spawn_blocking(move || match execution_scope {
+        ExecutionScope::Project(project_id) => {
+            resolve_project_root(&connector_directory, &owner, &project_id)
         }
-        LocalConversationResourceKind::Contact => {
+        ExecutionScope::Contact => {
             resolve_contact_root(&connector_directory, &owner, &conversation)
         }
     })
@@ -124,6 +118,30 @@ struct TeamExecutorBinding {
     team_id: String,
     agent_id: String,
     project_id: String,
+}
+
+enum ExecutionScope {
+    Project(String),
+    Contact,
+}
+
+fn resolve_execution_scope(
+    resource: Option<&LocalConversationResourceBinding>,
+    team_executor: Option<&TeamExecutorBinding>,
+) -> Result<ExecutionScope, String> {
+    if let Some(binding) = team_executor {
+        if resource.is_some() {
+            return Err(invalid_context());
+        }
+        return Ok(ExecutionScope::Project(binding.project_id.clone()));
+    }
+    let resource = resource.ok_or_else(invalid_context)?;
+    match resource.kind {
+        LocalConversationResourceKind::Project => {
+            Ok(ExecutionScope::Project(resource.resource_id.clone()))
+        }
+        LocalConversationResourceKind::Contact => Ok(ExecutionScope::Contact),
+    }
 }
 
 fn resolve_team_executor_binding(

@@ -1,17 +1,19 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    fs::{self, File, OpenOptions},
-    io::{ErrorKind, Read, Write},
+    fs::{self, File},
+    io::{ErrorKind, Read},
     path::{Path, PathBuf},
     sync::Mutex,
 };
-use uuid::Uuid;
+
+use crate::app_data_transaction::{create_owned_file, ensure_owned_directory};
 
 use super::models::{ToolApprovalDecision, ToolApprovalMode};
 
 const MAXIMUM_ENTRIES: usize = 256;
 const MAXIMUM_RECORD_BYTES: u64 = 16 * 1_024;
+const JOURNAL_UNAVAILABLE_ERROR: &str = "本机审批决定日志损坏或不可读，已停止审批恢复。";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -53,32 +55,43 @@ impl RecordedToolApprovalDecision {
 
 pub struct ApprovalDecisionJournal {
     directory: PathBuf,
+    load_error: Option<String>,
     records: Mutex<Vec<RecordedToolApprovalDecision>>,
 }
 
 impl ApprovalDecisionJournal {
     pub fn open(directory: PathBuf) -> Result<Self, String> {
-        let records = load_records(&directory)?;
+        let (records, load_error) = match load_records(&directory) {
+            Ok(records) => (records, None),
+            Err(error) => (Vec::new(), Some(error)),
+        };
         Ok(Self {
             directory,
+            load_error,
             records: Mutex::new(records),
         })
     }
 
-    pub fn snapshot(&self, owner_user_id: &str) -> Vec<RecordedToolApprovalDecision> {
-        self.records
+    pub fn snapshot(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<RecordedToolApprovalDecision>, String> {
+        self.require_available()?;
+        Ok(self
+            .records
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .map_err(|_| "approval journal lock is unavailable".to_owned())?
             .iter()
             .filter(|record| record.owner_user_id == owner_user_id)
             .cloned()
-            .collect()
+            .collect())
     }
 
     pub fn record(
         &self,
         record: RecordedToolApprovalDecision,
     ) -> Result<RecordedToolApprovalDecision, String> {
+        self.require_available()?;
         record.validate()?;
         let mut records = self
             .records
@@ -119,6 +132,7 @@ impl ApprovalDecisionJournal {
     }
 
     pub fn remove(&self, record: &RecordedToolApprovalDecision) -> Result<(), String> {
+        self.require_available()?;
         let mut records = self
             .records
             .lock()
@@ -133,6 +147,14 @@ impl ApprovalDecisionJournal {
         });
         Ok(())
     }
+
+    fn require_available(&self) -> Result<(), String> {
+        if self.load_error.is_some() {
+            Err(JOURNAL_UNAVAILABLE_ERROR.to_owned())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 fn load_records(directory: &Path) -> Result<Vec<RecordedToolApprovalDecision>, String> {
@@ -142,41 +164,48 @@ fn load_records(directory: &Path) -> Result<Vec<RecordedToolApprovalDecision>, S
         Err(error) => return Err(format!("failed to read approval journal: {error}")),
     };
     let mut records = Vec::new();
-    for entry in entries.flatten().take(MAXIMUM_ENTRIES * 2) {
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("failed to read approval journal: {error}"))?;
         let path = entry.path();
         if path.extension().and_then(|value| value.to_str()) != Some("json") {
             continue;
         }
-        let Ok(metadata) = entry.metadata() else {
-            continue;
-        };
+        if records.len() >= MAXIMUM_ENTRIES {
+            return Err("approval journal contains too many records".into());
+        }
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("failed to inspect approval journal: {error}"))?;
+        if !file_type.is_file() || file_type.is_symlink() {
+            return Err("approval journal contains a non-regular record".into());
+        }
+        let metadata = entry
+            .metadata()
+            .map_err(|error| format!("failed to inspect approval journal: {error}"))?;
         if !metadata.is_file() || metadata.len() > MAXIMUM_RECORD_BYTES {
-            continue;
+            return Err("approval journal record exceeds its size limit".into());
         }
         let mut bytes = Vec::with_capacity(metadata.len() as usize);
-        let Ok(file) = File::open(&path) else {
-            continue;
-        };
-        if file
-            .take(MAXIMUM_RECORD_BYTES + 1)
+        let file = File::open(&path)
+            .map_err(|error| format!("failed to read approval journal: {error}"))?;
+        file.take(MAXIMUM_RECORD_BYTES + 1)
             .read_to_end(&mut bytes)
-            .is_err()
-            || bytes.len() as u64 > MAXIMUM_RECORD_BYTES
-        {
-            continue;
+            .map_err(|error| format!("failed to read approval journal: {error}"))?;
+        if bytes.len() as u64 > MAXIMUM_RECORD_BYTES {
+            return Err("approval journal record exceeds its size limit".into());
         }
-        let Ok(record) = serde_json::from_slice::<RecordedToolApprovalDecision>(&bytes) else {
-            continue;
-        };
-        if record.validate().is_ok() && record_path(directory, &record) == path {
-            records.push(record);
+        let record = serde_json::from_slice::<RecordedToolApprovalDecision>(&bytes)
+            .map_err(|error| format!("failed to decode approval journal: {error}"))?;
+        record.validate()?;
+        if record_path(directory, &record) != path {
+            return Err("approval journal record identity does not match its file name".into());
         }
+        records.push(record);
     }
     records.sort_by(|left, right| {
         (right.recorded_at_unix_ms, right.invocation_id.as_str())
             .cmp(&(left.recorded_at_unix_ms, left.invocation_id.as_str()))
     });
-    records.truncate(MAXIMUM_ENTRIES);
     Ok(records)
 }
 
@@ -190,21 +219,10 @@ fn write_record(directory: &Path, record: &RecordedToolApprovalDecision) -> Resu
     if destination.exists() {
         return Err("approval journal identity already exists".into());
     }
-    let temporary = directory.join(format!(".approval-{}.tmp", Uuid::new_v4()));
-    let result = (|| {
-        let mut file = private_file(&temporary)?;
-        file.write_all(&bytes)
-            .and_then(|()| file.sync_all())
-            .map_err(|error| format!("failed to persist approval journal: {error}"))?;
-        fs::rename(&temporary, &destination)
-            .map_err(|error| format!("failed to publish approval journal: {error}"))?;
-        sync_directory(directory);
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
+    create_owned_file(directory, &destination, ".approval-", &bytes)
+        .map_err(|error| format!("failed to persist approval journal: {error}"))?;
+    sync_directory(directory);
+    Ok(())
 }
 
 fn remove_record_file(
@@ -244,7 +262,7 @@ fn validate_identifier(field: &str, value: &str) -> Result<(), String> {
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path)
+    ensure_owned_directory(path)
         .map_err(|error| format!("failed to create approval journal directory: {error}"))?;
     #[cfg(unix)]
     {
@@ -253,26 +271,6 @@ fn ensure_private_directory(path: &Path) -> Result<(), String> {
             .map_err(|error| format!("failed to protect approval journal directory: {error}"))?;
     }
     Ok(())
-}
-
-#[cfg(unix)]
-fn private_file(path: &Path) -> Result<File, String> {
-    use std::os::unix::fs::OpenOptionsExt;
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|error| format!("failed to create approval journal record: {error}"))
-}
-
-#[cfg(not(unix))]
-fn private_file(path: &Path) -> Result<File, String> {
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| format!("failed to create approval journal record: {error}"))
 }
 
 #[cfg(unix)]
@@ -296,11 +294,12 @@ mod tests {
         drop(journal);
 
         let reopened = ApprovalDecisionJournal::open(directory.path().into()).unwrap();
-        assert_eq!(reopened.snapshot("owner-1"), vec![record.clone()]);
+        assert_eq!(reopened.snapshot("owner-1").unwrap(), vec![record.clone()]);
         reopened.remove(&record).unwrap();
         assert!(ApprovalDecisionJournal::open(directory.path().into())
             .unwrap()
             .snapshot("owner-1")
+            .unwrap()
             .is_empty());
     }
 
@@ -316,7 +315,7 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("different decision"));
         assert_eq!(
-            journal.snapshot("owner-1")[0].decision,
+            journal.snapshot("owner-1").unwrap()[0].decision,
             ToolApprovalDecision::Accept
         );
     }
@@ -331,9 +330,9 @@ mod tests {
         retry.recorded_at_unix_ms += 100;
         retry.mode = Some(ToolApprovalMode::FullControl);
         assert_eq!(journal.record(retry.clone()).unwrap(), original);
-        assert_eq!(journal.snapshot("owner-1"), vec![original]);
+        assert_eq!(journal.snapshot("owner-1").unwrap(), vec![original]);
         journal.remove(&retry).unwrap();
-        assert!(journal.snapshot("owner-1").is_empty());
+        assert!(journal.snapshot("owner-1").unwrap().is_empty());
     }
 
     #[test]
@@ -350,27 +349,52 @@ mod tests {
         .unwrap();
 
         let journal = ApprovalDecisionJournal::open(directory.path().into()).unwrap();
-        assert_eq!(journal.snapshot("owner-1"), vec![record]);
+        assert_eq!(journal.snapshot("owner-1").unwrap(), vec![record]);
     }
 
     #[test]
-    fn ignores_corrupt_unbounded_and_misnamed_records() {
-        let directory = tempfile::tempdir().unwrap();
-        fs::write(directory.path().join("corrupt.json"), b"not-json").unwrap();
-        fs::write(
-            directory.path().join("oversized.json"),
-            vec![b'x'; MAXIMUM_RECORD_BYTES as usize + 1],
-        )
-        .unwrap();
-        fs::write(
-            directory.path().join("wrong-name.json"),
-            serde_json::to_vec(&sample_record(ToolApprovalDecision::Accept)).unwrap(),
-        )
-        .unwrap();
-        assert!(ApprovalDecisionJournal::open(directory.path().into())
+    fn corrupt_unbounded_and_misnamed_records_fail_closed_without_overwrite() {
+        let mut invalid = sample_record(ToolApprovalDecision::Accept);
+        invalid.invocation_version = 0;
+        let invalid_name = record_path(Path::new(""), &invalid)
+            .file_name()
             .unwrap()
-            .snapshot("owner-1")
-            .is_empty());
+            .to_string_lossy()
+            .into_owned();
+        for (name, bytes) in [
+            ("corrupt.json".to_owned(), b"not-json".to_vec()),
+            (
+                "oversized.json".to_owned(),
+                vec![b'x'; MAXIMUM_RECORD_BYTES as usize + 1],
+            ),
+            (
+                "wrong-name.json".to_owned(),
+                serde_json::to_vec(&sample_record(ToolApprovalDecision::Accept)).unwrap(),
+            ),
+            (invalid_name, serde_json::to_vec(&invalid).unwrap()),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join(name);
+            fs::write(&path, &bytes).unwrap();
+            let journal = ApprovalDecisionJournal::open(directory.path().into()).unwrap();
+            assert_eq!(
+                journal.snapshot("owner-1").unwrap_err(),
+                JOURNAL_UNAVAILABLE_ERROR
+            );
+            assert_eq!(
+                journal
+                    .record(sample_record(ToolApprovalDecision::Decline))
+                    .unwrap_err(),
+                JOURNAL_UNAVAILABLE_ERROR
+            );
+            assert_eq!(
+                journal
+                    .remove(&sample_record(ToolApprovalDecision::Accept))
+                    .unwrap_err(),
+                JOURNAL_UNAVAILABLE_ERROR
+            );
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
     }
 
     fn sample_record(decision: ToolApprovalDecision) -> RecordedToolApprovalDecision {

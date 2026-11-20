@@ -73,6 +73,25 @@ fn snapshot_for_owner(
 
 fn snapshot_from_state(state: &Map<String, Value>) -> Result<AccessControlSnapshot, String> {
     let approval_mode = approval_mode(state)?;
+    #[cfg(target_os = "windows")]
+    let backend_message = match crate::windows_appcontainer::probe_isolation() {
+        Ok(probe)
+            if probe.filesystem_denied
+                && probe.network_denied
+                && probe.workspace_lease_verified
+                && probe.workspace_recovery_verified
+                && probe.workspace_permission_tiers_verified
+                && probe.nonempty_workspace_tree_verified
+                && probe.network_capability_policy_verified
+                && probe.runtime_launcher_verified =>
+            "Windows AppContainer 文件/网络拒绝、句柄绑定的非空目录 ACL 租约、父目录临时 FILE_TRAVERSE、运行中新建项清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 失败关闭、受限句柄继承/环境/交互 stdio 启动器及 disabled/controlled 网络 capability token 自检已通过；Agent Plugin MCP 与任务终端已迁移到独立 AppContainer，Plugin 应用后端也已接入生产受限启动路径。目标级出站规则和 Plugin loopback 健康代理仍未关闭，因此当前仍只发布账号上下文和 Job Object 进程树边界。",
+        Ok(_) =>
+            "Windows AppContainer 自检未证明文件隔离；当前只发布账号上下文和 Job Object 进程树边界。",
+        Err(_) =>
+            "Windows AppContainer 自检不可用；当前只发布账号上下文和 Job Object 进程树边界。",
+    };
+    #[cfg(not(target_os = "windows"))]
+    let backend_message = "当前平台不提供 Windows AppContainer；只发布账号上下文和进程树边界。";
     let (approval_policy, approval_reviewer) = match approval_mode {
         "request_approval" => ("on_request", "user"),
         "auto_approval" => ("on_request", "auto_review"),
@@ -82,7 +101,7 @@ fn snapshot_from_state(state: &Map<String, Value>) -> Result<AccessControlSnapsh
     Ok(AccessControlSnapshot {
         settings: AccessControlSettings {
             enabled: true,
-            editable: false,
+            editable: true,
             default_backend: "windows_local_process".into(),
             default_permission_profile_id: "host_account".into(),
             default_permission_profile_name: "Windows 账号权限".into(),
@@ -90,7 +109,7 @@ fn snapshot_from_state(state: &Map<String, Value>) -> Result<AccessControlSnapsh
             default_approval_reviewer: approval_reviewer.into(),
             default_network_access: "host".into(),
             permission_configuration_error: Some(
-                "当前 Windows 后端尚未提供文件或网络隔离；命令进程仍受账号、项目上下文、审批策略和进程树回收约束。"
+                "审批策略已接入 Windows 实际执行门禁；文件权限与网络访问仍锁定为本机账号边界，尚未提供操作系统级隔离。"
                     .into(),
             ),
             policy_revision: format!("{POLICY_SCHEMA_REVISION}:{approval_mode}"),
@@ -104,7 +123,7 @@ fn snapshot_from_state(state: &Map<String, Value>) -> Result<AccessControlSnapsh
             filesystem_isolation: false,
             network_isolation: false,
             process_tree_control: true,
-            message: "通过账号与项目上下文校验后启动 PowerShell，并使用 Windows Job Object 回收进程树；不声明尚未实现的文件或网络隔离。".into(),
+            message: backend_message.into(),
         }],
     })
 }
@@ -140,7 +159,7 @@ mod tests {
         )]))
         .unwrap();
         assert!(snapshot.settings.enabled);
-        assert!(!snapshot.settings.editable);
+        assert!(snapshot.settings.editable);
         assert_eq!(snapshot.settings.default_backend, "windows_local_process");
         assert_eq!(
             snapshot.settings.default_permission_profile_id,

@@ -758,14 +758,17 @@ function mediaPort(includeAlternateTextModel = false): MediaStudioPort {
 }
 
 function model(id: string, name: string, modelName: string) {
+  const workload = modelName === "MiniMax-H3" ? "video" : modelName.startsWith("gpt-image-") ? "image" : "chat";
   return {
     id,
     name,
     provider: "openai-compatible",
     modelName,
+    workload,
     enabled: true,
     taskEnabled: true,
     hasApiKey: true,
+    supportsImageInput: workload === "chat",
   };
 }
 

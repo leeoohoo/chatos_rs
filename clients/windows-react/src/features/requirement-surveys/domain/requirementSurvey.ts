@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+const routeIdentifierSchema = z.string().min(1).max(1_024).refine(
+  (value) => value.trim() === value && !/[\u0000-\u001f\u007f]/u.test(value),
+  "团队路由标识无效。",
+);
+
 export const requirementSurveyAnswerSchema = z.union([
   z.string().max(16_000),
   z.boolean(),
@@ -122,6 +127,10 @@ export const requirementSurveyFollowUpSnapshotSchema = z.object({
   followUp: requirementSurveyFollowUpSchema,
   plan: requirementSurveyPlanSchema.nullable(),
   planFollowUp: requirementSurveyFollowUpSchema.nullable(),
+  sourceTeamRoute: z.object({
+    roomId: routeIdentifierSchema,
+    todoId: routeIdentifierSchema,
+  }).strict().nullable(),
 }).strict().superRefine((snapshot, context) => {
   if ((snapshot.plan == null) !== (snapshot.planFollowUp == null)) {
     context.addIssue({ code: "custom", message: "需求方案与来源状态不一致。", path: ["planFollowUp"] });

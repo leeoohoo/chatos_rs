@@ -5,6 +5,7 @@ mod models;
 mod ssh;
 mod terminal;
 
+use crate::machine_resource_governor::MachineResourceGovernor;
 use crate::{authentication::AuthenticationManager, connector_state, host_lifecycle::HostManager};
 use chatos_local_agent_protocol::{
     CreateRemoteConnectionCommand, DeleteRemoteConnectionCommand, GetRemoteConnectionCommand,
@@ -107,9 +108,12 @@ pub struct RemoteConnectionManager {
 }
 
 impl RemoteConnectionManager {
-    pub fn new(app_data_directory: PathBuf) -> Self {
+    pub fn new(app_data_directory: PathBuf, resource_governor: MachineResourceGovernor) -> Self {
         let test_runtime = Arc::new(NativeOpenSshTester::new(app_data_directory.clone()));
-        let file_runtime = Arc::new(NativeOpenSshTester::new(app_data_directory.clone()));
+        let file_runtime = Arc::new(NativeOpenSshTester::with_resource_governor(
+            app_data_directory.clone(),
+            resource_governor,
+        ));
         let terminal_runtime = Arc::new(NativeOpenSshTester::new(app_data_directory.clone()));
         Self {
             mutation: Mutex::new(()),

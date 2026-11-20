@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Route, Routes } from "react-router";
 import { TauriAuthenticationAdapter } from "../features/authentication/adapters/TauriAuthenticationAdapter";
 import { TauriAskUserAdapter } from "../features/ask-user/adapters/TauriAskUserAdapter";
@@ -72,7 +73,9 @@ export function App() {
 
 function ApplicationRoot() {
   const logout = useAuthenticationStore((state) => state.logout);
+  const session = useAuthenticationStore((state) => state.session);
   const stopHost = useHostLifecycleStore((state) => state.stop);
+  const [notepadOpen, setNotepadOpen] = useState(false);
 
   return (
     <main className="app-window">
@@ -83,7 +86,20 @@ function ApplicationRoot() {
       >
         <WindowControls windowChrome={windowChrome} />
         <span className="app-titlebar__title" data-tauri-drag-region>ChatOS</span>
-        <span className="app-titlebar__spacer" data-tauri-drag-region />
+        <span className="app-titlebar__actions">
+          {session && (
+            <button
+              aria-label="打开记事本"
+              className="app-titlebar__notepad"
+              onClick={(event) => {
+                event.stopPropagation();
+                setNotepadOpen(true);
+              }}
+              title="打开记事本"
+              type="button"
+            >▤</button>
+          )}
+        </span>
       </header>
       <AuthenticationGate authentication={authentication}>
         {(session) => (
@@ -106,7 +122,12 @@ function ApplicationRoot() {
             toolApproval={toolApproval}
             quickSearchNavigation={quickSearch}
             session={session}
-            onLogout={() => logout(authentication, () => stopHost(hostLifecycle))}
+            notepadOpen={notepadOpen}
+            onNotepadOpenChange={setNotepadOpen}
+            onLogout={async () => {
+              setNotepadOpen(false);
+              await logout(authentication, () => stopHost(hostLifecycle));
+            }}
           />
         )}
       </AuthenticationGate>

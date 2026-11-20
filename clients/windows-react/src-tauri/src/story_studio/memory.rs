@@ -322,6 +322,7 @@ pub(super) fn bind_memory(
             run.project_id, run.checkpoint.id
         ),
         subject_id: format!("agent:story-studio:{}", run.project_id),
+        project_subject_id: format!("project:{}", run.project_id),
         run_id: run.checkpoint.id.clone(),
         runtime_scope: run.checkpoint.scope.clone(),
     };
@@ -472,7 +473,7 @@ fn validate_checkpoint(
                 "client-agent:story:{}:{}",
                 run.project_id, run.checkpoint.id
             )
-        || memory.scope.subject_id != format!("client-agent:story:{}", run.project_id)
+        || memory.scope.subject_id != format!("agent:story-studio:{}", run.project_id)
         || memory.pinned_message_count == 0
         || memory.pinned_message_count > run.checkpoint.messages.len()
         || memory.synced_message_count > run.checkpoint.messages.len()

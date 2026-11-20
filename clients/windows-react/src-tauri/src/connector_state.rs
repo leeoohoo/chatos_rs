@@ -1,12 +1,12 @@
 use serde_json::{json, Map, Value};
 use std::{
-    fs::File,
+    fs::OpenOptions,
     io::Read,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
 };
 
-use crate::connector_storage;
+use crate::{app_data_transaction::replace_owned_file, connector_storage};
 
 const MAXIMUM_STATE_BYTES: u64 = 16 * 1_024 * 1_024;
 static STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -119,7 +119,18 @@ fn load_state(path: &Path) -> Result<Map<String, Value>, String> {
         return Err(state_error());
     }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    File::open(path)
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options
+        .open(path)
         .and_then(|file| file.take(MAXIMUM_STATE_BYTES + 1).read_to_end(&mut bytes))
         .map_err(|_| state_error())?;
     if bytes.len() as u64 > MAXIMUM_STATE_BYTES {
@@ -190,11 +201,8 @@ fn persist_state(
     if bytes.len() as u64 > MAXIMUM_STATE_BYTES {
         return Err(state_error());
     }
-    let mut temporary = tempfile::NamedTempFile::new_in(directory).map_err(|_| state_error())?;
-    std::io::Write::write_all(&mut temporary, &bytes).map_err(|_| state_error())?;
-    temporary.as_file().sync_all().map_err(|_| state_error())?;
-    temporary.persist(state_path).map_err(|_| state_error())?;
-    Ok(())
+    replace_owned_file(directory, state_path, ".connector-state-", &bytes)
+        .map_err(|_| state_error())
 }
 
 fn state_error() -> String {
@@ -204,6 +212,7 @@ fn state_error() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn initializes_owner_state_and_preserves_same_owner_grants() {
@@ -279,5 +288,37 @@ mod tests {
         assert!(restored.get("deviceID").is_some());
         assert!(restored.get("workspaces").is_some());
         assert!(read_owner_state(directory.path(), "owner-2").is_err());
+    }
+
+    #[test]
+    fn connector_directory_rejects_non_directory_app_data() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("not-a-directory");
+        fs::write(&file, b"file").unwrap();
+        assert!(confined_connector_directory(&file).is_err());
+    }
+
+    #[test]
+    fn corrupt_state_fails_closed_without_overwrite_or_plugin_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let connector = directory.path().join("NativeConnector");
+        let orphan = connector.join("Plugins").join("orphan");
+        fs::create_dir_all(&orphan).unwrap();
+        let marker = orphan.join("keep.txt");
+        fs::write(&marker, b"keep").unwrap();
+        let state_path = connector.join("state.json");
+        let corrupt = b"{not-json";
+        fs::write(&state_path, corrupt).unwrap();
+
+        assert!(ensure_owner_state(directory.path(), "owner-1").is_err());
+        assert!(read_owner_state(directory.path(), "owner-1").is_err());
+        assert!(
+            update_owner_state(directory.path(), "owner-1", |_| -> Result<(), String> {
+                panic!("a corrupt connector state must fail before applying updates")
+            })
+            .is_err()
+        );
+        assert_eq!(fs::read(&state_path).unwrap(), corrupt);
+        assert_eq!(fs::read(marker).unwrap(), b"keep");
     }
 }

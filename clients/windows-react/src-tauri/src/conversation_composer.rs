@@ -1,8 +1,9 @@
 use chatos_local_agent_protocol::{
-    GetConversationCommand, GetConversationRuntimeSettingsCommand,
-    GetLatestCapabilityPolicySnapshotCommand, GuideConversationTurnCommand, HostCommand,
-    HostResult, ListLatestModelConfigSnapshotsCommand, LocalConversationAttachmentSpec,
-    LocalConversationDetail, LocalConversationRuntimeSettings, LocalConversationTurnStatus,
+    GetCapabilityPolicySnapshotCommand, GetConversationCommand,
+    GetConversationRuntimeSettingsCommand, GetLatestCapabilityPolicySnapshotCommand,
+    GuideConversationTurnCommand, HostCommand, HostResult, ListLatestModelConfigSnapshotsCommand,
+    LocalConversationAttachmentSpec, LocalConversationDetail, LocalConversationResourceBinding,
+    LocalConversationResourceKind, LocalConversationRuntimeSettings, LocalConversationTurnStatus,
     LocalModelConfigSnapshot, PutConversationRuntimeSettingsCommand, StartConversationTurnCommand,
 };
 use serde::{Deserialize, Serialize};
@@ -13,11 +14,19 @@ use crate::{
     attachment_tool_worker::AttachmentToolWorker,
     conversation_attachments::{AttachmentManager, AttachmentScope},
     host_lifecycle::{HostExecutionError, HostManager},
+    plugin_installer_tool_worker::{
+        plugin_installer_revision, plugin_installer_tool_schemas, PLUGIN_INSTALLER_CONTACT_ID,
+        PLUGIN_INSTALLER_INSTRUCTIONS,
+    },
     model_selection::is_generation_only_model,
     terminal_tool_worker::TerminalToolWorker,
 };
 
 const MAIN_CHAT_PROFILE: &str = "main_chat";
+const MAIN_AGENT_ID: &str = "jiguli";
+const MAIN_AGENT_NAME: &str = "叽咕狸";
+const PLUGIN_INSTALLER_AGENT_ID: &str = "plugin-installer";
+const PLUGIN_INSTALLER_AGENT_NAME: &str = "插件安装助手";
 const MAX_ITERATIONS: u32 = 32;
 
 #[derive(Debug, Deserialize)]
@@ -190,7 +199,12 @@ async fn start_new_turn(
     attachments: Vec<LocalConversationAttachmentSpec>,
 ) -> Result<ConversationSendAck, String> {
     let settings = ensure_runtime_settings(manager, owner_user_id, conversation_id).await?;
-    let capability_revision = latest_main_chat_capability(manager, owner_user_id).await?;
+    let capability_revision = latest_capability_for_resource(
+        manager,
+        owner_user_id,
+        detail.conversation.resource.as_ref(),
+    )
+    .await?;
     let turn_id = identifier("turn");
     let message_id = identifier("message");
     let mut metadata = Map::from_iter([
@@ -203,6 +217,11 @@ async fn start_new_turn(
             Value::Bool(settings.reasoning_enabled),
         ),
     ]);
+    append_conversation_identity(
+        &mut metadata,
+        detail.conversation.resource.as_ref(),
+        &detail.conversation.title,
+    )?;
     if let Some(selection) = submission.explicit_capability_selection.as_ref() {
         metadata.insert(
             "explicit_capability_selection".into(),
@@ -237,6 +256,42 @@ async fn start_new_turn(
         turn_id: result.turn.turn_id.clone(),
         user_message_id: result.message.message_id.clone(),
     })
+}
+
+fn append_conversation_identity(
+    metadata: &mut Map<String, Value>,
+    resource: Option<&LocalConversationResourceBinding>,
+    title: &str,
+) -> Result<(), String> {
+    let resource = resource.ok_or_else(|| "会话缺少 Agent 绑定。".to_owned())?;
+    let (agent_id, agent_name) = match resource.kind {
+        LocalConversationResourceKind::Project => (MAIN_AGENT_ID, Some(MAIN_AGENT_NAME)),
+        LocalConversationResourceKind::Contact => {
+            let name = match resource.resource_id.as_str() {
+                MAIN_AGENT_ID => Some(MAIN_AGENT_NAME),
+                PLUGIN_INSTALLER_AGENT_ID => Some(PLUGIN_INSTALLER_AGENT_NAME),
+                _ => None,
+            };
+            (resource.resource_id.as_str(), name)
+        }
+    };
+    metadata.insert("agent_id".to_owned(), Value::String(agent_id.to_owned()));
+    if let Some(agent_name) = agent_name {
+        metadata.insert(
+            "agent_name".to_owned(),
+            Value::String(agent_name.to_owned()),
+        );
+    }
+    if resource.kind == LocalConversationResourceKind::Project {
+        let project_name = title.trim();
+        if !project_name.is_empty() {
+            metadata.insert(
+                "project_name".to_owned(),
+                Value::String(project_name.to_owned()),
+            );
+        }
+    }
+    Ok(())
 }
 
 async fn conversation_context(
@@ -337,6 +392,42 @@ async fn latest_main_chat_capability(
     };
     if snapshot.owner_user_id != owner_user_id || snapshot.profile_key != MAIN_CHAT_PROFILE {
         return Err("Local Agent Host 返回了不匹配的能力配置。".into());
+    }
+    Ok(snapshot.capability_policy_revision)
+}
+
+async fn latest_capability_for_resource(
+    manager: &HostManager,
+    owner_user_id: &str,
+    resource: Option<&LocalConversationResourceBinding>,
+) -> Result<String, String> {
+    let base_revision = latest_main_chat_capability(manager, owner_user_id).await?;
+    let is_plugin_installer = resource.is_some_and(|resource| {
+        resource.kind == LocalConversationResourceKind::Contact
+            && resource.resource_id == PLUGIN_INSTALLER_CONTACT_ID
+    });
+    if !is_plugin_installer {
+        return Ok(base_revision);
+    }
+    let plugin_revision = plugin_installer_revision(&base_revision);
+    let result = manager
+        .execute(HostCommand::GetCapabilityPolicySnapshot(
+            GetCapabilityPolicySnapshotCommand {
+                owner_user_id: owner_user_id.to_owned(),
+                profile_key: MAIN_CHAT_PROFILE.into(),
+                capability_policy_revision: plugin_revision,
+            },
+        ))
+        .await?;
+    let HostResult::CapabilityPolicySnapshot { snapshot } = result else {
+        return Err("Local Agent Host 返回了错误的 Plugin 安装能力响应。".into());
+    };
+    if snapshot.owner_user_id != owner_user_id
+        || snapshot.profile_key != MAIN_CHAT_PROFILE
+        || snapshot.instructions.as_deref() != Some(PLUGIN_INSTALLER_INSTRUCTIONS)
+        || snapshot.tools != plugin_installer_tool_schemas()
+    {
+        return Err("Local Agent Host 返回了不匹配的 Plugin 安装能力。".into());
     }
     Ok(snapshot.capability_policy_revision)
 }
@@ -448,5 +539,48 @@ mod tests {
             component_key: None,
         };
         assert!(explicit_capability_json(&invalid).is_err());
+    }
+
+    #[test]
+    fn main_chat_metadata_includes_the_resource_agent_identity() {
+        let mut metadata = Map::new();
+        let project = LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Project,
+            resource_id: "project-1".into(),
+        };
+        append_conversation_identity(&mut metadata, Some(&project), "我的项目")
+            .expect("project identity");
+        assert_eq!(
+            metadata.get("agent_id"),
+            Some(&Value::String("jiguli".into()))
+        );
+        assert_eq!(
+            metadata.get("agent_name"),
+            Some(&Value::String("叽咕狸".into()))
+        );
+        assert_eq!(
+            metadata.get("project_name"),
+            Some(&Value::String("我的项目".into()))
+        );
+    }
+
+    #[test]
+    fn main_chat_metadata_uses_contact_resource_identity() {
+        let mut metadata = Map::new();
+        let contact = LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Contact,
+            resource_id: PLUGIN_INSTALLER_AGENT_ID.into(),
+        };
+        append_conversation_identity(&mut metadata, Some(&contact), "插件安装助手")
+            .expect("contact identity");
+        assert_eq!(
+            metadata.get("agent_id"),
+            Some(&Value::String(PLUGIN_INSTALLER_AGENT_ID.into()))
+        );
+        assert_eq!(
+            metadata.get("agent_name"),
+            Some(&Value::String(PLUGIN_INSTALLER_AGENT_NAME.into()))
+        );
+        assert!(!metadata.contains_key("project_name"));
     }
 }

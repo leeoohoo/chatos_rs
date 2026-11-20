@@ -7,14 +7,11 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-#[cfg(test)]
 use chrono::{DateTime, SecondsFormat, Utc};
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
 use serde_json::json;
 use url::Host;
-#[cfg(test)]
 use uuid::Uuid;
 
 use chatos_sandbox_contract::{
@@ -23,10 +20,8 @@ use chatos_sandbox_contract::{
 };
 
 use crate::config::AppConfig;
-#[cfg(test)]
 use crate::relay_signature::canonical_json_string;
 
-#[cfg(test)]
 const MAX_HOSTS: usize = 256;
 const MAX_KEY_BYTES: u64 = 16 * 1024;
 
@@ -37,7 +32,6 @@ pub(crate) struct ControlledNetworkPolicyRequest {
     pub permission_profile: Option<String>,
 }
 
-#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ControlledNetworkPolicyEnvelope {
     pub policy_revision: String,
@@ -55,10 +49,8 @@ pub(crate) struct ControlledNetworkPolicyEnvelope {
 
 pub(crate) struct ControlledNetworkPolicySigner {
     key_id: String,
-    #[cfg(test)]
     keypair: Ed25519KeyPair,
     public_key: String,
-    #[cfg(test)]
     ttl: std::time::Duration,
 }
 
@@ -110,10 +102,8 @@ impl ControlledNetworkPolicySigner {
         );
         Ok(Some(Arc::new(Self {
             key_id,
-            #[cfg(test)]
             keypair,
             public_key,
-            #[cfg(test)]
             ttl: config.controlled_network_policy_ttl,
         })))
     }
@@ -126,7 +116,6 @@ impl ControlledNetworkPolicySigner {
         self.public_key.as_str()
     }
 
-    #[cfg(test)]
     pub(crate) fn issue(
         &self,
         owner_user_id: &str,
@@ -199,7 +188,6 @@ impl ControlledNetworkPolicySigner {
     }
 }
 
-#[cfg(test)]
 fn validate_identity(value: &str, label: &str) -> Result<(), String> {
     let value = value.trim();
     if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {

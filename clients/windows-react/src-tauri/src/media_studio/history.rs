@@ -10,10 +10,12 @@ use std::{
 use uuid::Uuid;
 
 use super::provider::{GeneratedImageAsset, ImageGenerationResult};
+use crate::app_data_transaction::{ensure_owned_directory, replace_owned_file};
 
 const MANIFEST_VERSION: u32 = 1;
 const MAXIMUM_IMAGE_BYTES: usize = 20 * 1_024 * 1_024;
 const MAXIMUM_MANIFEST_BYTES: usize = 2 * 1_024 * 1_024;
+const MAXIMUM_HISTORY_DIRECTORY_ENTRIES: usize = 20_000;
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -111,6 +113,10 @@ impl MediaStudioHistoryStore {
         }
     }
 
+    pub(super) fn temporary_cleanup_root(&self) -> PathBuf {
+        self.root.join("Accounts")
+    }
+
     pub(crate) async fn persist_image(
         &self,
         owner_user_id: &str,
@@ -170,7 +176,10 @@ impl MediaStudioHistoryStore {
         validate_private_directory(&account_directory)?;
         let mut candidates = Vec::with_capacity(limit.saturating_add(1));
         let entries = fs::read_dir(&account_directory).map_err(|_| history_error())?;
-        for entry in entries {
+        for (visited, entry) in entries.enumerate() {
+            if visited >= MAXIMUM_HISTORY_DIRECTORY_ENTRIES {
+                return Err(history_error());
+            }
             let Ok(entry) = entry else { continue };
             let Ok(file_type) = entry.file_type() else {
                 continue;
@@ -545,10 +554,9 @@ fn commit_manifest(directory: &Path, manifest: &HistoryManifest) -> Result<(), S
     if bytes.len() > MAXIMUM_MANIFEST_BYTES {
         return Err(history_error());
     }
-    let temporary = directory.join("record.json.tmp");
     let target = directory.join("record.json");
-    write_private_file(&temporary, &bytes)?;
-    fs::rename(&temporary, &target).map_err(|_| history_error())?;
+    replace_owned_file(directory, &target, ".image-history-", &bytes)
+        .map_err(|_| history_error())?;
     if let Ok(record) = File::open(directory) {
         let _ = record.sync_all();
     }
@@ -556,7 +564,7 @@ fn commit_manifest(directory: &Path, manifest: &HistoryManifest) -> Result<(), S
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path).map_err(|_| history_error())?;
+    ensure_owned_directory(path).map_err(|_| history_error())?;
     let metadata = fs::symlink_metadata(path).map_err(|_| history_error())?;
     if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
         return Err(history_error());
@@ -573,6 +581,14 @@ fn ensure_private_directory(path: &Path) -> Result<(), String> {
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;

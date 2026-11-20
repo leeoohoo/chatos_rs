@@ -29,7 +29,7 @@ export function fixture() {
   return {
     settings: {
       enabled: true,
-      editable: false,
+      editable: true,
       defaultBackend: "windows_local_process",
       defaultPermissionProfileId: "host_account",
       defaultPermissionProfileName: "Windows 账号权限",

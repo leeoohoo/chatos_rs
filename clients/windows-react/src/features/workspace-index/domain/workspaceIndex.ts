@@ -48,7 +48,6 @@ export type WorkspaceSelection =
   | { kind: "workbench" }
   | { kind: "agentManagement" }
   | { kind: "requirementSurveys" }
-  | { kind: "notepad" }
   | { kind: "mediaStudio" }
   | { kind: "terminal" }
   | { kind: "applications" }

@@ -11,8 +11,8 @@ import type { WorkspaceResourceItem } from "../../workspace-index/domain/workspa
 import { ContactConversationView } from "./ContactConversationView";
 
 vi.mock("../../conversation-history/ui/ConversationHistoryView", () => ({
-  ConversationHistoryView: ({ ownerUserId, conversationId }: { ownerUserId: string; conversationId: string }) => (
-    <div data-testid="conversation-surface">{ownerUserId}:{conversationId}</div>
+  ConversationHistoryView: ({ ownerUserId, conversationId, title, assistantName }: { ownerUserId: string; conversationId: string; title?: string; assistantName: string }) => (
+    <div data-testid="conversation-surface">{ownerUserId}:{conversationId}:{title}:{assistantName}</div>
   ),
 }));
 
@@ -23,15 +23,18 @@ describe("ContactConversationView", () => {
     renderView({ id: "jiguli", title: "叽咕狸", subtitle: null, conversationId: "conversation-1" });
 
     expect(screen.getByLabelText("叽咕狸 联系人会话")).toBeInTheDocument();
-    expect(screen.getByTestId("conversation-surface")).toHaveTextContent("owner-1:conversation-1");
+    expect(screen.getByTestId("conversation-surface")).toHaveTextContent("owner-1:conversation-1:叽咕狸:叽咕狸");
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 
   it("shows the macOS capability-isolation notice only for the plugin installer", () => {
     renderView({ id: "plugin-installer", title: "插件安装助手", subtitle: null, conversationId: "conversation-2" });
 
-    expect(screen.getByRole("note")).toHaveTextContent("安装能力只在此对话可用");
-    expect(screen.getByTestId("conversation-surface")).toHaveTextContent("owner-1:conversation-2");
+    const notice = screen.getByRole("note", { name: "插件安装能力范围" });
+    expect(notice).toHaveTextContent("安装或更新");
+    expect(notice).toHaveTextContent("平台插件市场、MCP、npm、Git 和本地 Plugin");
+    expect(notice).toHaveTextContent("安装能力只在此对话可用");
+    expect(screen.getByTestId("conversation-surface")).toHaveTextContent("owner-1:conversation-2:插件安装助手:插件安装助手");
   });
 
   it("shows the macOS empty state when no public conversation exists", () => {

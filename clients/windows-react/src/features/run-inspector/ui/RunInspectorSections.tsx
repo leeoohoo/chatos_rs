@@ -1,9 +1,14 @@
 import type { OpenInspectorPhase } from "../application/runInspectorStore";
+import {
+  isTaskExecutionActive,
+  taskExecutionPendingMessage,
+} from "../domain/runInspector";
 
 export function TaskDetailSection({ phase }: { phase: OpenInspectorPhase }) {
   const detail = phase.taskDetail;
   if (!detail) return <InspectorState loading={phase.isLoadingTask} message="正在加载任务详情…" />;
   const { task, run } = detail;
+  const executionActive = isTaskExecutionActive(task.status);
   return (
     <div className="inspector-section">
       <InfoCard title="任务目标">
@@ -12,10 +17,15 @@ export function TaskDetailSection({ phase }: { phase: OpenInspectorPhase }) {
       {task.description && task.description !== task.objective ? (
         <InfoCard title="说明"><TextValue value={task.description} /></InfoCard>
       ) : null}
-      {run?.reportContent ? (
+      {executionActive ? (
+        <InfoCard tone="attention" title={statusLabel(task.status)}>
+          <TextValue value={taskExecutionPendingMessage(task.status)} />
+        </InfoCard>
+      ) : null}
+      {!executionActive && run?.reportContent ? (
         <InfoCard title="模型输出"><TextValue value={run.reportContent} /></InfoCard>
       ) : null}
-      {task.resultSummary && task.resultSummary.trim() !== run?.reportContent?.trim() ? (
+      {!executionActive && task.resultSummary && task.resultSummary.trim() !== run?.reportContent?.trim() ? (
         <InfoCard title="结果摘要"><TextValue value={task.resultSummary} /></InfoCard>
       ) : null}
       <InfoCard title="任务信息">
@@ -55,6 +65,50 @@ export function TaskProcessSection({ phase }: { phase: OpenInspectorPhase }) {
       ))}
     </div>
   );
+}
+
+export function TaskCapabilitiesSection({ phase }: { phase: OpenInspectorPhase }) {
+  const usage = phase.taskDetail?.task.capabilityUsage;
+  if (!phase.taskDetail) return <InspectorState loading={phase.isLoadingTask} message="正在加载插件与工具记录…" />;
+  if (!usage) return <InspectorState message="任务产生真实调用后，会在这里集中展示。" />;
+  const totalCalls = usage.tools.reduce((sum, tool) => sum + tool.call_count, 0);
+  const usedPlugins = usage.plugins.filter((plugin) => plugin.call_count > 0);
+  return (
+    <div className="inspector-section capability-usage">
+      <InfoCard title="插件与工具">
+        <p className="inspector-text">只在这里汇总本任务真实使用的能力</p>
+        <div className="capability-facts">
+          <Definition label="调用次数" value={`${totalCalls} 次`} />
+          <Definition label="实际插件" value={`${usedPlugins.length}`} />
+          <Definition label="工具种类" value={`${usage.tools.length}`} />
+        </div>
+      </InfoCard>
+      <InfoCard title="实际使用的插件">
+        {usedPlugins.length > 0 ? usedPlugins.map((plugin) => (
+          <div className="capability-row" key={plugin.id}>
+            <strong>{plugin.display_name}</strong><span>{plugin.call_count} 次</span>
+          </div>
+        )) : <p className="inspector-text">本任务没有调用插件能力。</p>}
+      </InfoCard>
+      <InfoCard title="插件与外部工具调用">
+        {usage.tools.length > 0 ? usage.tools.map((tool) => (
+          <div className="capability-row" key={`${tool.plugin_id ?? "builtin"}:${tool.name}:${tool.status}`}>
+            <div><strong>{tool.display_name}</strong><small>{tool.plugin_name ? `插件 · ${tool.plugin_name}` : routeLabel(tool.route)}</small></div>
+            <span>{tool.status} · {tool.call_count} 次</span>
+          </div>
+        )) : <p className="inspector-text">尚未产生插件或外部工具调用。</p>}
+      </InfoCard>
+    </div>
+  );
+}
+
+function routeLabel(route: string) {
+  switch (route.toLowerCase()) {
+    case "external_mcp": case "mcp": return "外部 MCP 工具";
+    case "plugin": case "capability": return "插件能力";
+    case "project": return "项目工具";
+    default: return "系统内置工具";
+  }
 }
 
 export function TaskRunSection({
@@ -147,11 +201,11 @@ function InfoCard({
   children,
 }: {
   title: string;
-  tone?: "error";
+  tone?: "attention" | "error";
   children: React.ReactNode;
 }) {
   return (
-    <section className={tone === "error" ? "inspector-card inspector-card--error" : "inspector-card"}>
+    <section className={tone ? `inspector-card inspector-card--${tone}` : "inspector-card"}>
       <h4>{title}</h4>
       {children}
     </section>

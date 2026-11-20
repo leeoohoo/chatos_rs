@@ -224,4 +224,3 @@ extension NativePluginInstaller {
         return try body(pointers + [nil])
     }
 }
-

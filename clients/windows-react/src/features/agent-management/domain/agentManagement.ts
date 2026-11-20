@@ -204,7 +204,7 @@ export type AgentAvatarDraft = z.infer<typeof agentAvatarDraftSchema>;
 export const preparedAgentConversationSchema = z.object({
   roomId: z.string().uuid(),
   agentId: z.string().trim().min(1).max(512),
-  conversationId: z.string().regex(/^agent-direct-[0-9a-f-]{36}$/u),
+  conversationId: z.string().regex(/^agent-direct-v2-[0-9a-f-]{36}$/u),
   title: z.string().trim().min(1).max(120),
   createdAtUnixMs: z.number().int().nonnegative(),
   updatedAtUnixMs: z.number().int().nonnegative(),
@@ -216,7 +216,7 @@ export const preparedAgentConversationSchema = z.object({
       path: ["updatedAtUnixMs"],
     });
   }
-  if (conversation.conversationId !== `agent-direct-${conversation.roomId}`) {
+  if (conversation.conversationId !== `agent-direct-v2-${conversation.roomId}`) {
     context.addIssue({
       code: "custom",
       message: "Agent 私聊身份不一致。",
@@ -265,12 +265,12 @@ export const agentConversationActivityItemSchema = z.object({
 export const agentConversationActivitySnapshotSchema = z.object({
   roomId: z.string().uuid(),
   agentId: z.string().trim().min(1).max(512),
-  conversationId: z.string().regex(/^agent-direct-[0-9a-f-]{36}$/u),
+  conversationId: z.string().regex(/^agent-direct-v2-[0-9a-f-]{36}$/u),
   conversationVersion: z.number().int().positive(),
   hasActiveDelivery: z.boolean(),
   items: z.array(agentConversationActivityItemSchema).max(100),
 }).strict().superRefine((snapshot, context) => {
-  if (snapshot.conversationId !== `agent-direct-${snapshot.roomId}`) {
+  if (snapshot.conversationId !== `agent-direct-v2-${snapshot.roomId}`) {
     context.addIssue({
       code: "custom",
       message: "Agent 运行动态会话身份不一致。",
@@ -319,7 +319,7 @@ export const agentTeamMemberActivitySnapshotSchema = z.object({
   hasActiveDelivery: z.boolean(),
   items: z.array(agentConversationActivityItemSchema).max(100),
 }).strict().superRefine((snapshot, context) => {
-  if (snapshot.conversationId !== `agent-team-${snapshot.roomId}-${snapshot.agentId}`) {
+  if (snapshot.conversationId !== `agent-team-v2-${snapshot.roomId}-${snapshot.agentId}`) {
     context.addIssue({
       code: "custom",
       message: "团队 Agent 运行动态会话身份不一致。",
@@ -595,6 +595,7 @@ export const agentTeamConversationSnapshotSchema = z.object({
   teamId: z.string().uuid(),
   messages: z.array(agentTeamMessageSchema).max(200),
   deliveries: z.array(agentTeamDeliverySchema).max(500),
+  hasOlder: z.boolean().optional(),
 }).strict().superRefine((snapshot, context) => {
   const messageIds = new Set<string>();
   snapshot.messages.forEach((message, index) => {
@@ -700,7 +701,13 @@ export const agentTeamTodoExecutionContractSchema = z.object({
 
 export const agentTeamTodoExecutionPlanSchema = z.object({
   requiresExecution: z.boolean(),
-  builtinCapabilities: z.array(z.enum(["project_read", "project_write", "terminal"])).max(3),
+  builtinCapabilities: z.array(z.enum([
+    "project_read",
+    "project_write",
+    "terminal",
+    "requirement_survey_read",
+    "requirement_survey_write",
+  ])).max(5),
   plugins: z.array(z.object({
     pluginId: z.string().trim().min(1).max(512),
     componentKey: z.string().trim().min(1).max(512),
@@ -714,7 +721,15 @@ export const agentTeamTodoExecutionPlanSchema = z.object({
     context.addIssue({ code: "custom", message: "团队任务内建能力不能重复。", path: ["builtinCapabilities"] });
   }
   if (!plan.requiresExecution && plan.builtinCapabilities.some((capability) => capability !== "project_read")) {
-    context.addIssue({ code: "custom", message: "非执行任务不能申请写入或终端能力。", path: ["builtinCapabilities"] });
+    context.addIssue({ code: "custom", message: "非执行任务不能申请执行型内建能力。", path: ["builtinCapabilities"] });
+  }
+  if (plan.builtinCapabilities.includes("project_write")
+    && !plan.builtinCapabilities.includes("project_read")) {
+    context.addIssue({ code: "custom", message: "项目写入能力必须同时包含项目读取能力。", path: ["builtinCapabilities"] });
+  }
+  if (plan.builtinCapabilities.includes("requirement_survey_write")
+    && !plan.builtinCapabilities.includes("requirement_survey_read")) {
+    context.addIssue({ code: "custom", message: "需求调研写入能力必须同时包含需求调研读取能力。", path: ["builtinCapabilities"] });
   }
 });
 
@@ -812,6 +827,65 @@ export const agentTeamAssetListSchema = z.array(agentTeamAssetSchema).max(1_000)
     });
   });
 
+export const agentTeamAssetUpdateSuggestionSchema = z.object({
+  category: agentTeamAssetCategorySchema,
+  title: z.string().trim().min(1).max(240),
+  markdown: z.string().min(1).max(128_000),
+  rationale: z.string().trim().min(1).max(4_000),
+}).strict();
+
+export const agentTeamAssetReviewSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  teamId: z.string().uuid(),
+  todoId: z.string().trim().min(1).max(512),
+  todoTitle: z.string().trim().min(1).max(500),
+  sourceAgentId: z.string().trim().min(1).max(512),
+  sourceAgentName: z.string().trim().min(1).max(120),
+  suggestion: agentTeamAssetUpdateSuggestionSchema,
+  status: z.enum(["pending", "applied", "rejected"]),
+  resolvedAssetId: z.string().trim().min(1).max(512).nullable(),
+  resolvedAssetRevision: z.number().int().positive().nullable(),
+  reviewedByAgentId: z.string().trim().min(1).max(512).nullable(),
+  reviewReason: z.string().max(4_000),
+  createdAtUnixMs: z.number().int().nonnegative(),
+  updatedAtUnixMs: z.number().int().nonnegative(),
+}).strict().superRefine((review, context) => {
+  if (review.updatedAtUnixMs < review.createdAtUnixMs) {
+    context.addIssue({ code: "custom", message: "团队资产审核更新时间无效。", path: ["updatedAtUnixMs"] });
+  }
+  const pending = review.status === "pending"
+    && review.resolvedAssetId == null
+    && review.resolvedAssetRevision == null
+    && review.reviewedByAgentId == null
+    && review.reviewReason === "";
+  const applied = review.status === "applied"
+    && review.resolvedAssetId != null
+    && review.resolvedAssetRevision != null
+    && review.reviewedByAgentId != null;
+  const rejected = review.status === "rejected"
+    && review.resolvedAssetId == null
+    && review.resolvedAssetRevision == null
+    && review.reviewedByAgentId != null
+    && review.reviewReason.trim().length > 0;
+  if (!pending && !applied && !rejected) {
+    context.addIssue({ code: "custom", message: "团队资产审核状态不一致。", path: ["status"] });
+  }
+});
+
+export const agentTeamAssetReviewListSchema = z.array(agentTeamAssetReviewSchema).max(500)
+  .superRefine((reviews, context) => {
+    const identities = new Set<string>();
+    reviews.forEach((review, index) => {
+      if (review.status !== "pending") {
+        context.addIssue({ code: "custom", message: "待审核列表不能包含已处理记录。", path: [index, "status"] });
+      }
+      if (identities.has(review.id)) {
+        context.addIssue({ code: "custom", message: "团队资产审核不能重复。", path: [index, "id"] });
+      }
+      identities.add(review.id);
+    });
+  });
+
 export const agentTeamAssetRevisionSchema = z.object({
   assetId: z.string().trim().min(1).max(512),
   revision: z.number().int().positive(),
@@ -834,6 +908,74 @@ export const agentTeamAssetRevisionListSchema = z.array(agentTeamAssetRevisionSc
       }
     });
   });
+
+export const agentProjectMilestoneSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  title: z.string().trim().min(1).max(240),
+  detail: z.string().max(8_000),
+  status: z.enum(["pending", "in_progress", "blocked", "completed"]),
+  progressPercent: z.number().int().min(0).max(100),
+  acceptanceCriteria: z.array(z.string().trim().min(1).max(2_000)).max(32),
+  linkedTodoIds: z.array(z.string().trim().min(1).max(512)).max(128),
+  targetAtUnixMs: z.number().int().nonnegative().nullable(),
+}).strict().superRefine((milestone, context) => {
+  if (new Set(milestone.linkedTodoIds).size !== milestone.linkedTodoIds.length) {
+    context.addIssue({ code: "custom", message: "里程碑关联任务不能重复。", path: ["linkedTodoIds"] });
+  }
+});
+
+export const agentProjectIssueSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  title: z.string().trim().min(1).max(240),
+  detail: z.string().max(8_000),
+  requestedAction: z.string().trim().min(1).max(4_000),
+  severity: z.enum(["info", "warning", "critical"]),
+  owner: z.enum(["human", "agent", "external"]),
+  relatedTodoId: z.string().trim().min(1).max(512).nullable(),
+}).strict();
+
+export const agentProjectDashboardSchema = z.object({
+  teamId: z.string().uuid(),
+  phase: z.string().trim().min(1).max(240),
+  health: z.enum(["on_track", "at_risk", "blocked", "completed"]),
+  summary: z.string().trim().min(1).max(16_000),
+  nextSteps: z.array(z.string().trim().min(1).max(2_000)).max(32),
+  milestones: z.array(agentProjectMilestoneSchema).max(64),
+  issues: z.array(agentProjectIssueSchema).max(64),
+  revision: z.number().int().positive(),
+  updatedByAgentId: z.string().trim().min(1).max(512),
+  updatedAtUnixMs: z.number().int().nonnegative(),
+}).strict().superRefine((dashboard, context) => {
+  const milestoneIds = dashboard.milestones.map((milestone) => milestone.id);
+  const issueIds = dashboard.issues.map((issue) => issue.id);
+  if (new Set(milestoneIds).size !== milestoneIds.length) {
+    context.addIssue({ code: "custom", message: "项目总览里程碑不能重复。", path: ["milestones"] });
+  }
+  if (new Set(issueIds).size !== issueIds.length) {
+    context.addIssue({ code: "custom", message: "项目总览问题不能重复。", path: ["issues"] });
+  }
+});
+
+export const agentProjectDashboardSnapshotSchema = z.object({
+  dashboard: agentProjectDashboardSchema.nullable(),
+  pendingApprovalCount: z.number().int().nonnegative(),
+}).strict();
+
+export const agentProjectManagerBriefMaximumLength = 800;
+
+const agentProjectManagerBriefSegmenter = typeof Intl.Segmenter === "function"
+  ? new Intl.Segmenter("zh-Hans", { granularity: "grapheme" })
+  : null;
+
+export function isLegacyAgentProjectManagerBrief(summary: string): boolean {
+  let characterCount = 0;
+  const characters = agentProjectManagerBriefSegmenter?.segment(summary) ?? Array.from(summary);
+  for (const _character of characters) {
+    characterCount += 1;
+    if (characterCount > agentProjectManagerBriefMaximumLength) return true;
+  }
+  return false;
+}
 
 export interface CreateAgentTeamInput {
   projectId: string;
@@ -875,7 +1017,13 @@ export type AgentTeamTodo = z.infer<typeof agentTeamTodoSchema>;
 export type AgentTeamTodoProgress = z.infer<typeof agentTeamTodoProgressSchema>;
 export type AgentTeamAssetCategory = z.infer<typeof agentTeamAssetCategorySchema>;
 export type AgentTeamAsset = z.infer<typeof agentTeamAssetSchema>;
+export type AgentTeamAssetUpdateSuggestion = z.infer<typeof agentTeamAssetUpdateSuggestionSchema>;
+export type AgentTeamAssetReview = z.infer<typeof agentTeamAssetReviewSchema>;
 export type AgentTeamAssetRevision = z.infer<typeof agentTeamAssetRevisionSchema>;
+export type AgentProjectMilestone = z.infer<typeof agentProjectMilestoneSchema>;
+export type AgentProjectIssue = z.infer<typeof agentProjectIssueSchema>;
+export type AgentProjectDashboard = z.infer<typeof agentProjectDashboardSchema>;
+export type AgentProjectDashboardSnapshot = z.infer<typeof agentProjectDashboardSnapshotSchema>;
 
 export const agentProfessionLabels: Record<z.infer<typeof agentProfessionKeySchema>, string> = {
   project_manager: "项目经理",

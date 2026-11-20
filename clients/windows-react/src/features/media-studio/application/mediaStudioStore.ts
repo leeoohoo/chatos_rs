@@ -49,6 +49,8 @@ interface MediaStudioState {
   presentationGeneration: number;
   requestSequence: number;
   models: MediaStudioModel[];
+  imageModels: MediaStudioModel[];
+  textModels: MediaStudioModel[];
   selectedModelId: string | null;
   isLoadingModels: boolean;
   hasLoadedModels: boolean;
@@ -109,6 +111,11 @@ interface MediaStudioState {
   loadOlderHistory(port: MediaStudioPort): Promise<void>;
   refreshVideoHistory(port: MediaStudioPort): Promise<void>;
   loadOlderVideoHistory(port: MediaStudioPort): Promise<void>;
+  mergeWorkflowResults(
+    ownerUserId: string,
+    images: MediaStudioHistoryItem[],
+    videos: MediaStudioVideoHistoryItem[],
+  ): void;
   setSelectedModel(modelId: string): void;
   setPrompt(prompt: string): void;
   setSize(size: string): void;
@@ -204,15 +211,21 @@ export const useMediaStudioStore = create<MediaStudioState>((set, get) => ({
       const models = await port.listModels(identity.ownerUserId);
       if (!acceptsModels(get(), identity)) return;
       const available = models.filter((model) => model.enabled && model.hasApiKey);
-      const selectedModelId = available.some((model) => model.id === get().selectedModelId)
+      const imageModels = available.filter((model) => model.workload === "image");
+      const textModels = available.filter((model) => model.workload === "chat");
+      const selectedModelId = imageModels.some((model) => model.id === get().selectedModelId)
         ? get().selectedModelId
-        : available[0]?.id ?? null;
-      const videoModels = available.filter(isSupportedVideoModel);
+        : imageModels[0]?.id ?? null;
+      const videoModels = available.filter(
+        (model) => model.workload === "video" && isSupportedVideoModel(model),
+      );
       const selectedVideoModelId = videoModels.some(
         (model) => model.id === get().selectedVideoModelId,
       ) ? get().selectedVideoModelId : videoModels[0]?.id ?? null;
       set({
         models: available,
+        imageModels,
+        textModels,
         selectedModelId,
         videoModels,
         selectedVideoModelId,
@@ -346,9 +359,17 @@ export const useMediaStudioStore = create<MediaStudioState>((set, get) => ({
     }
   },
 
+  mergeWorkflowResults(ownerUserId, images, videos) {
+    if (get().ownerUserId !== ownerUserId) return;
+    set({
+      history: mergeHistory(images, get().history),
+      videoHistory: mergeVideoHistory(videos, get().videoHistory),
+    });
+  },
+
   setSelectedModel(modelId) {
     const state = get();
-    if (state.isGenerating || !state.models.some((model) => model.id === modelId)) return;
+    if (state.isGenerating || !state.imageModels.some((model) => model.id === modelId)) return;
     set({ selectedModelId: modelId, generationErrorMessage: null });
   },
 
@@ -802,7 +823,7 @@ export function canGenerateMediaStudioImage(state: MediaStudioState) {
     && !state.isLoadingHistory
     && !state.isImportingReferences
     && state.selectedModelId != null
-    && state.models.some((model) => model.id === state.selectedModelId)
+    && state.imageModels.some((model) => model.id === state.selectedModelId)
     && state.prompt.trim().length > 0;
 }
 
@@ -869,6 +890,8 @@ function emptyState() {
     ownerUserId: null,
     presentationId: null,
     models: [] as MediaStudioModel[],
+    imageModels: [] as MediaStudioModel[],
+    textModels: [] as MediaStudioModel[],
     selectedModelId: null,
     isLoadingModels: false,
     hasLoadedModels: false,

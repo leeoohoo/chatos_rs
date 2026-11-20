@@ -1,15 +1,17 @@
+use crate::{
+    app_data_transaction::{ensure_owned_directory, replace_owned_file},
+    authentication::AuthenticationManager,
+    host_lifecycle::validate_owner,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
-    path::{Path, PathBuf},
+    fs::File,
+    io::Read,
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 use tauri::State;
-use uuid::Uuid;
-
-use crate::{authentication::AuthenticationManager, host_lifecycle::validate_owner};
 
 const FILE_VERSION: u32 = 1;
 const MAXIMUM_FILE_BYTES: u64 = 2 * 1_024 * 1_024;
@@ -160,14 +162,9 @@ impl GeneralSettingsStore {
             return Err(settings_error());
         }
         let parent = self.path.parent().ok_or_else(settings_error)?;
-        fs::create_dir_all(parent).map_err(|_| settings_error())?;
-        let temporary = parent.join(format!(".general-settings-{}.tmp", Uuid::new_v4()));
-        let result =
-            write_private_file(&temporary, &bytes).and_then(|_| fs::rename(&temporary, &self.path));
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-            return Err(settings_error());
-        }
+        ensure_owned_directory(parent).map_err(|_| settings_error())?;
+        replace_owned_file(parent, &self.path, ".general-settings-", &bytes)
+            .map_err(|_| settings_error())?;
         if let Ok(directory) = File::open(parent) {
             let _ = directory.sync_all();
         }
@@ -311,19 +308,6 @@ impl IdleSleepController {
     fn set(&self, _enabled: bool) -> Result<(), String> {
         Ok(())
     }
-}
-
-fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
 }
 
 fn settings_error() -> String {

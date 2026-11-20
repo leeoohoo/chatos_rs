@@ -19,19 +19,25 @@ export function pluginSettingsSnapshot(): PluginSettingsSnapshot {
       hasUi: true,
       source: "marketplace",
       runtimeStatus: "not_checked",
+      runtimeToolCount: null,
+      runtimeLastCheckedAt: null,
+      runtimeError: null,
       mcpServerCount: 1,
+      hookCount: 0,
+      hookRuntimeStatus: null,
       skills: ["diagram-architecture", "diagram-flowchart"],
       permissions: [{ id: "process.spawn", required: true, reason: "Launch MCP", status: "declared_not_checked" }],
       installationIssue: null,
       windowsCompatible: true,
       installActionAvailable: true,
+      credentials: [],
     }],
     marketplaceAvailable: true,
     localCatalogAvailable: true,
     marketplaceError: null,
     localCatalogError: null,
     secureMarketplaceInstallAvailable: true,
-    manualInstallAvailable: false,
+    manualInstallAvailable: true,
   };
 }
 
@@ -55,6 +61,28 @@ export function pluginSettingsPort(overrides: Partial<PluginSettingsPort> = {}):
       ...pluginSettingsSnapshot(),
       plugins: pluginSettingsSnapshot().plugins.map((plugin) => ({ ...plugin, installed: false, installedVersion: null })),
     }),
+    updateCredentials: async (_ownerUserId, _pluginId, credentials) => ({
+      ...pluginSettingsSnapshot(),
+      plugins: pluginSettingsSnapshot().plugins.map((plugin) => ({
+        ...plugin,
+        credentials: Object.keys(credentials).map((name) => ({ name, configured: true })),
+      })),
+    }),
+    pickManualDirectory: async () => ({ selectionId: "selection-1", directoryName: "my-plugin" }),
+    inspectManualDirectory: async (_ownerUserId, _presentationId, selectionId) => ({
+      selectionId,
+      directoryName: "my-plugin",
+      displayName: "My Local Plugin",
+      version: "1.0.0",
+      description: "A verified local plugin.",
+      fingerprint: "a".repeat(64),
+      components: [
+        { kind: "mcp", displayName: "local-mcp", hookCount: null, events: [], runtimeStatus: null },
+        { kind: "skill", displayName: "local-skill", hookCount: null, events: [], runtimeStatus: null },
+      ],
+    }),
+    installManualDirectory: async () => pluginSettingsSnapshot(),
+    discardManualDirectory: async () => undefined,
     ...overrides,
   };
 }

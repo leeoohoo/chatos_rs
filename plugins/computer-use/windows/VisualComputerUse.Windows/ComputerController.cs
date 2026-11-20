@@ -152,6 +152,9 @@ internal sealed class ComputerController
                 return;
             }
         }
+
+        throw new VisualComputerUseException(
+            $"Application '{application}' did not expose a visible window after launch.");
     }
 
     internal static IReadOnlyList<PointDto> VirtualTrajectory(PointDto start, PointDto target, int steps)

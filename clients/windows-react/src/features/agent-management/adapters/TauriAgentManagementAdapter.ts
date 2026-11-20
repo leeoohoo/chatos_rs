@@ -14,10 +14,12 @@ import {
   queuedAgentTeamMessageSchema,
   dispatchedAgentTeamDeliverySchema,
   agentTeamRunHistorySnapshotSchema,
+  agentProjectDashboardSnapshotSchema,
   agentTeamTodoListSchema,
   agentTeamTodoProgressListSchema,
   agentTeamTodoSchema,
   agentTeamAssetListSchema,
+  agentTeamAssetReviewListSchema,
   agentTeamAssetRevisionListSchema,
   agentTeamAssetSchema,
   agentTeamSummarySchema,
@@ -45,6 +47,10 @@ import {
   requirementSurveySchema,
   type RequirementSurveyAnswers,
 } from "../../requirement-surveys/domain/requirementSurvey";
+import {
+  agentArtifactPageSchema,
+  agentArtifactPreviewSchema,
+} from "../domain/agentArtifact";
 
 export class TauriAgentManagementAdapter implements AgentManagementPort {
   async listProfiles(ownerUserId: string) {
@@ -97,6 +103,35 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
 
   async discardAvatarPresentation(ownerUserId: string, presentationId: string) {
     await invoke("discard_media_studio_presentation", { input: { ownerUserId, presentationId } });
+  }
+
+  async listArtifacts(ownerUserId: string, limit: number, cursor: string | null) {
+    return agentArtifactPageSchema.parse(
+      await invoke("list_agent_artifacts", { ownerUserId, limit, cursor }),
+    );
+  }
+
+  async previewArtifact(
+    ownerUserId: string,
+    artifactId: string,
+    expectedSize: number,
+    expectedSha256: string,
+  ) {
+    return agentArtifactPreviewSchema.parse(await invoke("preview_agent_artifact", {
+      ownerUserId, artifactId, expectedSize, expectedSha256,
+    }));
+  }
+
+  async saveArtifact(
+    ownerUserId: string,
+    artifactId: string,
+    name: string,
+    expectedSize: number,
+    expectedSha256: string,
+  ) {
+    return z.boolean().parse(await invoke("save_agent_artifact", {
+      ownerUserId, artifactId, name, expectedSize, expectedSha256,
+    }));
   }
 
   async loadSkillCatalog(ownerUserId: string) {
@@ -210,9 +245,14 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
     );
   }
 
-  async loadTeamConversation(ownerUserId: string, teamId: string) {
+  async loadTeamConversation(
+    ownerUserId: string,
+    teamId: string,
+    beforeMessageId: string | null = null,
+    limit = 50,
+  ) {
     return agentTeamConversationSnapshotSchema.parse(
-      await invoke("load_agent_team_conversation", { ownerUserId, teamId }),
+      await invoke("load_agent_team_conversation", { ownerUserId, teamId, beforeMessageId, limit }),
     );
   }
 
@@ -245,6 +285,16 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async loadTeamRuns(ownerUserId: string, teamId: string) {
     return agentTeamRunHistorySnapshotSchema.parse(
       await invoke("load_agent_team_runs", { ownerUserId, teamId }),
+    );
+  }
+
+  async cancelTeamRun(ownerUserId: string, teamId: string, runId: string) {
+    await invoke("cancel_agent_team_run", { input: { ownerUserId, teamId, runId } });
+  }
+
+  async loadTeamDashboard(ownerUserId: string, teamId: string) {
+    return agentProjectDashboardSnapshotSchema.parse(
+      await invoke("load_agent_team_dashboard", { ownerUserId, teamId }),
     );
   }
 
@@ -316,6 +366,12 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async listTeamAssets(ownerUserId: string, teamId: string) {
     return agentTeamAssetListSchema.parse(
       await invoke("list_agent_team_assets", { ownerUserId, teamId }),
+    );
+  }
+
+  async listTeamAssetReviews(ownerUserId: string, teamId: string) {
+    return agentTeamAssetReviewListSchema.parse(
+      await invoke("list_agent_team_asset_reviews", { ownerUserId, teamId }),
     );
   }
 

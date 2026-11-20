@@ -5,18 +5,26 @@ mod video_history;
 mod video_input;
 mod video_job;
 mod video_provider;
+mod workflow;
 
 use serde::{Deserialize, Serialize};
 use std::{
-    path::PathBuf,
+    fs,
+    path::{Path, PathBuf},
     sync::{atomic::Ordering, Arc, Mutex},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{http, State};
 use uuid::Uuid;
 
 use crate::{
+    app_data_maintenance::try_remove_stale_owned_directory_tree,
+    app_owned_export::try_remove_stale_owned_file,
     authentication::{AuthenticationManager, GatewayModelConfig},
     host_lifecycle::validate_owner,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
 };
 use history::{
     ImageGenerationOutcome, ImageHistoryCursor, ImageHistoryItem, ImageHistoryPage,
@@ -37,18 +45,27 @@ use video_job::{
     MediaStudioVideoJobRegistry, MediaStudioVideoJobSnapshot, VideoPollStart, VideoPollWork,
 };
 use video_provider::{
-    make_video_create_request, make_video_result, parse_video_job, resolve_video_model,
-    video_content_endpoint, video_job_endpoint, VideoGenerationRequest, VideoInput,
-    VideoReferencePurpose, MAXIMUM_VIDEO_BYTES, MAXIMUM_VIDEO_JOB_RESPONSE_BYTES,
+    make_video_create_request, make_video_result, parse_video_job, parse_video_job_with_fallback,
+    resolve_video_model, video_content_endpoint, video_job_endpoint, VideoGenerationRequest,
+    VideoInput, VideoReferencePurpose, MAXIMUM_VIDEO_BYTES, MAXIMUM_VIDEO_JOB_RESPONSE_BYTES,
+};
+use workflow::MediaWorkflow;
+pub(crate) use workflow::{
+    delete_media_studio_workflow, list_media_studio_workflows, run_media_studio_workflow,
+    save_media_studio_workflow, MediaStudioWorkflowStore,
 };
 
 const MAXIMUM_PROVIDER_RESPONSE_BYTES: usize = 48 * 1_024 * 1_024;
 const MAXIMUM_IMAGE_REFERENCES: usize = 8;
+const STALE_HISTORY_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const MAXIMUM_HISTORY_CLEANUP_ENTRIES_PER_ROOT: usize = 10_000;
+const MAXIMUM_HISTORY_CLEANUP_TREE_ENTRIES: usize = 20_000;
 
 #[derive(Clone)]
 pub(crate) struct MediaStudioManager {
     history: MediaStudioHistoryStore,
     video_history: MediaStudioVideoHistoryStore,
+    workflows: MediaStudioWorkflowStore,
     provider_client: reqwest::Client,
     preview_session: Arc<Mutex<Option<MediaPreviewSession>>>,
     references: MediaImageReferenceVault,
@@ -138,6 +155,7 @@ impl MediaStudioManager {
         Ok(Self {
             history: MediaStudioHistoryStore::new(app_data_directory.clone())?,
             video_history: MediaStudioVideoHistoryStore::new(app_data_directory.clone()),
+            workflows: MediaStudioWorkflowStore::new(app_data_directory.clone())?,
             provider_client,
             preview_session: Arc::new(Mutex::new(None)),
             references: MediaImageReferenceVault::new(
@@ -159,6 +177,21 @@ impl MediaStudioManager {
             .ok_or_else(|| "无法定位应用数据目录。".to_owned())?
             .join("com.chatos.windows");
         Self::new(app_data_directory)
+    }
+
+    pub(crate) async fn cleanup_stale_temporaries(&self) -> usize {
+        let image_accounts = self.history.temporary_cleanup_root();
+        let video_accounts = self.video_history.temporary_cleanup_root();
+        let workflow_accounts = self.workflows.temporary_cleanup_root();
+        tauri::async_runtime::spawn_blocking(move || {
+            let cutoff = SystemTime::now()
+                .checked_sub(STALE_HISTORY_TEMPORARY_AGE)
+                .unwrap_or(UNIX_EPOCH);
+            cleanup_history_temporaries(&image_accounts, &video_accounts, cutoff)
+                .saturating_add(cleanup_workflow_temporaries(&workflow_accounts, cutoff))
+        })
+        .await
+        .unwrap_or_default()
     }
 
     fn activate_session(
@@ -197,6 +230,26 @@ impl MediaStudioManager {
         self.references.reset();
         self.video_inputs.reset();
         self.video_jobs.reset();
+    }
+
+    pub(crate) fn list_workflows(&self, owner_user_id: &str) -> Result<Vec<MediaWorkflow>, String> {
+        self.workflows.list(owner_user_id)
+    }
+
+    pub(crate) fn save_workflow(
+        &self,
+        owner_user_id: &str,
+        workflow: &MediaWorkflow,
+    ) -> Result<bool, String> {
+        self.workflows.save(owner_user_id, workflow)
+    }
+
+    pub(crate) fn delete_workflow(
+        &self,
+        owner_user_id: &str,
+        workflow_id: &str,
+    ) -> Result<(), String> {
+        self.workflows.delete(owner_user_id, workflow_id)
     }
 
     /// Reads one already-persisted generated image through Media Studio's owner-scoped history
@@ -659,13 +712,7 @@ impl MediaStudioManager {
 
     fn protocol_response(&self, request: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
         match self.protocol_body(request.uri().path()) {
-            Ok((mime_type, body)) => http::Response::builder()
-                .status(http::StatusCode::OK)
-                .header(http::header::CONTENT_TYPE, mime_type)
-                .header("X-Content-Type-Options", "nosniff")
-                .header("Cache-Control", "no-store")
-                .body(body)
-                .expect("valid media preview response"),
+            Ok((mime_type, body)) => media_preview_response(&request, &mime_type, body),
             Err(status) => http::Response::builder()
                 .status(status)
                 .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
@@ -718,6 +765,415 @@ impl MediaStudioManager {
             _ => Err(http::StatusCode::BAD_REQUEST),
         }
     }
+}
+
+fn media_preview_response(
+    request: &http::Request<Vec<u8>>,
+    mime_type: &str,
+    body: Vec<u8>,
+) -> http::Response<Vec<u8>> {
+    let total_length = body.len() as u64;
+    let base_headers = |builder: http::response::Builder| {
+        builder
+            .header(http::header::ACCEPT_RANGES, "bytes")
+            // Media previews are served from `chatos-media.localhost`, while the
+            // application document runs on `tauri.localhost`.  WebView2 treats
+            // range-backed media requests as cross-origin, so expose the
+            // protocol's CORS contract explicitly instead of relying on the
+            // custom-scheme defaults.
+            .header("Access-Control-Allow-Origin", "*")
+            .header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+            .header("Access-Control-Allow-Headers", "Range, Content-Type")
+            .header("Access-Control-Expose-Headers", "Content-Range")
+            .header("X-Content-Type-Options", "nosniff")
+            .header("Cache-Control", "no-store")
+    };
+    if request.method() == http::Method::OPTIONS {
+        return base_headers(
+            http::Response::builder()
+                .status(http::StatusCode::NO_CONTENT)
+                .header(http::header::CONTENT_LENGTH, 0),
+        )
+        .body(Vec::new())
+        .expect("valid media options response");
+    }
+    if request.method() == http::Method::HEAD {
+        return base_headers(
+            http::Response::builder()
+                .status(http::StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, mime_type)
+                .header(http::header::CONTENT_LENGTH, total_length),
+        )
+        .body(Vec::new())
+        .expect("valid media head response");
+    }
+    let range_header = request
+        .headers()
+        .get(http::header::RANGE)
+        .and_then(|value| value.to_str().ok());
+    let ranges = match range_header {
+        Some(value) => match parse_byte_ranges(value, total_length) {
+            Ok(ranges) => Some(ranges),
+            Err(()) => {
+                return base_headers(
+                    http::Response::builder()
+                        .status(http::StatusCode::RANGE_NOT_SATISFIABLE)
+                        .header(
+                            http::header::CONTENT_RANGE,
+                            format!("bytes */{total_length}"),
+                        )
+                        .header(http::header::CONTENT_LENGTH, 0),
+                )
+                .header("Cache-Control", "no-store")
+                .body(Vec::new())
+                .expect("valid media range error response");
+            }
+        },
+        None => None,
+    };
+
+    let Some(ranges) = ranges else {
+        return base_headers(
+            http::Response::builder()
+                .status(http::StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, mime_type)
+                .header(http::header::CONTENT_LENGTH, body.len()),
+        )
+        .body(body)
+        .expect("valid media preview response");
+    };
+    if ranges.len() == 1 {
+        let (start, end) = ranges[0];
+        let body = body[start as usize..=end as usize].to_vec();
+        return base_headers(
+            http::Response::builder()
+                .status(http::StatusCode::PARTIAL_CONTENT)
+                .header(http::header::CONTENT_TYPE, mime_type)
+                .header(http::header::CONTENT_LENGTH, body.len())
+                .header(
+                    http::header::CONTENT_RANGE,
+                    format!("bytes {start}-{end}/{total_length}"),
+                ),
+        )
+        .body(body)
+        .expect("valid media range response");
+    }
+
+    let boundary = "chatos-media-range";
+    let mut multipart = Vec::new();
+    for (start, end) in ranges {
+        multipart.extend_from_slice(format!("\r\n--{boundary}\r\n").as_bytes());
+        multipart.extend_from_slice(format!("Content-Type: {mime_type}\r\n").as_bytes());
+        multipart.extend_from_slice(
+            format!("Content-Range: bytes {start}-{end}/{total_length}\r\n\r\n").as_bytes(),
+        );
+        multipart.extend_from_slice(&body[start as usize..=end as usize]);
+    }
+    multipart.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    base_headers(
+        http::Response::builder()
+            .status(http::StatusCode::PARTIAL_CONTENT)
+            .header(
+                http::header::CONTENT_TYPE,
+                format!("multipart/byteranges; boundary={boundary}"),
+            )
+            .header(http::header::CONTENT_LENGTH, multipart.len()),
+    )
+    .body(multipart)
+    .expect("valid multipart media range response")
+}
+
+fn parse_byte_ranges(value: &str, total_length: u64) -> Result<Vec<(u64, u64)>, ()> {
+    if total_length == 0 {
+        return Err(());
+    }
+    let value = value.trim();
+    let Some(value) = value.strip_prefix("bytes=").map(str::trim) else {
+        return Err(());
+    };
+    let values = value.split(',').map(str::trim).collect::<Vec<_>>();
+    if values.is_empty() || values.len() > 16 || values.iter().any(|value| value.is_empty()) {
+        return Err(());
+    }
+    values
+        .into_iter()
+        .map(|value| {
+            let Some((start, end)) = value.split_once('-') else {
+                return Err(());
+            };
+            let start = start.trim();
+            let end = end.trim();
+            let (start, end) = if start.is_empty() {
+                let suffix_length = end.parse::<u64>().map_err(|_| ())?;
+                if suffix_length == 0 {
+                    return Err(());
+                }
+                (
+                    total_length.saturating_sub(suffix_length),
+                    total_length.saturating_sub(1),
+                )
+            } else {
+                let start = start.parse::<u64>().map_err(|_| ())?;
+                let end = if end.is_empty() {
+                    total_length.saturating_sub(1)
+                } else {
+                    end.parse::<u64>()
+                        .map_err(|_| ())?
+                        .min(total_length.saturating_sub(1))
+                };
+                (start, end)
+            };
+            if start > end || start >= total_length {
+                return Err(());
+            }
+            let end = start.saturating_add((end - start).min(1024 * 1024 - 1));
+            Ok((start, end))
+        })
+        .collect()
+}
+
+fn cleanup_history_temporaries(
+    image_accounts: &Path,
+    video_accounts: &Path,
+    cutoff: SystemTime,
+) -> usize {
+    let mut removed = 0usize;
+    for root in [image_accounts, video_accounts] {
+        let mut state = HistoryTemporaryCleanupState::default();
+        cleanup_history_account_root(root, cutoff, &mut state);
+        removed = removed.saturating_add(state.removed);
+    }
+    removed
+}
+
+fn cleanup_history_account_root(
+    root: &Path,
+    cutoff: SystemTime,
+    state: &mut HistoryTemporaryCleanupState,
+) {
+    if !safe_cleanup_directory(root) {
+        return;
+    }
+    let Ok(owners) = fs::read_dir(root) else {
+        return;
+    };
+    for owner in owners.flatten() {
+        if !state.visit() {
+            return;
+        }
+        let owner_path = owner.path();
+        if !owner.file_name().to_str().is_some_and(canonical_owner_hash)
+            || !safe_cleanup_directory(&owner_path)
+        {
+            continue;
+        }
+        cleanup_history_owner(&owner_path, cutoff, state);
+    }
+}
+
+fn cleanup_history_owner(
+    owner: &Path,
+    cutoff: SystemTime,
+    state: &mut HistoryTemporaryCleanupState,
+) {
+    let Ok(records) = fs::read_dir(owner) else {
+        return;
+    };
+    for record in records.flatten() {
+        if !state.visit() {
+            return;
+        }
+        let record_path = record.path();
+        if !record.file_name().to_str().is_some_and(canonical_record_id)
+            || !safe_cleanup_directory(&record_path)
+        {
+            continue;
+        }
+        cleanup_history_record(&record_path, cutoff, state);
+        if state.visited >= MAXIMUM_HISTORY_CLEANUP_ENTRIES_PER_ROOT {
+            return;
+        }
+    }
+}
+
+fn cleanup_history_record(
+    record: &Path,
+    cutoff: SystemTime,
+    state: &mut HistoryTemporaryCleanupState,
+) {
+    let manifest = record.join("record.json");
+    match fs::symlink_metadata(&manifest) {
+        Ok(metadata)
+            if metadata.file_type().is_file()
+                && !metadata.file_type().is_symlink()
+                && !is_windows_reparse_point(&metadata) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if try_remove_stale_owned_directory_tree(
+                record,
+                cutoff,
+                MAXIMUM_HISTORY_CLEANUP_TREE_ENTRIES,
+            ) {
+                state.removed = state.removed.saturating_add(1);
+            }
+            return;
+        }
+        _ => return,
+    }
+    let Ok(entries) = fs::read_dir(record) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !state.visit() {
+            return;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if !canonical_history_manifest_temporary_name(&name) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.file_type().is_file()
+            && !metadata.file_type().is_symlink()
+            && !is_windows_reparse_point(&metadata)
+            && metadata.modified().is_ok_and(|modified| modified <= cutoff)
+            && try_remove_stale_owned_file(&path, cutoff)
+        {
+            state.removed = state.removed.saturating_add(1);
+        }
+    }
+}
+
+#[derive(Default)]
+struct HistoryTemporaryCleanupState {
+    visited: usize,
+    removed: usize,
+}
+
+impl HistoryTemporaryCleanupState {
+    fn visit(&mut self) -> bool {
+        if self.visited >= MAXIMUM_HISTORY_CLEANUP_ENTRIES_PER_ROOT {
+            return false;
+        }
+        self.visited += 1;
+        true
+    }
+}
+
+fn canonical_owner_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn canonical_record_id(value: &str) -> bool {
+    Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value)
+}
+
+fn canonical_history_manifest_temporary_name(value: &str) -> bool {
+    if value == "record.json.tmp" {
+        return true;
+    }
+    [".image-history-", ".video-history-"].iter().any(|prefix| {
+        value
+            .strip_prefix(prefix)
+            .and_then(|value| value.strip_suffix(".tmp"))
+            .is_some_and(canonical_record_id)
+    })
+}
+
+fn cleanup_workflow_temporaries(accounts: &Path, cutoff: SystemTime) -> usize {
+    if !safe_cleanup_directory(accounts) {
+        return 0;
+    }
+    let mut state = HistoryTemporaryCleanupState::default();
+    let Ok(owners) = fs::read_dir(accounts) else {
+        return 0;
+    };
+    for owner in owners {
+        if !state.visit() {
+            break;
+        }
+        let Ok(owner) = owner else {
+            continue;
+        };
+        let Some(owner_name) = owner.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let owner_path = owner.path();
+        if !canonical_owner_hash(&owner_name) || !safe_cleanup_directory(&owner_path) {
+            continue;
+        }
+        let Ok(workflows) = fs::read_dir(owner_path) else {
+            continue;
+        };
+        for workflow in workflows {
+            if !state.visit() {
+                return state.removed;
+            }
+            let Ok(workflow) = workflow else {
+                continue;
+            };
+            let Some(workflow_name) = workflow.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let workflow_path = workflow.path();
+            if !canonical_record_id(&workflow_name) || !safe_cleanup_directory(&workflow_path) {
+                continue;
+            }
+            let Ok(entries) = fs::read_dir(workflow_path) else {
+                continue;
+            };
+            for entry in entries {
+                if !state.visit() {
+                    return state.removed;
+                }
+                let Ok(entry) = entry else {
+                    continue;
+                };
+                let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                    continue;
+                };
+                if canonical_workflow_manifest_temporary_name(&name)
+                    && try_remove_stale_owned_file(&entry.path(), cutoff)
+                {
+                    state.removed = state.removed.saturating_add(1);
+                }
+            }
+        }
+    }
+    state.removed
+}
+
+fn canonical_workflow_manifest_temporary_name(value: &str) -> bool {
+    value
+        .strip_prefix(".workflow-")
+        .and_then(|value| value.strip_suffix(".tmp"))
+        .is_some_and(canonical_record_id)
+}
+
+fn safe_cleanup_directory(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| {
+        metadata.file_type().is_dir()
+            && !metadata.file_type().is_symlink()
+            && !is_windows_reparse_point(&metadata)
+    })
+}
+
+#[cfg(windows)]
+fn is_windows_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_windows_reparse_point(_: &fs::Metadata) -> bool {
+    false
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -800,9 +1256,30 @@ pub(crate) struct MediaStudioModelOption {
     name: String,
     provider: String,
     model_name: String,
+    workload: MediaStudioModelWorkload,
     enabled: bool,
     task_enabled: bool,
     has_api_key: bool,
+    supports_image_input: bool,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MediaStudioModelWorkload {
+    Chat,
+    Image,
+    Video,
+}
+
+impl From<chatos_service_runtime::model_workload::ModelWorkload> for MediaStudioModelWorkload {
+    fn from(value: chatos_service_runtime::model_workload::ModelWorkload) -> Self {
+        use chatos_service_runtime::model_workload::ModelWorkload;
+        match value {
+            ModelWorkload::Chat => Self::Chat,
+            ModelWorkload::Image => Self::Image,
+            ModelWorkload::Video => Self::Video,
+        }
+    }
 }
 
 #[tauri::command]
@@ -888,6 +1365,7 @@ pub(crate) async fn load_media_studio_video_history(
 pub(crate) async fn pick_media_studio_reference_images(
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, MediaStudioManager>,
+    resources: State<'_, MachineResourceGovernor>,
     input: MediaStudioReferenceSelectionInput,
 ) -> Result<MediaImageReferenceImportResult, String> {
     validate_owner(&input.owner_user_id)?;
@@ -914,6 +1392,12 @@ pub(crate) async fn pick_media_studio_reference_images(
     let references = manager.references.clone();
     let owner_user_id = input.owner_user_id.clone();
     let staged_presentation_id = presentation_id.clone();
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::MediaWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let mut result = tauri::async_runtime::spawn_blocking(move || {
         references.stage_paths(
             &owner_user_id,
@@ -951,6 +1435,7 @@ pub(crate) async fn pick_media_studio_reference_images(
 pub(crate) async fn pick_agent_avatar(
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, MediaStudioManager>,
+    resources: State<'_, MachineResourceGovernor>,
     input: MediaStudioReferenceSelectionInput,
 ) -> Result<Option<MediaImageReferenceDraft>, String> {
     validate_owner(&input.owner_user_id)?;
@@ -977,6 +1462,12 @@ pub(crate) async fn pick_agent_avatar(
     let owner_user_id = input.owner_user_id.clone();
     let staged_presentation_id = presentation_id.clone();
     let path = handle.path().to_path_buf();
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::MediaWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let mut result = tauri::async_runtime::spawn_blocking(move || {
         references.stage_paths(
             &owner_user_id,
@@ -1022,6 +1513,7 @@ pub(crate) async fn pick_agent_avatar(
 pub(crate) async fn pick_media_studio_video_reference_audio(
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, MediaStudioManager>,
+    resources: State<'_, MachineResourceGovernor>,
     input: MediaStudioReferenceSelectionInput,
 ) -> Result<Option<MediaVideoAudioDraft>, String> {
     validate_owner(&input.owner_user_id)?;
@@ -1047,6 +1539,12 @@ pub(crate) async fn pick_media_studio_video_reference_audio(
     let inputs = manager.video_inputs.clone();
     let owner_user_id = input.owner_user_id.clone();
     let staged_presentation_id = presentation_id.clone();
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::MediaWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         inputs.stage_path(
             &owner_user_id,
@@ -1076,6 +1574,7 @@ pub(crate) async fn pick_media_studio_video_reference_audio(
 pub(crate) async fn stage_media_studio_history_references(
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, MediaStudioManager>,
+    resources: State<'_, MachineResourceGovernor>,
     input: MediaStudioHistoryReferenceSelectionInput,
 ) -> Result<MediaImageReferenceImportResult, String> {
     validate_owner(&input.owner_user_id)?;
@@ -1099,6 +1598,12 @@ pub(crate) async fn stage_media_studio_history_references(
     let command_owner_user_id = input.owner_user_id.clone();
     let staged_presentation_id = presentation_id.clone();
     let assets = input.assets;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::MediaWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let mut result = tauri::async_runtime::spawn_blocking(move || {
         let mut values = Vec::new();
         let mut errors = Vec::new();
@@ -1543,7 +2048,7 @@ async fn advance_video_job(
         if work.cancelled.load(Ordering::Acquire) {
             return Err("视频生成已取消。".into());
         }
-        parse_video_job(&body, &work.runtime.api_key)?
+        parse_video_job_with_fallback(&body, &work.runtime.api_key, Some(&work.provider_job.id))?
     } else {
         work.provider_job.clone()
     };
@@ -1796,6 +2301,10 @@ fn present_model_catalog(
                 && !model.model.trim().is_empty()
         })
         .map(|model| MediaStudioModelOption {
+            workload: chatos_service_runtime::model_workload::ModelWorkload::for_model(
+                &model.model,
+            )
+            .into(),
             id: model.id,
             name: model.name,
             provider: model.provider,
@@ -1803,6 +2312,7 @@ fn present_model_catalog(
             enabled: model.enabled,
             task_enabled: model.task_enabled.unwrap_or(model.enabled),
             has_api_key: model.has_api_key,
+            supports_image_input: model.supports_images,
         })
         .collect::<Vec<_>>();
     models.sort_by(|left, right| {
@@ -1814,13 +2324,10 @@ fn present_model_catalog(
 }
 
 fn image_model_rank(model: &MediaStudioModelOption) -> u8 {
-    if format!("{} {}", model.name, model.model_name)
-        .to_lowercase()
-        .contains("image")
-    {
-        0
-    } else {
-        1
+    match model.workload {
+        MediaStudioModelWorkload::Image => 0,
+        MediaStudioModelWorkload::Chat => 1,
+        MediaStudioModelWorkload::Video => 2,
     }
 }
 
@@ -1860,14 +2367,166 @@ mod tests {
     }
 
     #[test]
+    fn stale_history_cleanup_only_removes_owned_manifest_temporaries() {
+        let root = tempdir().unwrap();
+        let manager = MediaStudioManager::new(root.path().to_path_buf()).unwrap();
+        let owner = history::owner_hash("alice");
+        let image_record = manager
+            .history
+            .temporary_cleanup_root()
+            .join(&owner)
+            .join(Uuid::new_v4().to_string());
+        let video_record = manager
+            .video_history
+            .temporary_cleanup_root()
+            .join(&owner)
+            .join(Uuid::new_v4().to_string());
+        let incomplete_record = manager
+            .history
+            .temporary_cleanup_root()
+            .join(&owner)
+            .join(Uuid::new_v4().to_string());
+        fs::create_dir_all(&image_record).unwrap();
+        fs::create_dir_all(&video_record).unwrap();
+        fs::create_dir_all(&incomplete_record).unwrap();
+
+        let image_temporary = image_record.join("record.json.tmp");
+        let image_owned_temporary =
+            image_record.join(format!(".image-history-{}.tmp", Uuid::new_v4()));
+        let video_temporary = video_record.join("record.json.tmp");
+        let video_owned_temporary =
+            video_record.join(format!(".video-history-{}.tmp", Uuid::new_v4()));
+        let video_manifest = video_record.join("record.json");
+        let committed = image_record.join("record.json");
+        let unrelated = image_record.join("notes.tmp");
+        let incomplete_asset = incomplete_record.join("00000000000000000000000000000001.png");
+        for path in [
+            &image_temporary,
+            &image_owned_temporary,
+            &video_temporary,
+            &video_owned_temporary,
+            &video_manifest,
+            &committed,
+            &unrelated,
+        ] {
+            fs::write(path, b"value").unwrap();
+        }
+        fs::write(&incomplete_asset, b"orphaned asset").unwrap();
+
+        let invalid_owner_temporary = manager
+            .history
+            .temporary_cleanup_root()
+            .join("not-an-owner")
+            .join(Uuid::new_v4().to_string())
+            .join("record.json.tmp");
+        fs::create_dir_all(invalid_owner_temporary.parent().unwrap()).unwrap();
+        fs::write(&invalid_owner_temporary, b"value").unwrap();
+        let invalid_record_temporary = manager
+            .history
+            .temporary_cleanup_root()
+            .join(&owner)
+            .join("not-a-record")
+            .join("record.json.tmp");
+        fs::create_dir_all(invalid_record_temporary.parent().unwrap()).unwrap();
+        fs::write(&invalid_record_temporary, b"value").unwrap();
+
+        assert_eq!(
+            cleanup_history_temporaries(
+                &manager.history.temporary_cleanup_root(),
+                &manager.video_history.temporary_cleanup_root(),
+                UNIX_EPOCH,
+            ),
+            0
+        );
+        assert_eq!(
+            cleanup_history_temporaries(
+                &manager.history.temporary_cleanup_root(),
+                &manager.video_history.temporary_cleanup_root(),
+                SystemTime::now() + Duration::from_secs(1),
+            ),
+            5
+        );
+        assert!(!image_temporary.exists());
+        assert!(!image_owned_temporary.exists());
+        assert!(!video_temporary.exists());
+        assert!(!video_owned_temporary.exists());
+        assert!(video_manifest.exists());
+        assert!(!incomplete_record.exists());
+        assert!(committed.exists());
+        assert!(unrelated.exists());
+        assert!(invalid_owner_temporary.exists());
+        assert!(invalid_record_temporary.exists());
+    }
+
+    #[test]
+    fn stale_workflow_cleanup_only_removes_owned_manifest_temporaries() {
+        let root = tempdir().unwrap();
+        let manager = MediaStudioManager::new(root.path().to_path_buf()).unwrap();
+        let accounts = manager.workflows.temporary_cleanup_root();
+        let owner = history::owner_hash("alice");
+        let workflow = accounts.join(&owner).join(Uuid::new_v4().to_string());
+        fs::create_dir_all(workflow.join("assets")).unwrap();
+
+        let owned_temporary = workflow.join(format!(".workflow-{}.tmp", Uuid::new_v4()));
+        let malformed_temporary = workflow.join(".workflow-NOT-A-UUID.tmp");
+        let committed = workflow.join("workflow.json");
+        let unrelated = workflow.join("notes.tmp");
+        let nested_temporary = workflow
+            .join("assets")
+            .join(format!(".workflow-{}.tmp", Uuid::new_v4()));
+        for path in [
+            &owned_temporary,
+            &malformed_temporary,
+            &committed,
+            &unrelated,
+            &nested_temporary,
+        ] {
+            fs::write(path, b"value").unwrap();
+        }
+
+        let hard_link_source = workflow.join("hard-link-source");
+        fs::write(&hard_link_source, b"linked").unwrap();
+        let hard_link_temporary = workflow.join(format!(".workflow-{}.tmp", Uuid::new_v4()));
+        fs::hard_link(&hard_link_source, &hard_link_temporary).unwrap();
+
+        let invalid_owner_temporary = accounts
+            .join("not-an-owner")
+            .join(Uuid::new_v4().to_string())
+            .join(format!(".workflow-{}.tmp", Uuid::new_v4()));
+        fs::create_dir_all(invalid_owner_temporary.parent().unwrap()).unwrap();
+        fs::write(&invalid_owner_temporary, b"value").unwrap();
+        let invalid_workflow_temporary = accounts
+            .join(&owner)
+            .join("not-a-workflow")
+            .join(format!(".workflow-{}.tmp", Uuid::new_v4()));
+        fs::create_dir_all(invalid_workflow_temporary.parent().unwrap()).unwrap();
+        fs::write(&invalid_workflow_temporary, b"value").unwrap();
+
+        assert_eq!(cleanup_workflow_temporaries(&accounts, UNIX_EPOCH), 0);
+        assert_eq!(
+            cleanup_workflow_temporaries(&accounts, SystemTime::now() + Duration::from_secs(1),),
+            1
+        );
+        assert!(!owned_temporary.exists());
+        assert!(malformed_temporary.exists());
+        assert!(committed.exists());
+        assert!(unrelated.exists());
+        assert!(nested_temporary.exists());
+        assert!(hard_link_source.exists());
+        assert!(hard_link_temporary.exists());
+        assert!(invalid_owner_temporary.exists());
+        assert!(invalid_workflow_temporary.exists());
+    }
+
+    #[test]
     fn catalog_matches_macos_filter_sort_and_redacts_secrets() {
         let models = present_model_catalog(
             "alice",
             vec![
-                model("chat", "alice", "Zeta", true),
-                model("image", "alice", "Image Alpha", true),
-                model("disabled", "alice", "Image Disabled", false),
-                model("other", "bob", "Image Other", true),
+                model("chat", "alice", "gpt-6.1-sol", true),
+                model("image", "alice", "gpt-image-1", true),
+                model("disabled", "alice", "gpt-image-2", false),
+                model("other", "bob", "gpt-image-3", true),
             ],
         )
         .unwrap();
@@ -1882,6 +2541,10 @@ mod tests {
         assert!(!encoded.contains("must-never-cross"));
         assert!(!encoded.contains("api_key"));
         assert!(encoded.contains("hasApiKey"));
+        assert!(encoded.contains("supportsImageInput"));
+        assert!(encoded.contains("\"workload\":\"image\""));
+        assert_eq!(models[0].workload, MediaStudioModelWorkload::Image);
+        assert_eq!(models[1].workload, MediaStudioModelWorkload::Chat);
     }
 
     #[test]
@@ -2106,6 +2769,96 @@ mod tests {
             manager.protocol_body(&path).unwrap_err(),
             http::StatusCode::UNAUTHORIZED
         );
+    }
+
+    #[test]
+    fn media_preview_protocol_supports_bounded_video_ranges() {
+        let request = http::Request::builder()
+            .uri("/session/record/token")
+            .header(http::header::RANGE, "bytes=2-5")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&request, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()[http::header::CONTENT_TYPE], "video/mp4");
+        assert_eq!(response.headers()[http::header::CONTENT_LENGTH], "4");
+        assert_eq!(
+            response.headers()[http::header::CONTENT_RANGE],
+            "bytes 2-5/10"
+        );
+        assert_eq!(response.headers()[http::header::ACCEPT_RANGES], "bytes");
+        assert_eq!(response.body(), b"2345");
+
+        let suffix = http::Request::builder()
+            .uri("/session/record/token")
+            .header(http::header::RANGE, "bytes=6-")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&suffix, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.body(), b"6789");
+
+        let tail = http::Request::builder()
+            .uri("/session/record/token")
+            .header(http::header::RANGE, "bytes=-3")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&tail, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.body(), b"789");
+
+        let invalid = http::Request::builder()
+            .uri("/session/record/token")
+            .header(http::header::RANGE, "bytes=20-30")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&invalid, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            response.headers()[http::header::CONTENT_RANGE],
+            "bytes */10"
+        );
+
+        let multiple = http::Request::builder()
+            .uri("/session/record/token")
+            .header(http::header::RANGE, "bytes=0-1,8-9")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&multiple, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response.headers()[http::header::CONTENT_TYPE],
+            "multipart/byteranges; boundary=chatos-media-range"
+        );
+        let body = String::from_utf8(response.body().clone()).unwrap();
+        assert!(body.contains("Content-Range: bytes 0-1/10"));
+        assert!(body.contains("Content-Range: bytes 8-9/10"));
+        assert!(body.contains("01"));
+        assert!(body.contains("89"));
+
+        let head = http::Request::builder()
+            .method(http::Method::HEAD)
+            .uri("/session/record/token")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&head, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::OK);
+        assert_eq!(response.headers()[http::header::CONTENT_LENGTH], "10");
+        assert!(response.body().is_empty());
+
+        let options = http::Request::builder()
+            .method(http::Method::OPTIONS)
+            .uri("/session/record/token")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&options, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::NO_CONTENT);
+        assert_eq!(response.headers()["Access-Control-Allow-Origin"], "*");
+        assert_eq!(
+            response.headers()["Access-Control-Allow-Headers"],
+            "Range, Content-Type"
+        );
+        assert!(response.body().is_empty());
     }
 
     #[test]

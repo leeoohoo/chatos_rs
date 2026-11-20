@@ -66,7 +66,7 @@ export const conversationHistoryPageSchema = z.object({
   turns: z.array(turnSchema),
   messages: z.array(messageSchema),
   attachments: z.array(attachmentSchema),
-  next_before_ordinal: z.number().int().positive().nullable(),
+  next_before_cursor: z.string().min(1).nullable(),
 });
 
 export const conversationHistoryResponseSchema = successEnvelope(
@@ -94,6 +94,11 @@ const taskSchema = z.object({
   created_at_unix_ms: z.number().int().nonnegative(),
   updated_at_unix_ms: z.number().int().nonnegative(),
 });
+
+export const taskDisplayStatusSchema = z.enum([
+  "pending", "ready", "queued", "running", "succeeded", "failed", "cancelled", "blocked",
+  "reviewing_followup", "waiting_confirmation",
+]);
 
 export const messageTaskGraphSchema = z.object({
       root_task_ids: z.array(z.string().min(1)),

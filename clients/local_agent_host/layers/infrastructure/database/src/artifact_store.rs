@@ -424,23 +424,34 @@ fn prepare_staged_artifact_sync(
     write: &LocalAgentArtifactWrite,
 ) -> Result<PathBuf, ClientStorageError> {
     let staged_path = safe_staging_path(staging_root, &write.staging_token)?;
-    let path_metadata =
-        std::fs::symlink_metadata(&staged_path).map_err(ClientStorageError::database)?;
+    let path_metadata = std::fs::symlink_metadata(&staged_path).map_err(|error| {
+        ClientStorageError::database(format!(
+            "stat staged artifact {} failed: {error}",
+            staged_path.display()
+        ))
+    })?;
     if !path_metadata.file_type().is_file() || path_metadata.file_type().is_symlink() {
         return Err(invalid_staged_artifact());
     }
 
     let mut options = OpenOptions::new();
-    options.read(true);
+    // Windows requires a writable handle for `sync_all`/FlushFileBuffers even
+    // when the file contents are only being verified and never mutated.
+    options.read(true).write(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
     }
-    let mut file = options
-        .open(&staged_path)
-        .map_err(ClientStorageError::database)?;
-    let initial = file.metadata().map_err(ClientStorageError::database)?;
+    let mut file = options.open(&staged_path).map_err(|error| {
+        ClientStorageError::database(format!(
+            "open staged artifact {} failed: {error}",
+            staged_path.display()
+        ))
+    })?;
+    let initial = file.metadata().map_err(|error| {
+        ClientStorageError::database(format!("stat staged artifact failed: {error}"))
+    })?;
     if !initial.is_file()
         || initial.len() != write.artifact.size
         || !same_file_identity(&path_metadata, &initial)
@@ -480,19 +491,36 @@ fn prepare_staged_artifact_sync(
     if digest != write.artifact.sha256 {
         return Err(invalid_staged_artifact());
     }
-    let final_metadata = file.metadata().map_err(ClientStorageError::database)?;
-    let final_path_metadata =
-        std::fs::symlink_metadata(&staged_path).map_err(ClientStorageError::database)?;
+    let final_metadata = file.metadata().map_err(|error| {
+        ClientStorageError::database(format!("restat staged artifact failed: {error}"))
+    })?;
+    let final_path_metadata = std::fs::symlink_metadata(&staged_path).map_err(|error| {
+        ClientStorageError::database(format!(
+            "restat staged artifact path {} failed: {error}",
+            staged_path.display()
+        ))
+    })?;
     if !same_file_identity(&initial, &final_metadata)
         || !same_file_identity(&final_metadata, &final_path_metadata)
         || !has_single_link(&final_metadata)
     {
         return Err(invalid_staged_artifact());
     }
-    file.sync_all().map_err(ClientStorageError::database)?;
+    file.sync_all().map_err(|error| {
+        ClientStorageError::database(format!("sync staged artifact failed: {error}"))
+    })?;
+    // Windows does not allow renaming a file while its read handle is still
+    // open. Unix permits that pattern, so this must be explicit for parity.
+    drop(file);
 
     let prepared_path = artifact_root.join(format!(".{}.import", Uuid::new_v4()));
-    std::fs::rename(&staged_path, &prepared_path).map_err(ClientStorageError::database)?;
+    std::fs::rename(&staged_path, &prepared_path).map_err(|error| {
+        ClientStorageError::database(format!(
+            "rename staged artifact {} -> {} failed: {error}",
+            staged_path.display(),
+            prepared_path.display()
+        ))
+    })?;
     let moved_metadata =
         std::fs::symlink_metadata(&prepared_path).map_err(ClientStorageError::database)?;
     if !same_inode(&final_metadata, &moved_metadata) || !has_single_link(&moved_metadata) {

@@ -3,6 +3,14 @@ export const supportedWindowsRuntimes = Object.freeze({
   "win-arm64": { directory: "windows-arm64", machine: 0xaa64 },
 });
 
+export function assertMacPackagingHost(platform = process.platform) {
+  if (platform !== "darwin") {
+    throw new Error(
+      `ChatOS Computer Use packaging requires a macOS host for the Swift app, lipo, and PlistBuddy toolchain; received ${platform}. Windows worker builds and smoke tests remain available through npm run build:windows and npm run smoke:windows.`,
+    );
+  }
+}
+
 export function windowsPlatformFromPortableExecutable(bytes) {
   if (!Buffer.isBuffer(bytes) || bytes.length < 0x40) {
     throw new Error("Windows worker is not a bounded PE executable.");

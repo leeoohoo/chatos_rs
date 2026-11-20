@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   AgentTeamAsset,
+  AgentTeamAssetReview,
   AgentTeamAssetRevision,
   SaveAgentTeamAssetInput,
 } from "../domain/agentManagement";
@@ -10,6 +11,7 @@ interface AgentTeamAssetState {
   ownerUserId: string | null;
   teamId: string | null;
   assets: AgentTeamAsset[];
+  reviews: AgentTeamAssetReview[];
   revisions: Record<string, AgentTeamAssetRevision[]>;
   isLoading: boolean;
   mutationAssetId: string | null;
@@ -29,6 +31,7 @@ export const useAgentTeamAssetStore = create<AgentTeamAssetState>((set, get) => 
   ownerUserId: null,
   teamId: null,
   assets: [],
+  reviews: [],
   revisions: {},
   isLoading: false,
   mutationAssetId: null,
@@ -50,6 +53,7 @@ export const useAgentTeamAssetStore = create<AgentTeamAssetState>((set, get) => 
         ownerUserId,
         teamId,
         assets: [],
+        reviews: [],
         revisions: {},
         isLoading: false,
         mutationAssetId: null,
@@ -68,15 +72,26 @@ export const useAgentTeamAssetStore = create<AgentTeamAssetState>((set, get) => 
     const ownerUserId = current.ownerUserId;
     const teamId = current.teamId;
     const requestId = current.sequence + 1;
-    set({ sequence: requestId, requestId, isLoading: current.assets.length === 0, error: null });
+    set({
+      sequence: requestId,
+      requestId,
+      isLoading: current.assets.length === 0 && current.reviews.length === 0,
+      error: null,
+    });
     try {
-      const assets = await port.listTeamAssets(ownerUserId, teamId);
+      const [assets, reviews] = await Promise.all([
+        port.listTeamAssets(ownerUserId, teamId),
+        port.listTeamAssetReviews?.(ownerUserId, teamId) ?? Promise.resolve([]),
+      ]);
       const state = get();
       if (state.ownerUserId !== ownerUserId || state.teamId !== teamId || state.requestId !== requestId) return;
       if (assets.some((asset) => asset.teamId !== teamId || asset.status !== "active")) {
         throw new Error("团队共享资产身份不一致，请刷新后重试。");
       }
-      set({ assets, isLoading: false, requestId: 0 });
+      if (reviews.some((review) => review.teamId !== teamId || review.status !== "pending")) {
+        throw new Error("团队共享资产审核身份不一致，请刷新后重试。");
+      }
+      set({ assets, reviews, isLoading: false, requestId: 0 });
     } catch (failure) {
       const state = get();
       if (state.ownerUserId !== ownerUserId || state.teamId !== teamId || state.requestId !== requestId) return;
@@ -184,6 +199,7 @@ export const useAgentTeamAssetStore = create<AgentTeamAssetState>((set, get) => 
       ownerUserId: null,
       teamId: null,
       assets: [],
+      reviews: [],
       revisions: {},
       isLoading: false,
       mutationAssetId: null,

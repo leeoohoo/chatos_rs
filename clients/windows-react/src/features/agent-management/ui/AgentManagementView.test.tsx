@@ -15,11 +15,17 @@ import {
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
 import type { ConversationAttachmentPort } from "../../conversation-attachments/ports/ConversationAttachmentPort";
-import { AgentManagementView } from "./AgentManagementView";
+import {
+  AgentManagementView,
+  isCancellableTeamRunDetailStatus,
+  shouldPollTeamRunDetail,
+  TeamSystemMessage,
+  teamRunDetailStatusLabel,
+} from "./AgentManagementView";
 
 vi.mock("../../conversation-history/ui/ConversationHistoryView", () => ({
-  ConversationHistoryView: ({ agentBound }: { agentBound?: boolean }) => (
-    <div data-testid="agent-conversation-history" data-agent-bound={String(agentBound)} />
+  ConversationHistoryView: ({ agentBound, assistantName }: { agentBound?: boolean; assistantName: string }) => (
+    <div data-testid="agent-conversation-history" data-agent-bound={String(agentBound)} data-assistant-name={assistantName} />
   ),
 }));
 
@@ -32,6 +38,37 @@ describe("AgentManagementView", () => {
   beforeEach(() => useAgentTeamTodoStore.getState().reset());
   afterEach(cleanup);
 
+  it("prioritizes follow-up gates in the team Run detail status", () => {
+    expect(teamRunDetailStatusLabel("reviewing_followup", "running")).toBe("审查追加要求");
+    expect(teamRunDetailStatusLabel("waiting_confirmation", "failed")).toBe("等待确认");
+    expect(teamRunDetailStatusLabel("succeeded", "succeeded")).toBe("已完成");
+  });
+
+  it("keeps team Run detail polling through review gates", () => {
+    expect(shouldPollTeamRunDetail("reviewing_followup")).toBe(true);
+    expect(shouldPollTeamRunDetail(" waiting_confirmation ")).toBe(true);
+    expect(shouldPollTeamRunDetail("succeeded")).toBe(false);
+  });
+
+  it("offers cancellation for every non-terminal Host Run state", () => {
+    expect(isCancellableTeamRunDetailStatus("waiting_tool_result")).toBe(true);
+    expect(isCancellableTeamRunDetailStatus("needs_review")).toBe(true);
+    expect(isCancellableTeamRunDetailStatus("cancelled")).toBe(false);
+    expect(isCancellableTeamRunDetailStatus("succeeded")).toBe(false);
+  });
+
+  it("renders multiline system work contracts as bounded Markdown", () => {
+    const { container } = render(
+      <TeamSystemMessage content={"独立 Todo 工作契约\n\n# 验证共享资产\n\n## 范围\n\n- 只做真实回归"} />,
+    );
+
+    expect(screen.getByRole("heading", { name: "验证共享资产", level: 1 })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "范围", level: 2 })).toBeVisible();
+    expect(screen.getByText("只做真实回归")).toBeVisible();
+    expect(container.querySelector(".agent-team-message--system")).toHaveClass("is-rich");
+    expect(screen.queryByText("# 验证共享资产")).not.toBeInTheDocument();
+  });
+
   it("renders macOS profile card facts and enables profile editing", async () => {
     renderView();
     expect(await screen.findByText("界面设计师")).toBeVisible();
@@ -39,7 +76,7 @@ describe("AgentManagementView", () => {
     expect(await screen.findByText("主要模型")).toBeVisible();
     expect(screen.getByText("每 15 分钟")).toBeVisible();
     expect(screen.getByText("项目与团队")).toBeVisible();
-    expect(screen.getByRole("button", { name: /创建 Agent/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "＋ 创建 Agent" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "编辑" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "私聊" })).toBeDisabled();
   });
@@ -56,10 +93,57 @@ describe("AgentManagementView", () => {
     expect(image?.src).toBe(avatarProfile.avatarPreviewUrl);
   });
 
+  it("loads, previews, and saves Local Agent Host documents", async () => {
+    const artifact = {
+      artifactId: "artifact-1",
+      name: "交付说明.md",
+      mimeType: "text/markdown",
+      size: 12,
+      sha256: "a".repeat(64),
+      status: "stored" as const,
+      createdAtUnixMs: Date.UTC(2026, 9, 25, 1, 2),
+      updatedAtUnixMs: Date.UTC(2026, 9, 25, 1, 2),
+    };
+    const port = stubPort({
+      listArtifacts: vi.fn(async () => ({ artifacts: [artifact], nextCursor: null })),
+      previewArtifact: vi.fn(async () => ({ artifactId: artifact.artifactId, markdown: "# 交付说明\n\n- 已完成" })),
+      saveArtifact: vi.fn(async () => true),
+    });
+    renderView(port);
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: /本地 Agent 文档/ }));
+    expect(await screen.findByText("交付说明.md")).toBeVisible();
+    expect(port.listArtifacts).toHaveBeenCalledWith("owner-1", 50, null);
+
+    fireEvent.click(screen.getByRole("button", { name: "◎ 预览" }));
+    expect(await screen.findByRole("dialog", { name: "交付说明.md 文档预览" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "交付说明" })).toBeVisible();
+    expect(port.previewArtifact).toHaveBeenCalledWith(
+      "owner-1", artifact.artifactId, artifact.size, artifact.sha256,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "关闭文档预览" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "另存为 交付说明.md" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("“交付说明.md”已保存。");
+    expect(port.saveArtifact).toHaveBeenCalledWith(
+      "owner-1", artifact.artifactId, artifact.name, artifact.size, artifact.sha256,
+    );
+  });
+
+  it("refreshes the real Agent document list and keeps the macOS empty state", async () => {
+    const listArtifacts = vi.fn(async () => ({ artifacts: [], nextCursor: null }));
+    renderView(stubPort({ listArtifacts }));
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: /本地 Agent 文档/ }));
+    expect(await screen.findByText("还没有本地 Agent 文档")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "刷新本地 Agent 文档" }));
+    await waitFor(() => expect(listArtifacts).toHaveBeenCalledTimes(2));
+  });
+
   it("opens creation with macOS defaults", async () => {
     renderView();
     await screen.findByText("界面设计师");
-    fireEvent.click(screen.getAllByRole("button", { name: /创建 Agent/ })[0]!);
+    fireEvent.click(screen.getByRole("button", { name: "＋ 创建 Agent" }));
     expect(await screen.findByRole("dialog", { name: "创建 Agent" })).toBeVisible();
     expect(screen.getByLabelText("角色 Prompt")).toHaveValue("默认角色 Prompt");
     expect(screen.getByLabelText("模型")).toHaveValue("model-1");
@@ -82,7 +166,7 @@ describe("AgentManagementView", () => {
     const port = stubPort({ listProfiles: vi.fn(async () => []) });
     renderView(port);
     await screen.findByText("还没有 Agent");
-    fireEvent.click(screen.getAllByRole("button", { name: /创建 Agent/ })[1]!);
+    fireEvent.click(screen.getByRole("button", { name: /^创建 Agent$/ }));
     await screen.findByRole("dialog", { name: "创建 Agent" });
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "  新 Agent  " } });
     fireEvent.change(screen.getByLabelText("说明"), { target: { value: "  处理需求  " } });
@@ -164,18 +248,10 @@ describe("AgentManagementView", () => {
     expect(screen.getByRole("dialog", { name: "编辑 Agent" })).toBeVisible();
   });
 
-  it("refreshes the native profile truth", async () => {
-    const port = stubPort();
-    renderView(port);
-    await screen.findByText("界面设计师");
-    fireEvent.click(screen.getByRole("button", { name: "刷新 Agent" }));
-    await waitFor(() => expect(port.listProfiles).toHaveBeenCalledTimes(2));
-  });
-
   it("shows a truthful empty state", async () => {
     renderView(stubPort({ listProfiles: vi.fn(async () => []) }));
     expect(await screen.findByText("还没有 Agent")).toBeVisible();
-    expect(screen.getByText(/创建一个 Agent/)).toBeVisible();
+    expect(screen.getByText(/创建后可以直接私聊/)).toBeVisible();
   });
 
   it("creates one project-bound Agent team with the macOS default name", async () => {
@@ -202,9 +278,7 @@ describe("AgentManagementView", () => {
       />,
     );
     await screen.findByText("界面设计师");
-    fireEvent.click(screen.getByRole("button", { name: "团队" }));
-    expect(await screen.findByText("还没有项目团队")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "＋ 创建团队" }));
+    fireEvent.click(screen.getByRole("button", { name: "创建 Agent 团队" }));
     expect(await screen.findByRole("dialog", { name: "创建 Agent 团队" })).toBeVisible();
     expect(screen.getByLabelText("绑定项目")).toHaveValue("project-1");
     fireEvent.click(screen.getByRole("button", { name: "创建团队" }));
@@ -215,7 +289,8 @@ describe("AgentManagementView", () => {
       goal: "",
     }));
     expect(await screen.findByText("Alpha Agent 团队")).toBeVisible();
-    expect(screen.getByText("0 位 Agent")).toBeVisible();
+    const memberRail = await screen.findByRole("region", { name: "Agent 团队成员" });
+    expect(within(memberRail).getByText("0")).toBeVisible();
   });
 
   it("loads team members and invites an existing account Agent", async () => {
@@ -257,9 +332,8 @@ describe("AgentManagementView", () => {
       />,
     );
     await screen.findByText("界面设计师");
-    fireEvent.click(screen.getByRole("button", { name: "团队" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
     await screen.findByText("Alpha Agent 团队");
-    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
     await waitFor(() => expect(port.loadTeam).toHaveBeenCalledWith("owner-1", team.id));
     expect(await screen.findByRole("region", { name: "Agent 团队成员" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "邀请 Agent" }));
@@ -271,7 +345,7 @@ describe("AgentManagementView", () => {
       "owner-1", team.id, "agent-2",
     ));
     expect(await screen.findByText(/负责后端服务/)).toBeVisible();
-    expect(screen.getByText("2 位 Agent")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Agent 团队成员" })).getByText("2")).toBeVisible();
   });
 
   it("edits team-scoped duties and assigns a qualified project manager", async () => {
@@ -316,8 +390,7 @@ describe("AgentManagementView", () => {
       />,
     );
     await screen.findByRole("heading", { name: "项目经理", level: 3 });
-    fireEvent.click(screen.getByRole("button", { name: "团队" }));
-    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
     fireEvent.click(await screen.findByRole("button", { name: "管理" }));
     expect(await screen.findByRole("dialog", { name: "管理团队成员" })).toBeVisible();
     fireEvent.change(screen.getByLabelText("当前项目角色"), { target: { value: " 项目统筹 " } });
@@ -396,7 +469,7 @@ describe("AgentManagementView", () => {
       queueTeamMessage,
       dispatchNextTeamDelivery,
       loadTeamMemberActivity: vi.fn(async () => ({
-        roomId: team.id, agentId: "agent-1", conversationId: `agent-team-${team.id}-agent-1`,
+        roomId: team.id, agentId: "agent-1", conversationId: `agent-team-v2-${team.id}-agent-1`,
         conversationVersion: 1, hasActiveDelivery: false, items: [],
       })),
     });
@@ -421,8 +494,7 @@ describe("AgentManagementView", () => {
       />,
     );
     await screen.findByText("界面设计师");
-    fireEvent.click(screen.getByRole("button", { name: "团队" }));
-    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
     fireEvent.click(await screen.findByRole("button", { name: "聊天" }));
     expect(await screen.findByRole("region", { name: "Agent 团队聊天" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "添加团队附件" }));
@@ -437,6 +509,107 @@ describe("AgentManagementView", () => {
     expect(await screen.findByText("界面设计师 · 正在执行")).toBeVisible();
     expect(screen.getByText("1.0 KB")).toBeVisible();
     expect(screen.getByLabelText("团队消息")).toHaveValue("");
+  });
+
+  it("renders the persisted project dashboard with milestones, brief, and Human issues", async () => {
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",
+      name: "Alpha Agent 团队", goal: "交付 Alpha", defaultAgentId: "agent-1",
+      projectManagerAgentId: "agent-1", memberCount: 1, createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    };
+    const detail = {
+      team,
+      members: [{ agentId: "agent-1", role: "项目经理", responsibility: "负责交付", joinedAtUnixMs: 20 }],
+    };
+    const loadTeamDashboard = vi.fn(async () => ({
+      dashboard: {
+        teamId: team.id, phase: "实现与联调", health: "at_risk" as const,
+        summary: "核心链路已完成，等待产品方向确认。", nextSteps: ["确认发布范围", "完成回归"],
+        milestones: [{
+          id: "milestone-1", title: "Windows 首版", detail: "完成原生打包",
+          status: "in_progress" as const, progressPercent: 72, acceptanceCriteria: ["安装包可运行"],
+          linkedTodoIds: [], targetAtUnixMs: null,
+        }],
+        issues: [{
+          id: "issue-1", title: "确认发布范围", detail: "需要产品决策",
+          requestedAction: "请确认是否包含自动更新", severity: "warning" as const,
+          owner: "human" as const, relatedTodoId: null,
+        }],
+        revision: 3, updatedByAgentId: "agent-1", updatedAtUnixMs: 40,
+      },
+      pendingApprovalCount: 1,
+    }));
+    const port = stubPort({
+      listProfiles: vi.fn(async () => [{ ...profile(), name: "项目经理", professionKey: "project_manager" as const }]),
+      listTeams: vi.fn(async () => [team]), loadTeam: vi.fn(async () => detail), loadTeamDashboard,
+      listTeamTodos: vi.fn(async () => []),
+      loadTeamRuns: vi.fn(async () => ({
+        teamId: team.id, messageCount: 0, pendingDeliveryCount: 0, runningDeliveryCount: 0,
+        completedDeliveryCount: 0, failedDeliveryCount: 0, cancelledDeliveryCount: 0, runs: [],
+      })),
+    });
+    renderView(port);
+    await screen.findByRole("heading", { name: "项目经理", level: 3 });
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
+    const overview = await screen.findByRole("region", { name: "Agent 团队总览" });
+    expect(await within(overview).findByText("实现与联调")).toBeVisible();
+    expect(within(overview).getByText("有风险")).toBeVisible();
+    expect(within(overview).getAllByText("Windows 首版")[0]).toBeVisible();
+    expect(within(overview).getByText("核心链路已完成，等待产品方向确认。")).toBeVisible();
+    expect(within(overview).getByText("1. 确认发布范围")).toBeVisible();
+    expect(within(overview).getByText("请确认是否包含自动更新")).toBeVisible();
+    expect(loadTeamDashboard).toHaveBeenCalledWith("owner-1", team.id);
+  });
+
+  it("collapses manager briefs longer than the macOS threshold and keeps next steps inside the disclosure", async () => {
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",
+      name: "Alpha Agent 团队", goal: "交付 Alpha", defaultAgentId: "agent-1",
+      projectManagerAgentId: "agent-1", memberCount: 1, createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    };
+    const detail = {
+      team,
+      members: [{ agentId: "agent-1", role: "项目经理", responsibility: "负责交付", joinedAtUnixMs: 20 }],
+    };
+    const longSummary = "历史技术记录".repeat(161);
+    const port = stubPort({
+      listProfiles: vi.fn(async () => [{ ...profile(), name: "项目经理", professionKey: "project_manager" as const }]),
+      listTeams: vi.fn(async () => [team]),
+      loadTeam: vi.fn(async () => detail),
+      loadTeamDashboard: vi.fn(async () => ({
+        dashboard: {
+          teamId: team.id, phase: "实现与联调", health: "on_track" as const,
+          summary: longSummary, nextSteps: ["完成真实回归"], milestones: [], issues: [],
+          revision: 4, updatedByAgentId: "agent-1", updatedAtUnixMs: 40,
+        },
+        pendingApprovalCount: 0,
+      })),
+      listTeamTodos: vi.fn(async () => []),
+      loadTeamRuns: vi.fn(async () => ({
+        teamId: team.id, messageCount: 0, pendingDeliveryCount: 0, runningDeliveryCount: 0,
+        completedDeliveryCount: 0, failedDeliveryCount: 0, cancelledDeliveryCount: 0, runs: [],
+      })),
+    });
+    renderView(port);
+    await screen.findByRole("heading", { name: "项目经理", level: 3 });
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
+    const overview = await screen.findByRole("region", { name: "Agent 团队总览" });
+
+    expect(await within(overview).findByText("历史简报包含较多技术记录，已默认收起。最新状态请看当前阶段、里程碑和执行情况。")).toBeVisible();
+    const expand = within(overview).getByRole("button", { name: "查看历史完整记录" });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    expect(within(overview).queryByText(longSummary)).not.toBeInTheDocument();
+    expect(within(overview).queryByText("1. 完成真实回归")).not.toBeInTheDocument();
+
+    fireEvent.click(expand);
+    expect(within(overview).getByText(longSummary)).toBeVisible();
+    expect(within(overview).getByText("1. 完成真实回归")).toBeVisible();
+    const collapse = within(overview).getByRole("button", { name: "收起历史完整记录" });
+    expect(collapse).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(collapse);
+    expect(within(overview).queryByText(longSummary)).not.toBeInTheDocument();
+    expect(within(overview).getByRole("button", { name: "查看历史完整记录" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("shows native team Run history and filters it by Agent", async () => {
@@ -478,6 +651,10 @@ describe("AgentManagementView", () => {
         cursor: 1, eventId: "event-1", eventType: "run_completed",
         summary: "Run 已完成", status: "succeeded", createdAtUnixMs: 40,
       }],
+      toolCalls: [{
+        callId: "call-1", toolName: "capability_invoke", displayName: "调用 Plugin 工具",
+        route: "plugin", status: "succeeded", resultSizeBytes: 128,
+      }],
       eventsHasMore: false,
       nextOffset: 1,
     }));
@@ -494,27 +671,126 @@ describe("AgentManagementView", () => {
       />,
     );
     await screen.findByText("界面设计师");
-    fireEvent.click(screen.getByRole("button", { name: "团队" }));
-    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
     fireEvent.click(await screen.findByRole("button", { name: "总览" }));
     const overview = await screen.findByRole("region", { name: "Agent 团队总览" });
     expect(overview).toBeVisible();
-    expect(within(overview).getByText("团队目标")).toBeVisible();
-    expect(within(overview).getByText("交付 Alpha")).toBeVisible();
-    expect(within(overview).getByRole("button", { name: /1\s*团队消息/ })).toBeVisible();
+    expect(within(overview).getByText("当前阶段")).toBeVisible();
+    expect(within(overview).getAllByText("交付 Alpha")[0]).toBeVisible();
+    expect(within(overview).getByText("项目经理简报")).toBeVisible();
     fireEvent.click(await screen.findByRole("button", { name: "运行" }));
 
     await waitFor(() => expect(loadTeamRuns).toHaveBeenCalledWith("owner-1", team.id));
     expect(await screen.findByRole("region", { name: "Agent 团队运行" })).toBeVisible();
-    expect(screen.getByText("默认 Agent · Run run-team-1")).toBeVisible();
+    expect(screen.getByText("团队全部运行")).toBeVisible();
+    expect(await screen.findByText("默认 Agent · 1 条事件 · 2 次模型调用")).toBeVisible();
     expect(screen.getByText("已完成")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "界面设计师" }));
-    expect(screen.getByText("Run run-team-1", { exact: false })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看界面设计师的运行状态" }));
+    expect(screen.getByText("界面设计师 的运行")).toBeVisible();
+    expect(screen.getByText("通讯与任务执行彼此独立，可同时运行")).toBeVisible();
+    expect(screen.getByRole("button", { name: "查看全部" })).toBeVisible();
+    const runDetailTrigger = screen.getByRole("button", {
+      name: "查看界面设计师的通讯运行详情，已完成，默认 Agent，Run run-team-1",
+    });
+    fireEvent.click(runDetailTrigger);
     expect(await screen.findByRole("dialog", { name: "团队 Run 检查器" })).toBeVisible();
+    const closeRunDetail = screen.getByRole("button", { name: "完成" });
+    await waitFor(() => expect(closeRunDetail).toHaveFocus());
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(closeRunDetail).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(closeRunDetail).toHaveFocus();
     await waitFor(() => expect(loadRun).toHaveBeenCalledWith("owner-1", "run-team-1", 0));
     expect(await screen.findByText("Run 已完成")).toBeVisible();
     expect(screen.getByText("已完成团队回复")).toBeVisible();
+    expect(screen.getByText("工具调用")).toBeVisible();
+    expect(screen.getByText("调用 Plugin 工具")).toBeVisible();
+    expect(screen.getByText("路由 · plugin")).toBeVisible();
+    expect(screen.getByText("succeeded · 结果 128 B")).toBeVisible();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "团队 Run 检查器" })).toBeNull();
+    await waitFor(() => expect(runDetailTrigger).toHaveFocus());
+  });
+
+  it("confirms and cancels an active manager Run through the owner-scoped port", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",
+      name: "Alpha Agent 团队", goal: "交付 Alpha", defaultAgentId: "agent-1",
+      projectManagerAgentId: null, memberCount: 1, createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    };
+    const detail = {
+      team,
+      members: [{ agentId: "agent-1", role: "界面设计师", responsibility: "负责产品界面", joinedAtUnixMs: 20 }],
+    };
+    const activeRun = {
+      deliveryId: "delivery-active", messageId: "message-active", agentId: "agent-1",
+      lane: "manager" as const, triggerKind: "default_agent" as const,
+      deliveryStatus: "running" as const, runStatus: "running" as const,
+      turnId: "turn-active", runId: "run-active", responseMessageId: null, lastError: null,
+      createdAtUnixMs: 30, updatedAtUnixMs: 40,
+    };
+    const loadTeamRuns = vi.fn(async () => ({
+      teamId: team.id, messageCount: 1, pendingDeliveryCount: 0, runningDeliveryCount: 1,
+      completedDeliveryCount: 0, failedDeliveryCount: 0, cancelledDeliveryCount: 0,
+      runs: [activeRun],
+    }));
+    let cancelled = false;
+    const cancelTeamRun = vi.fn(async () => { cancelled = true; });
+    const port = stubPort({
+      listTeams: vi.fn(async () => [team]), loadTeam: vi.fn(async () => detail),
+      loadTeamRuns, cancelTeamRun,
+    });
+    const loadRun = vi.fn(async () => cancelled ? ({
+      run: {
+        runId: "run-active", taskId: "task-1", status: "cancelled", iteration: 1,
+        maxIterations: 32, resultSummary: null, reportContent: null,
+        errorMessage: "用户已结束这个未完成的 Agent Run。",
+        createdAtUnixMs: 30, updatedAtUnixMs: 50, finishedAtUnixMs: 50,
+      },
+      events: [], toolCalls: [], eventsHasMore: false, nextOffset: 0,
+    }) : ({
+        run: {
+          runId: "run-active", taskId: "task-1", status: "waiting_tool_result", iteration: 1,
+          maxIterations: 32, resultSummary: null, reportContent: null, errorMessage: null,
+          createdAtUnixMs: 30, updatedAtUnixMs: 40, finishedAtUnixMs: null,
+        },
+        events: [], toolCalls: [], eventsHasMore: false, nextOffset: 0,
+      }));
+    const runInspectorPort: RunInspectorPort = {
+      loadGraph: vi.fn(), loadTask: vi.fn(), loadRun,
+      retryTask: vi.fn(), cancelTask: vi.fn(), restartTask: vi.fn(),
+    };
+    render(
+      <AgentManagementView
+        ownerUserId="owner-1"
+        port={port}
+        projects={[{ id: "project-1", title: "Alpha" }]}
+        runInspectorPort={runInspectorPort}
+      />,
+    );
+    await screen.findByText("界面设计师");
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
+    fireEvent.click(await screen.findByRole("button", { name: "运行" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看界面设计师的运行状态" }));
+    fireEvent.click(await screen.findByRole("button", {
+      name: "查看界面设计师的通讯运行详情，运行中，默认 Agent，Run run-active",
+    }));
+    const closeRunDetail = screen.getByRole("button", { name: "完成" });
+    const cancelRun = await screen.findByRole("button", { name: "结束运行" });
+    cancelRun.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(closeRunDetail).toHaveFocus();
+    closeRunDetail.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(cancelRun).toHaveFocus();
+    fireEvent.click(cancelRun);
+
+    expect(confirm).toHaveBeenCalledWith("结束这个未完成的 Agent Run？已完成的消息和审计记录会保留。");
+    await waitFor(() => expect(cancelTeamRun).toHaveBeenCalledWith("owner-1", team.id, "run-active"));
+    await waitFor(() => expect(loadRun.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "结束运行" })).toBeNull());
+    confirm.mockRestore();
   });
 
   it("shows the newest persisted Todo execution record before older history", async () => {
@@ -559,15 +835,77 @@ describe("AgentManagementView", () => {
     });
     renderView(port);
     await screen.findByText("界面设计师");
-    fireEvent.click(screen.getByRole("button", { name: "团队" }));
-    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
     fireEvent.click(await screen.findByRole("button", { name: "任务" }));
 
+    expect(await screen.findByRole("region", { name: "团队交付概览" })).toBeVisible();
+    expect(screen.getByText("项目文件交付")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "新建任务" })).not.toBeInTheDocument();
     expect(await screen.findByText("最新：已经完成数据接入")).toBeVisible();
     expect(listTeamTodoProgress).toHaveBeenCalledWith("owner-1", team.id, "todo-1", 100);
     expect(screen.queryByText("开始读取代码")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "查看全部 2 条" }));
     expect(await screen.findByText("开始读取代码")).toBeVisible();
+    expect(screen.getByText("任务授权")).toBeVisible();
+    expect(screen.getByText("独立执行环境")).toBeVisible();
+    expect(screen.getByText("Windows React")).toBeVisible();
+  });
+
+  it("opens the exact team Todo from a requirement-survey return route", async () => {
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",
+      name: "Alpha Agent 团队", goal: "交付 Alpha", defaultAgentId: "agent-1",
+      projectManagerAgentId: "agent-1", memberCount: 1, createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    };
+    const detail = {
+      team,
+      members: [{ agentId: "agent-1", role: "界面设计师", responsibility: "负责产品界面", joinedAtUnixMs: 20 }],
+    };
+    const todo = {
+      id: "todo-survey", agentId: "agent-1", agentName: "界面设计师", teamId: team.id,
+      sourceRoomId: team.id, sourceMessageId: "message-1", title: "完成团队需求调研", detail: "保存方案",
+      priority: 90, sortOrder: 0, status: "completed" as const, blockedReason: "", result: "方案已确认",
+      executionContract: {
+        objective: "完成团队需求调研", scope: "Windows React", expectedOutputs: ["需求方案"],
+        acceptanceCriteria: ["可返回原任务"], constraints: [],
+      },
+      executionPlan: {
+        requiresExecution: true,
+        builtinCapabilities: ["requirement_survey_read" as const, "requirement_survey_write" as const],
+        plugins: [], selectionRevision: "requirement-survey-v1", selectedAtUnixMs: 20,
+      },
+      dependencyIds: [], createdAtUnixMs: 20, updatedAtUnixMs: 40,
+    };
+    const onNavigationHandled = vi.fn();
+    const port = stubPort({
+      listTeams: vi.fn(async () => [team]),
+      loadTeam: vi.fn(async () => detail),
+      listTeamTodos: vi.fn(async () => [todo]),
+      listTeamTodoProgress: vi.fn(async () => []),
+      dispatchNextTeamDelivery: vi.fn(async () => null),
+      loadTeamRuns: vi.fn(async () => ({
+        teamId: team.id, messageCount: 0, pendingDeliveryCount: 0, runningDeliveryCount: 0,
+        completedDeliveryCount: 1, failedDeliveryCount: 0, cancelledDeliveryCount: 0, runs: [],
+      })),
+    });
+    render(
+      <AgentManagementView
+        navigationTarget={{ roomId: team.id, todoId: todo.id, requestId: 7 }}
+        onNavigationHandled={onNavigationHandled}
+        ownerUserId="owner-1"
+        port={port}
+        projects={[{ id: "project-1", title: "Alpha" }]}
+      />,
+    );
+
+    const workspace = await screen.findByRole("region", { name: "Agent 团队任务" });
+    expect(within(workspace).getAllByText("完成团队需求调研")[0]).toBeVisible();
+    expect(within(workspace).getByText("任务授权")).toBeVisible();
+    expect(within(workspace).getByText("需求调研读取")).toBeVisible();
+    expect(within(workspace).getByText("requirement_survey_write")).toBeVisible();
+    expect(onNavigationHandled).toHaveBeenCalledWith(7);
+    expect(port.loadTeam).toHaveBeenCalledWith("owner-1", team.id);
+    expect(port.listTeamTodos).toHaveBeenCalledWith("owner-1", team.id, true);
   });
 
   it("loads and edits revisioned team shared assets", async () => {
@@ -593,6 +931,16 @@ describe("AgentManagementView", () => {
       listTeams: vi.fn(async () => [team]),
       loadTeam: vi.fn(async () => detail),
       listTeamAssets: vi.fn(async () => [asset]),
+      listTeamAssetReviews: vi.fn(async () => [{
+        id: "asset-review-1", teamId: team.id, todoId: "todo-1", todoTitle: "完成架构验证",
+        sourceAgentId: "agent-1", sourceAgentName: "界面设计师",
+        suggestion: {
+          category: "architecture" as const, title: "事件驱动架构",
+          markdown: "采用事件驱动并保持幂等。", rationale: "集成测试已经验证。",
+        },
+        status: "pending" as const, resolvedAssetId: null, resolvedAssetRevision: null,
+        reviewedByAgentId: null, reviewReason: "", createdAtUnixMs: 31, updatedAtUnixMs: 31,
+      }]),
       saveTeamAsset,
       archiveTeamAsset: vi.fn(async () => ({ ...asset, revision: 2, status: "archived" as const })),
       listTeamAssetRevisions: vi.fn(async () => [{
@@ -608,12 +956,18 @@ describe("AgentManagementView", () => {
       />,
     );
     await screen.findByText("界面设计师");
-    fireEvent.click(screen.getByRole("button", { name: "团队" }));
-    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
     fireEvent.click(await screen.findByRole("button", { name: "共享资产" }));
     const workspace = await screen.findByRole("region", { name: "Agent 团队共享资产" });
+    expect(within(workspace).getByRole("region", { name: "待审核共享资产建议" })).toBeVisible();
+    expect(within(workspace).getByText("事件驱动架构")).toBeVisible();
+    expect(within(workspace).getByText("来源任务：完成架构验证 · 提交 Agent：界面设计师")).toBeVisible();
+    expect(within(workspace).getByText(/写入团队资产或给出事实理由明确拒绝/)).toBeVisible();
     expect(within(workspace).getAllByText("项目概览")[0]).toBeVisible();
-    fireEvent.click(within(workspace).getByRole("button", { name: "编辑" }));
+    expect(within(workspace).getByText("1–1 / 1")).toBeVisible();
+    fireEvent.click(within(workspace).getByRole("button", { name: "项目概览" }));
+    expect(within(workspace).getByRole("heading", { name: "Alpha", level: 1 })).toBeVisible();
+    fireEvent.click(within(workspace).getByRole("menuitem", { name: "编辑" }));
     const editor = await screen.findByRole("dialog", { name: "编辑共享资产" });
     fireEvent.change(within(editor).getByLabelText("标题"), { target: { value: "Alpha 项目概览" } });
     fireEvent.click(within(editor).getByRole("button", { name: "保存" }));
@@ -622,9 +976,13 @@ describe("AgentManagementView", () => {
       markdown: "# Alpha\n\n第一版", expectedRevision: 1,
     }));
     expect(await within(workspace).findByText("Alpha 项目概览")).toBeVisible();
+    fireEvent.click(within(workspace).getByRole("menuitem", { name: "版本历史" }));
+    const history = await screen.findByRole("dialog", { name: "共享资产版本历史" });
+    expect(within(history).getByText(/r1 · 你 ·/)).toBeVisible();
+    expect(within(history).getByRole("heading", { name: "Alpha", level: 1 })).toBeVisible();
   });
 
-  it("loads and submits Host-backed project requirement surveys", async () => {
+  it("routes migrated team surveys to the global requirement-survey workspace", async () => {
     const team = {
       id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",
       name: "Alpha Agent 团队", goal: "交付 Alpha", defaultAgentId: "agent-1",
@@ -634,43 +992,29 @@ describe("AgentManagementView", () => {
       team,
       members: [{ agentId: "agent-1", role: "界面设计师", responsibility: "负责产品界面", joinedAtUnixMs: 20 }],
     };
-    const survey = {
-      surveyId: "survey-1", projectId: team.projectId, sourceConversationId: "conversation-1",
-      sourceRunId: "run-1", sourceTaskId: null, title: "项目目标", description: "请补充交付目标",
-      questions: [{ questionId: "goal", prompt: "需要交付什么？", responseKind: "text" as const, required: true, options: [] }],
-      answers: null, status: "open" as const, version: 1, createdAtUnixMs: 30,
-      updatedAtUnixMs: 30, resolvedAtUnixMs: null,
-    };
-    const resolveProjectRequirementSurvey = vi.fn(async (_owner, _project, _survey, version, answers) => ({
-      ...survey, answers, status: "resolved" as const, version: version + 1,
-      updatedAtUnixMs: 40, resolvedAtUnixMs: 40,
-    }));
+    const listProjectRequirementSurveys = vi.fn();
+    const onOpenRequirementSurveys = vi.fn();
     const port = stubPort({
       listTeams: vi.fn(async () => [team]), loadTeam: vi.fn(async () => detail),
-      listProjectRequirementSurveys: vi.fn(async () => [survey]),
-      resolveProjectRequirementSurvey,
+      listProjectRequirementSurveys,
     });
     render(
       <AgentManagementView
+        onOpenRequirementSurveys={onOpenRequirementSurveys}
         ownerUserId="owner-1"
         port={port}
         projects={[{ id: "project-1", title: "Alpha" }]}
       />,
     );
     await screen.findByText("界面设计师");
-    fireEvent.click(screen.getByRole("button", { name: "团队" }));
-    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
     fireEvent.click(await screen.findByRole("button", { name: "需求调研" }));
     const workspace = await screen.findByRole("region", { name: "Agent 团队需求调研" });
-    fireEvent.click(await within(workspace).findByRole("button", { name: /项目目标/ }));
-    const sheet = await screen.findByRole("dialog", { name: "需求调研详情" });
-    fireEvent.change(within(sheet).getByLabelText("需要交付什么？"), { target: { value: "交付 Alpha" } });
-    fireEvent.click(within(sheet).getByRole("button", { name: "提交并继续" }));
-    await waitFor(() => expect(resolveProjectRequirementSurvey).toHaveBeenCalledWith(
-      "owner-1", "project-1", "survey-1", 1, { goal: "交付 Alpha" },
-    ));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "需求调研详情" })).not.toBeInTheDocument());
-    expect(within(workspace).getByText("已提交")).toBeVisible();
+    expect(within(workspace).getByText("需求调研已迁移")).toBeVisible();
+    expect(within(workspace).getByText("Task 调研现在由 Local Agent Host 保存并恢复原 Run，不再属于 Agent 群聊。")).toBeVisible();
+    fireEvent.click(within(workspace).getByRole("button", { name: "打开需求调研" }));
+    expect(onOpenRequirementSurveys).toHaveBeenCalledTimes(1);
+    expect(listProjectRequirementSurveys).not.toHaveBeenCalled();
   });
 
   it("selects an Agent and loads its existing private-chat activity without opening a conversation", async () => {
@@ -702,7 +1046,7 @@ describe("AgentManagementView", () => {
     });
     renderView(port);
     await screen.findByText("界面设计师");
-    fireEvent.click(screen.getByRole("button", { name: "运行动态" }));
+    fireEvent.click(screen.getByText("界面设计师").closest("article")!);
 
     expect(await screen.findByText("正在运行")).toBeVisible();
     expect(screen.getByText("Run 正在执行")).toBeVisible();
@@ -723,10 +1067,11 @@ describe("AgentManagementView", () => {
     renderView(port);
     await screen.findByText("后端工程师");
 
-    const activityButtons = screen.getAllByRole("button", { name: "运行动态" });
-    fireEvent.click(activityButtons[0]!);
+    const firstCard = screen.getByText("界面设计师").closest("article")!;
+    const secondCard = screen.getByText("后端工程师").closest("article")!;
+    fireEvent.click(firstCard);
     await waitFor(() => expect(loadProfileActivity).toHaveBeenCalledWith("owner-1", "agent-1"));
-    fireEvent.click(activityButtons[1]!);
+    fireEvent.click(secondCard);
     await waitFor(() => expect(loadProfileActivity).toHaveBeenCalledWith("owner-1", "agent-2"));
     second.resolve({
       agentId: "agent-2",
@@ -752,7 +1097,7 @@ describe("AgentManagementView", () => {
     const prepareConversation = vi.fn(async () => ({
       roomId,
       agentId: "agent-1",
-      conversationId: `agent-direct-${roomId}`,
+      conversationId: `agent-direct-v2-${roomId}`,
       title: "界面设计师",
       createdAtUnixMs: 10,
       updatedAtUnixMs: 20,
@@ -763,7 +1108,7 @@ describe("AgentManagementView", () => {
       loadConversationActivity: vi.fn(async () => ({
         roomId,
         agentId: "agent-1",
-        conversationId: `agent-direct-${roomId}`,
+        conversationId: `agent-direct-v2-${roomId}`,
         conversationVersion: 2,
         hasActiveDelivery: false,
         items: [{
@@ -801,6 +1146,7 @@ describe("AgentManagementView", () => {
     await waitFor(() => expect(prepareConversation).toHaveBeenCalledWith("owner-1", "agent-1"));
     expect(await screen.findByLabelText("界面设计师 Agent 私聊")).toBeVisible();
     expect(screen.getByTestId("agent-conversation-history")).toHaveAttribute("data-agent-bound", "true");
+    expect(screen.getByTestId("agent-conversation-history")).toHaveAttribute("data-assistant-name", "界面设计师");
     expect(screen.getByRole("button", { name: "返回 Agent 管理" })).toBeEnabled();
     expect(await screen.findByText("最近 1 次运行")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "查看动态" }));
@@ -839,11 +1185,11 @@ describe("AgentManagementView", () => {
     }));
     const port = stubPort({
       prepareConversation: vi.fn(async () => ({
-        roomId, agentId: "agent-1", conversationId: `agent-direct-${roomId}`,
+        roomId, agentId: "agent-1", conversationId: `agent-direct-v2-${roomId}`,
         title: "界面设计师", createdAtUnixMs: 10, updatedAtUnixMs: 20,
       })),
       loadConversationActivity: vi.fn(async () => ({
-        roomId, agentId: "agent-1", conversationId: `agent-direct-${roomId}`,
+        roomId, agentId: "agent-1", conversationId: `agent-direct-v2-${roomId}`,
         conversationVersion: 1, hasActiveDelivery: false, items: [],
       })),
       listStaffingProposals: vi.fn(async () => [proposal]),

@@ -4,7 +4,12 @@ export const pluginPermissionSchema = z.object({
   id: z.string().min(1),
   required: z.boolean(),
   reason: z.string().nullable(),
-  status: z.literal("declared_not_checked"),
+  status: z.enum(["declared_not_checked", "granted", "needs_attention", "unavailable", "disabled"]),
+});
+
+export const pluginCredentialSchema = z.object({
+  name: z.string().min(1).max(128).regex(/^[A-Za-z0-9._-]+$/),
+  configured: z.boolean(),
 });
 
 export const managedPluginSchema = z.object({
@@ -22,13 +27,19 @@ export const managedPluginSchema = z.object({
   enabled: z.boolean(),
   hasUi: z.boolean(),
   source: z.enum(["marketplace", "local"]),
-  runtimeStatus: z.enum(["not_installed", "not_checked", "disabled"]),
+  runtimeStatus: z.enum(["not_installed", "not_checked", "ready", "unavailable", "disabled"]),
+  runtimeToolCount: z.number().int().nonnegative().nullable(),
+  runtimeLastCheckedAt: z.string().datetime().nullable(),
+  runtimeError: z.string().nullable(),
   mcpServerCount: z.number().int().nonnegative(),
+  hookCount: z.number().int().nonnegative(),
+  hookRuntimeStatus: z.enum(["ready", "runner_unavailable"]).nullable(),
   skills: z.array(z.string().min(1)).max(128),
   permissions: z.array(pluginPermissionSchema).max(128),
   installationIssue: z.enum(["metadata_invalid", "integrity_check_failed"]).nullable(),
   windowsCompatible: z.boolean(),
   installActionAvailable: z.boolean(),
+  credentials: z.array(pluginCredentialSchema).max(256),
 });
 
 export const pluginSettingsSnapshotSchema = z.object({
@@ -41,8 +52,33 @@ export const pluginSettingsSnapshotSchema = z.object({
   manualInstallAvailable: z.boolean(),
 });
 
+export const manualPluginDirectorySelectionSchema = z.object({
+  selectionId: z.string().min(1),
+  directoryName: z.string().min(1),
+});
+
+export const manualPluginComponentSchema = z.object({
+  kind: z.enum(["mcp", "skill", "hook"]),
+  displayName: z.string().min(1),
+  hookCount: z.number().int().nonnegative().nullable(),
+  events: z.array(z.string().min(1)).max(11),
+  runtimeStatus: z.enum(["ready", "runner_unavailable"]).nullable(),
+});
+
+export const manualPluginInspectionSchema = z.object({
+  selectionId: z.string().min(1),
+  directoryName: z.string().min(1),
+  displayName: z.string().min(1),
+  version: z.string().min(1),
+  description: z.string(),
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  components: z.array(manualPluginComponentSchema).max(192),
+});
+
 export type ManagedPlugin = z.infer<typeof managedPluginSchema>;
 export type PluginSettingsSnapshot = z.infer<typeof pluginSettingsSnapshotSchema>;
+export type ManualPluginDirectorySelection = z.infer<typeof manualPluginDirectorySelectionSchema>;
+export type ManualPluginInspection = z.infer<typeof manualPluginInspectionSchema>;
 
 export function filterPlugins(plugins: ManagedPlugin[], queryInput: string) {
   const query = queryInput.trim().toLocaleLowerCase();
@@ -55,5 +91,6 @@ export function filterPlugins(plugins: ManagedPlugin[], queryInput: string) {
     plugin.packageName ?? "",
     plugin.pluginKey ?? "",
     ...plugin.skills,
+    plugin.hookCount > 0 ? "hook hooks lifecycle" : "",
   ].join(" ").toLocaleLowerCase().includes(query));
 }

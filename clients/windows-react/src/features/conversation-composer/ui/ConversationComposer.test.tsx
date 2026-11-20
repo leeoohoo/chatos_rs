@@ -21,7 +21,7 @@ const history: ConversationHistorySnapshot = {
   turns: [],
   messages: [],
   attachments: [],
-  next_before_ordinal: null,
+  next_before_cursor: null,
 };
 
 const runtimeSettingsPort: ConversationRuntimeSettingsPort = {

@@ -3,12 +3,31 @@ use chatos_local_agent_protocol::{
     LocalAgentToolStatus,
 };
 use serde_json::json;
+use std::{cell::Cell, fs};
 
 use super::{
-    exact_pending_invocation,
+    continue_decision_after_audit, exact_pending_invocation, gateway_model_options,
     models::{ToolApprovalDecision, ToolApprovalMode},
     policy_auto_approval_candidate, project_pending,
+    projection::pending_approval,
+    settings::ApprovalSettingsStore,
 };
+use crate::{authentication::GatewayModelConfig, connector_state};
+
+#[test]
+fn gateway_fallback_model_catalog_is_scoped_to_enabled_credentialed_owner_models() {
+    let catalog = vec![
+        gateway_model("usable", "owner-1", true, true, "gpt-4o"),
+        gateway_model("disabled", "owner-1", false, true, "gpt-4o"),
+        gateway_model("missing-key", "owner-1", true, false, "gpt-4o"),
+        gateway_model("other-owner", "owner-2", true, true, "gpt-4o"),
+        gateway_model("blank-model", "owner-1", true, true, " "),
+    ];
+    let options = gateway_model_options(catalog, "owner-1");
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].id, "usable");
+    assert_eq!(options[0].model_name, "gpt-4o");
+}
 
 #[test]
 fn projects_only_safe_fields_and_never_serializes_full_arguments() {
@@ -215,6 +234,43 @@ fn automatic_review_verdict_is_bound_to_the_exact_pending_version() {
     assert!(exact_pending_invocation(&[resolved], "terminal", 2).is_none());
 }
 
+#[tokio::test]
+async fn audit_failure_does_not_strand_a_recorded_decision() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = connector_state::ensure_owner_state(directory.path(), "owner-1").unwrap();
+    fs::create_dir(state.parent().unwrap().join("approval-activity.json")).unwrap();
+    let settings = ApprovalSettingsStore::new(directory.path().into());
+    let continued = Cell::new(false);
+    let expected = invocation("approval-audit", "execute_command", json!({}));
+    let audit_result = settings.record_decision(
+        "owner-1",
+        &pending_approval(&expected).unwrap(),
+        ToolApprovalMode::RequestApproval,
+        ToolApprovalDecision::Decline,
+        1,
+    );
+    assert!(audit_result.is_err());
+    let audit_error = audit_result.as_ref().unwrap_err().clone();
+    let submitted = continue_decision_after_audit(audit_result, async {
+        continued.set(true);
+        Ok(expected.clone())
+    })
+    .await
+    .unwrap();
+
+    assert!(continued.get());
+    assert_eq!(submitted.value.invocation_id, expected.invocation_id);
+    assert_eq!(submitted.finish().unwrap_err(), audit_error);
+
+    let decision_error = continue_decision_after_audit::<LocalAgentToolInvocationRecord>(
+        Err("audit save failed".into()),
+        async { Err("host decision failed".into()) },
+    )
+    .await
+    .err();
+    assert_eq!(decision_error.as_deref(), Some("host decision failed"));
+}
+
 fn invocation(
     invocation_id: &str,
     tool_name: &str,
@@ -242,5 +298,38 @@ fn invocation(
         claim_until_unix_ms: None,
         created_at_unix_ms: 10,
         updated_at_unix_ms: 11,
+    }
+}
+
+fn gateway_model(
+    id: &str,
+    owner_user_id: &str,
+    enabled: bool,
+    has_api_key: bool,
+    model: &str,
+) -> GatewayModelConfig {
+    GatewayModelConfig {
+        id: id.into(),
+        owner_user_id: owner_user_id.into(),
+        name: id.into(),
+        provider: "openai".into(),
+        model: model.into(),
+        api_key: None,
+        base_url: None,
+        task_thinking_level: None,
+        temperature: None,
+        max_output_tokens: None,
+        model_capability_revision: None,
+        context_window_tokens: None,
+        output_reserve_tokens: None,
+        protocol_overhead_estimator_id: None,
+        tokenizer_id: None,
+        responses_compaction_threshold: None,
+        enabled,
+        task_enabled: None,
+        has_api_key,
+        supports_images: false,
+        supports_reasoning: false,
+        supports_responses: true,
     }
 }

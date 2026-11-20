@@ -77,7 +77,7 @@ impl Default for StoryAgentRunPolicy {
 }
 
 impl StoryAgentRunPolicy {
-    fn validate(&self) -> bool {
+    pub(super) fn validate(&self) -> bool {
         (1..=10_000).contains(&self.maximum_model_calls)
             && (5..=1_800).contains(&self.request_timeout_seconds)
             && (10..=86_400).contains(&self.run_timeout_seconds)
@@ -151,6 +151,8 @@ pub(super) struct StoryAgentMemoryScope {
     pub project_id: String,
     pub thread_id: String,
     pub subject_id: String,
+    #[serde(default)]
+    pub project_subject_id: String,
     pub run_id: String,
     pub runtime_scope: String,
 }

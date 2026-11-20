@@ -14,6 +14,22 @@ use crate::tool_call::{
 };
 use crate::tool_runtime::{ToolResultModelBudget, ToolResultModelBudgetLimits};
 
+const EXPIRED_RUN_SCOPED_REFERENCE: &str = "[expired_run_scoped_reference]";
+const RUN_SCOPED_REFERENCE_PREFIXES: [&str; 12] = [
+    "agent_ref_",
+    "asset_ref_",
+    "asset_review_ref_",
+    "assignee_ref_",
+    "attachment_ref_",
+    "document_ref_",
+    "message_ref_",
+    "plugin_ref_",
+    "project_ref_",
+    "review_ref_",
+    "team_ref_",
+    "todo_ref_",
+];
+
 pub fn compose_response_to_input_items(response: &ComposeContextResponse) -> Vec<Value> {
     compose_response_to_input_items_with_budget(response, None)
 }
@@ -36,6 +52,7 @@ pub fn compose_response_to_input_items_with_budget(
             .collect::<Vec<_>>()
             .join("\n\n===\n\n");
         if !text.trim().is_empty() {
+            let text = redact_run_scoped_references(text.as_str());
             items.push(to_message_item(
                 "system",
                 &Value::String(format!("{MEMORY_CONTEXT_ITEM_PREFIX}\n\n{text}")),
@@ -77,6 +94,7 @@ fn engine_record_to_input_items(
                     .get(&record_index)
                     .cloned()
                     .unwrap_or_else(|| record.content.clone());
+                let output = redact_run_scoped_references(output.as_str());
                 items.push(build_function_call_output_item(
                     tool_call_id.as_str(),
                     output.as_str(),
@@ -89,11 +107,8 @@ fn engine_record_to_input_items(
 
     if role == "assistant" {
         if !record.content.trim().is_empty() {
-            items.push(to_message_item(
-                "assistant",
-                &Value::String(record.content.clone()),
-                false,
-            ));
+            let content = redact_run_scoped_references(record.content.as_str());
+            items.push(to_message_item("assistant", &Value::String(content), false));
         }
         for tool_call in
             extract_message_tool_calls(record.structured_payload.as_ref(), record.metadata.as_ref())
@@ -114,6 +129,7 @@ fn engine_record_to_input_items(
                 continue;
             }
             let arguments = tool_call_arguments_text(&tool_call);
+            let arguments = redact_run_scoped_references(arguments.as_str());
             items.push(build_function_call_item(call_id, name, arguments.as_str()));
             seen_tool_call_ids.insert(call_id.to_string());
         }
@@ -121,11 +137,8 @@ fn engine_record_to_input_items(
     }
 
     if matches!(role, "user" | "system" | "developer") && !record.content.trim().is_empty() {
-        items.push(to_message_item(
-            role,
-            &Value::String(record.content.clone()),
-            false,
-        ));
+        let content = redact_run_scoped_references(record.content.as_str());
+        items.push(to_message_item(role, &Value::String(content), false));
     }
     items
 }
@@ -238,4 +251,31 @@ fn decrement_remaining_tool_output_id(counts: &mut HashMap<String, usize>, call_
     if should_remove {
         counts.remove(call_id);
     }
+}
+
+fn redact_run_scoped_references(text: &str) -> String {
+    let mut redacted = text.to_string();
+    for prefix in RUN_SCOPED_REFERENCE_PREFIXES {
+        let mut search_from = 0;
+        while let Some(relative_start) = redacted[search_from..].find(prefix) {
+            let start = search_from + relative_start;
+            let digest_start = start + prefix.len();
+            let digest_end = digest_start.saturating_add(64);
+            if digest_end > redacted.len()
+                || !redacted.as_bytes()[digest_start..digest_end]
+                    .iter()
+                    .all(u8::is_ascii_hexdigit)
+                || redacted
+                    .as_bytes()
+                    .get(digest_end)
+                    .is_some_and(u8::is_ascii_hexdigit)
+            {
+                search_from = digest_start;
+                continue;
+            }
+            redacted.replace_range(start..digest_end, EXPIRED_RUN_SCOPED_REFERENCE);
+            search_from = start + EXPIRED_RUN_SCOPED_REFERENCE.len();
+        }
+    }
+    redacted
 }

@@ -1,6 +1,12 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  auditAccentBackgroundToken,
+  auditAccentTextContrast,
+  auditIconOnlyButtonAccessibleNames as auditIconOnlyButtonAccessibleNamesRules,
+  auditSecondaryTextContrast,
+} from "./audit-architecture-rules.mjs";
 
 const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const sourceRoot = join(projectRoot, "src");
@@ -29,7 +35,28 @@ for (const file of sourceFiles(sourceRoot)) {
   if (!isTest && path.includes("/features/authentication/") && /access_?token|accessToken|localStorage|sessionStorage|indexedDB/i.test(source)) {
     violations.push(`${path}: authentication tokens and browser credential storage are forbidden in React`);
   }
+
+  auditModalAccessibleNames(source, path, violations);
+  if (!isTest) {
+    auditIconOnlyButtonAccessibleNamesRules(source, path, violations);
+  }
 }
+
+for (const file of sourceFiles(sourceRoot, [".css"])) {
+  const source = readFileSync(file, "utf8");
+  const path = relative(projectRoot, file).split(sep).join("/");
+  auditAccentBackgroundToken(source, path, violations);
+}
+
+const themePath = join(sourceRoot, "design-system", "theme.css");
+const themeSource = readFileSync(themePath, "utf8");
+const themeRelativePath = relative(projectRoot, themePath).split(sep).join("/");
+auditSecondaryTextContrast(
+  themeSource,
+  themeRelativePath,
+  violations,
+);
+auditAccentTextContrast(themeSource, themeRelativePath, violations);
 
 if (violations.length > 0) {
   process.stderr.write(`Windows React architecture violations:\n${violations.map((item) => `- ${item}`).join("\n")}\n`);
@@ -38,13 +65,26 @@ if (violations.length > 0) {
 
 process.stdout.write("Windows React architecture audit passed.\n");
 
-function* sourceFiles(directory) {
+function* sourceFiles(directory, extensions = [".ts", ".tsx"]) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
       yield* sourceFiles(path);
-    } else if ([".ts", ".tsx"].includes(extname(entry.name))) {
+    } else if (extensions.includes(extname(entry.name))) {
       yield path;
     }
+  }
+}
+
+function auditModalAccessibleNames(source, path, violations) {
+  const modalOpeningTags = source.matchAll(/<[^>]*\baria-modal\s*=\s*["']true["'][^>]*>/gms);
+  for (const match of modalOpeningTags) {
+    const openingTag = match[0];
+    if (/\baria-label\s*=|\baria-labelledby\s*=/.test(openingTag)) {
+      continue;
+    }
+
+    const line = source.slice(0, match.index ?? 0).split("\n").length;
+    violations.push(`${path}:${line}: modal elements must provide aria-label or aria-labelledby`);
   }
 }

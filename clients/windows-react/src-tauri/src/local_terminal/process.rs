@@ -3,7 +3,10 @@ use super::{LocalTerminalIdentity, LocalTerminalLaunch};
 pub(super) use crate::interactive_pty::{
     snapshot_state, trim_events, PtySessionState as LocalTerminalSessionState,
 };
-use crate::interactive_pty::{ManagedPtySession, PtyCommand, PtyMessages};
+use crate::{
+    interactive_pty::{ManagedPtySession, PtyCommand, PtyMessages},
+    machine_resource_governor::MachineResourcePermit,
+};
 pub(super) use crate::interactive_pty::{
     PtyEvent as LocalTerminalEvent, PtyPollSnapshot as LocalTerminalPollSnapshot,
 };
@@ -18,15 +21,26 @@ pub(super) struct ManagedLocalTerminal {
 }
 
 impl ManagedLocalTerminal {
+    #[allow(dead_code)]
     pub(super) fn spawn(
         identity: LocalTerminalIdentity,
         launch: LocalTerminalLaunch,
         columns: u16,
         rows: u16,
     ) -> Result<Arc<Self>, String> {
+        Self::spawn_with_permit(identity, launch, columns, rows, None)
+    }
+
+    pub(super) fn spawn_with_permit(
+        identity: LocalTerminalIdentity,
+        launch: LocalTerminalLaunch,
+        columns: u16,
+        rows: u16,
+        resource_permit: Option<MachineResourcePermit>,
+    ) -> Result<Arc<Self>, String> {
         let initial_working_directory = launch.initial_working_directory.clone();
         let shell_name = launch.shell_name.clone();
-        let session = ManagedPtySession::spawn(
+        let session = ManagedPtySession::spawn_with_permit(
             PtyCommand {
                 executable: launch.executable.clone(),
                 arguments: launch
@@ -54,6 +68,7 @@ impl ManagedLocalTerminal {
                 resize_error: "无法调整本机终端窗口大小。",
                 thread_name: "local",
             },
+            resource_permit,
         )?;
         Ok(Arc::new(Self {
             identity,

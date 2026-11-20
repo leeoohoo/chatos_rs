@@ -9,6 +9,7 @@ use chatos_local_agent_protocol::{
     LocalConversationResourceKind, ResumeConversationTurnCommand,
 };
 use serde_json::{json, Value};
+use sqlx::Acquire;
 
 #[path = "requirement_plan_tests.rs"]
 mod requirement_plan_tests;
@@ -177,6 +178,114 @@ async fn first_turn_atomically_creates_a_missing_conversation() {
         .expect("get conversation")
         .expect("conversation exists");
     assert_eq!(stored.turns.len(), 1);
+}
+
+#[tokio::test]
+async fn legacy_unbound_conversation_can_be_bound_once_without_overwriting_resources() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    let legacy = create(&storage, "agent-team-v2-room-agent").await;
+    assert_eq!(legacy.conversation.resource, None);
+
+    let resource = LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Contact,
+        resource_id: "agent".to_string(),
+    };
+    let mut bound = conversation("agent-team-v2-room-agent");
+    bound.resource = Some(resource.clone());
+    let migrated = storage
+        .create_conversation(&idempotency("bind-agent-team"), &bound, 2_000)
+        .await
+        .expect("bind legacy conversation");
+    assert_eq!(migrated.conversation.resource, Some(resource.clone()));
+    assert_eq!(migrated.conversation.version, 2);
+
+    let replay = storage
+        .create_conversation(&idempotency("bind-agent-team"), &bound, 3_000)
+        .await
+        .expect("replay binding");
+    assert_eq!(replay, migrated);
+
+    let mut wrong = bound;
+    wrong.resource = Some(LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Contact,
+        resource_id: "another-agent".to_string(),
+    });
+    assert!(matches!(
+        storage
+            .create_conversation(&idempotency("bind-agent-team-wrong"), &wrong, 4_000)
+            .await,
+        Err(ClientStorageError::Conflict(_))
+    ));
+
+    let occupied_resource = LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Project,
+        resource_id: "occupied-project".to_string(),
+    };
+    let mut occupied = conversation("occupied-project");
+    occupied.resource = Some(occupied_resource.clone());
+    storage
+        .create_conversation(&idempotency("create-occupied-project"), &occupied, 5_000)
+        .await
+        .expect("create resource owner");
+    create(&storage, "legacy-project-conflict").await;
+    let mut conflicting = conversation("legacy-project-conflict");
+    conflicting.resource = Some(occupied_resource);
+    assert!(matches!(
+        storage
+            .create_conversation(
+                &idempotency("bind-legacy-project-conflict"),
+                &conflicting,
+                6_000,
+            )
+            .await,
+        Err(ClientStorageError::Conflict(_))
+    ));
+    assert_eq!(
+        storage
+            .get_conversation("user-1", "legacy-project-conflict")
+            .await
+            .expect("read legacy conflict")
+            .expect("legacy conversation")
+            .conversation
+            .resource,
+        None
+    );
+}
+
+#[tokio::test]
+async fn contact_resource_can_back_direct_and_team_conversations() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    let resource = LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Contact,
+        resource_id: "agent-1".to_string(),
+    };
+
+    let mut direct = conversation("agent-direct-v2-room-1");
+    direct.resource = Some(resource.clone());
+    storage
+        .create_conversation(&idempotency("create-agent-direct"), &direct, 1_000)
+        .await
+        .expect("create direct conversation");
+
+    let mut team = conversation("agent-team-v2-team-1-agent-1");
+    team.resource = Some(resource.clone());
+    storage
+        .create_conversation(&idempotency("create-agent-team"), &team, 2_000)
+        .await
+        .expect("create team conversation");
+
+    for conversation_id in [direct.conversation_id, team.conversation_id] {
+        let stored = storage
+            .get_conversation("user-1", &conversation_id)
+            .await
+            .expect("read conversation")
+            .expect("conversation exists");
+        assert_eq!(stored.conversation.resource, Some(resource.clone()));
+    }
 }
 
 #[tokio::test]
@@ -880,6 +989,114 @@ async fn history_pages_never_split_a_turn_from_its_user_message() {
     all_message_ids.sort_unstable();
     all_message_ids.dedup();
     assert_eq!(all_message_ids.len(), 6);
+}
+
+#[tokio::test]
+async fn history_pages_keep_ten_thousand_messages_bounded_and_cursor_stable() {
+    const MESSAGE_COUNT: usize = 10_000;
+    const PAGE_SIZE: u32 = 100;
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create(&storage, "conversation-history-10k").await;
+
+    let mut connection = storage.pool.acquire().await.expect("connection");
+    let mut transaction = connection.begin().await.expect("transaction");
+    for index in 0..MESSAGE_COUNT {
+        let ordinal = i64::try_from(index + 1).expect("ordinal");
+        let run_id = format!("run-history-10k-{index}");
+        let turn_id = format!("turn-history-10k-{index}");
+        let message_id = format!("message-history-10k-{index}");
+        let timestamp = 10_000_i64 + ordinal;
+        sqlx::query(
+            "INSERT INTO local_agent_runs(\
+             run_id, owner_user_id, owner_entity_type, owner_entity_id, profile_key,\
+             model_config_ref, model_config_revision, capability_policy_revision, input_json, status,\
+             iteration, model_attempt, max_iterations, version, terminal_outcome_json, checkpoint_json,\
+             created_at_unix_ms, updated_at_unix_ms\
+             ) VALUES(?, 'user-1', 'conversation_turn', ?, 'main_chat',\
+             'model-1', 'revision-1', 'policy-1', '{}', 'succeeded',\
+             0, 1, 8, 1, 'null', 'null', ?, ?)",
+        )
+        .bind(&run_id)
+        .bind(&turn_id)
+        .bind(timestamp)
+        .bind(timestamp)
+        .execute(&mut *transaction)
+        .await
+        .expect("insert run");
+        sqlx::query(
+            "INSERT INTO local_conversation_turns(\
+             turn_id, conversation_id, user_message_id, run_id, status,\
+             created_at_unix_ms, updated_at_unix_ms\
+             ) VALUES(?, 'conversation-history-10k', ?, ?, 'succeeded', ?, ?)",
+        )
+        .bind(&turn_id)
+        .bind(&message_id)
+        .bind(&run_id)
+        .bind(timestamp)
+        .bind(timestamp)
+        .execute(&mut *transaction)
+        .await
+        .expect("insert turn");
+        sqlx::query(
+            "INSERT INTO local_conversation_messages(\
+             message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json,\
+             created_at_unix_ms\
+             ) VALUES(?, 'conversation-history-10k', ?, ?, 'user', ?, '{}', ?)",
+        )
+        .bind(&message_id)
+        .bind(&turn_id)
+        .bind(ordinal)
+        .bind(serde_json::to_string(&json!({"text": format!("message {index}")})).unwrap())
+        .bind(timestamp)
+        .execute(&mut *transaction)
+        .await
+        .expect("insert message");
+    }
+    transaction.commit().await.expect("commit history fixture");
+    drop(connection);
+
+    let mut before_cursor = None;
+    let mut total_messages = 0;
+    let mut pages = 0;
+    let mut previous_oldest = MESSAGE_COUNT + 1;
+    loop {
+        let page = storage
+            .get_conversation_history(
+                "user-1",
+                "conversation-history-10k",
+                before_cursor
+                    .as_deref()
+                    .map(str::parse)
+                    .transpose()
+                    .unwrap(),
+                PAGE_SIZE,
+            )
+            .await
+            .expect("history page");
+        assert!(page.messages.len() <= PAGE_SIZE as usize);
+        let oldest = page
+            .messages
+            .first()
+            .expect("page must contain messages")
+            .ordinal as usize;
+        assert!(oldest < previous_oldest);
+        assert!(page
+            .messages
+            .windows(2)
+            .all(|messages| messages[0].ordinal < messages[1].ordinal));
+        total_messages += page.messages.len();
+        pages += 1;
+        previous_oldest = oldest;
+        before_cursor = page.next_before_cursor;
+        if before_cursor.is_none() {
+            break;
+        }
+    }
+
+    assert_eq!(total_messages, MESSAGE_COUNT);
+    assert_eq!(pages, MESSAGE_COUNT / PAGE_SIZE as usize);
 }
 
 #[tokio::test]

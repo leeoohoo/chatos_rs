@@ -48,6 +48,21 @@ describe("TauriNotepadAdapter", () => {
       input: { ownerUserId: "owner-1", noteId: "note-1", expectedVersion: 3, source: "picker" },
     });
   });
+
+  it("uses native clipboard and save dialog for note actions", async () => {
+    const adapter = new TauriNotepadAdapter();
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await adapter.copyText("# 方案");
+    expect(invoke).toHaveBeenLastCalledWith("copy_notepad_text", {
+      input: { text: "# 方案" },
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce(true);
+    await expect(adapter.exportMarkdown("owner-1", "方案", "# 方案")).resolves.toBe(true);
+    expect(invoke).toHaveBeenLastCalledWith("export_notepad_markdown", {
+      input: { ownerUserId: "owner-1", title: "方案", content: "# 方案" },
+    });
+  });
 });
 
 function note(overrides: Record<string, unknown> = {}) {

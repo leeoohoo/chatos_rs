@@ -2,7 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use crate::{LocalToolExecutor, LocalToolRegistry};
+use crate::LocalToolExecutor;
+#[cfg(unix)]
+use crate::LocalToolRegistry;
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     LocalAgentToolApprovalStatus, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,

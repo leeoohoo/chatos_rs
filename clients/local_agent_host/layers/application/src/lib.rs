@@ -667,6 +667,7 @@ impl LocalAgentRuntime {
             | HostCommand::RemovePluginInstallation(_)
             | HostCommand::PutPluginHookBundle(_)
             | HostCommand::ListPluginHookBundles(_)
+            | HostCommand::ListPluginHookBundleRecords(_)
             | HostCommand::ListPluginHookInvocations(_)
             | HostCommand::SetActivePluginHookBundles(_)) => {
                 self.handle_plugin_command(&idempotency, command).await
