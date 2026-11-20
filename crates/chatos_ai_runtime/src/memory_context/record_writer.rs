@@ -125,72 +125,15 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
         self.ensure_thread(tenant_id.as_str(), thread_id.as_str(), &identity)
             .await?;
         let record = self.upsert_record_input(input)?;
-        let records = vec![record];
-        let runtime_context_assertion = self
-            .issue_assertion(
-                tenant_id.as_str(),
-                thread_id.as_str(),
-                &identity,
-                project_partition_key.as_str(),
-            )
-            .await?;
-        let summary = summarize_record_batch(records.as_slice());
-        let source_id = self.source_id.as_deref().unwrap_or("");
-        info!(
-            tenant_id = tenant_id.as_str(),
-            source_id,
-            thread_id = thread_id.as_str(),
-            record_count = summary.record_count,
-            record_roles = summary.roles.as_str(),
-            record_ids = summary.record_ids.as_str(),
-            tool_names = summary.tool_names.as_str(),
-            content_bytes = summary.content_bytes,
-            max_content_bytes = summary.max_content_bytes,
-            metadata_bytes = summary.metadata_bytes,
-            structured_payload_bytes = summary.structured_payload_bytes,
-            "memory engine record batch sync start"
-        );
-        let response = self
-            .client
-            .ingest_thread_records(
-                thread_id.as_str(),
-                &SdkBatchSyncRecordsRequest {
-                    tenant_id,
-                    project_partition_key,
-                    runtime_context_assertion,
-                    records,
-                },
-            )
-            .await;
-        match &response {
-            Ok(response) => {
-                info!(
-                    source_id,
-                    thread_id = thread_id.as_str(),
-                    received_count = response.received_count,
-                    upserted_count = response.upserted_count,
-                    "memory engine record batch sync completed"
-                );
-            }
-            Err(err) => {
-                warn!(
-                    source_id,
-                    thread_id = thread_id.as_str(),
-                    record_count = summary.record_count,
-                    record_roles = summary.roles.as_str(),
-                    record_ids = summary.record_ids.as_str(),
-                    tool_names = summary.tool_names.as_str(),
-                    content_bytes = summary.content_bytes,
-                    max_content_bytes = summary.max_content_bytes,
-                    metadata_bytes = summary.metadata_bytes,
-                    structured_payload_bytes = summary.structured_payload_bytes,
-                    error = err.as_str(),
-                    "memory engine record batch sync failed"
-                );
-            }
-        }
-        response?;
-        Ok(())
+        self.sync_records(
+            tenant_id,
+            thread_id,
+            project_partition_key,
+            &identity,
+            vec![record],
+            "record",
+        )
+        .await
     }
 
     async fn save_tool_records(&self, inputs: Vec<SaveToolRecordInput>) -> Result<(), String> {
@@ -221,20 +164,81 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
         }
 
         for ((tenant_id, thread_id, project_partition_key), (identity, records)) in batches {
-            let runtime_context_assertion = self
-                .issue_assertion(
-                    tenant_id.as_str(),
-                    thread_id.as_str(),
-                    &identity,
-                    project_partition_key.as_str(),
-                )
-                .await?;
-            let summary = summarize_record_batch(records.as_slice());
-            let source_id = self.source_id.as_deref().unwrap_or("");
-            info!(
-                tenant_id = tenant_id.as_str(),
+            self.sync_records(
+                tenant_id,
+                thread_id,
+                project_partition_key,
+                &identity,
+                records,
+                "tool_records",
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+}
+
+impl MemoryEngineRecordWriter {
+    async fn sync_records(
+        &self,
+        tenant_id: String,
+        thread_id: String,
+        project_partition_key: String,
+        identity: &RecordThreadIdentity,
+        records: Vec<UpsertRecordInput>,
+        batch_kind: &str,
+    ) -> Result<(), String> {
+        let runtime_context_assertion = self
+            .issue_assertion(
+                tenant_id.as_str(),
+                thread_id.as_str(),
+                identity,
+                project_partition_key.as_str(),
+            )
+            .await?;
+        let summary = summarize_record_batch(records.as_slice());
+        let source_id = self.source_id.as_deref().unwrap_or("");
+        info!(
+            tenant_id = tenant_id.as_str(),
+            source_id,
+            thread_id = thread_id.as_str(),
+            batch_kind,
+            record_count = summary.record_count,
+            record_roles = summary.roles.as_str(),
+            record_ids = summary.record_ids.as_str(),
+            tool_names = summary.tool_names.as_str(),
+            content_bytes = summary.content_bytes,
+            max_content_bytes = summary.max_content_bytes,
+            metadata_bytes = summary.metadata_bytes,
+            structured_payload_bytes = summary.structured_payload_bytes,
+            "memory engine record batch sync start"
+        );
+        let response = self
+            .client
+            .ingest_thread_records(
+                thread_id.as_str(),
+                &SdkBatchSyncRecordsRequest {
+                    tenant_id,
+                    project_partition_key,
+                    runtime_context_assertion,
+                    records,
+                },
+            )
+            .await;
+        match &response {
+            Ok(response) => info!(
                 source_id,
                 thread_id = thread_id.as_str(),
+                batch_kind,
+                received_count = response.received_count,
+                upserted_count = response.upserted_count,
+                "memory engine record batch sync completed"
+            ),
+            Err(err) => warn!(
+                source_id,
+                thread_id = thread_id.as_str(),
+                batch_kind,
                 record_count = summary.record_count,
                 record_roles = summary.roles.as_str(),
                 record_ids = summary.record_ids.as_str(),
@@ -243,55 +247,13 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
                 max_content_bytes = summary.max_content_bytes,
                 metadata_bytes = summary.metadata_bytes,
                 structured_payload_bytes = summary.structured_payload_bytes,
-                "memory engine tool record batch sync start"
-            );
-            let response = self
-                .client
-                .ingest_thread_records(
-                    thread_id.as_str(),
-                    &SdkBatchSyncRecordsRequest {
-                        tenant_id: tenant_id.clone(),
-                        project_partition_key,
-                        runtime_context_assertion,
-                        records,
-                    },
-                )
-                .await;
-            match &response {
-                Ok(response) => {
-                    info!(
-                        source_id,
-                        thread_id = thread_id.as_str(),
-                        received_count = response.received_count,
-                        upserted_count = response.upserted_count,
-                        "memory engine tool record batch sync completed"
-                    );
-                }
-                Err(err) => {
-                    warn!(
-                        source_id,
-                        thread_id = thread_id.as_str(),
-                        record_count = summary.record_count,
-                        record_roles = summary.roles.as_str(),
-                        record_ids = summary.record_ids.as_str(),
-                        tool_names = summary.tool_names.as_str(),
-                        content_bytes = summary.content_bytes,
-                        max_content_bytes = summary.max_content_bytes,
-                        metadata_bytes = summary.metadata_bytes,
-                        structured_payload_bytes = summary.structured_payload_bytes,
-                        error = err.as_str(),
-                        "memory engine tool record batch sync failed"
-                    );
-                }
-            }
-            response?;
+                error = err.as_str(),
+                "memory engine record batch sync failed"
+            ),
         }
-
-        Ok(())
+        response.map(|_| ())
     }
-}
 
-impl MemoryEngineRecordWriter {
     async fn issue_assertion(
         &self,
         tenant_id: &str,
