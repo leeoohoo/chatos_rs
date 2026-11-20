@@ -77,7 +77,6 @@ clients/windows-react/src-tauri/src/media_studio/reference.rs	861	2027-02-28	Spl
 memory_engine/backend/src/api/admin_api/reliability.rs	861	2027-02-28	Split existing production responsibilities before expiry
 plugins/browser/crates/browser-cdp-core/src/runtime.rs	861	2027-02-28	Split existing production responsibilities before expiry
 memory_engine/backend/src/repositories/subject_memory_scopes.rs	854	2027-02-28	Split existing production responsibilities before expiry
-clients/local_agent_host/layers/infrastructure/database/src/conversation_commands.rs	853	2027-02-28	Split existing production responsibilities before expiry
 clients/local_agent_host/layers/interface/src/lib.rs	853	2027-02-28	Split existing production responsibilities before expiry
 clients/macos/Sources/ChatOSApp/Features/Pet/PetQuickChatView.swift	842	2027-02-28	Split existing production responsibilities before expiry
 clients/local_agent_host/layers/infrastructure/database/src/task_lifecycle.rs	841	2027-02-28	Split existing production responsibilities before expiry
