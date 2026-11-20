@@ -452,17 +452,24 @@ impl LocalAgentRuntime {
                     ))
                 })?;
             let metadata = input.packed_metadata();
+            let created_at = match input.created_at {
+                Some(created_at) => created_at,
+                None => DateTime::<Utc>::from_timestamp_millis(pending.created_at_unix_ms)
+                    .ok_or_else(|| {
+                        LocalAgentRuntimeError::InvalidRunState(
+                            "committed conversation update has an invalid durable timestamp"
+                                .to_string(),
+                        )
+                    })?
+                    .to_rfc3339(),
+            };
             records.push(AuthoritativeConversationRecord {
                 record_id: input.message_id.unwrap_or(pending.record_id),
                 role: input.role,
                 content: input.content,
                 structured_payload: input.structured_payload,
                 metadata,
-                created_at: input.created_at.ok_or_else(|| {
-                    LocalAgentRuntimeError::InvalidRunState(
-                        "committed conversation update requires created_at".to_string(),
-                    )
-                })?,
+                created_at,
             });
         }
         let mut messages = authoritative_messages(&command.conversation_id, &records)?;
@@ -1468,14 +1475,18 @@ mod tests {
                 created_at: input.created_at.clone().unwrap(),
             };
             for (index, input) in [&user, &reply, &completed].into_iter().enumerate() {
+                let mut payload = serde_json::to_value(input).unwrap();
+                if index == 0 {
+                    payload.as_object_mut().unwrap().remove("created_at");
+                }
                 storage
                     .enqueue_memory_record(
                         input.message_id.as_deref().unwrap(),
                         "user-1",
                         "chatos",
                         "client-agent:agent:jiguli",
-                        &serde_json::to_value(input).unwrap(),
-                        10_000 + index as i64,
+                        &payload,
+                        1_794_304_800_000 + index as i64 * 1_000,
                     )
                     .await
                     .unwrap();

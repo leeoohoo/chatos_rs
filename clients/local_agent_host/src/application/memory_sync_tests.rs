@@ -164,6 +164,7 @@ async fn local_writer_enqueues_before_remote_sync() {
     assert_eq!(queued.tenant_id, "user-1");
     assert_eq!(queued.thread_id, "conversation-1");
     assert_eq!(queued.payload["content"], "hello");
+    assert_eq!(queued.payload["created_at"], "1970-01-01T00:00:01+00:00");
 }
 
 #[tokio::test]

@@ -6,6 +6,7 @@ use chatos_ai_runtime::{MemoryContextCache, MemoryRecordWriter, MemoryScope, Sav
 use chatos_local_agent_ports::{
     ClientStorageError, LocalMemoryContextCacheStore, LocalMemoryOutboxStore, LocalMemoryRunClaim,
 };
+use chrono::{DateTime, Utc};
 use memory_engine_sdk::ComposeContextResponse;
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
@@ -110,6 +111,14 @@ impl LocalMemoryOutboxWriter {
 #[async_trait]
 impl MemoryRecordWriter for LocalMemoryOutboxWriter {
     async fn save_record(&self, mut input: SaveRecordInput) -> Result<(), String> {
+        let now_unix_ms = (self.clock)()?;
+        if input.created_at.is_none() {
+            input.created_at = Some(
+                DateTime::<Utc>::from_timestamp_millis(now_unix_ms)
+                    .ok_or_else(|| "Memory outbox clock is outside the RFC 3339 range".to_string())?
+                    .to_rfc3339(),
+            );
+        }
         let record_id = required(input.message_id.as_deref(), "message_id")?.to_string();
         let thread_id =
             required(Some(input.conversation_id.as_str()), "conversation_id")?.to_string();
@@ -140,7 +149,7 @@ impl MemoryRecordWriter for LocalMemoryOutboxWriter {
                     &self.source_id,
                     &thread_id,
                     &payload,
-                    (self.clock)()?,
+                    now_unix_ms,
                 )
                 .await
                 .map_err(|error| error.to_string());
@@ -152,7 +161,7 @@ impl MemoryRecordWriter for LocalMemoryOutboxWriter {
                 &self.source_id,
                 &thread_id,
                 &payload,
-                (self.clock)()?,
+                now_unix_ms,
             )
             .await
             .map(|_| ())
