@@ -72,4 +72,3 @@ clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+Plugins.swift	
 clients/macos/Sources/ChatOSConnector/NativeSSHConnectionTester.swift	812	2027-02-28	Split existing production responsibilities before expiry
 clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryVideoGenerationAdapter.swift	806	2027-02-28	Split existing production responsibilities before expiry
 clients/local_agent_host/layers/interface/src/conversation.rs	805	2027-02-28	Split existing production responsibilities before expiry
-clients/windows-react/src-tauri/src/project_run/runtime.rs	802	2027-02-28	Split existing production responsibilities before expiry

@@ -108,7 +108,6 @@ clients/macos/Sources/ChatOSConnector/NativeSSHConnectionTester.swift	812	2027-0
 clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryVideoGenerationAdapter.swift	806	2027-02-28	Split existing owned source by responsibility before expiry
 clients/local_agent_host/layers/interface/src/conversation.rs	805	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Tests/ChatOSAppTests/MediaWorkerProcessClientTests.swift	803	2027-02-28	Split existing owned source by responsibility before expiry
-clients/windows-react/src-tauri/src/project_run/runtime.rs	802	2027-02-28	Split existing owned source by responsibility before expiry
 clients/local_agent_host/layers/infrastructure/database/src/migration_crash_tests.rs	800	2027-02-28	Split existing owned source by responsibility before expiry
 clients/local_agent_host/src/application/task_tool_support.rs	800	2027-02-28	Split existing owned source by responsibility before expiry
 clients/macos/Tests/ChatOSAppTests/TaskReplyInspectorViewModelTests.swift	800	2027-02-28	Split existing owned source by responsibility before expiry
