@@ -463,12 +463,16 @@ pub(super) async fn enqueue_on(
     now_unix_ms: i64,
 ) -> Result<LocalMemoryOutboxRecord, ClientStorageError> {
     if let Some(existing) = fetch_record(connection, source_id, record_id).await? {
+        let immutable_replay = replay_with_original_created_at(&existing.payload, payload);
         if existing.tenant_id == tenant_id
             && existing.thread_id == thread_id
-            && (existing.payload == *payload
-                || memory_routing_upgrade_replay_is_compatible(&existing.payload, payload))
+            && (existing.payload == immutable_replay
+                || memory_routing_upgrade_replay_is_compatible(
+                    &existing.payload,
+                    &immutable_replay,
+                ))
         {
-            if existing.payload != *payload
+            if existing.payload != immutable_replay
                 && matches!(
                     existing.status,
                     LocalMemoryOutboxStatus::Pending | LocalMemoryOutboxStatus::RetryScheduled
@@ -479,7 +483,7 @@ pub(super) async fn enqueue_on(
                      updated_at_unix_ms = ? WHERE source_id = ? AND record_id = ? \
                      AND status IN ('pending', 'retry_scheduled')",
                 )
-                .bind(serde_json::to_string(payload)?)
+                .bind(serde_json::to_string(&immutable_replay)?)
                 .bind(now_unix_ms)
                 .bind(source_id)
                 .bind(record_id)
@@ -544,6 +548,21 @@ fn mutable_projection_payload(payload: &Value) -> bool {
         .pointer("/metadata/memory_projection_mutable")
         .and_then(Value::as_bool)
         == Some(true)
+}
+
+fn replay_with_original_created_at(existing: &Value, replay: &Value) -> Value {
+    let mut replay = replay.clone();
+    if let (Some(Value::String(existing_created_at)), Some(replay)) =
+        (existing.get("created_at"), replay.as_object_mut())
+    {
+        if matches!(replay.get("created_at"), Some(Value::String(_))) {
+            replay.insert(
+                "created_at".to_string(),
+                Value::String(existing_created_at.clone()),
+            );
+        }
+    }
+    replay
 }
 
 const MEMORY_ROUTING_METADATA_KEYS: [&str; 7] = [
@@ -1104,6 +1123,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn synced_tool_result_replay_keeps_original_created_at() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        let original = json!({
+            "message_id": "run-1:tool:batch-1:0",
+            "role": "tool",
+            "content": "same tool result",
+            "created_at": "2026-11-20T08:35:07Z"
+        });
+        storage
+            .enqueue_memory_record(
+                "run-1:tool:batch-1:0",
+                "user-1",
+                "chatos",
+                "task-1",
+                &original,
+                1_000,
+            )
+            .await
+            .expect("enqueue");
+        let claimed = storage
+            .claim_next_memory_record("user-1", "claim-1", 2_000, 12_000)
+            .await
+            .expect("claim")
+            .expect("record");
+        storage
+            .complete_memory_record(
+                "chatos",
+                "run-1:tool:batch-1:0",
+                "claim-1",
+                claimed.version,
+                3_000,
+            )
+            .await
+            .expect("complete");
+
+        let replay = json!({
+            "message_id": "run-1:tool:batch-1:0",
+            "role": "tool",
+            "content": "same tool result",
+            "created_at": "2026-11-20T08:35:39Z"
+        });
+        let stored = storage
+            .enqueue_memory_record(
+                "run-1:tool:batch-1:0",
+                "user-1",
+                "chatos",
+                "task-1",
+                &replay,
+                4_000,
+            )
+            .await
+            .expect("idempotent replay");
+        assert_eq!(stored.status, LocalMemoryOutboxStatus::Synced);
+        assert_eq!(stored.payload, original);
+
+        let changed = json!({
+            "message_id": "run-1:tool:batch-1:0",
+            "role": "tool",
+            "content": "changed tool result",
+            "created_at": "2026-11-20T08:35:40Z"
+        });
+        assert!(storage
+            .enqueue_memory_record(
+                "run-1:tool:batch-1:0",
+                "user-1",
+                "chatos",
+                "task-1",
+                &changed,
+                5_000,
+            )
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
     async fn completing_conversation_record_publishes_exact_memory_transcript_event() {
         let storage = SqliteClientStorage::connect_memory()
             .await
@@ -1183,6 +1279,7 @@ mod tests {
         let legacy = json!({
             "message_id": "run-1:tool:batch-1:0",
             "content": "same tool result",
+            "created_at": "2026-11-20T08:35:07Z",
             "metadata": {
                 "tenant_id": "user-1",
                 "run_id": "run-1",
@@ -1219,6 +1316,7 @@ mod tests {
         let enriched = json!({
             "message_id": "run-1:tool:batch-1:0",
             "content": "same tool result",
+            "created_at": "2026-11-20T08:35:39Z",
             "metadata": {
                 "tenant_id": "user-1",
                 "run_id": "run-1",
@@ -1318,11 +1416,13 @@ mod tests {
         let legacy = json!({
             "message_id": "message-1",
             "content": "same",
+            "created_at": "2026-11-20T08:35:07Z",
             "metadata": {"tenant_id": "user-1"}
         });
         let enriched = json!({
             "message_id": "message-1",
             "content": "same",
+            "created_at": "2026-11-20T08:35:39Z",
             "metadata": {
                 "tenant_id": "user-1",
                 "agent_id": "agent-1",
@@ -1339,7 +1439,9 @@ mod tests {
             .expect("upgrade replay");
 
         assert_eq!(upgraded.status, LocalMemoryOutboxStatus::Pending);
-        assert_eq!(upgraded.payload, enriched);
+        let mut expected = enriched;
+        expected["created_at"] = legacy["created_at"].clone();
+        assert_eq!(upgraded.payload, expected);
         assert!(upgraded.version > queued.version);
     }
 
