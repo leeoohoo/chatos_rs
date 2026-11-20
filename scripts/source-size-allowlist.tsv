@@ -1,7 +1,6 @@
 # path	max_lines	expires_on	reason
 # Existing production source above 800 lines; exact budgets block further growth.
 # Remove entries as files are split below the hard limit.
-clients/local_agent_host/src/application/hook_coordinator.rs	2007	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/windows_appcontainer.rs	3575	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/plugin_settings.rs	3488	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/plugin_application/runtime.rs	3293	2027-02-28	Split existing production responsibilities before expiry
