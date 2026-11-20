@@ -255,7 +255,7 @@ pub fn materialize_mcp_command(
     intent: &CloudAgentOutboxIntent,
     mcp_runtime_session_ref: &str,
     result_routing_key: &str,
-) -> Result<chatos_mcp_service::McpToolCallCommand, String> {
+) -> Result<chatos_cloud_agent_protocol::McpToolCallCommand, String> {
     if intent.topic != "mcp_tool_call_command" {
         return Err("only MCP tool command intents can be materialized".to_string());
     }
@@ -300,7 +300,7 @@ pub fn materialize_mcp_command(
                         Some("tool arguments must be an object".to_string()),
                     ),
                 };
-            Ok(chatos_mcp_service::McpToolCallCommandItem {
+            Ok(chatos_cloud_agent_protocol::McpToolCallCommandItem {
                 invocation_id: format!("{batch_id}:{call_index}"),
                 tool_call_id: tool_call_id.to_string(),
                 call_index,
@@ -310,7 +310,7 @@ pub fn materialize_mcp_command(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let command = chatos_mcp_service::McpToolCallCommand {
+    let command = chatos_cloud_agent_protocol::McpToolCallCommand {
         owner_service: run.owner_service.clone(),
         agent_run_id: run.ordering.agent_run_id.clone(),
         agent_key: run.agent_key.clone(),

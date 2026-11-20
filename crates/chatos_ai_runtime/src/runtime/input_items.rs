@@ -1,15 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-#[cfg(all(test, feature = "local-agent-loop"))]
-use std::collections::HashMap;
-
 use serde_json::{json, Value};
-
-#[cfg(feature = "local-agent-loop")]
-use crate::tool_runtime::merge_pending_tool_turn_items;
-#[cfg(all(test, feature = "local-agent-loop"))]
-use crate::tool_runtime::{ToolResultModelBudget, ToolResultModelBudgetLimits};
 
 use super::EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT;
 
@@ -36,109 +28,6 @@ pub(super) fn attach_runtime_debug(mut payload: Value, runtime_debug: &Value) ->
             "task_execution_debug": runtime_debug,
         })
     }
-}
-
-#[cfg(feature = "local-agent-loop")]
-pub(super) fn merge_pending_tool_turn_into_input(
-    input: Value,
-    pending_tool_calls: Option<&[Value]>,
-    pending_tool_outputs: Option<&[Value]>,
-) -> Value {
-    if pending_tool_calls.is_none() && pending_tool_outputs.is_none() {
-        return input;
-    }
-
-    let mut items = input.as_array().cloned().unwrap_or_else(|| {
-        if input.is_null() {
-            Vec::new()
-        } else {
-            vec![input]
-        }
-    });
-    merge_pending_tool_turn_items(&mut items, pending_tool_calls, pending_tool_outputs);
-    Value::Array(items)
-}
-
-#[cfg(all(test, feature = "local-agent-loop"))]
-pub(super) fn merge_current_turn_tool_history_into_input(
-    input: Value,
-    tool_call_items: &[Value],
-    tool_output_items: &[Value],
-    limits: Option<ToolResultModelBudgetLimits>,
-) -> Value {
-    if tool_call_items.is_empty() && tool_output_items.is_empty() {
-        return input;
-    }
-
-    let mut items = input.as_array().cloned().unwrap_or_else(|| {
-        if input.is_null() {
-            Vec::new()
-        } else {
-            vec![input]
-        }
-    });
-    let sanitized_outputs =
-        sanitize_current_turn_tool_outputs(tool_call_items, tool_output_items, limits);
-    merge_pending_tool_turn_items(
-        &mut items,
-        Some(tool_call_items),
-        Some(sanitized_outputs.as_slice()),
-    );
-    Value::Array(items)
-}
-
-#[cfg(all(test, feature = "local-agent-loop"))]
-fn sanitize_current_turn_tool_outputs(
-    tool_call_items: &[Value],
-    tool_output_items: &[Value],
-    limits: Option<ToolResultModelBudgetLimits>,
-) -> Vec<Value> {
-    let tool_names = tool_call_items
-        .iter()
-        .filter_map(|item| {
-            let call_id = item.get("call_id")?.as_str()?.trim();
-            let name = item.get("name")?.as_str()?.trim();
-            (!call_id.is_empty() && !name.is_empty())
-                .then(|| (call_id.to_string(), name.to_string()))
-        })
-        .collect::<HashMap<_, _>>();
-    let mut budget = limits
-        .map(ToolResultModelBudget::from_limits)
-        .unwrap_or_else(ToolResultModelBudget::from_env);
-    let mut sanitized = Vec::with_capacity(tool_output_items.len());
-
-    // Keep the already-sent history prefix stable across iterations. The output
-    // from the immediately preceding batch is merged afterwards as authoritative
-    // pending evidence, so it can remain complete without rewriting older items.
-    for item in tool_output_items {
-        let mut item = item.clone();
-        if item.get("type").and_then(Value::as_str) == Some("function_call_output") {
-            let call_id = item
-                .get("call_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let tool_name = tool_names
-                .get(call_id)
-                .map(String::as_str)
-                .unwrap_or("unknown");
-            if let Some(output) = item.get("output").and_then(Value::as_str) {
-                item["output"] = Value::String(budget.sanitize_content(tool_name, output));
-            }
-        }
-        sanitized.push(item);
-    }
-    sanitized
-}
-
-#[cfg(any(test, feature = "local-agent-loop"))]
-#[allow(dead_code)]
-pub(super) fn append_runtime_input_items(input: Value, items: &[Value]) -> Value {
-    if items.is_empty() {
-        return input;
-    }
-    let mut input_items = runtime_input_value_to_items(input);
-    input_items.extend(items.iter().cloned());
-    Value::Array(input_items)
 }
 
 /// Merge runtime-owned sticky/lifecycle items without adding another identical

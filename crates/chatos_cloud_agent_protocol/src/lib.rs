@@ -108,6 +108,88 @@ impl CloudAgentStepStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpToolCallCommand {
+    pub owner_service: String,
+    pub agent_run_id: String,
+    pub agent_key: String,
+    pub ordering_lane_key: String,
+    pub lane_seq: u64,
+    pub generation: u64,
+    pub source_step_seq: u64,
+    pub batch_id: String,
+    pub mcp_runtime_session_ref: String,
+    pub result_routing_key: String,
+    pub calls: Vec<McpToolCallCommandItem>,
+    #[serde(default = "initial_delivery_attempt")]
+    pub delivery_attempt: u32,
+}
+
+impl McpToolCallCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("owner_service", self.owner_service.as_str()),
+            ("agent_run_id", self.agent_run_id.as_str()),
+            ("agent_key", self.agent_key.as_str()),
+            ("ordering_lane_key", self.ordering_lane_key.as_str()),
+            ("batch_id", self.batch_id.as_str()),
+            (
+                "mcp_runtime_session_ref",
+                self.mcp_runtime_session_ref.as_str(),
+            ),
+            ("result_routing_key", self.result_routing_key.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("MCP tool call command {name} must not be empty"));
+            }
+        }
+        if self.lane_seq == 0 || self.generation == 0 || self.source_step_seq == 0 {
+            return Err(
+                "MCP tool call command lane_seq, generation and source_step_seq must be positive"
+                    .to_string(),
+            );
+        }
+        if self.calls.is_empty() || self.calls.len() > 128 {
+            return Err("MCP tool call command must contain between 1 and 128 calls".to_string());
+        }
+        for (index, call) in self.calls.iter().enumerate() {
+            if call.call_index != index {
+                return Err("MCP tool call command call_index must match array order".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn normalize_delivery_attempt(mut self) -> Self {
+        self.delivery_attempt = self.delivery_attempt.max(1);
+        self
+    }
+
+    pub fn next_retry(&self, max_delivery_attempts: u32) -> Option<Self> {
+        if self.delivery_attempt.max(1) >= max_delivery_attempts {
+            return None;
+        }
+        let mut retry = self.clone();
+        retry.delivery_attempt = self.delivery_attempt.max(1).saturating_add(1);
+        Some(retry)
+    }
+}
+
+fn initial_delivery_attempt() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpToolCallCommandItem {
+    pub invocation_id: String,
+    pub tool_call_id: String,
+    pub call_index: usize,
+    pub name: String,
+    pub arguments: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CloudAgentRunRecord {
     pub ordering: CloudAgentOrdering,
     pub owner_service: String,
@@ -361,6 +443,30 @@ fn validate_positive(name: &str, value: u64) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    fn mcp_command() -> McpToolCallCommand {
+        McpToolCallCommand {
+            owner_service: "memory-engine".to_string(),
+            agent_run_id: "run-1".to_string(),
+            agent_key: "memory-rollup".to_string(),
+            ordering_lane_key: "thread:1".to_string(),
+            lane_seq: 1,
+            generation: 1,
+            source_step_seq: 1,
+            batch_id: "batch-1".to_string(),
+            mcp_runtime_session_ref: "session-1".to_string(),
+            result_routing_key: "results".to_string(),
+            calls: vec![McpToolCallCommandItem {
+                invocation_id: "batch-1:0".to_string(),
+                tool_call_id: "call-1".to_string(),
+                call_index: 0,
+                name: "lookup".to_string(),
+                arguments: serde_json::json!({}),
+                preflight_error: None,
+            }],
+            delivery_attempt: 1,
+        }
+    }
+
     fn ordering() -> CloudAgentOrdering {
         CloudAgentOrdering {
             ordering_lane_key: "conversation:conversation-1".to_string(),
@@ -395,6 +501,17 @@ mod tests {
             value.validate().unwrap_err(),
             "agent_run_id must not be empty"
         );
+    }
+
+    #[test]
+    fn mcp_command_validation_and_retry_stay_with_the_cloud_contract() {
+        let command = mcp_command();
+        command.validate().unwrap();
+        assert_eq!(command.next_retry(3).unwrap().delivery_attempt, 2);
+
+        let mut invalid = command;
+        invalid.calls[0].call_index = 1;
+        assert!(invalid.validate().is_err());
     }
 
     #[test]

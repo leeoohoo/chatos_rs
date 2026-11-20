@@ -8,7 +8,6 @@ use std::time::Instant;
 use serde_json::{json, Value};
 use tracing::{info, warn};
 
-use crate::builtin_prompt::{BuiltinMcpPromptBuildResult, BuiltinMcpPromptLocale};
 use crate::parallelism::should_parallelize_tool_batch;
 use crate::registry::BuiltinToolRegistry;
 use crate::tool_call::extract_tool_call_name;
@@ -142,50 +141,6 @@ impl McpExecutor {
 
     pub fn tool_metadata(&self) -> &HashMap<String, ToolInfo> {
         &self.tool_metadata
-    }
-
-    pub fn compose_builtin_mcp_system_prompt(
-        &self,
-        locale: BuiltinMcpPromptLocale,
-    ) -> Option<String> {
-        crate::builtin_prompt::compose_builtin_mcp_system_prompt(
-            self.builtin_servers.as_slice(),
-            locale,
-        )
-    }
-
-    pub fn inspect_builtin_mcp_system_prompt(
-        &self,
-        locale: BuiltinMcpPromptLocale,
-    ) -> BuiltinMcpPromptBuildResult {
-        crate::builtin_prompt::inspect_builtin_mcp_system_prompt(
-            self.builtin_servers.as_slice(),
-            locale,
-        )
-    }
-
-    pub fn compose_effective_builtin_mcp_system_prompt(
-        &self,
-        locale: BuiltinMcpPromptLocale,
-    ) -> Option<String> {
-        crate::builtin_prompt::compose_effective_builtin_mcp_system_prompt(
-            self.builtin_servers.as_slice(),
-            self.tool_metadata(),
-            self.unavailable_tools.as_slice(),
-            locale,
-        )
-    }
-
-    pub fn inspect_effective_builtin_mcp_system_prompt(
-        &self,
-        locale: BuiltinMcpPromptLocale,
-    ) -> BuiltinMcpPromptBuildResult {
-        crate::builtin_prompt::inspect_effective_builtin_mcp_system_prompt(
-            self.builtin_servers.as_slice(),
-            self.tool_metadata(),
-            self.unavailable_tools.as_slice(),
-            locale,
-        )
     }
 
     pub fn should_parallelize_tool_batch(&self, tool_calls: &[Value]) -> bool {
@@ -378,9 +333,8 @@ mod tests {
     use serde_json::Value;
 
     use crate::{
-        BuiltinMcpKind, BuiltinMcpPromptLocale, BuiltinMcpServerOptions, BuiltinToolProvider,
-        BuiltinToolRegistry, McpBuiltinServer, McpExecutor, McpHttpServer, McpStdioServer,
-        ToolCallContext, ToolInfo, ToolResultCallback, ToolStreamChunkCallback,
+        BuiltinToolProvider, BuiltinToolRegistry, McpBuiltinServer, McpExecutor, McpHttpServer,
+        McpStdioServer, ToolCallContext, ToolInfo, ToolResultCallback, ToolStreamChunkCallback,
     };
 
     #[tokio::test]
@@ -414,30 +368,6 @@ mod tests {
 
         assert!(results.is_empty());
         assert_eq!(callback_count.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn builtin_prompt_methods_use_configured_and_effective_builtin_state() {
-        let options = BuiltinMcpServerOptions::new(".");
-        let mut executor = McpExecutor::builder()
-            .with_builtin_kinds([BuiltinMcpKind::AskUser], &options)
-            .build();
-
-        let raw_prompt = executor
-            .compose_builtin_mcp_system_prompt(BuiltinMcpPromptLocale::ZhCn)
-            .expect("raw builtin prompt");
-        assert!(raw_prompt.contains("`ask_user_prompt_choices`"));
-        assert!(!raw_prompt.contains("task_manager"));
-
-        executor.init_builtin_only().expect("builtin init");
-        assert!(executor.available_tools().is_empty());
-        assert!(executor.unavailable_tools().iter().any(|item| item
-            .get("reason")
-            .and_then(serde_json::Value::as_str)
-            == Some("missing builtin provider")));
-        assert!(executor
-            .compose_effective_builtin_mcp_system_prompt(BuiltinMcpPromptLocale::ZhCn)
-            .is_none());
     }
 
     #[test]

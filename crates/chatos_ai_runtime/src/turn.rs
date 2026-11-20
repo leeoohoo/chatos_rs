@@ -6,8 +6,6 @@ use serde_json::{json, Value};
 
 use crate::memory_context::{MemoryContextComposer, MemoryScope};
 use crate::runtime::{AiRuntime, AiRuntimeOptions, AiSingleStepOutcome, AiSingleStepRequest};
-#[cfg(feature = "local-agent-loop")]
-use crate::runtime::{AiRuntimeResult, AiTurnReport};
 use crate::traits::{ModelRequest, ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput};
 
 #[path = "turn_budget.rs"]
@@ -76,56 +74,6 @@ impl ContextualTurnRunner {
             composer.run_active_summary(scope, trigger_reason).await?;
         }
         Ok(())
-    }
-
-    #[cfg(feature = "local-agent-loop")]
-    pub async fn run_turn(
-        &self,
-        request: ContextualTurnRequest,
-    ) -> Result<AiRuntimeResult, String> {
-        let ContextualTurnRequest {
-            mut model_request,
-            runtime_options,
-            mut memory_scope,
-            prefixed_input_items,
-            current_input_items,
-            mut user_record,
-        } = request;
-        enable_openai_responses_protocol(&mut model_request);
-        if let (Some(composer), Some(scope), Some(record)) = (
-            self.memory_composer.as_ref(),
-            memory_scope.as_ref(),
-            user_record.as_ref(),
-        ) {
-            composer.ensure_thread_for_record(scope, record).await?;
-        }
-        let include_memory = self
-            .restrict_memory_budget(
-                &model_request,
-                memory_scope.as_mut(),
-                &prefixed_input_items,
-                &current_input_items,
-            )
-            .await?;
-        if !include_memory {
-            memory_scope = None;
-        }
-        let contextual_input = build_contextual_input(
-            self.memory_composer.as_ref(),
-            memory_scope.as_ref(),
-            prefixed_input_items.as_slice(),
-            current_input_items.as_slice(),
-            model_request.input.clone(),
-            runtime_options.conversation_turn_id.as_deref(),
-        )
-        .await?;
-        if let Some(user_record) = user_record.take() {
-            self.runtime.save_record(user_record).await?;
-        }
-
-        model_request.input = contextual_input;
-        validate_complete_request_budget(&model_request)?;
-        self.runtime.run_turn(model_request, runtime_options).await
     }
 
     pub async fn execute_once(
@@ -205,14 +153,6 @@ impl ContextualTurnRunner {
             build_contextual_input(None, None, prefixed, current, request.input.clone(), None)
                 .await?;
         budget::restrict_memory_scope(scope, &baseline)
-    }
-
-    #[cfg(feature = "local-agent-loop")]
-    pub async fn run_turn_report(&self, request: ContextualTurnRequest) -> AiTurnReport {
-        match self.run_turn(request).await {
-            Ok(result) => result.into_report(),
-            Err(err) => AiTurnReport::failed(err),
-        }
     }
 }
 

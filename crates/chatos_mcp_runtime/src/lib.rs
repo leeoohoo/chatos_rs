@@ -13,7 +13,6 @@ pub mod registry;
 pub mod rpc;
 pub mod schema;
 pub mod stdio_policy;
-pub mod task_types;
 pub mod text;
 pub mod tool_call;
 pub mod types;
@@ -22,27 +21,18 @@ pub use arguments::{parse_json_loose, parse_json_tool_args, parse_tool_args};
 pub use builder::McpExecutorBuilder;
 pub use builtin_catalog::{
     builtin_kind_by_any, builtin_kind_by_command, builtin_kind_by_config_id,
-    builtin_kind_by_kind_name, builtin_kind_by_server_name, builtin_servers_from_kinds,
-    complete_builtin_kind_dependencies, configurable_builtin_kinds, default_runtime_builtin_kinds,
-    BuiltinMcpKind, BuiltinMcpServerOptions, AGENT_BUILDER_COMMAND, AGENT_BUILDER_MCP_ID,
-    AGENT_BUILDER_SERVER_NAME, ASK_USER_COMMAND, ASK_USER_MCP_ID, ASK_USER_SERVER_NAME,
-    CODE_MAINTAINER_READ_COMMAND, CODE_MAINTAINER_READ_MCP_ID, CODE_MAINTAINER_READ_SERVER_NAME,
-    CODE_MAINTAINER_WRITE_COMMAND, CODE_MAINTAINER_WRITE_MCP_ID, CODE_MAINTAINER_WRITE_SERVER_NAME,
-    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_WRITE_BYTES, DEFAULT_SEARCH_LIMIT,
-    LEGACY_CODE_MAINTAINER_COMMAND, LEGACY_CODE_MAINTAINER_MCP_ID,
-    MEMORY_COMMAND_READER_SERVER_NAME, MEMORY_PLUGIN_READER_SERVER_NAME,
-    MEMORY_SKILL_READER_SERVER_NAME, NOTEPAD_COMMAND, NOTEPAD_MCP_ID, NOTEPAD_SERVER_NAME,
-    REMOTE_CONNECTION_CONTROLLER_COMMAND, REMOTE_CONNECTION_CONTROLLER_MCP_ID,
-    REMOTE_CONNECTION_CONTROLLER_SERVER_NAME, TERMINAL_CONTROLLER_COMMAND,
-    TERMINAL_CONTROLLER_MCP_ID, TERMINAL_CONTROLLER_SERVER_NAME,
+    builtin_kind_by_kind_name, builtin_kind_by_server_name, BuiltinMcpKind, AGENT_BUILDER_COMMAND,
+    AGENT_BUILDER_MCP_ID, AGENT_BUILDER_SERVER_NAME, ASK_USER_COMMAND, ASK_USER_MCP_ID,
+    ASK_USER_SERVER_NAME, CODE_MAINTAINER_READ_COMMAND, CODE_MAINTAINER_READ_MCP_ID,
+    CODE_MAINTAINER_READ_SERVER_NAME, CODE_MAINTAINER_WRITE_COMMAND, CODE_MAINTAINER_WRITE_MCP_ID,
+    CODE_MAINTAINER_WRITE_SERVER_NAME, LEGACY_CODE_MAINTAINER_COMMAND,
+    LEGACY_CODE_MAINTAINER_MCP_ID, MEMORY_COMMAND_READER_SERVER_NAME,
+    MEMORY_PLUGIN_READER_SERVER_NAME, MEMORY_SKILL_READER_SERVER_NAME, NOTEPAD_COMMAND,
+    NOTEPAD_MCP_ID, NOTEPAD_SERVER_NAME, REMOTE_CONNECTION_CONTROLLER_COMMAND,
+    REMOTE_CONNECTION_CONTROLLER_MCP_ID, REMOTE_CONNECTION_CONTROLLER_SERVER_NAME,
+    TERMINAL_CONTROLLER_COMMAND, TERMINAL_CONTROLLER_MCP_ID, TERMINAL_CONTROLLER_SERVER_NAME,
 };
-pub use builtin_prompt::{
-    builtin_mcp_prompt_section_ids, builtin_mcp_prompt_source_path,
-    builtin_mcp_provider_skill_instructions, compose_builtin_mcp_system_prompt,
-    compose_effective_builtin_mcp_system_prompt, inspect_builtin_mcp_system_prompt,
-    inspect_effective_builtin_mcp_system_prompt, BuiltinMcpPromptBuildResult,
-    BuiltinMcpPromptLocale,
-};
+pub use builtin_prompt::{builtin_mcp_provider_skill_instructions, BuiltinMcpPromptLocale};
 pub use execution::{execute_tool_calls_parallel, execute_tool_calls_stream};
 pub use executor::McpExecutor;
 pub use naming::{canonical_name_segment, canonical_prefixed_tool_name, legacy_prefixed_tool_name};
@@ -59,7 +49,6 @@ pub use stdio_policy::{
     validate_stdio_arguments, validate_stdio_environment, validate_stdio_environment_name,
     StdioPolicyViolation,
 };
-pub use task_types::TaskUpdatePatch;
 pub use text::{
     capability_description_budget_error, inject_agent_builder_args, structured_result_payload,
     to_text_and_structured_result, to_text_and_structured_result_with_transient,

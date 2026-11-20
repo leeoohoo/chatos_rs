@@ -7,10 +7,6 @@ use std::sync::Arc;
 use crate::executor::McpExecutor;
 use crate::registry::{BuiltinToolProvider, BuiltinToolRegistry};
 use crate::types::{McpBuiltinServer, McpHttpServer, McpStdioServer, ToolLifecycleHook};
-use crate::{
-    builtin_servers_from_kinds, default_runtime_builtin_kinds, BuiltinMcpKind,
-    BuiltinMcpServerOptions,
-};
 
 #[derive(Clone, Default)]
 pub struct McpExecutorBuilder {
@@ -66,17 +62,6 @@ impl McpExecutorBuilder {
     {
         self.builtin_servers.extend(servers);
         self
-    }
-
-    pub fn with_builtin_kinds<I>(self, kinds: I, options: &BuiltinMcpServerOptions) -> Self
-    where
-        I: IntoIterator<Item = BuiltinMcpKind>,
-    {
-        self.with_builtin_servers(builtin_servers_from_kinds(kinds, options))
-    }
-
-    pub fn with_default_runtime_builtin_servers(self, options: &BuiltinMcpServerOptions) -> Self {
-        self.with_builtin_kinds(default_runtime_builtin_kinds(), options)
     }
 
     pub fn with_builtin_provider<P>(mut self, provider: P) -> Self
@@ -162,9 +147,8 @@ mod tests {
     use serde_json::{json, Value};
 
     use crate::{
-        BuiltinMcpServerOptions, BuiltinToolProvider, McpBuiltinServer, McpExecutorBuilder,
-        McpHttpServer, ToolCallContext, ToolLifecycleEvent, ToolLifecycleHook,
-        ToolLifecycleOutcome, ToolStreamChunkCallback,
+        BuiltinToolProvider, McpBuiltinServer, McpExecutorBuilder, McpHttpServer, ToolCallContext,
+        ToolLifecycleEvent, ToolLifecycleHook, ToolLifecycleOutcome, ToolStreamChunkCallback,
     };
 
     struct EchoProvider;
@@ -426,23 +410,6 @@ mod tests {
 
         assert!(executor.available_tools().is_empty());
         assert_eq!(executor.unavailable_tools().len(), 1);
-    }
-
-    #[test]
-    fn builder_adds_default_runtime_builtin_servers_from_shared_catalog() {
-        let options = BuiltinMcpServerOptions::new("/tmp/chatos-mcp-builder-test");
-        let executor = crate::McpExecutor::builder()
-            .with_default_runtime_builtin_servers(&options)
-            .build_builtin_only()
-            .expect("builtin executor");
-
-        let unavailable = executor.unavailable_tools();
-        assert!(unavailable.iter().all(|item| {
-            item.get("server_name").and_then(Value::as_str) != Some("task_manager")
-        }));
-        assert!(unavailable.iter().all(|item| {
-            item.get("server_name").and_then(Value::as_str) != Some("agent_builder")
-        }));
     }
 
     #[tokio::test]

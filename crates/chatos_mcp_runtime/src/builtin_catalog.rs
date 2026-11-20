@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::McpBuiltinServer;
 
-pub const DEFAULT_MAX_FILE_BYTES: i64 = 256 * 1024;
-pub const DEFAULT_MAX_WRITE_BYTES: i64 = 5 * 1024 * 1024;
-pub const DEFAULT_SEARCH_LIMIT: usize = 40;
+const DEFAULT_MAX_FILE_BYTES: i64 = 256 * 1024;
+const DEFAULT_MAX_WRITE_BYTES: i64 = 5 * 1024 * 1024;
+const DEFAULT_SEARCH_LIMIT: usize = 40;
 
 pub const LEGACY_CODE_MAINTAINER_MCP_ID: &str = "builtin_code_maintainer";
 pub const LEGACY_CODE_MAINTAINER_COMMAND: &str = "builtin:code_maintainer";
@@ -45,79 +45,6 @@ pub const REMOTE_CONNECTION_CONTROLLER_COMMAND: &str = "builtin:remote_connectio
 pub const MEMORY_SKILL_READER_SERVER_NAME: &str = "memory_skill_reader";
 pub const MEMORY_COMMAND_READER_SERVER_NAME: &str = "memory_command_reader";
 pub const MEMORY_PLUGIN_READER_SERVER_NAME: &str = "memory_plugin_reader";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BuiltinMcpServerOptions {
-    pub workspace_dir: String,
-    pub user_id: Option<String>,
-    pub project_id: Option<String>,
-    pub remote_connection_id: Option<String>,
-    pub contact_agent_id: Option<String>,
-    pub auto_create_task: bool,
-    pub allow_writes: Option<bool>,
-    pub max_file_bytes: i64,
-    pub max_write_bytes: i64,
-    pub search_limit: usize,
-}
-
-impl BuiltinMcpServerOptions {
-    pub fn new(workspace_dir: impl Into<String>) -> Self {
-        Self {
-            workspace_dir: workspace_dir.into(),
-            user_id: None,
-            project_id: None,
-            remote_connection_id: None,
-            contact_agent_id: None,
-            auto_create_task: false,
-            allow_writes: None,
-            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
-            max_write_bytes: DEFAULT_MAX_WRITE_BYTES,
-            search_limit: DEFAULT_SEARCH_LIMIT,
-        }
-    }
-
-    pub fn with_user_id(mut self, user_id: impl Into<String>) -> Self {
-        self.user_id = Some(user_id.into());
-        self
-    }
-
-    pub fn with_project_id(mut self, project_id: impl Into<String>) -> Self {
-        self.project_id = Some(project_id.into());
-        self
-    }
-
-    pub fn with_remote_connection_id(mut self, remote_connection_id: impl Into<String>) -> Self {
-        self.remote_connection_id = Some(remote_connection_id.into());
-        self
-    }
-
-    pub fn with_contact_agent_id(mut self, contact_agent_id: impl Into<String>) -> Self {
-        self.contact_agent_id = Some(contact_agent_id.into());
-        self
-    }
-
-    pub fn with_auto_create_task(mut self, auto_create_task: bool) -> Self {
-        self.auto_create_task = auto_create_task;
-        self
-    }
-
-    pub fn with_allow_writes(mut self, allow_writes: bool) -> Self {
-        self.allow_writes = Some(allow_writes);
-        self
-    }
-
-    pub fn with_limits(
-        mut self,
-        max_file_bytes: i64,
-        max_write_bytes: i64,
-        search_limit: usize,
-    ) -> Self {
-        self.max_file_bytes = max_file_bytes;
-        self.max_write_bytes = max_write_bytes;
-        self.search_limit = search_limit;
-        self
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BuiltinMcpKind {
@@ -190,30 +117,20 @@ impl BuiltinMcpKind {
         }
     }
 
-    pub fn default_allow_writes(self) -> bool {
-        !matches!(self, Self::CodeMaintainerRead)
-    }
-
     pub fn default_server(self, workspace_dir: impl Into<String>) -> McpBuiltinServer {
-        self.server_with_options(&BuiltinMcpServerOptions::new(workspace_dir))
-    }
-
-    pub fn server_with_options(self, options: &BuiltinMcpServerOptions) -> McpBuiltinServer {
         McpBuiltinServer {
             name: self.server_name().to_string(),
             kind: self.kind_name().to_string(),
-            workspace_dir: options.workspace_dir.clone(),
-            user_id: options.user_id.clone(),
-            project_id: options.project_id.clone(),
-            remote_connection_id: options.remote_connection_id.clone(),
-            contact_agent_id: options.contact_agent_id.clone(),
-            auto_create_task: options.auto_create_task,
-            allow_writes: options
-                .allow_writes
-                .unwrap_or_else(|| self.default_allow_writes()),
-            max_file_bytes: options.max_file_bytes,
-            max_write_bytes: options.max_write_bytes,
-            search_limit: options.search_limit,
+            workspace_dir: workspace_dir.into(),
+            user_id: None,
+            project_id: None,
+            remote_connection_id: None,
+            contact_agent_id: None,
+            auto_create_task: false,
+            allow_writes: !matches!(self, Self::CodeMaintainerRead),
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_write_bytes: DEFAULT_MAX_WRITE_BYTES,
+            search_limit: DEFAULT_SEARCH_LIMIT,
         }
     }
 }
@@ -297,85 +214,22 @@ pub fn builtin_kind_by_command(value: &str) -> Option<BuiltinMcpKind> {
     }
 }
 
-pub fn configurable_builtin_kinds() -> Vec<BuiltinMcpKind> {
-    vec![
-        BuiltinMcpKind::CodeMaintainerRead,
-        BuiltinMcpKind::CodeMaintainerWrite,
-        BuiltinMcpKind::TerminalController,
-        BuiltinMcpKind::Notepad,
-        BuiltinMcpKind::AgentBuilder,
-        BuiltinMcpKind::AskUser,
-    ]
-}
-
-pub fn default_runtime_builtin_kinds() -> Vec<BuiltinMcpKind> {
-    configurable_builtin_kinds()
-        .into_iter()
-        .filter(|kind| !matches!(kind, BuiltinMcpKind::AgentBuilder))
-        .collect()
-}
-
-pub fn complete_builtin_kind_dependencies<I>(kinds: I) -> Vec<BuiltinMcpKind>
-where
-    I: IntoIterator<Item = BuiltinMcpKind>,
-{
-    let mut out = Vec::new();
-    for kind in kinds {
-        if !out.contains(&kind) {
-            out.push(kind);
-        }
-    }
-
-    if (out.contains(&BuiltinMcpKind::CodeMaintainerWrite)
-        || out.contains(&BuiltinMcpKind::TerminalController))
-        && !out.contains(&BuiltinMcpKind::CodeMaintainerRead)
-    {
-        let insert_at = out
-            .iter()
-            .position(|kind| {
-                matches!(
-                    kind,
-                    BuiltinMcpKind::CodeMaintainerWrite | BuiltinMcpKind::TerminalController
-                )
-            })
-            .unwrap_or(out.len());
-        out.insert(insert_at, BuiltinMcpKind::CodeMaintainerRead);
-    }
-
-    out
-}
-
-pub fn builtin_servers_from_kinds<I>(
-    kinds: I,
-    options: &BuiltinMcpServerOptions,
-) -> Vec<McpBuiltinServer>
-where
-    I: IntoIterator<Item = BuiltinMcpKind>,
-{
-    kinds
-        .into_iter()
-        .map(|kind| kind.server_with_options(options))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        builtin_kind_by_any, builtin_servers_from_kinds, complete_builtin_kind_dependencies,
-        configurable_builtin_kinds, default_runtime_builtin_kinds, BuiltinMcpKind,
-        BuiltinMcpServerOptions, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_WRITE_BYTES,
-        DEFAULT_SEARCH_LIMIT, LEGACY_CODE_MAINTAINER_COMMAND, LEGACY_CODE_MAINTAINER_MCP_ID,
-        MEMORY_SKILL_READER_SERVER_NAME,
+        builtin_kind_by_any, BuiltinMcpKind, LEGACY_CODE_MAINTAINER_COMMAND,
+        LEGACY_CODE_MAINTAINER_MCP_ID,
     };
 
     #[test]
-    fn resolves_kind_from_all_public_identifiers() {
-        assert_eq!(builtin_kind_by_any("TaskManager"), None);
-        assert_eq!(builtin_kind_by_any("builtin_task_manager"), None);
-        assert_eq!(builtin_kind_by_any("builtin:task_manager"), None);
+    fn resolves_current_and_legacy_identifiers() {
         assert_eq!(
-            builtin_kind_by_any(MEMORY_SKILL_READER_SERVER_NAME),
-            Some(BuiltinMcpKind::MemorySkillReader)
+            builtin_kind_by_any("CodeMaintainerRead"),
+            Some(BuiltinMcpKind::CodeMaintainerRead)
+        );
+        assert_eq!(
+            builtin_kind_by_any("code_maintainer_read"),
+            Some(BuiltinMcpKind::CodeMaintainerRead)
         );
         assert_eq!(
             builtin_kind_by_any(LEGACY_CODE_MAINTAINER_MCP_ID),
@@ -385,88 +239,6 @@ mod tests {
             builtin_kind_by_any(LEGACY_CODE_MAINTAINER_COMMAND),
             Some(BuiltinMcpKind::CodeMaintainerWrite)
         );
-    }
-
-    #[test]
-    fn builds_default_builtin_server_config() {
-        let server = BuiltinMcpKind::TerminalController.default_server("/tmp/work");
-        assert_eq!(server.name, "terminal_controller");
-        assert_eq!(server.kind, "TerminalController");
-        assert_eq!(server.workspace_dir, "/tmp/work");
-        assert!(server.allow_writes);
-        assert_eq!(server.max_file_bytes, DEFAULT_MAX_FILE_BYTES);
-        assert_eq!(server.max_write_bytes, DEFAULT_MAX_WRITE_BYTES);
-        assert_eq!(server.search_limit, DEFAULT_SEARCH_LIMIT);
-    }
-
-    #[test]
-    fn builds_builtin_servers_from_shared_options() {
-        let options = BuiltinMcpServerOptions::new("/tmp/work")
-            .with_user_id("user-1")
-            .with_project_id("project-1")
-            .with_contact_agent_id("agent-1")
-            .with_auto_create_task(true)
-            .with_limits(1024, 2048, 12);
-        let servers = builtin_servers_from_kinds(
-            [
-                BuiltinMcpKind::TerminalController,
-                BuiltinMcpKind::CodeMaintainerRead,
-            ],
-            &options,
-        );
-        assert_eq!(servers.len(), 2);
-        assert_eq!(servers[0].user_id.as_deref(), Some("user-1"));
-        assert_eq!(servers[0].project_id.as_deref(), Some("project-1"));
-        assert_eq!(servers[0].contact_agent_id.as_deref(), Some("agent-1"));
-        assert!(servers[0].auto_create_task);
-        assert_eq!(servers[0].max_file_bytes, 1024);
-        assert!(!servers[1].allow_writes);
-    }
-
-    #[test]
-    fn default_runtime_builtin_kinds_match_chat_loading_rules() {
-        let configurable = configurable_builtin_kinds();
-        assert!(configurable.contains(&BuiltinMcpKind::AgentBuilder));
-
-        let runtime = default_runtime_builtin_kinds();
-        assert!(!runtime.contains(&BuiltinMcpKind::AgentBuilder));
-        assert!(!runtime.contains(&BuiltinMcpKind::MemorySkillReader));
-    }
-
-    #[test]
-    fn completes_mutating_engineering_dependencies() {
-        assert_eq!(
-            complete_builtin_kind_dependencies([
-                BuiltinMcpKind::TerminalController,
-                BuiltinMcpKind::CodeMaintainerWrite,
-            ]),
-            vec![
-                BuiltinMcpKind::CodeMaintainerRead,
-                BuiltinMcpKind::TerminalController,
-                BuiltinMcpKind::CodeMaintainerWrite,
-            ]
-        );
-        assert_eq!(
-            complete_builtin_kind_dependencies([BuiltinMcpKind::TerminalController]),
-            vec![
-                BuiltinMcpKind::CodeMaintainerRead,
-                BuiltinMcpKind::TerminalController,
-            ]
-        );
-    }
-
-    #[test]
-    fn completing_builtin_dependencies_keeps_existing_read_and_dedupes() {
-        assert_eq!(
-            complete_builtin_kind_dependencies([
-                BuiltinMcpKind::CodeMaintainerRead,
-                BuiltinMcpKind::CodeMaintainerWrite,
-                BuiltinMcpKind::CodeMaintainerRead,
-            ]),
-            vec![
-                BuiltinMcpKind::CodeMaintainerRead,
-                BuiltinMcpKind::CodeMaintainerWrite,
-            ]
-        );
+        assert_eq!(builtin_kind_by_any("unknown"), None);
     }
 }

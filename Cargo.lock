@@ -458,7 +458,6 @@ dependencies = [
  "chatos_ai_runtime",
  "chatos_cloud_agent_protocol",
  "chatos_mcp_runtime",
- "chatos_mcp_service",
  "chrono",
  "serde",
  "serde_json",
@@ -570,13 +569,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chatos_local_workspace"
-version = "0.1.0"
-dependencies = [
- "urlencoding",
-]
-
-[[package]]
 name = "chatos_mcp"
 version = "0.1.0"
 dependencies = [
@@ -618,16 +610,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chatos_mcp_service"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "chatos_plugin_management_sdk"
 version = "0.1.0"
 dependencies = [
@@ -655,14 +637,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "chatos_remote_runtime"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "ssh2",
 ]
 
 [[package]]
@@ -694,15 +668,6 @@ dependencies = [
  "tracing",
  "urlencoding",
  "uuid",
-]
-
-[[package]]
-name = "chatos_terminal_runtime"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "tempfile",
- "tokio",
 ]
 
 [[package]]
@@ -1853,32 +1818,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1f111c8c41e7c61a49cd34e44c7619462967221a6443b0ec299e0ac30cfb9b1"
 dependencies = [
  "cc",
- "pkg-config",
- "vcpkg",
-]
-
-[[package]]
-name = "libssh2-sys"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f5eb74291e8691cab524a01274a1b1e7742b1a94f29d8b101d8aadc8372c1cd"
-dependencies = [
- "cc",
- "libc",
- "libz-sys",
- "openssl-sys",
- "pkg-config",
- "vcpkg",
-]
-
-[[package]]
-name = "libz-sys"
-version = "1.1.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85bc9657773828b90eeb625adff10eeac83cc21bbfd8e23a03eaa8a33c9e28d9"
-dependencies = [
- "cc",
- "libc",
  "pkg-config",
  "vcpkg",
 ]
@@ -3199,18 +3138,6 @@ dependencies = [
  "thiserror",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "ssh2"
-version = "0.9.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c95eb3c09e378543395a3fa9796f897861862466ee331d59140ade4ea0dcfdfc"
-dependencies = [
- "bitflags",
- "libc",
- "libssh2-sys",
- "parking_lot",
 ]
 
 [[package]]

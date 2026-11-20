@@ -6,54 +6,28 @@ use std::sync::OnceLock;
 
 use super::BuiltinMcpPromptLocale;
 
-const BUILTIN_MCP_PROMPT_ZH_SOURCE_PATH: &str = "BUILTIN_MCP_PROMPT.zh-CN.md";
-const BUILTIN_MCP_PROMPT_EN_SOURCE_PATH: &str = "BUILTIN_MCP_PROMPT.en-US.md";
 const BUILTIN_MCP_PROMPT_ZH_SOURCE: &str = include_str!("../../../../BUILTIN_MCP_PROMPT.zh-CN.md");
 const BUILTIN_MCP_PROMPT_EN_SOURCE: &str = include_str!("../../../../BUILTIN_MCP_PROMPT.en-US.md");
 
-#[derive(Debug, Clone)]
-pub(super) struct PromptSectionRegistry {
-    pub(super) ordered_ids: Vec<String>,
-    pub(super) sections: HashMap<String, String>,
-}
+static PROMPT_SECTIONS_ZH: OnceLock<HashMap<String, String>> = OnceLock::new();
+static PROMPT_SECTIONS_EN: OnceLock<HashMap<String, String>> = OnceLock::new();
 
-static PROMPT_SECTION_REGISTRY_ZH: OnceLock<PromptSectionRegistry> = OnceLock::new();
-static PROMPT_SECTION_REGISTRY_EN: OnceLock<PromptSectionRegistry> = OnceLock::new();
-
-pub(super) fn builtin_mcp_prompt_source_path(locale: BuiltinMcpPromptLocale) -> &'static str {
+pub(super) fn prompt_sections(locale: BuiltinMcpPromptLocale) -> &'static HashMap<String, String> {
     if locale.is_english() {
-        BUILTIN_MCP_PROMPT_EN_SOURCE_PATH
+        PROMPT_SECTIONS_EN.get_or_init(|| parse_prompt_sections(BUILTIN_MCP_PROMPT_EN_SOURCE))
     } else {
-        BUILTIN_MCP_PROMPT_ZH_SOURCE_PATH
+        PROMPT_SECTIONS_ZH.get_or_init(|| parse_prompt_sections(BUILTIN_MCP_PROMPT_ZH_SOURCE))
     }
 }
 
-pub(super) fn prompt_section_registry(
-    locale: BuiltinMcpPromptLocale,
-) -> &'static PromptSectionRegistry {
-    if locale.is_english() {
-        PROMPT_SECTION_REGISTRY_EN
-            .get_or_init(|| parse_prompt_sections(BUILTIN_MCP_PROMPT_EN_SOURCE))
-    } else {
-        PROMPT_SECTION_REGISTRY_ZH
-            .get_or_init(|| parse_prompt_sections(BUILTIN_MCP_PROMPT_ZH_SOURCE))
-    }
-}
-
-fn parse_prompt_sections(markdown: &str) -> PromptSectionRegistry {
-    let mut ordered_ids = Vec::new();
+fn parse_prompt_sections(markdown: &str) -> HashMap<String, String> {
     let mut sections = HashMap::new();
     let mut current_id: Option<String> = None;
     let mut current_lines: Vec<&str> = Vec::new();
 
     for line in markdown.lines() {
         if let Some(section_id) = parse_section_header(line) {
-            flush_section(
-                &mut ordered_ids,
-                &mut sections,
-                &mut current_id,
-                &mut current_lines,
-            );
+            flush_section(&mut sections, &mut current_id, &mut current_lines);
             current_id = Some(section_id.to_string());
             continue;
         }
@@ -63,21 +37,12 @@ fn parse_prompt_sections(markdown: &str) -> PromptSectionRegistry {
         }
     }
 
-    flush_section(
-        &mut ordered_ids,
-        &mut sections,
-        &mut current_id,
-        &mut current_lines,
-    );
+    flush_section(&mut sections, &mut current_id, &mut current_lines);
 
-    PromptSectionRegistry {
-        ordered_ids,
-        sections,
-    }
+    sections
 }
 
 fn flush_section(
-    ordered_ids: &mut Vec<String>,
     sections: &mut HashMap<String, String>,
     current_id: &mut Option<String>,
     current_lines: &mut Vec<&str>,
@@ -90,9 +55,6 @@ fn flush_section(
     let content = current_lines.join("\n").trim().to_string();
     current_lines.clear();
     if !content.is_empty() {
-        if !ordered_ids.iter().any(|item| item == &section_id) {
-            ordered_ids.push(section_id.clone());
-        }
         sections.insert(section_id, content);
     }
 }

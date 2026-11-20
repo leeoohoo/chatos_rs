@@ -1,4 +1,4 @@
-#[cfg(all(test, feature = "local-agent-loop"))]
+#[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -14,7 +14,7 @@ mod tests {
         user_text_item, ContextualTurnRequest, RuntimeTurnSpec,
     };
     use crate::{
-        AiRuntime, AiRuntimeOptions, AiTurnStatus, MemoryContextComposer, MemoryScope,
+        AiRuntime, AiRuntimeOptions, MemoryContextComposer, MemoryScope,
         ModelRequest, ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput,
     };
 
@@ -620,26 +620,6 @@ mod tests {
             vec![user_text_item("run this task")]
         );
         assert!(request.user_record.is_some());
-    }
-
-    #[tokio::test]
-    async fn contextual_turn_runner_report_captures_aborted_runtime() {
-        let config = published_test_config(ModelRuntimeConfig::openai_compatible(
-            "http://127.0.0.1:1/v1",
-            "secret",
-            "gpt-test",
-            "openai",
-        ));
-        let runtime_options = AiRuntimeOptions::for_conversation("task_1")
-            .with_abort_checker(Some(std::sync::Arc::new(|_| true)));
-        let request =
-            ContextualTurnRequest::for_user_text(&config, runtime_options, "run this task");
-        let runner = super::ContextualTurnRunner::new(AiRuntime::new(None), None);
-
-        let report = runner.run_turn_report(request).await;
-
-        assert_eq!(report.status, AiTurnStatus::Aborted);
-        assert_eq!(report.error.as_deref(), Some("aborted"));
     }
 
     #[test]

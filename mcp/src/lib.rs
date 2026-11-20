@@ -9,9 +9,18 @@ mod implementations;
 mod product_skills;
 mod skills;
 mod system_tool_catalog;
-mod task_types;
 mod tool_catalog;
 
+pub use backend::{SystemMcpBackend, SystemMcpHost};
+pub use catalog::{
+    system_mcp_catalog, system_mcp_descriptor, system_mcp_descriptor_by_any,
+    system_mcp_descriptor_by_embedded_kind, system_mcp_descriptor_by_resource_id,
+    system_mcp_descriptor_by_server_name, system_mcp_descriptor_for_record, SystemMcpDescriptor,
+};
+pub use chatos_plugin_management_sdk::{
+    SystemMcpKey, LEGACY_BUILTIN_MCP_RUNTIME_KIND, SYSTEM_MCP_RUNTIME_KIND,
+};
+pub use definition::{CatalogSystemMcpDefinition, SystemMcpDefinition};
 pub(crate) use implementations::builtin::tool_registry;
 pub use implementations::builtin::{
     agent_builder, ask_user, bundled_tools, code_maintainer, memory_readers, notepad,
@@ -47,20 +56,6 @@ pub use implementations::builtin::{
     PROCESS_LIST_MAX_LIMIT, PROCESS_POLL_MAX_LIMIT, PROCESS_WAIT_MAX_TIMEOUT_MS,
     RECENT_LOGS_MAX_PER_TERMINAL_LIMIT, RECENT_LOGS_MAX_TERMINAL_LIMIT,
 };
-pub use task_types::{
-    TaskClosureDecision, TaskDraft, TaskOutcomeItem, TaskUpdatePatch, TASK_NOT_FOUND_ERR,
-};
-
-pub use backend::{SystemMcpBackend, SystemMcpHost};
-pub use catalog::{
-    system_mcp_catalog, system_mcp_descriptor, system_mcp_descriptor_by_any,
-    system_mcp_descriptor_by_embedded_kind, system_mcp_descriptor_by_resource_id,
-    system_mcp_descriptor_by_server_name, system_mcp_descriptor_for_record, SystemMcpDescriptor,
-};
-pub use chatos_plugin_management_sdk::{
-    SystemMcpKey, LEGACY_BUILTIN_MCP_RUNTIME_KIND, SYSTEM_MCP_RUNTIME_KIND,
-};
-pub use definition::{CatalogSystemMcpDefinition, SystemMcpDefinition};
 pub use implementations::{system_mcp_definition, system_mcp_definitions};
 pub use product_skills::{
     product_skill_document, product_skill_documents, ProductSkillDocument, ProductSkillResource,

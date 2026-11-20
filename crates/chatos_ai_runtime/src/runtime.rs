@@ -7,11 +7,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use chatos_mcp_runtime::ToolResult;
-#[cfg(feature = "local-agent-loop")]
-use tracing::{info, warn};
 
-#[cfg(feature = "local-agent-loop")]
-use crate::file_write_recovery::automatic_file_write_recovery_calls;
 use crate::request::AiRequestHandler;
 use crate::tool_call::tool_calls_value_has_items;
 use crate::traits::SaveToolRecordInput;
@@ -19,8 +15,6 @@ use crate::traits::{
     MemoryRecordWriter, ModelRequest, SaveAssistantRecordInput, SaveRecordInput, ToolExecutor,
 };
 use crate::{RuntimeBeforeModelRequest, RuntimeIterationContext};
-#[cfg(feature = "local-agent-loop")]
-use crate::{RuntimeFinalResponseAction, RuntimeFinalResponseContext};
 
 mod final_response;
 mod input_items;
@@ -28,54 +22,25 @@ mod model_request;
 mod options;
 mod persistence;
 mod report;
-mod request_error;
 mod single_step;
-#[cfg(feature = "local-agent-loop")]
-mod summaries;
-#[cfg(feature = "local-agent-loop")]
-mod tool_execution;
 
-pub use self::options::{AiRuntimeOptions, IterativeContextRefresh, MemoryContextOverflowRecovery};
-pub use self::report::{AiRuntimeResult, AiTurnReport, AiTurnStatus};
+pub use self::options::AiRuntimeOptions;
+pub use self::report::AiRuntimeResult;
 pub use self::single_step::{AiSingleStepOutcome, AiSingleStepRequest};
 
 use self::final_response::runtime_result_from_response;
-#[cfg(feature = "local-agent-loop")]
-use self::final_response::{handle_response_without_tool_calls, FinalResponseAction};
 use self::input_items::append_lifecycle_input_items;
-#[cfg(feature = "local-agent-loop")]
-use self::input_items::append_runtime_input_items;
-#[cfg(feature = "local-agent-loop")]
-use self::input_items::empty_final_response_followup_item;
-#[cfg(feature = "local-agent-loop")]
-use self::input_items::{input_item_count, json_value_size_bytes};
-#[cfg(feature = "local-agent-loop")]
-use self::model_request::dispatch_model_request;
 use self::persistence::normalized_option;
 use self::persistence::should_persist_tool_result;
-#[cfg(feature = "local-agent-loop")]
-use self::request_error::{handle_model_request_error, ModelRequestErrorAction};
-#[cfg(feature = "local-agent-loop")]
-use self::summaries::summarize_tool_call_names;
-#[cfg(feature = "local-agent-loop")]
-use self::tool_execution::{
-    execute_runtime_tools, next_consecutive_failed_tool_batch_count, repeated_tool_failure_error,
-    RepeatedToolFailureTracker,
-};
 
 pub struct AiRuntime {
     request_handler: AiRequestHandler,
-    #[cfg_attr(not(feature = "local-agent-loop"), allow(dead_code))]
     tool_executor: Option<Arc<dyn ToolExecutor>>,
     record_writer: Option<Arc<dyn MemoryRecordWriter>>,
     max_iterations: usize,
 }
 
 const EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT: &str = "上一轮响应没有返回任何可展示的最终结果。请先检查当前任务是否已经真实完成：如果已经满足目标且不需要更多验证，直接输出最终结果；如果仍有未完成工作、未处理的任务状态/门禁反馈、缺少关键事实或缺少验证，请继续使用必要工具完成工作或记录明确阻塞。不要把未完成工作包装成最终结果。";
-#[cfg(feature = "local-agent-loop")]
-const EMPTY_FINAL_RESPONSE_ERROR: &str = "模型未返回可展示的最终结果";
-#[cfg(feature = "local-agent-loop")]
-const MAX_CONSECUTIVE_FAILED_TOOL_BATCHES: usize = 8;
 impl AiRuntime {
     pub fn builder() -> crate::builder::AiRuntimeBuilder {
         crate::builder::AiRuntimeBuilder::new()
@@ -126,8 +91,6 @@ impl AiRuntime {
     }
 
     /// Persists a tool batch executed by an external event-driven MCP service.
-    /// The local approval Agent still uses the in-process loop; cloud Agents
-    /// call this after the aggregate MCP result arrives.
     pub async fn persist_external_tool_results(
         &self,
         options: &AiRuntimeOptions,
@@ -143,356 +106,6 @@ impl AiRuntime {
         request: AiSingleStepRequest,
     ) -> Result<AiSingleStepOutcome, String> {
         single_step::execute_once(self, request).await
-    }
-
-    #[cfg(feature = "local-agent-loop")]
-    pub async fn run_turn(
-        &self,
-        mut request: ModelRequest,
-        options: AiRuntimeOptions,
-    ) -> Result<AiRuntimeResult, String> {
-        request.supports_responses = true;
-        request.previous_response_id = None;
-        let mut iteration = 0usize;
-        let mut context_overflow_recovery_attempted = false;
-        let mut missing_tool_turn_replay_attempted = false;
-        let mut iteration_reason = "initial".to_string();
-        let mut pending_tool_calls: Option<Vec<Value>> = None;
-        let mut pending_tool_outputs: Option<Vec<Value>> = None;
-        let mut empty_final_response_followup_attempted = false;
-        let mut runtime_followup_items: Vec<Value> = Vec::new();
-        let mut runtime_followup_appended_to_request = false;
-        let mut consecutive_failed_tool_batches = 0usize;
-        let mut repeated_tool_failure_tracker = RepeatedToolFailureTracker::default();
-        'runtime_loop: loop {
-            if options.is_aborted() {
-                return Err("aborted".to_string());
-            }
-            if iteration >= self.max_iterations {
-                warn!(
-                    conversation_id = options.conversation_id.as_deref().unwrap_or(""),
-                    conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
-                    iteration,
-                    max_iterations = self.max_iterations,
-                    "ai runtime hit max iterations"
-                );
-                return Err("达到最大迭代次数".to_string());
-            }
-            iteration += 1;
-
-            if !runtime_followup_items.is_empty() && !runtime_followup_appended_to_request {
-                request.input =
-                    append_runtime_input_items(request.input, runtime_followup_items.as_slice());
-                runtime_followup_appended_to_request = true;
-            }
-
-            if let Some(executor) = &self.tool_executor {
-                let tools = executor.available_tools();
-                if !tools.is_empty() {
-                    request.tools = tools;
-                }
-            }
-
-            let (mut iteration_request, lifecycle_before) =
-                prepare_iteration_request(&request, &options, iteration, iteration_reason.as_str())
-                    .await?;
-            iteration_request.previous_response_id = None;
-
-            let tool_count = iteration_request.tools.len();
-            let mut transient_retry_count = 0usize;
-            let mut recovery_request_handler: Option<AiRequestHandler> = None;
-            let mut request_attempt = 0usize;
-            let mut response = loop {
-                request_attempt = request_attempt.saturating_add(1);
-                let request_handler = recovery_request_handler
-                    .as_ref()
-                    .unwrap_or(&self.request_handler);
-                let force_identity_encoding = recovery_request_handler.is_some();
-                let input_item_count = input_item_count(&iteration_request.input);
-                let input_bytes = json_value_size_bytes(&iteration_request.input);
-                let response = dispatch_model_request(
-                    request_handler,
-                    &iteration_request,
-                    &options,
-                    iteration,
-                    iteration_reason.as_str(),
-                    input_item_count,
-                    input_bytes,
-                    tool_count,
-                    request_attempt,
-                    lifecycle_before.stream_output,
-                    true,
-                    force_identity_encoding,
-                )
-                .await;
-                match response {
-                    Ok(response) => break response,
-                    Err(err) => {
-                        match handle_model_request_error(
-                            err,
-                            &iteration_request,
-                            &options,
-                            iteration,
-                            missing_tool_turn_replay_attempted,
-                            pending_tool_calls.as_deref(),
-                            pending_tool_outputs.as_deref(),
-                            &mut context_overflow_recovery_attempted,
-                            &mut transient_retry_count,
-                        )
-                        .await?
-                        {
-                            ModelRequestErrorAction::ReplayMissingToolTurn(repaired_input) => {
-                                request.input = repaired_input;
-                                missing_tool_turn_replay_attempted = true;
-                                iteration_reason = "missing_tool_turn_replay".to_string();
-                                continue 'runtime_loop;
-                            }
-                            ModelRequestErrorAction::ContextRecovered => {
-                                iteration_reason = "context_overflow_recovery".to_string();
-                                continue 'runtime_loop;
-                            }
-                            ModelRequestErrorAction::RetryRequest => {
-                                // A retry must not inherit a potentially unhealthy pooled
-                                // connection. Build a new client for every retry attempt and
-                                // ask the provider to close that isolated connection afterward.
-                                recovery_request_handler =
-                                    Some(self.request_handler.isolated_retry_handler());
-                                continue;
-                            }
-                            ModelRequestErrorAction::Fail(err) => return Err(err),
-                        }
-                    }
-                }
-            };
-            missing_tool_turn_replay_attempted = false;
-
-            if options.is_aborted() {
-                return Err("aborted".to_string());
-            }
-
-            let Some(tool_calls) = response
-                .tool_calls
-                .clone()
-                .filter(|value| tool_calls_value_has_items(Some(value)))
-            else {
-                match handle_response_without_tool_calls(
-                    &response,
-                    &options,
-                    iteration,
-                    self.max_iterations,
-                    empty_final_response_followup_attempted,
-                )? {
-                    FinalResponseAction::AskForFollowup => {
-                        empty_final_response_followup_attempted = true;
-                        runtime_followup_items = vec![empty_final_response_followup_item()];
-                        request.input = crate::stateless_history::append_responses_history_items(
-                            request.input,
-                            response.response_output_items.as_slice(),
-                            &[],
-                        );
-                        runtime_followup_appended_to_request = false;
-                        iteration_reason = "empty_final_response_followup".to_string();
-                        continue;
-                    }
-                    FinalResponseAction::Complete => {
-                        if let Some(hook) = &options.lifecycle_hook {
-                            match hook
-                                .after_final_response(RuntimeFinalResponseContext {
-                                    conversation_id: options.conversation_id.clone(),
-                                    conversation_turn_id: options.conversation_turn_id.clone(),
-                                    iteration,
-                                    reason: iteration_reason.clone(),
-                                    response: response.clone(),
-                                })
-                                .await?
-                            {
-                                RuntimeFinalResponseAction::Accept => {}
-                                RuntimeFinalResponseAction::Replace(replacement) => {
-                                    response = *replacement;
-                                }
-                                RuntimeFinalResponseAction::Continue {
-                                    input_items,
-                                    reason,
-                                } => {
-                                    runtime_followup_items = input_items;
-                                    request.input =
-                                        crate::stateless_history::append_responses_history_items(
-                                            request.input,
-                                            response.response_output_items.as_slice(),
-                                            &[],
-                                        );
-                                    runtime_followup_appended_to_request = false;
-                                    iteration_reason = if reason.trim().is_empty() {
-                                        "lifecycle_followup".to_string()
-                                    } else {
-                                        reason
-                                    };
-                                    if let Some(callback) = &options.callbacks.on_turn_phase {
-                                        callback(serde_json::json!({
-                                            "phase": "continue",
-                                            "reason": iteration_reason,
-                                            "iteration": iteration,
-                                        }));
-                                    }
-                                    continue;
-                                }
-                                RuntimeFinalResponseAction::ContinueReplacingResponse {
-                                    response: _replacement,
-                                    input_items,
-                                    reason,
-                                } => {
-                                    runtime_followup_items = input_items;
-                                    // The provider-side response is what the lifecycle hook
-                                    // rejected. Reusing its response id would retain the
-                                    // unauthorized hosted-tool result outside our sanitized
-                                    // continuation history.
-                                    request.input =
-                                        crate::stateless_history::append_responses_history_items(
-                                            request.input,
-                                            response.response_output_items.as_slice(),
-                                            &[],
-                                        );
-                                    runtime_followup_appended_to_request = false;
-                                    iteration_reason = if reason.trim().is_empty() {
-                                        "lifecycle_sanitized_followup".to_string()
-                                    } else {
-                                        reason
-                                    };
-                                    if let Some(callback) = &options.callbacks.on_turn_phase {
-                                        callback(serde_json::json!({
-                                            "phase": "continue",
-                                            "reason": iteration_reason,
-                                            "iteration": iteration,
-                                        }));
-                                    }
-                                    continue;
-                                }
-                            }
-                        }
-                        let lifecycle_metadata = if let Some(hook) = &options.lifecycle_hook {
-                            hook.final_response_metadata(RuntimeFinalResponseContext {
-                                conversation_id: options.conversation_id.clone(),
-                                conversation_turn_id: options.conversation_turn_id.clone(),
-                                iteration,
-                                reason: iteration_reason.clone(),
-                                response: response.clone(),
-                            })
-                            .await?
-                        } else {
-                            None
-                        };
-                        self.save_assistant_record(
-                            &options,
-                            &response,
-                            response.tool_calls.clone(),
-                            None,
-                            merge_record_metadata(
-                                lifecycle_metadata,
-                                options
-                                    .record_options
-                                    .request_summary_on_final_response
-                                    .then(|| {
-                                        serde_json::json!({
-                                            "memory_terminal_summary_requested": true
-                                        })
-                                    }),
-                            ),
-                        )
-                        .await?;
-                        return Ok(runtime_result_from_response(response));
-                    }
-                }
-            };
-
-            let tool_call_count = tool_calls.as_array().map(Vec::len).unwrap_or_default();
-            let tool_names = summarize_tool_call_names(&tool_calls, 8);
-            info!(
-                conversation_id = options.conversation_id.as_deref().unwrap_or(""),
-                conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
-                iteration,
-                tool_call_count,
-                tool_names = tool_names.join(", "),
-                "ai runtime received tool calls and will continue loop"
-            );
-            self.save_assistant_record(
-                &options,
-                &response,
-                Some(tool_calls.clone()),
-                Some("tool_calls".to_string()),
-                None,
-            )
-            .await?;
-
-            let Some(executor) = &self.tool_executor else {
-                return Ok(runtime_result_from_response(response));
-            };
-
-            let mut tool_execution = execute_runtime_tools(
-                executor.as_ref(),
-                &tool_calls,
-                &options,
-                iteration,
-                &mut repeated_tool_failure_tracker,
-            )
-            .await?;
-            self.save_tool_records(&options, tool_execution.tool_results.as_slice())
-                .await?;
-            let recovery_calls = automatic_file_write_recovery_calls(
-                tool_execution.tool_results.as_slice(),
-                executor.available_tools().as_slice(),
-            )?;
-            if !recovery_calls.is_empty() {
-                info!(
-                    conversation_id = options.conversation_id.as_deref().unwrap_or(""),
-                    conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
-                    iteration,
-                    recovery_call_count = recovery_calls.len(),
-                    "ai runtime automatically re-reading stale modification targets"
-                );
-                let recovery_execution = execute_runtime_tools(
-                    executor.as_ref(),
-                    &Value::Array(recovery_calls),
-                    &options,
-                    iteration,
-                    &mut repeated_tool_failure_tracker,
-                )
-                .await?;
-                self.save_tool_records(&options, recovery_execution.tool_results.as_slice())
-                    .await?;
-                tool_execution.extend(recovery_execution);
-            }
-            consecutive_failed_tool_batches = next_consecutive_failed_tool_batch_count(
-                consecutive_failed_tool_batches,
-                tool_execution.tool_results.as_slice(),
-            );
-            if consecutive_failed_tool_batches >= MAX_CONSECUTIVE_FAILED_TOOL_BATCHES {
-                let error = repeated_tool_failure_error(
-                    tool_execution.tool_results.as_slice(),
-                    consecutive_failed_tool_batches,
-                );
-                warn!(
-                    conversation_id = options.conversation_id.as_deref().unwrap_or(""),
-                    conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
-                    iteration,
-                    consecutive_failed_tool_batches,
-                    "ai runtime stopped after repeated failed tool batches"
-                );
-                return Err(error);
-            }
-            let response_output_items = if response.response_output_items.is_empty() {
-                tool_execution.tool_call_items.clone()
-            } else {
-                response.response_output_items.clone()
-            };
-            request.input = crate::stateless_history::append_responses_history_items(
-                request.input,
-                response_output_items.as_slice(),
-                tool_execution.tool_output_items.as_slice(),
-            );
-            pending_tool_calls = Some(tool_execution.tool_call_items);
-            pending_tool_outputs = Some(tool_execution.tool_output_items);
-            iteration_reason = "tool_results".to_string();
-        }
     }
 
     async fn save_assistant_record(
@@ -664,6 +277,3 @@ fn runtime_tool_definition_name(tool: &Value) -> Option<&str> {
         .and_then(Value::as_str)
         .or_else(|| tool.get("function")?.get("name")?.as_str())
 }
-
-#[cfg(all(test, feature = "local-agent-loop"))]
-mod tests;
