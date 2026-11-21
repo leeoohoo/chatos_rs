@@ -320,7 +320,7 @@ struct MediaStudioWorkflowWorkspace: View {
             fieldLabel("节点类型")
             Picker("", selection: Binding(
                 get: { node.kind },
-                set: viewModel.changeSelectedWorkflowNodeKind
+                set: { viewModel.changeSelectedWorkflowNodeKind($0) }
             )) {
                 Text("文本").tag(MediaStudioWorkflowNodeKind.text)
                 Text("图片").tag(MediaStudioWorkflowNodeKind.image)
