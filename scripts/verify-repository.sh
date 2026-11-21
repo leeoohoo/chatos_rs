@@ -148,12 +148,23 @@ run_native_platform() {
       run_swiftpm test --package-path "$ROOT_DIR/clients/macos" \
         --no-parallel --filter ChatOSAgentRuntimeTests
       for test_target in \
-        ChatOSWorkerRuntimeTests ChatOSCoreTests ChatOSAPITests ChatOSConnectorTests \
-        ChatOSAppTests ChatOSMediaWorkerTests ChatOSCodeReadWorkerTests; do
+        ChatOSWorkerRuntimeTests ChatOSCoreTests ChatOSAPITests ChatOSAppTests \
+        ChatOSMediaWorkerTests ChatOSCodeReadWorkerTests; do
         run_swiftpm test \
           --package-path "$ROOT_DIR/clients/macos" --no-parallel \
           --disable-swift-testing --filter "$test_target"
       done
+      while IFS= read -r test_class; do
+        [[ -n "$test_class" ]] || continue
+        run_swiftpm test \
+          --package-path "$ROOT_DIR/clients/macos" --no-parallel \
+          --disable-swift-testing --filter "$test_class"
+      done < <(
+        run_swiftpm test list --package-path "$ROOT_DIR/clients/macos" \
+          --disable-swift-testing \
+          | sed -n 's#^\(ChatOSConnectorTests\.[^/]*\)/.*#\1#p' \
+          | sort -u
+      )
       run_swiftpm build --package-path "$ROOT_DIR/plugins/computer-use"
       run_swiftpm test --package-path "$ROOT_DIR/plugins/computer-use" --no-parallel
       ;;
