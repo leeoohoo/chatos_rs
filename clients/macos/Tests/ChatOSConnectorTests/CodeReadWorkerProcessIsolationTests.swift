@@ -366,12 +366,13 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         defer { fixture.dispose() }
         let hanging = try fixture.makeWorker(name: "hanging-worker.py", hangs: true)
         let responsive = try fixture.makeWorker(name: "responsive-worker.py", hangs: false)
+        let resourceGovernor = Self.isolatedConcurrencyGovernor
         let blockedCompletion = CompletionFlag()
         let blocked = Task {
             do {
                 let result = try await CodeReadWorkerProcessClient(
                     executableURL: hanging, timeout: 20,
-                    resourceGovernor: Self.isolatedConcurrencyGovernor
+                    resourceGovernor: resourceGovernor
                 ).execute(
                     operation: "project_run_analyze_v1",
                     arguments: [:],
@@ -390,7 +391,7 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         let result = try await CodeReadWorkerProcessClient(
             executableURL: responsive, timeout: 10,
-            resourceGovernor: Self.isolatedConcurrencyGovernor
+            resourceGovernor: resourceGovernor
         ).execute(
             operation: "project_run_analyze_v1",
             arguments: [:],
@@ -406,7 +407,6 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
             return XCTFail("responsive worker returned an invalid result")
         }
         XCTAssertEqual(value, "independent")
-
         blocked.cancel()
         do {
             _ = try await blocked.value
@@ -419,12 +419,13 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         defer { fixture.dispose() }
         let hanging = try fixture.makeWorker(name: "hanging-mutation-worker.py", hangs: true)
         let responsive = try fixture.makeWorker(name: "responsive-mutation-worker.py", hangs: false)
+        let resourceGovernor = Self.isolatedConcurrencyGovernor
         let blockedCompletion = CompletionFlag()
         let blocked = Task {
             do {
                 let result = try await CodeReadWorkerProcessClient(
                     executableURL: hanging, timeout: 20,
-                    resourceGovernor: Self.isolatedConcurrencyGovernor
+                    resourceGovernor: resourceGovernor
                 ).execute(
                     operation: "project_write_file_v1",
                     arguments: ["path": .string("blocked.txt"), "content": .string("blocked")],
@@ -443,7 +444,7 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         let result = try await CodeReadWorkerProcessClient(
             executableURL: responsive, timeout: 10,
-            resourceGovernor: Self.isolatedConcurrencyGovernor
+            resourceGovernor: resourceGovernor
         ).execute(
             operation: "project_write_file_v1",
             arguments: ["path": .string("independent.txt"), "content": .string("independent")],
@@ -459,7 +460,6 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
             return XCTFail("responsive worker returned an invalid result")
         }
         XCTAssertEqual(value, "independent")
-
         blocked.cancel()
         do {
             _ = try await blocked.value
@@ -760,6 +760,7 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
             name: "responsive-attachment-worker.py",
             hangs: false
         )
+        let resourceGovernor = Self.isolatedConcurrencyGovernor
         let arguments: [String: CodeReadWorkerJSONValue] = [
             "owner_user_id": .string("owner"),
             "conversation_id": .string("conversation"),
@@ -776,7 +777,7 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
             do {
                 let result = try await CodeReadWorkerProcessClient(
                     executableURL: hanging, timeout: 20,
-                    resourceGovernor: Self.isolatedConcurrencyGovernor
+                    resourceGovernor: resourceGovernor
                 ).execute(
                     operation: "attachment_resolve_v1",
                     arguments: arguments,
@@ -792,7 +793,7 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         let result = try await CodeReadWorkerProcessClient(
             executableURL: responsive, timeout: 10,
-            resourceGovernor: Self.isolatedConcurrencyGovernor
+            resourceGovernor: resourceGovernor
         ).execute(
             operation: "attachment_resolve_v1",
             arguments: arguments,
@@ -805,7 +806,6 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
             return XCTFail("responsive attachment worker returned an invalid result")
         }
         XCTAssertEqual(value, "independent")
-
         blocked.cancel()
         do {
             _ = try await blocked.value
