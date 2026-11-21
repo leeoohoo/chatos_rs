@@ -151,7 +151,7 @@ run_native_platform() {
         ChatOSWorkerRuntimeTests ChatOSCoreTests ChatOSAPITests ChatOSAppTests \
         ChatOSMediaWorkerTests ChatOSCodeReadWorkerTests; do
         run_swiftpm test \
-          --package-path "$ROOT_DIR/clients/macos" --no-parallel \
+          --package-path "$ROOT_DIR/clients/macos" --skip-build --no-parallel \
           --disable-swift-testing --filter "$test_target"
       done
       while IFS= read -r test_class; do
@@ -161,21 +161,21 @@ run_native_platform() {
           while IFS= read -r test_case; do
             [[ "$test_case" == "$test_class/"* ]] || continue
             run_swiftpm test \
-              --package-path "$ROOT_DIR/clients/macos" --no-parallel \
+              --package-path "$ROOT_DIR/clients/macos" --skip-build --no-parallel \
               --disable-swift-testing --filter "$test_case"
             ((scheduler_test_count += 1))
           done < <(
-            run_swiftpm test list --package-path "$ROOT_DIR/clients/macos" \
+            run_swiftpm test list --package-path "$ROOT_DIR/clients/macos" --skip-build \
               --disable-swift-testing
           )
           ((scheduler_test_count > 0))
         else
           run_swiftpm test \
-            --package-path "$ROOT_DIR/clients/macos" --no-parallel \
+            --package-path "$ROOT_DIR/clients/macos" --skip-build --no-parallel \
             --disable-swift-testing --filter "$test_class"
         fi
       done < <(
-        run_swiftpm test list --package-path "$ROOT_DIR/clients/macos" \
+        run_swiftpm test list --package-path "$ROOT_DIR/clients/macos" --skip-build \
           --disable-swift-testing \
           | sed -n 's#^\(ChatOSConnectorTests\.[^/]*\)/.*#\1#p' \
           | sort -u
