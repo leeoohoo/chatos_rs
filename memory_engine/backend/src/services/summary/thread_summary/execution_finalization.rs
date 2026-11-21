@@ -1,3 +1,5 @@
+use super::*;
+
 pub(crate) async fn execute_prepared_thread_summary_job(
     config: &AppConfig,
     db: &Db,
@@ -84,13 +86,7 @@ pub(crate) async fn execute_prepared_thread_summary_job(
         }
     };
 
-    let generation = claim_thread_summary_generation(
-        db,
-        tenant_id,
-        source_id,
-        job_run_id,
-    )
-    .await?;
+    let generation = claim_thread_summary_generation(db, tenant_id, source_id, job_run_id).await?;
     let record_ids = selection
         .selected
         .iter()
@@ -170,7 +166,11 @@ pub(crate) async fn execute_prepared_thread_summary_job(
     )
     .await
     {
-        tracing::warn!(summary_id = summary.id, error, "thread summary rollup Outbox publish deferred");
+        tracing::warn!(
+            summary_id = summary.id,
+            error,
+            "thread summary rollup Outbox publish deferred"
+        );
     }
     if let Err(error) = crate::subject_memory_queue::publish_pending_source_for_summary(
         config,
@@ -181,7 +181,11 @@ pub(crate) async fn execute_prepared_thread_summary_job(
     )
     .await
     {
-        tracing::warn!(summary_id = summary.id, error, "thread summary subject-memory Outbox publish deferred");
+        tracing::warn!(
+            summary_id = summary.id,
+            error,
+            "thread summary subject-memory Outbox publish deferred"
+        );
     }
 
     Ok(RunThreadSummaryResponse {

@@ -22,6 +22,10 @@ use super::job::{
     noop_metadata, FrozenThreadSummarySelection, THREAD_DIRECT_TRIGGER,
 };
 
+#[path = "execution_finalization.rs"]
+mod finalization;
+pub(crate) use finalization::execute_prepared_thread_summary_job;
+
 const PARTITION_CLAIM_LEASE_SECONDS: i64 = 300;
 const GENERATION_FINALIZE_LEASE_SECONDS: i64 = 300;
 const THREAD_SUMMARY_GENERATION_STEP: &str = "thread_summary_final";
@@ -606,8 +610,6 @@ pub(super) fn project_partition_key(selection: &PendingRecordSelection) -> &str 
 fn project_partition_key_from_subject(project_subject_id: Option<&str>) -> &str {
     project_subject_id.unwrap_or("__none__")
 }
-
-include!("execution_part01.rs");
 
 fn noop_response(thread_id: &str) -> RunThreadSummaryResponse {
     RunThreadSummaryResponse {
