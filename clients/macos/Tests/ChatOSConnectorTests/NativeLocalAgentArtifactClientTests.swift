@@ -13,9 +13,11 @@ final class NativeLocalAgentArtifactClientTests: XCTestCase {
         let hostExecutable = ProcessInfo.processInfo.environment["CHATOS_LOCAL_AGENT_HOST_PATH"]
             .map { URL(fileURLWithPath: $0) }
             ?? repository.appendingPathComponent("target-shared/debug/chatos_local_agent_host")
-        let workerExecutable = repository.appendingPathComponent(
-            "clients/macos/.build/out/Products/Debug/ChatOSCodeReadWorker"
-        )
+        let workerExecutable = ProcessInfo.processInfo.environment["CHATOS_CODE_READ_WORKER_PATH"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? repository.appendingPathComponent(
+                "clients/macos/.build/out/Products/Debug/ChatOSCodeReadWorker"
+            )
         guard FileManager.default.isExecutableFile(atPath: hostExecutable.path),
               FileManager.default.isExecutableFile(atPath: workerExecutable.path) else {
             if ProcessInfo.processInfo.environment["CHATOS_REQUIRE_NATIVE_HOST_TESTS"] == "1" {

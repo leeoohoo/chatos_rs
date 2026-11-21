@@ -187,23 +187,7 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
     }
 
     func testRealWorkerReadsThroughAuthenticatedProcessBoundary() async throws {
-        let packageRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        #if DEBUG
-        let configurations = ["Debug", "Release"]
-        #else
-        let configurations = ["Release", "Debug"]
-        #endif
-        let candidates = configurations.map {
-            packageRoot.appendingPathComponent(".build/out/Products/\($0)/ChatOSCodeReadWorker")
-        }
-        guard let executable = candidates.first(where: {
-            FileManager.default.isExecutableFile(atPath: $0.path)
-        }) else {
-            throw XCTSkip("Build ChatOSCodeReadWorker before running the process integration test")
-        }
+        let executable = try realWorkerExecutable()
         let fixture = try WorkerFixture()
         defer { fixture.dispose() }
         try Data("isolated-content\n".utf8)
@@ -815,6 +799,10 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
 }
 
 private func realWorkerExecutable() throws -> URL {
+    if let configured = ProcessInfo.processInfo.environment["CHATOS_CODE_READ_WORKER_PATH"] {
+        let executable = URL(fileURLWithPath: configured)
+        if FileManager.default.isExecutableFile(atPath: executable.path) { return executable }
+    }
     let packageRoot = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()

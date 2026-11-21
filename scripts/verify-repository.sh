@@ -143,6 +143,9 @@ run_native_platform() {
         "${CARGO[@]}" clean --target-dir "$ROOT_DIR/target-shared"
       fi
       run_swiftpm build --package-path "$ROOT_DIR/clients/macos"
+      swift_bin_path="$(run_swiftpm build --package-path "$ROOT_DIR/clients/macos" --show-bin-path)"
+      export CHATOS_CODE_READ_WORKER_PATH="$swift_bin_path/ChatOSCodeReadWorker"
+      test -x "$CHATOS_CODE_READ_WORKER_PATH"
       # Swift Testing currently ignores module filters under Xcode's build system, so run it once
       # with the first XCTest target and disable it for the remaining target-sized XCTest batches.
       run_swiftpm test --package-path "$ROOT_DIR/clients/macos" \
