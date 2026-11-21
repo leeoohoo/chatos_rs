@@ -10,6 +10,9 @@ import XCTest
 @testable import ChatOSConnector
 
 final class CodeReadWorkerProcessIsolationTests: XCTestCase {
+    private static let isolatedConcurrencyGovernor = ClientFileWorkerResourceGovernor(
+        budget: .init(totalConcurrentWorkers: 3, maximumMediaWorkers: 2, maximumCodeReadWorkers: 2)
+    )
     func testSharedMachineQueueDoesNotSpawnWorkerBeforeAdmission() async throws {
         let fixture = try WorkerFixture()
         defer { fixture.dispose() }
@@ -367,8 +370,8 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         let blocked = Task {
             do {
                 let result = try await CodeReadWorkerProcessClient(
-                    executableURL: hanging,
-                    timeout: 20
+                    executableURL: hanging, timeout: 20,
+                    resourceGovernor: Self.isolatedConcurrencyGovernor
                 ).execute(
                     operation: "project_run_analyze_v1",
                     arguments: [:],
@@ -385,10 +388,9 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
             }
         }
         try await Task.sleep(for: .milliseconds(100))
-
         let result = try await CodeReadWorkerProcessClient(
-            executableURL: responsive,
-            timeout: 10
+            executableURL: responsive, timeout: 10,
+            resourceGovernor: Self.isolatedConcurrencyGovernor
         ).execute(
             operation: "project_run_analyze_v1",
             arguments: [:],
@@ -421,8 +423,8 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         let blocked = Task {
             do {
                 let result = try await CodeReadWorkerProcessClient(
-                    executableURL: hanging,
-                    timeout: 20
+                    executableURL: hanging, timeout: 20,
+                    resourceGovernor: Self.isolatedConcurrencyGovernor
                 ).execute(
                     operation: "project_write_file_v1",
                     arguments: ["path": .string("blocked.txt"), "content": .string("blocked")],
@@ -439,10 +441,9 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
             }
         }
         try await Task.sleep(for: .milliseconds(100))
-
         let result = try await CodeReadWorkerProcessClient(
-            executableURL: responsive,
-            timeout: 10
+            executableURL: responsive, timeout: 10,
+            resourceGovernor: Self.isolatedConcurrencyGovernor
         ).execute(
             operation: "project_write_file_v1",
             arguments: ["path": .string("independent.txt"), "content": .string("independent")],
@@ -774,8 +775,8 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         let blocked = Task {
             do {
                 let result = try await CodeReadWorkerProcessClient(
-                    executableURL: hanging,
-                    timeout: 20
+                    executableURL: hanging, timeout: 20,
+                    resourceGovernor: Self.isolatedConcurrencyGovernor
                 ).execute(
                     operation: "attachment_resolve_v1",
                     arguments: arguments,
@@ -789,10 +790,9 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
             }
         }
         try await Task.sleep(for: .milliseconds(100))
-
         let result = try await CodeReadWorkerProcessClient(
-            executableURL: responsive,
-            timeout: 10
+            executableURL: responsive, timeout: 10,
+            resourceGovernor: Self.isolatedConcurrencyGovernor
         ).execute(
             operation: "attachment_resolve_v1",
             arguments: arguments,

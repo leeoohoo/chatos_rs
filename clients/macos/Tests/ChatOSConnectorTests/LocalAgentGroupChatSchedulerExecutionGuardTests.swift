@@ -281,6 +281,7 @@ extension LocalAgentGroupChatSchedulerTests {
             service: nativeService,
             services: ActiveCancellationSchedulerTestServices(),
             settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 2,
             now: { 200 }
         )
         let startedAt = Date()

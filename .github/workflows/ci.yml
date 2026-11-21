@@ -163,9 +163,10 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Select current Xcode toolchain
+      - name: Prepare macOS native toolchain
         if: runner.os == 'macOS'
         run: |
+          sudo install -m 0755 "$(command -v node)" /usr/local/bin/node
           sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
           swift --version
 
