@@ -8,32 +8,19 @@ pub fn legacy_policy_permission_snapshot(
     runtime_workspace_roots: Vec<String>,
 ) -> EffectivePermissionSnapshot {
     let active_profile = ActivePermissionProfile {
-        id: match policy.permission_profile_id {
-            PermissionProfileId::ReadOnly => ":read-only",
-            PermissionProfileId::WorkspaceWrite => ":workspace",
-            PermissionProfileId::FullAccess => ":danger-full-access",
-        }
-        .to_string(),
+        id: policy.permission_profile_id.codex_name().to_string(),
         extends: None,
     };
-    let (file_system, network) = match policy.permission_profile_id {
-        PermissionProfileId::ReadOnly => (
-            FileSystemPermissionPolicy::Restricted {
-                entries: vec![FileSystemSandboxEntry {
-                    access: FileSystemAccessMode::Read,
-                    path: FileSystemPath::Special {
-                        value: FileSystemSpecialPath::Root,
-                    },
-                }],
-                glob_scan_max_depth: None,
-            },
-            NetworkPermissionPolicy::Restricted {
-                requirements: NetworkRequirements {
-                    enabled: Some(false),
-                    ..NetworkRequirements::default()
+    let file_system = match policy.permission_profile_id {
+        PermissionProfileId::ReadOnly => FileSystemPermissionPolicy::Restricted {
+            entries: vec![FileSystemSandboxEntry {
+                access: FileSystemAccessMode::Read,
+                path: FileSystemPath::Special {
+                    value: FileSystemSpecialPath::Root,
                 },
-            },
-        ),
+            }],
+            glob_scan_max_depth: None,
+        },
         PermissionProfileId::WorkspaceWrite => {
             let mut entries = vec![
                 FileSystemSandboxEntry {
@@ -69,23 +56,23 @@ pub fn legacy_policy_permission_snapshot(
                         path: FileSystemPath::Path { path },
                     }),
             );
-            (
-                FileSystemPermissionPolicy::Restricted {
-                    entries,
-                    glob_scan_max_depth: None,
-                },
-                NetworkPermissionPolicy::Restricted {
-                    requirements: NetworkRequirements {
-                        enabled: Some(false),
-                        ..NetworkRequirements::default()
-                    },
-                },
-            )
+            FileSystemPermissionPolicy::Restricted {
+                entries,
+                glob_scan_max_depth: None,
+            }
         }
-        PermissionProfileId::FullAccess => (
-            FileSystemPermissionPolicy::Unrestricted,
-            NetworkPermissionPolicy::Unrestricted,
-        ),
+        PermissionProfileId::FullAccess => FileSystemPermissionPolicy::Unrestricted,
+    };
+    let network = match policy.permission_profile_id {
+        PermissionProfileId::FullAccess => NetworkPermissionPolicy::Unrestricted,
+        PermissionProfileId::ReadOnly | PermissionProfileId::WorkspaceWrite => {
+            NetworkPermissionPolicy::Restricted {
+                requirements: NetworkRequirements {
+                    enabled: Some(false),
+                    ..NetworkRequirements::default()
+                },
+            }
+        }
     };
     EffectivePermissionSnapshot {
         active_profile,
