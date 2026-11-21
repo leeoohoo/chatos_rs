@@ -63,6 +63,16 @@ actor LocalAgentActiveDeliveryRegistry {
     private var deliveryIDs: Set<String> = []
     private var managers: [ManagerKey: String] = [:]
 
+    func isActive(
+        deliveryID: String,
+        ownerUserID: String,
+        agentID: String,
+        lane: LocalAgentRunLane
+    ) -> Bool {
+        deliveryIDs.contains(deliveryID)
+            || (lane == .manager && managers[.init(ownerUserID: ownerUserID, agentID: agentID)] != nil)
+    }
+
     /// Atomically claims in-process ownership of a delivery. Manual resume, Human retry, and
     /// crash recovery all use this gate. Manager ownership is Agent-wide across conversations;
     /// executor ownership remains independent, and duplicate execution of a Delivery is rejected.

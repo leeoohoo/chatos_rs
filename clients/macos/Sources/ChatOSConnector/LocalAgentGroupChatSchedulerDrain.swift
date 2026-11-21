@@ -471,6 +471,17 @@ extension LocalAgentGroupChatScheduler {
                       !Task.isCancelled,
                       nextRunIndex < runs.count,
                       completed.count + inFlightCount < maximumRuns {
+                    let run = runs[nextRunIndex]
+                    let deliveryID = run.context.deliveryID
+                    if await activeDeliveryRegistry.isActive(
+                        deliveryID: deliveryID,
+                        ownerUserID: ownerUserID,
+                        agentID: run.context.agentID,
+                        lane: run.context.lane
+                    ) {
+                        nextRunIndex += 1
+                        continue
+                    }
                     do {
                         try await runtime.checkExecutionAdmission()
                     } catch {
@@ -491,9 +502,7 @@ extension LocalAgentGroupChatScheduler {
                         break
                     }
                     let order = nextRunIndex
-                    let run = runs[nextRunIndex]
                     nextRunIndex += 1
-                    let deliveryID = run.context.deliveryID
                     guard await activeDeliveryRegistry.acquire(
                         deliveryID: deliveryID, ownerUserID: ownerUserID,
                         agentID: run.context.agentID, lane: run.context.lane
