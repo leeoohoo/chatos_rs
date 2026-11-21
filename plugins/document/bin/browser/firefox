@@ -1,5 +1,5 @@
 #!/bin/sh
-# Firefox needs an explicit profile when the Plugin runs with an isolated HOME.
+# Firefox still reads protected macOS app data even with an explicit profile.
 set -eu
 : "${CHATOS_PLUGIN_CACHE_DIR:?Missing isolated Plugin cache}"
 firefox_bin='/Applications/Firefox.app/Contents/MacOS/firefox'
@@ -9,6 +9,8 @@ if [ ! -x "$firefox_bin" ]; then
 fi
 mkdir -p "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles"
 render_profile=$(mktemp -d "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles/firefox.XXXXXXXX")
+firefox_app_data="$CHATOS_PLUGIN_CACHE_DIR/firefox-app-data"
+mkdir -p "$firefox_app_data"
 screenshot=''
 for argument in "$@"; do
   case "$argument" in
@@ -20,7 +22,7 @@ cleanup() {
 }
 trap cleanup EXIT
 status=0
-"$firefox_bin" --new-instance --profile "$render_profile" "$@" || status=$?
+MOZ_APP_DATA="$firefox_app_data" "$firefox_bin" --new-instance --profile "$render_profile" "$@" || status=$?
 if [ "$status" -eq 0 ] && [ -n "$screenshot" ]; then
   attempts=0
   while [ ! -s "$screenshot" ] && [ "$attempts" -lt 300 ]; do
