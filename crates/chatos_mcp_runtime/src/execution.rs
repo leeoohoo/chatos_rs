@@ -328,36 +328,44 @@ async fn collect_parallel_results(
         let Some(joined) = joined else {
             break;
         };
-        match joined {
-            Ok((task_id, (index, result))) => {
-                pending_contexts.remove(&task_id);
-                results[index] = Some(result);
-            }
-            Err(err) => {
-                let task_id = err.id();
-                if let Some(pending) = pending_contexts.remove(&task_id) {
-                    error!(
-                        tool_name = %pending.tool_name,
-                        tool_call_id = %pending.call_id,
-                        "parallel tool task panicked or was cancelled: {}",
-                        err
-                    );
-                    results[pending.index] = Some(tool_result_error(
-                        pending.call_id,
-                        pending.tool_name,
-                        pending.conversation_turn_id,
-                        join_error_message(&err),
-                        false,
-                    ));
-                } else {
-                    warn!("parallel tool join error without context: {err}");
-                }
-            }
-        }
+        store_parallel_result(joined, pending_contexts, results);
 
         if context.is_aborted() {
             join_set.abort_all();
             break;
+        }
+    }
+}
+
+fn store_parallel_result(
+    joined: Result<(Id, (usize, ToolResult)), tokio::task::JoinError>,
+    pending_contexts: &mut HashMap<Id, PendingToolContext>,
+    results: &mut [Option<ToolResult>],
+) {
+    match joined {
+        Ok((task_id, (index, result))) => {
+            pending_contexts.remove(&task_id);
+            results[index] = Some(result);
+        }
+        Err(error) => {
+            let task_id = error.id();
+            let Some(pending) = pending_contexts.remove(&task_id) else {
+                warn!("parallel tool join error without context: {error}");
+                return;
+            };
+            error!(
+                tool_name = %pending.tool_name,
+                tool_call_id = %pending.call_id,
+                "parallel tool task panicked or was cancelled: {}",
+                error
+            );
+            results[pending.index] = Some(tool_result_error(
+                pending.call_id,
+                pending.tool_name,
+                pending.conversation_turn_id,
+                join_error_message(&error),
+                false,
+            ));
         }
     }
 }
