@@ -176,70 +176,13 @@ impl AiRequestHandler {
             "ai provider response headers received"
         );
         if !response.status().is_success() {
-            let status = response.status();
-            let retry_after_ms = retry_after_delay_ms(response.headers());
-            let provider_request_id = response
-                .headers()
-                .get("x-request-id")
-                .or_else(|| response.headers().get("openai-request-id"))
-                .and_then(|value| value.to_str().ok())
-                .unwrap_or("unavailable")
-                .to_string();
-            let body = read_error_response_text_limited(response).await;
-            let body_preview = log_preview(body.as_str());
-            warn!(
-                transport = "responses",
-                url = url.as_str(),
-                status = status.as_u16(),
-                retry_after_ms,
-                provider_request_id = provider_request_id.as_str(),
-                response_body = body_preview.as_str(),
-                "ai provider request failed"
-            );
-            let retry_hint = retry_after_ms
-                .map(|value| format!(" [retry_after_ms={value}]"))
-                .unwrap_or_default();
-            return Err(format!(
-                "status {status}{retry_hint} [provider_request_id={provider_request_id}]: {body}"
-            ));
+            return Err(provider_response_error(response, url.as_str()).await);
         }
 
         let parsed =
             parse_stream_response(response, callbacks, options.abort_token, self.read_timeout)
                 .await;
-        match &parsed {
-            Ok(ai_response) => {
-                info!(
-                    transport = "responses",
-                    url = url.as_str(),
-                    response_id = ai_response.response_id.as_deref().unwrap_or(""),
-                    provider_request_id = ai_response.provider_request_id.as_deref().unwrap_or(""),
-                    finish_reason = ai_response.finish_reason.as_deref().unwrap_or(""),
-                    response_status = ai_response.response_status.as_deref().unwrap_or(""),
-                    terminal_event_type = ai_response.terminal_event_type.as_deref().unwrap_or(""),
-                    terminal_event_seen = ai_response.terminal_event_seen,
-                    parsed_sse_event_count = ai_response.parsed_stream_event_count,
-                    malformed_sse_event_count = ai_response.malformed_stream_event_count,
-                    content_bytes = ai_response.content.len(),
-                    reasoning_bytes = ai_response.reasoning.as_deref().map(str::len).unwrap_or(0),
-                    tool_call_count = ai_response_tool_call_count(ai_response),
-                    has_provider_error = ai_response.provider_error.is_some(),
-                    has_usage = ai_response.usage.is_some(),
-                    ai_provider_request_ms = request_started_at.elapsed().as_millis(),
-                    stream = options.stream,
-                    "received ai provider response"
-                );
-            }
-            Err(err) => {
-                warn!(
-                    transport = "responses",
-                    url = url.as_str(),
-                    error = err.as_str(),
-                    stream = options.stream,
-                    "failed to parse ai provider response"
-                );
-            }
-        }
+        log_parsed_response(&parsed, url.as_str(), options.stream, request_started_at);
         parsed
     }
 }
@@ -247,6 +190,70 @@ impl AiRequestHandler {
 impl Default for AiRequestHandler {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+async fn provider_response_error(response: reqwest::Response, url: &str) -> String {
+    let status = response.status();
+    let retry_after_ms = retry_after_delay_ms(response.headers());
+    let provider_request_id = response
+        .headers()
+        .get("x-request-id")
+        .or_else(|| response.headers().get("openai-request-id"))
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("unavailable")
+        .to_string();
+    let body = read_error_response_text_limited(response).await;
+    let body_preview = log_preview(body.as_str());
+    warn!(
+        transport = "responses",
+        url,
+        status = status.as_u16(),
+        retry_after_ms,
+        provider_request_id = provider_request_id.as_str(),
+        response_body = body_preview.as_str(),
+        "ai provider request failed"
+    );
+    let retry_hint = retry_after_ms
+        .map(|value| format!(" [retry_after_ms={value}]"))
+        .unwrap_or_default();
+    format!("status {status}{retry_hint} [provider_request_id={provider_request_id}]: {body}")
+}
+
+fn log_parsed_response(
+    parsed: &Result<AiResponse, String>,
+    url: &str,
+    stream: bool,
+    request_started_at: Instant,
+) {
+    match parsed {
+        Ok(response) => info!(
+            transport = "responses",
+            url,
+            response_id = response.response_id.as_deref().unwrap_or(""),
+            provider_request_id = response.provider_request_id.as_deref().unwrap_or(""),
+            finish_reason = response.finish_reason.as_deref().unwrap_or(""),
+            response_status = response.response_status.as_deref().unwrap_or(""),
+            terminal_event_type = response.terminal_event_type.as_deref().unwrap_or(""),
+            terminal_event_seen = response.terminal_event_seen,
+            parsed_sse_event_count = response.parsed_stream_event_count,
+            malformed_sse_event_count = response.malformed_stream_event_count,
+            content_bytes = response.content.len(),
+            reasoning_bytes = response.reasoning.as_deref().map(str::len).unwrap_or(0),
+            tool_call_count = ai_response_tool_call_count(response),
+            has_provider_error = response.provider_error.is_some(),
+            has_usage = response.usage.is_some(),
+            ai_provider_request_ms = request_started_at.elapsed().as_millis(),
+            stream,
+            "received ai provider response"
+        ),
+        Err(error) => warn!(
+            transport = "responses",
+            url,
+            error = error.as_str(),
+            stream,
+            "failed to parse ai provider response"
+        ),
     }
 }
 
