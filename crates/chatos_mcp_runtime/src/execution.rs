@@ -73,6 +73,33 @@ fn invalid_tool_call_result(error: ToolCallInputError, context: &ToolCallContext
     )
 }
 
+fn tool_result_from_outcome(
+    call_id: String,
+    tool_name: String,
+    conversation_turn_id: Option<String>,
+    outcome: Result<(String, Option<Value>), ToolCallError>,
+) -> ToolResult {
+    match outcome {
+        Ok((content, structured_result)) => tool_result_success(
+            call_id,
+            tool_name,
+            conversation_turn_id,
+            content,
+            structured_result,
+        ),
+        Err(error) => {
+            let fatal_error = error.is_fatal();
+            tool_result_error(
+                call_id,
+                tool_name,
+                conversation_turn_id,
+                format!("工具执行失败: {error}"),
+                fatal_error,
+            )
+        }
+    }
+}
+
 async fn wait_for_tool_outcome<Fut>(outcome: Fut, context: &ToolCallContext) -> Option<Fut::Output>
 where
     Fut: Future,
@@ -146,44 +173,29 @@ where
             break;
         }
 
-        match outcome {
-            Ok((content, structured_result)) => push_tool_result(
-                &mut results,
-                tool_result_success(
-                    call_id,
-                    tool_name,
-                    context.conversation_turn_id.clone(),
-                    content,
-                    structured_result,
-                ),
-                &context,
-                on_tool_result.as_ref(),
-            ),
-            Err(err) => {
-                if err.to_string() == "aborted" {
-                    break;
-                }
-                warn!(
-                    "[MCP] tool execution failed: tool={}, call_id={}, err={}",
-                    tool_name, call_id, err
-                );
-                let fatal_error = err.is_fatal();
-                push_tool_result(
-                    &mut results,
-                    tool_result_error(
-                        call_id,
-                        tool_name,
-                        context.conversation_turn_id.clone(),
-                        format!("工具执行失败: {err}"),
-                        fatal_error,
-                    ),
-                    &context,
-                    on_tool_result.as_ref(),
-                );
-                if fatal_error {
-                    break;
-                }
+        let fatal_error = outcome.as_ref().is_err_and(|error| error.is_fatal());
+        if let Err(error) = &outcome {
+            if error.to_string() == "aborted" {
+                break;
             }
+            warn!(
+                "[MCP] tool execution failed: tool={}, call_id={}, err={}",
+                tool_name, call_id, error
+            );
+        }
+        push_tool_result(
+            &mut results,
+            tool_result_from_outcome(
+                call_id,
+                tool_name,
+                context.conversation_turn_id.clone(),
+                outcome,
+            ),
+            &context,
+            on_tool_result.as_ref(),
+        );
+        if fatal_error {
+            break;
         }
     }
 
@@ -246,32 +258,19 @@ where
                     false,
                 )
             } else {
-                match execute_one(
+                let outcome = execute_one(
                     tool_name.clone(),
                     args,
                     task_context.clone(),
                     stream_callback,
                 )
-                .await
-                {
-                    Ok((content, structured_result)) => tool_result_success(
-                        call_id,
-                        tool_name,
-                        task_context.conversation_turn_id.clone(),
-                        content,
-                        structured_result,
-                    ),
-                    Err(err) => {
-                        let fatal_error = err.is_fatal();
-                        tool_result_error(
-                            call_id,
-                            tool_name,
-                            task_context.conversation_turn_id.clone(),
-                            format!("工具执行失败: {err}"),
-                            fatal_error,
-                        )
-                    }
-                }
+                .await;
+                tool_result_from_outcome(
+                    call_id,
+                    tool_name,
+                    task_context.conversation_turn_id.clone(),
+                    outcome,
+                )
             };
             (index, result)
         });

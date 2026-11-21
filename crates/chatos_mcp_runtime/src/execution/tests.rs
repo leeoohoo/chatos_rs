@@ -7,7 +7,22 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::{execute_tool_calls_parallel, execute_tool_calls_stream};
-use crate::{ToolCallContext, ToolResultCallback};
+use crate::{ToolCallContext, ToolCallError, ToolResultCallback};
+
+#[test]
+fn shared_outcome_mapping_preserves_fatal_errors() {
+    let result = super::tool_result_from_outcome(
+        "call-1".into(),
+        "write".into(),
+        Some("turn-1".into()),
+        Err(ToolCallError::fatal("permission denied")),
+    );
+
+    assert!(result.fatal_error);
+    assert!(result.is_error);
+    assert_eq!(result.conversation_turn_id.as_deref(), Some("turn-1"));
+    assert_eq!(result.content, "工具执行失败: permission denied");
+}
 
 #[test]
 fn failed_external_result_strips_binary_and_trace_but_keeps_diagnosis() {
