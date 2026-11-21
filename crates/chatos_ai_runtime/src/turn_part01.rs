@@ -1,711 +1,707 @@
-#[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
-    use std::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
-    use axum::extract::State;
-    use axum::routing::post;
-    use axum::{Json, Router};
-    use serde_json::{json, Value};
+use axum::extract::State;
+use axum::routing::post;
+use axum::{Json, Router};
+use serde_json::{json, Value};
 
-    use super::{
-        build_contextual_input, enable_openai_responses_protocol, input_value_to_items,
-        user_text_item, ContextualTurnRequest, RuntimeTurnSpec,
-    };
-    use crate::{
-        AiRuntime, AiRuntimeOptions, MemoryContextComposer, MemoryScope,
-        ModelRequest, ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput,
-    };
+use super::{
+    build_contextual_input, enable_openai_responses_protocol, input_value_to_items, user_text_item,
+    ContextualTurnRequest, RuntimeTurnSpec,
+};
+use crate::{
+    AiRuntime, AiRuntimeOptions, MemoryContextComposer, MemoryScope, ModelRequest,
+    ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput,
+};
 
-    fn published_test_config(mut config: ModelRuntimeConfig) -> ModelRuntimeConfig {
-        config.model_capability_revision = "test-published".into();
-        config.context_window_tokens = 117_031;
-        config.output_reserve_tokens = 17_031;
-        config.protocol_overhead_estimator_id = "responses-json-v1".into();
-        config
-    }
+fn published_test_config(mut config: ModelRuntimeConfig) -> ModelRuntimeConfig {
+    config.model_capability_revision = "test-published".into();
+    config.context_window_tokens = 117_031;
+    config.output_reserve_tokens = 17_031;
+    config.protocol_overhead_estimator_id = "responses-json-v1".into();
+    config
+}
 
-    fn test_scope() -> MemoryScope {
-        MemoryScope::thread("tenant-1", "task_execution", "thread-1")
-            .with_subject_id("agent:test-agent")
-            .with_compose_context(None, None, "test-published")
-            .with_policy(memory_engine_sdk::ComposeContextPolicy {
-                max_memory_tokens: 100_000,
-                max_recent_record_tokens: 100_000,
-                max_thread_summary_tokens: 100_000,
-                max_project_memory_tokens: 100_000,
-                max_agent_memory_tokens: 100_000,
-            })
-    }
+fn test_scope() -> MemoryScope {
+    MemoryScope::thread("tenant-1", "task_execution", "thread-1")
+        .with_subject_id("agent:test-agent")
+        .with_compose_context(None, None, "test-published")
+        .with_policy(memory_engine_sdk::ComposeContextPolicy {
+            max_memory_tokens: 100_000,
+            max_recent_record_tokens: 100_000,
+            max_thread_summary_tokens: 100_000,
+            max_project_memory_tokens: 100_000,
+            max_agent_memory_tokens: 100_000,
+        })
+}
 
-    fn test_issuer() -> memory_engine_sdk::RuntimeContextAssertionIssuer {
-        memory_engine_sdk::RuntimeContextAssertionIssuer::new(
-            "test-assertion-secret",
-            "test-key",
-            "test-issuer",
-            "test-identity",
-            60,
-        )
-        .unwrap()
-    }
+fn test_issuer() -> memory_engine_sdk::RuntimeContextAssertionIssuer {
+    memory_engine_sdk::RuntimeContextAssertionIssuer::new(
+        "test-assertion-secret",
+        "test-key",
+        "test-issuer",
+        "test-identity",
+        60,
+    )
+    .unwrap()
+}
 
-    async fn memory_composer_mock(
-        mut response: Value,
-    ) -> (
-        MemoryContextComposer,
-        MemoryScope,
-        tokio::task::JoinHandle<()>,
-    ) {
-        for block in response["blocks"].as_array_mut().unwrap() {
-            *block = serde_json::to_value(memory_engine_sdk::ComposeContextBlock {
-                block_type: block["block_type"].as_str().unwrap().into(),
-                text: block["text"].as_str().unwrap().into(),
-                ..Default::default()
-            })
-            .unwrap();
-        }
-        response["meta"] = serde_json::to_value(memory_engine_sdk::ComposeContextMeta {
-            summary_count: response["meta"]["summary_count"].as_u64().unwrap_or(0) as usize,
-            recent_record_count: response["meta"]["recent_record_count"]
-                .as_u64()
-                .unwrap_or(0) as usize,
+async fn memory_composer_mock(
+    mut response: Value,
+) -> (
+    MemoryContextComposer,
+    MemoryScope,
+    tokio::task::JoinHandle<()>,
+) {
+    for block in response["blocks"].as_array_mut().unwrap() {
+        *block = serde_json::to_value(memory_engine_sdk::ComposeContextBlock {
+            block_type: block["block_type"].as_str().unwrap().into(),
+            text: block["text"].as_str().unwrap().into(),
             ..Default::default()
         })
         .unwrap();
-        async fn compose(State(response): State<Value>) -> Json<Value> {
-            Json(response)
-        }
+    }
+    response["meta"] = serde_json::to_value(memory_engine_sdk::ComposeContextMeta {
+        summary_count: response["meta"]["summary_count"].as_u64().unwrap_or(0) as usize,
+        recent_record_count: response["meta"]["recent_record_count"]
+            .as_u64()
+            .unwrap_or(0) as usize,
+        ..Default::default()
+    })
+    .unwrap();
+    async fn compose(State(response): State<Value>) -> Json<Value> {
+        Json(response)
+    }
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind memory engine mock");
-        let address = listener.local_addr().expect("memory engine mock address");
-        let server = tokio::spawn(async move {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind memory engine mock");
+    let address = listener.local_addr().expect("memory engine mock address");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            Router::new()
+                .route("/api/memory-engine/v1/context/compose", post(compose))
+                .with_state(response),
+        )
+        .await;
+    });
+    let composer = MemoryContextComposer::new_direct(
+        format!("http://{address}"),
+        Duration::from_secs(1),
+        "task_execution",
+    )
+    .expect("memory composer")
+    .with_runtime_context_assertion_provider(test_issuer());
+    let scope = test_scope();
+    (composer, scope, server)
+}
+
+#[tokio::test]
+async fn build_contextual_input_orders_prefix_memory_and_current_items() {
+    let input = build_contextual_input(
+        None,
+        None,
+        &[json!({"role":"system","content":"prefix"})],
+        &[json!({"role":"user","content":"current"})],
+        json!("fallback"),
+        None,
+    )
+    .await
+    .expect("contextual input");
+
+    let items = input.as_array().expect("items");
+    assert_eq!(items.len(), 2);
+    assert_eq!(
+        items[0].get("content").and_then(Value::as_str),
+        Some("prefix")
+    );
+    assert_eq!(
+        items[1].get("content").and_then(Value::as_str),
+        Some("current")
+    );
+}
+
+#[tokio::test]
+async fn build_contextual_input_uses_fallback_when_current_is_empty() {
+    let input = build_contextual_input(None, None, &[], &[], json!("fallback"), None)
+        .await
+        .expect("contextual input");
+
+    let items = input.as_array().expect("items");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].get("content").and_then(Value::as_str),
+        Some("fallback")
+    );
+}
+
+#[tokio::test]
+async fn durable_responses_history_remains_an_immutable_cache_prefix() {
+    let original = json!({"role":"user","content":"implement inventory cli"});
+    let reasoning = json!({"type":"reasoning","id":"rs-1","summary":[]});
+    let call = json!({"type":"function_call","id":"fc-1","call_id":"call-1","name":"read_file","arguments":"{}"});
+    let output = json!({"type":"function_call_output","call_id":"call-1","output":"README"});
+    let durable = vec![
+        original.clone(),
+        reasoning.clone(),
+        call.clone(),
+        output.clone(),
+    ];
+
+    let input = build_contextual_input(
+        None,
+        None,
+        &[json!({"role":"system","content":"stable prompt"})],
+        durable.as_slice(),
+        Value::Null,
+        Some("run-1"),
+    )
+    .await
+    .expect("contextual input");
+    let items = input.as_array().expect("items");
+
+    assert_eq!(items, durable.as_slice());
+}
+
+#[tokio::test]
+async fn durable_history_ignores_a_new_memory_snapshot() {
+    let (composer, scope, server) = memory_composer_mock(json!({
+        "thread_id": "thread-1",
+        "blocks": [{"block_type": "thread_summary_top_level", "text": "summary"}],
+        "recent_records": [],
+        "meta": {"summary_count": 1, "recent_record_count": 0}
+    }))
+    .await;
+    let durable = vec![
+        json!({"role":"user","content":"implement inventory cli"}),
+        json!({"type":"reasoning","id":"rs-1","summary":[]}),
+        json!({"type":"function_call","id":"fc-old","call_id":"call-old","name":"read_file","arguments":"{}"}),
+        json!({"type":"function_call_output","call_id":"call-old","output":"old README"}),
+        json!({"type":"reasoning","id":"rs-2","summary":[]}),
+        json!({"type":"function_call","id":"fc-new","call_id":"call-new","name":"run_tests","arguments":"{}"}),
+        json!({"type":"function_call_output","call_id":"call-new","output":"cargo test"}),
+    ];
+
+    let input = build_contextual_input(
+        Some(&composer),
+        Some(&scope),
+        &[json!({"role":"system","content":"stable prompt"})],
+        durable.as_slice(),
+        Value::Null,
+        Some("run-1"),
+    )
+    .await
+    .expect("contextual input");
+    server.abort();
+
+    let items = input.as_array().expect("items");
+    assert_eq!(items, durable.as_slice());
+    assert!(!input.to_string().contains("[memory_engine_context]"));
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item.get("role").and_then(Value::as_str) == Some("user"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item.get("call_id").and_then(Value::as_str) == Some("call-old"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item.get("call_id").and_then(Value::as_str) == Some("call-new"))
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn durable_history_reuses_the_original_memory_snapshot() {
+    let (composer, scope, server) = memory_composer_mock(json!({
+        "thread_id": "thread-1",
+        "blocks": [{"block_type": "agent_memory_recent", "text": "fresh-memory"}],
+        "recent_records": [],
+        "meta": {"summary_count": 1, "recent_record_count": 0}
+    }))
+    .await;
+    let durable = vec![
+        json!({
+            "type":"message",
+            "role":"system",
+            "content":[{"type":"input_text","text":"[memory_engine_context]\n\nstale-memory"}]
+        }),
+        json!({"role":"user","content":"continue"}),
+        json!({"type":"reasoning","id":"rs-1","summary":[]}),
+    ];
+
+    let input = build_contextual_input(
+        Some(&composer),
+        Some(&scope),
+        &[],
+        durable.as_slice(),
+        Value::Null,
+        Some("run-1"),
+    )
+    .await
+    .expect("contextual input");
+    server.abort();
+
+    let text = input.to_string();
+    assert!(!text.contains("fresh-memory"));
+    assert!(text.contains("stale-memory"));
+    assert_eq!(text.matches("[memory_engine_context]").count(), 1);
+}
+
+#[tokio::test]
+async fn durable_history_does_not_duplicate_current_turn_memory_records() {
+    let (composer, scope, server) = memory_composer_mock(json!({
+        "thread_id": "thread-1",
+        "blocks": [],
+        "recent_records": [{
+            "id": "record-current-run",
+            "thread_id": "thread-1",
+            "tenant_id": "tenant-1",
+            "source_id": "task_execution",
+            "external_record_id": null,
+            "role": "system",
+            "record_type": "message",
+            "content": "backend directory was already inspected",
+            "structured_payload": null,
+            "metadata": {"conversation_turn_id": "run-1"},
+            "summary_status": "pending",
+            "summary_id": null,
+            "summarized_at": null,
+            "created_at": "2026-08-19T09:37:14Z"
+        }],
+        "meta": {"summary_count": 0, "recent_record_count": 1}
+    }))
+    .await;
+    let durable = vec![
+        json!({"role":"user","content":"build the backend"}),
+        json!({"type":"reasoning","id":"rs-1","summary":[]}),
+        json!({"type":"function_call","id":"fc-1","call_id":"call-1","name":"list_dir","arguments":"{}"}),
+        json!({"type":"function_call_output","call_id":"call-1","output":"frontend backend"}),
+    ];
+
+    let input = build_contextual_input(
+        Some(&composer),
+        Some(&scope),
+        &[],
+        durable.as_slice(),
+        Value::Null,
+        Some("run-1"),
+    )
+    .await
+    .expect("contextual input");
+    server.abort();
+
+    assert_eq!(input, Value::Array(durable));
+}
+
+#[tokio::test]
+async fn chat_style_durable_history_does_not_duplicate_memory_records() {
+    let (composer, scope, server) = memory_composer_mock(json!({
+        "thread_id": "thread-1",
+        "blocks": [],
+        "recent_records": [{
+            "id": "record-current-run",
+            "thread_id": "thread-1",
+            "tenant_id": "tenant-1",
+            "source_id": "task_execution",
+            "external_record_id": null,
+            "role": "system",
+            "record_type": "message",
+            "content": "backend file list was already read",
+            "structured_payload": null,
+            "metadata": {"conversation_turn_id": "run-1"},
+            "summary_status": "pending",
+            "summary_id": null,
+            "summarized_at": null,
+            "created_at": "2026-08-19T09:37:14Z"
+        }],
+        "meta": {"summary_count": 0, "recent_record_count": 1}
+    }))
+    .await;
+    let durable = vec![
+        json!({"role":"user","content":"build the backend"}),
+        json!({
+            "role":"assistant",
+            "content":"",
+            "tool_calls":[{"id":"call-old","type":"function","function":{"name":"read_file","arguments":"{}"}}]
+        }),
+        json!({"role":"tool","tool_call_id":"call-old","content":"old huge file output"}),
+        json!({
+            "role":"assistant",
+            "content":"",
+            "tool_calls":[{"id":"call-1","type":"function","function":{"name":"list_dir","arguments":"{}"}}]
+        }),
+        json!({"role":"tool","tool_call_id":"call-1","content":"frontend backend"}),
+    ];
+
+    let input = build_contextual_input(
+        Some(&composer),
+        Some(&scope),
+        &[],
+        durable.as_slice(),
+        Value::Null,
+        Some("run-1"),
+    )
+    .await
+    .expect("contextual input");
+    server.abort();
+
+    assert_eq!(input, Value::Array(durable));
+}
+
+#[tokio::test]
+async fn plain_current_input_excludes_current_turn_memory_records() {
+    let (composer, scope, server) = memory_composer_mock(json!({
+        "thread_id": "thread-1",
+        "blocks": [],
+        "recent_records": [{
+            "id": "record-current-run",
+            "thread_id": "thread-1",
+            "tenant_id": "tenant-1",
+            "source_id": "task_execution",
+            "external_record_id": null,
+            "role": "system",
+            "record_type": "message",
+            "content": "current user prompt already persisted",
+            "structured_payload": null,
+            "metadata": {"conversation_turn_id": "run-1"},
+            "summary_status": "pending",
+            "summary_id": null,
+            "summarized_at": null,
+            "created_at": "2026-08-19T09:37:14Z"
+        }],
+        "meta": {"summary_count": 0, "recent_record_count": 1}
+    }))
+    .await;
+
+    let input = build_contextual_input(
+        Some(&composer),
+        Some(&scope),
+        &[],
+        &[user_text_item("build the backend")],
+        Value::Null,
+        Some("run-1"),
+    )
+    .await
+    .expect("contextual input");
+    server.abort();
+
+    assert!(!input
+        .to_string()
+        .contains("current user prompt already persisted"));
+    assert!(input.to_string().contains("build the backend"));
+}
+
+#[tokio::test]
+async fn every_model_input_composition_fetches_latest_memory_engine_context() {
+    async fn compose(State(calls): State<Arc<AtomicUsize>>) -> Json<Value> {
+        let call = calls.fetch_add(1, Ordering::SeqCst) + 1;
+        Json(json!({
+            "thread_id": "thread-1",
+            "blocks": [memory_engine_sdk::ComposeContextBlock { block_type: "memory".into(), text: format!("memory-{call}"), ..Default::default() }],
+            "recent_records": [],
+            "meta": memory_engine_sdk::ComposeContextMeta { summary_count: 1, ..Default::default() }
+        }))
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind memory engine mock");
+    let address = listener.local_addr().expect("memory engine mock address");
+    let server_calls = Arc::clone(&calls);
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            Router::new()
+                .route("/api/memory-engine/v1/context/compose", post(compose))
+                .with_state(server_calls),
+        )
+        .await;
+    });
+    let composer = MemoryContextComposer::new_direct(
+        format!("http://{address}"),
+        Duration::from_secs(1),
+        "task_execution",
+    )
+    .expect("memory composer")
+    .with_runtime_context_assertion_provider(test_issuer());
+    let scope = test_scope();
+
+    let first = build_contextual_input(
+        Some(&composer),
+        Some(&scope),
+        &[],
+        &[user_text_item("first")],
+        Value::Null,
+        Some("run-1"),
+    )
+    .await
+    .expect("first model input");
+    let second = build_contextual_input(
+        Some(&composer),
+        Some(&scope),
+        &[],
+        &[user_text_item("second")],
+        Value::Null,
+        Some("run-1"),
+    )
+    .await
+    .expect("second model input");
+    server.abort();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(first.to_string().contains("memory-1"));
+    assert!(second.to_string().contains("memory-2"));
+}
+
+#[tokio::test]
+async fn responses_compaction_skips_memory_and_reaches_provider_above_soft_limit() {
+    async fn compose_call(State(calls): State<Arc<AtomicUsize>>) -> Json<Value> {
+        calls.fetch_add(1, Ordering::SeqCst);
+        Json(json!({
+            "thread_id": "thread-1",
+            "blocks": [],
+            "recent_records": [],
+            "meta": memory_engine_sdk::ComposeContextMeta::default()
+        }))
+    }
+
+    async fn model_call(
+        State(payload): State<Arc<std::sync::Mutex<Option<Value>>>>,
+        Json(request): Json<Value>,
+    ) -> Json<Value> {
+        *payload.lock().expect("provider request") = Some(request);
+        Json(json!({
+            "id": "response-1",
+            "status": "completed",
+            "output_text": "ok",
+            "output": []
+        }))
+    }
+
+    let compose_calls = Arc::new(AtomicUsize::new(0));
+    let memory_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind memory mock");
+    let memory_address = memory_listener.local_addr().expect("memory mock address");
+    let memory_server = tokio::spawn({
+        let compose_calls = Arc::clone(&compose_calls);
+        async move {
             let _ = axum::serve(
-                listener,
+                memory_listener,
                 Router::new()
-                    .route("/api/memory-engine/v1/context/compose", post(compose))
-                    .with_state(response),
+                    .route("/api/memory-engine/v1/context/compose", post(compose_call))
+                    .with_state(compose_calls),
             )
             .await;
-        });
-        let composer = MemoryContextComposer::new_direct(
-            format!("http://{address}"),
-            Duration::from_secs(1),
-            "task_execution",
-        )
-        .expect("memory composer")
-        .with_runtime_context_assertion_provider(test_issuer());
-        let scope = test_scope();
-        (composer, scope, server)
-    }
-
-    #[tokio::test]
-    async fn build_contextual_input_orders_prefix_memory_and_current_items() {
-        let input = build_contextual_input(
-            None,
-            None,
-            &[json!({"role":"system","content":"prefix"})],
-            &[json!({"role":"user","content":"current"})],
-            json!("fallback"),
-            None,
-        )
-        .await
-        .expect("contextual input");
-
-        let items = input.as_array().expect("items");
-        assert_eq!(items.len(), 2);
-        assert_eq!(
-            items[0].get("content").and_then(Value::as_str),
-            Some("prefix")
-        );
-        assert_eq!(
-            items[1].get("content").and_then(Value::as_str),
-            Some("current")
-        );
-    }
-
-    #[tokio::test]
-    async fn build_contextual_input_uses_fallback_when_current_is_empty() {
-        let input = build_contextual_input(None, None, &[], &[], json!("fallback"), None)
-            .await
-            .expect("contextual input");
-
-        let items = input.as_array().expect("items");
-        assert_eq!(items.len(), 1);
-        assert_eq!(
-            items[0].get("content").and_then(Value::as_str),
-            Some("fallback")
-        );
-    }
-
-    #[tokio::test]
-    async fn durable_responses_history_remains_an_immutable_cache_prefix() {
-        let original = json!({"role":"user","content":"implement inventory cli"});
-        let reasoning = json!({"type":"reasoning","id":"rs-1","summary":[]});
-        let call = json!({"type":"function_call","id":"fc-1","call_id":"call-1","name":"read_file","arguments":"{}"});
-        let output = json!({"type":"function_call_output","call_id":"call-1","output":"README"});
-        let durable = vec![
-            original.clone(),
-            reasoning.clone(),
-            call.clone(),
-            output.clone(),
-        ];
-
-        let input = build_contextual_input(
-            None,
-            None,
-            &[json!({"role":"system","content":"stable prompt"})],
-            durable.as_slice(),
-            Value::Null,
-            Some("run-1"),
-        )
-        .await
-        .expect("contextual input");
-        let items = input.as_array().expect("items");
-
-        assert_eq!(items, durable.as_slice());
-    }
-
-    #[tokio::test]
-    async fn durable_history_ignores_a_new_memory_snapshot() {
-        let (composer, scope, server) = memory_composer_mock(json!({
-            "thread_id": "thread-1",
-            "blocks": [{"block_type": "thread_summary_top_level", "text": "summary"}],
-            "recent_records": [],
-            "meta": {"summary_count": 1, "recent_record_count": 0}
-        }))
-        .await;
-        let durable = vec![
-            json!({"role":"user","content":"implement inventory cli"}),
-            json!({"type":"reasoning","id":"rs-1","summary":[]}),
-            json!({"type":"function_call","id":"fc-old","call_id":"call-old","name":"read_file","arguments":"{}"}),
-            json!({"type":"function_call_output","call_id":"call-old","output":"old README"}),
-            json!({"type":"reasoning","id":"rs-2","summary":[]}),
-            json!({"type":"function_call","id":"fc-new","call_id":"call-new","name":"run_tests","arguments":"{}"}),
-            json!({"type":"function_call_output","call_id":"call-new","output":"cargo test"}),
-        ];
-
-        let input = build_contextual_input(
-            Some(&composer),
-            Some(&scope),
-            &[json!({"role":"system","content":"stable prompt"})],
-            durable.as_slice(),
-            Value::Null,
-            Some("run-1"),
-        )
-        .await
-        .expect("contextual input");
-        server.abort();
-
-        let items = input.as_array().expect("items");
-        assert_eq!(items, durable.as_slice());
-        assert!(!input.to_string().contains("[memory_engine_context]"));
-        assert_eq!(
-            items
-                .iter()
-                .filter(|item| item.get("role").and_then(Value::as_str) == Some("user"))
-                .count(),
-            1
-        );
-        assert_eq!(
-            items
-                .iter()
-                .filter(|item| item.get("call_id").and_then(Value::as_str) == Some("call-old"))
-                .count(),
-            2
-        );
-        assert_eq!(
-            items
-                .iter()
-                .filter(|item| item.get("call_id").and_then(Value::as_str) == Some("call-new"))
-                .count(),
-            2
-        );
-    }
-
-    #[tokio::test]
-    async fn durable_history_reuses_the_original_memory_snapshot() {
-        let (composer, scope, server) = memory_composer_mock(json!({
-            "thread_id": "thread-1",
-            "blocks": [{"block_type": "agent_memory_recent", "text": "fresh-memory"}],
-            "recent_records": [],
-            "meta": {"summary_count": 1, "recent_record_count": 0}
-        }))
-        .await;
-        let durable = vec![
-            json!({
-                "type":"message",
-                "role":"system",
-                "content":[{"type":"input_text","text":"[memory_engine_context]\n\nstale-memory"}]
-            }),
-            json!({"role":"user","content":"continue"}),
-            json!({"type":"reasoning","id":"rs-1","summary":[]}),
-        ];
-
-        let input = build_contextual_input(
-            Some(&composer),
-            Some(&scope),
-            &[],
-            durable.as_slice(),
-            Value::Null,
-            Some("run-1"),
-        )
-        .await
-        .expect("contextual input");
-        server.abort();
-
-        let text = input.to_string();
-        assert!(!text.contains("fresh-memory"));
-        assert!(text.contains("stale-memory"));
-        assert_eq!(text.matches("[memory_engine_context]").count(), 1);
-    }
-
-    #[tokio::test]
-    async fn durable_history_does_not_duplicate_current_turn_memory_records() {
-        let (composer, scope, server) = memory_composer_mock(json!({
-            "thread_id": "thread-1",
-            "blocks": [],
-            "recent_records": [{
-                "id": "record-current-run",
-                "thread_id": "thread-1",
-                "tenant_id": "tenant-1",
-                "source_id": "task_execution",
-                "external_record_id": null,
-                "role": "system",
-                "record_type": "message",
-                "content": "backend directory was already inspected",
-                "structured_payload": null,
-                "metadata": {"conversation_turn_id": "run-1"},
-                "summary_status": "pending",
-                "summary_id": null,
-                "summarized_at": null,
-                "created_at": "2026-08-19T09:37:14Z"
-            }],
-            "meta": {"summary_count": 0, "recent_record_count": 1}
-        }))
-        .await;
-        let durable = vec![
-            json!({"role":"user","content":"build the backend"}),
-            json!({"type":"reasoning","id":"rs-1","summary":[]}),
-            json!({"type":"function_call","id":"fc-1","call_id":"call-1","name":"list_dir","arguments":"{}"}),
-            json!({"type":"function_call_output","call_id":"call-1","output":"frontend backend"}),
-        ];
-
-        let input = build_contextual_input(
-            Some(&composer),
-            Some(&scope),
-            &[],
-            durable.as_slice(),
-            Value::Null,
-            Some("run-1"),
-        )
-        .await
-        .expect("contextual input");
-        server.abort();
-
-        assert_eq!(input, Value::Array(durable));
-    }
-
-    #[tokio::test]
-    async fn chat_style_durable_history_does_not_duplicate_memory_records() {
-        let (composer, scope, server) = memory_composer_mock(json!({
-            "thread_id": "thread-1",
-            "blocks": [],
-            "recent_records": [{
-                "id": "record-current-run",
-                "thread_id": "thread-1",
-                "tenant_id": "tenant-1",
-                "source_id": "task_execution",
-                "external_record_id": null,
-                "role": "system",
-                "record_type": "message",
-                "content": "backend file list was already read",
-                "structured_payload": null,
-                "metadata": {"conversation_turn_id": "run-1"},
-                "summary_status": "pending",
-                "summary_id": null,
-                "summarized_at": null,
-                "created_at": "2026-08-19T09:37:14Z"
-            }],
-            "meta": {"summary_count": 0, "recent_record_count": 1}
-        }))
-        .await;
-        let durable = vec![
-            json!({"role":"user","content":"build the backend"}),
-            json!({
-                "role":"assistant",
-                "content":"",
-                "tool_calls":[{"id":"call-old","type":"function","function":{"name":"read_file","arguments":"{}"}}]
-            }),
-            json!({"role":"tool","tool_call_id":"call-old","content":"old huge file output"}),
-            json!({
-                "role":"assistant",
-                "content":"",
-                "tool_calls":[{"id":"call-1","type":"function","function":{"name":"list_dir","arguments":"{}"}}]
-            }),
-            json!({"role":"tool","tool_call_id":"call-1","content":"frontend backend"}),
-        ];
-
-        let input = build_contextual_input(
-            Some(&composer),
-            Some(&scope),
-            &[],
-            durable.as_slice(),
-            Value::Null,
-            Some("run-1"),
-        )
-        .await
-        .expect("contextual input");
-        server.abort();
-
-        assert_eq!(input, Value::Array(durable));
-    }
-
-    #[tokio::test]
-    async fn plain_current_input_excludes_current_turn_memory_records() {
-        let (composer, scope, server) = memory_composer_mock(json!({
-            "thread_id": "thread-1",
-            "blocks": [],
-            "recent_records": [{
-                "id": "record-current-run",
-                "thread_id": "thread-1",
-                "tenant_id": "tenant-1",
-                "source_id": "task_execution",
-                "external_record_id": null,
-                "role": "system",
-                "record_type": "message",
-                "content": "current user prompt already persisted",
-                "structured_payload": null,
-                "metadata": {"conversation_turn_id": "run-1"},
-                "summary_status": "pending",
-                "summary_id": null,
-                "summarized_at": null,
-                "created_at": "2026-08-19T09:37:14Z"
-            }],
-            "meta": {"summary_count": 0, "recent_record_count": 1}
-        }))
-        .await;
-
-        let input = build_contextual_input(
-            Some(&composer),
-            Some(&scope),
-            &[],
-            &[user_text_item("build the backend")],
-            Value::Null,
-            Some("run-1"),
-        )
-        .await
-        .expect("contextual input");
-        server.abort();
-
-        assert!(!input
-            .to_string()
-            .contains("current user prompt already persisted"));
-        assert!(input.to_string().contains("build the backend"));
-    }
-
-    #[tokio::test]
-    async fn every_model_input_composition_fetches_latest_memory_engine_context() {
-        async fn compose(State(calls): State<Arc<AtomicUsize>>) -> Json<Value> {
-            let call = calls.fetch_add(1, Ordering::SeqCst) + 1;
-            Json(json!({
-                "thread_id": "thread-1",
-                "blocks": [memory_engine_sdk::ComposeContextBlock { block_type: "memory".into(), text: format!("memory-{call}"), ..Default::default() }],
-                "recent_records": [],
-                "meta": memory_engine_sdk::ComposeContextMeta { summary_count: 1, ..Default::default() }
-            }))
         }
+    });
+    let composer = MemoryContextComposer::new_direct(
+        format!("http://{memory_address}"),
+        Duration::from_secs(1),
+        "task_execution",
+    )
+    .expect("memory composer")
+    .with_runtime_context_assertion_provider(test_issuer());
 
-        let calls = Arc::new(AtomicUsize::new(0));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind memory engine mock");
-        let address = listener.local_addr().expect("memory engine mock address");
-        let server_calls = Arc::clone(&calls);
-        let server = tokio::spawn(async move {
+    let provider_payload = Arc::new(std::sync::Mutex::new(None));
+    let provider_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind provider mock");
+    let provider_address = provider_listener
+        .local_addr()
+        .expect("provider mock address");
+    let provider_server = tokio::spawn({
+        let provider_payload = Arc::clone(&provider_payload);
+        async move {
             let _ = axum::serve(
-                listener,
+                provider_listener,
                 Router::new()
-                    .route("/api/memory-engine/v1/context/compose", post(compose))
-                    .with_state(server_calls),
+                    .route("/responses", post(model_call))
+                    .with_state(provider_payload),
             )
             .await;
-        });
-        let composer = MemoryContextComposer::new_direct(
-            format!("http://{address}"),
-            Duration::from_secs(1),
-            "task_execution",
-        )
-        .expect("memory composer")
-        .with_runtime_context_assertion_provider(test_issuer());
-        let scope = test_scope();
-
-        let first = build_contextual_input(
-            Some(&composer),
-            Some(&scope),
-            &[],
-            &[user_text_item("first")],
-            Value::Null,
-            Some("run-1"),
-        )
-        .await
-        .expect("first model input");
-        let second = build_contextual_input(
-            Some(&composer),
-            Some(&scope),
-            &[],
-            &[user_text_item("second")],
-            Value::Null,
-            Some("run-1"),
-        )
-        .await
-        .expect("second model input");
-        server.abort();
-
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
-        assert!(first.to_string().contains("memory-1"));
-        assert!(second.to_string().contains("memory-2"));
-    }
-
-    #[tokio::test]
-    async fn responses_compaction_skips_memory_and_reaches_provider_above_soft_limit() {
-        async fn compose_call(State(calls): State<Arc<AtomicUsize>>) -> Json<Value> {
-            calls.fetch_add(1, Ordering::SeqCst);
-            Json(json!({
-                "thread_id": "thread-1",
-                "blocks": [],
-                "recent_records": [],
-                "meta": memory_engine_sdk::ComposeContextMeta::default()
-            }))
         }
+    });
 
-        async fn model_call(
-            State(payload): State<Arc<std::sync::Mutex<Option<Value>>>>,
-            Json(request): Json<Value>,
-        ) -> Json<Value> {
-            *payload.lock().expect("provider request") = Some(request);
-            Json(json!({
-                "id": "response-1",
-                "status": "completed",
-                "output_text": "ok",
-                "output": []
-            }))
-        }
-
-        let compose_calls = Arc::new(AtomicUsize::new(0));
-        let memory_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind memory mock");
-        let memory_address = memory_listener.local_addr().expect("memory mock address");
-        let memory_server = tokio::spawn({
-            let compose_calls = Arc::clone(&compose_calls);
-            async move {
-                let _ = axum::serve(
-                    memory_listener,
-                    Router::new()
-                        .route("/api/memory-engine/v1/context/compose", post(compose_call))
-                        .with_state(compose_calls),
-                )
-                .await;
-            }
-        });
-        let composer = MemoryContextComposer::new_direct(
-            format!("http://{memory_address}"),
-            Duration::from_secs(1),
-            "task_execution",
-        )
-        .expect("memory composer")
-        .with_runtime_context_assertion_provider(test_issuer());
-
-        let provider_payload = Arc::new(std::sync::Mutex::new(None));
-        let provider_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind provider mock");
-        let provider_address = provider_listener
-            .local_addr()
-            .expect("provider mock address");
-        let provider_server = tokio::spawn({
-            let provider_payload = Arc::clone(&provider_payload);
-            async move {
-                let _ = axum::serve(
-                    provider_listener,
-                    Router::new()
-                        .route("/responses", post(model_call))
-                        .with_state(provider_payload),
-                )
-                .await;
-            }
-        });
-
-        let config = published_test_config(
-            ModelRuntimeConfig::openai_compatible(
-                format!("http://{provider_address}"),
-                "secret",
-                "gpt-test",
-                "openai",
-            )
-            .with_responses_support(true),
-        );
-        let runtime_options =
-            AiRuntimeOptions::for_conversation("task-1").with_conversation_turn_id("run-1");
-        let request = ContextualTurnRequest::new(
-            config.to_model_request(Value::Null, Vec::new()),
-            runtime_options,
-            vec![user_text_item("x".repeat(320_000))],
-        )
-        .with_memory_scope(Some(test_scope()));
-        let runner = super::ContextualTurnRunner::new(AiRuntime::default(), Some(composer));
-
-        runner
-            .execute_once(request, 1, "initial", 1)
-            .await
-            .expect("provider request succeeds");
-        memory_server.abort();
-        provider_server.abort();
-
-        assert_eq!(compose_calls.load(Ordering::SeqCst), 0);
-        let payload = provider_payload
-            .lock()
-            .expect("provider payload")
-            .clone()
-            .expect("provider was called");
-        assert_eq!(
-            payload.pointer("/context_management/0/type"),
-            Some(&json!("compaction"))
-        );
-        assert_eq!(
-            payload.pointer("/context_management/0/compact_threshold"),
-            Some(&json!(100_000))
-        );
-        assert!(!payload.to_string().contains("[memory_engine_context]"));
-    }
-
-    #[test]
-    fn input_value_to_items_wraps_text_as_user_message() {
-        let items = input_value_to_items(json!("hello"));
-        assert_eq!(items, vec![user_text_item("hello")]);
-    }
-
-    #[test]
-    fn contextual_turn_request_builds_from_model_config_and_user_text() {
-        let config = ModelRuntimeConfig::openai_compatible(
-            "http://127.0.0.1:8080/v1",
-            "secret",
-            "gpt-test",
-            "openai",
-        );
-        let runtime_options =
-            AiRuntimeOptions::for_conversation("task_1").with_conversation_turn_id("run_1");
-
-        let request =
-            ContextualTurnRequest::for_user_text(&config, runtime_options, "run this task")
-                .with_user_record(Some(
-                    SaveRecordInput::user_message("task_1", "run this task")
-                        .with_conversation_turn_id("run_1"),
-                ));
-
-        assert_eq!(request.model_request.model, "gpt-test");
-        assert_eq!(
-            request.runtime_options.conversation_id.as_deref(),
-            Some("task_1")
-        );
-        assert_eq!(
-            request.runtime_options.conversation_turn_id.as_deref(),
-            Some("run_1")
-        );
-        assert_eq!(
-            request.current_input_items,
-            vec![user_text_item("run this task")]
-        );
-        assert!(request.user_record.is_some());
-    }
-
-    #[test]
-    fn agent_turns_force_responses_for_every_gateway() {
-        let mut openai = ModelRequest::openai_compatible(
-            "https://api.openai.com/v1",
-            "secret",
-            "gpt-test",
-            "openai",
-            Value::Null,
-        );
-        let mut compatible = ModelRequest::openai_compatible(
-            "https://gateway.example.test/v1",
-            "secret",
-            "gpt-test",
-            "openai_compatible",
-            Value::Null,
-        );
-
-        enable_openai_responses_protocol(&mut openai);
-        enable_openai_responses_protocol(&mut compatible);
-
-        assert!(openai.supports_responses);
-        assert!(compatible.supports_responses);
-    }
-
-    #[test]
-    fn runtime_turn_spec_roundtrips_and_builds_contextual_request() {
-        let config = ModelRuntimeConfig::openai_compatible(
-            "http://127.0.0.1:8080/v1",
+    let config = published_test_config(
+        ModelRuntimeConfig::openai_compatible(
+            format!("http://{provider_address}"),
             "secret",
             "gpt-test",
             "openai",
         )
-        .with_responses_support(true);
-        let spec = RuntimeTurnSpec::for_user_text(config, "task_1", "run this task")
-            .with_conversation_turn_id("run_1")
-            .with_record_options(RuntimeRecordOptions::persist_all())
-            .with_memory_scope(Some(
-                MemoryScope::thread("tenant_1", "task_execution", "task_1")
-                    .with_subject_id("contact_1"),
-            ))
-            .with_prefixed_input_items(vec![json!({"role":"system","content":"prefix"})])
-            .with_user_record(Some(
-                SaveRecordInput::user_message("task_1", "run this task")
-                    .with_conversation_turn_id("run_1"),
-            ))
-            .with_tools(vec![json!({"type":"function","name":"tool_1"})]);
+        .with_responses_support(true),
+    );
+    let runtime_options =
+        AiRuntimeOptions::for_conversation("task-1").with_conversation_turn_id("run-1");
+    let request = ContextualTurnRequest::new(
+        config.to_model_request(Value::Null, Vec::new()),
+        runtime_options,
+        vec![user_text_item("x".repeat(320_000))],
+    )
+    .with_memory_scope(Some(test_scope()));
+    let runner = super::ContextualTurnRunner::new(AiRuntime::default(), Some(composer));
 
-        let encoded = serde_json::to_string(&spec).expect("serialize spec");
-        let decoded: RuntimeTurnSpec =
-            serde_json::from_str(encoded.as_str()).expect("deserialize spec");
-        let request = decoded.into_contextual_turn_request();
+    runner
+        .execute_once(request, 1, "initial", 1)
+        .await
+        .expect("provider request succeeds");
+    memory_server.abort();
+    provider_server.abort();
 
-        assert_eq!(request.model_request.model, "gpt-test");
-        assert!(request.model_request.supports_responses);
-        assert_eq!(request.model_request.tools.len(), 1);
-        assert_eq!(
-            request.runtime_options.conversation_id.as_deref(),
-            Some("task_1")
-        );
-        assert_eq!(
-            request.runtime_options.conversation_turn_id.as_deref(),
-            Some("run_1")
-        );
-        assert!(
-            request
-                .runtime_options
-                .record_options
-                .persist_assistant_records
-        );
-        assert_eq!(
-            request
-                .memory_scope
-                .as_ref()
-                .and_then(|scope| scope.subject_id.as_deref()),
-            Some("contact_1")
-        );
-        assert_eq!(
-            request.prefixed_input_items[0]["content"].as_str(),
-            Some("prefix")
-        );
-        assert_eq!(
-            request.current_input_items,
-            vec![user_text_item("run this task")]
-        );
-        assert!(request.user_record.is_some());
-    }
+    assert_eq!(compose_calls.load(Ordering::SeqCst), 0);
+    let payload = provider_payload
+        .lock()
+        .expect("provider payload")
+        .clone()
+        .expect("provider was called");
+    assert_eq!(
+        payload.pointer("/context_management/0/type"),
+        Some(&json!("compaction"))
+    );
+    assert_eq!(
+        payload.pointer("/context_management/0/compact_threshold"),
+        Some(&json!(100_000))
+    );
+    assert!(!payload.to_string().contains("[memory_engine_context]"));
+}
+
+#[test]
+fn input_value_to_items_wraps_text_as_user_message() {
+    let items = input_value_to_items(json!("hello"));
+    assert_eq!(items, vec![user_text_item("hello")]);
+}
+
+#[test]
+fn contextual_turn_request_builds_from_model_config_and_user_text() {
+    let config = ModelRuntimeConfig::openai_compatible(
+        "http://127.0.0.1:8080/v1",
+        "secret",
+        "gpt-test",
+        "openai",
+    );
+    let runtime_options =
+        AiRuntimeOptions::for_conversation("task_1").with_conversation_turn_id("run_1");
+
+    let request = ContextualTurnRequest::for_user_text(&config, runtime_options, "run this task")
+        .with_user_record(Some(
+            SaveRecordInput::user_message("task_1", "run this task")
+                .with_conversation_turn_id("run_1"),
+        ));
+
+    assert_eq!(request.model_request.model, "gpt-test");
+    assert_eq!(
+        request.runtime_options.conversation_id.as_deref(),
+        Some("task_1")
+    );
+    assert_eq!(
+        request.runtime_options.conversation_turn_id.as_deref(),
+        Some("run_1")
+    );
+    assert_eq!(
+        request.current_input_items,
+        vec![user_text_item("run this task")]
+    );
+    assert!(request.user_record.is_some());
+}
+
+#[test]
+fn agent_turns_force_responses_for_every_gateway() {
+    let mut openai = ModelRequest::openai_compatible(
+        "https://api.openai.com/v1",
+        "secret",
+        "gpt-test",
+        "openai",
+        Value::Null,
+    );
+    let mut compatible = ModelRequest::openai_compatible(
+        "https://gateway.example.test/v1",
+        "secret",
+        "gpt-test",
+        "openai_compatible",
+        Value::Null,
+    );
+
+    enable_openai_responses_protocol(&mut openai);
+    enable_openai_responses_protocol(&mut compatible);
+
+    assert!(openai.supports_responses);
+    assert!(compatible.supports_responses);
+}
+
+#[test]
+fn runtime_turn_spec_roundtrips_and_builds_contextual_request() {
+    let config = ModelRuntimeConfig::openai_compatible(
+        "http://127.0.0.1:8080/v1",
+        "secret",
+        "gpt-test",
+        "openai",
+    )
+    .with_responses_support(true);
+    let spec = RuntimeTurnSpec::for_user_text(config, "task_1", "run this task")
+        .with_conversation_turn_id("run_1")
+        .with_record_options(RuntimeRecordOptions::persist_all())
+        .with_memory_scope(Some(
+            MemoryScope::thread("tenant_1", "task_execution", "task_1")
+                .with_subject_id("contact_1"),
+        ))
+        .with_prefixed_input_items(vec![json!({"role":"system","content":"prefix"})])
+        .with_user_record(Some(
+            SaveRecordInput::user_message("task_1", "run this task")
+                .with_conversation_turn_id("run_1"),
+        ))
+        .with_tools(vec![json!({"type":"function","name":"tool_1"})]);
+
+    let encoded = serde_json::to_string(&spec).expect("serialize spec");
+    let decoded: RuntimeTurnSpec =
+        serde_json::from_str(encoded.as_str()).expect("deserialize spec");
+    let request = decoded.into_contextual_turn_request();
+
+    assert_eq!(request.model_request.model, "gpt-test");
+    assert!(request.model_request.supports_responses);
+    assert_eq!(request.model_request.tools.len(), 1);
+    assert_eq!(
+        request.runtime_options.conversation_id.as_deref(),
+        Some("task_1")
+    );
+    assert_eq!(
+        request.runtime_options.conversation_turn_id.as_deref(),
+        Some("run_1")
+    );
+    assert!(
+        request
+            .runtime_options
+            .record_options
+            .persist_assistant_records
+    );
+    assert_eq!(
+        request
+            .memory_scope
+            .as_ref()
+            .and_then(|scope| scope.subject_id.as_deref()),
+        Some("contact_1")
+    );
+    assert_eq!(
+        request.prefixed_input_items[0]["content"].as_str(),
+        Some("prefix")
+    );
+    assert_eq!(
+        request.current_input_items,
+        vec![user_text_item("run this task")]
+    );
+    assert!(request.user_record.is_some());
 }

@@ -376,4 +376,6 @@ pub fn message_item(role: &str, content: Value) -> Value {
     })
 }
 
-include!("turn_part01.rs");
+#[cfg(test)]
+#[path = "turn_part01.rs"]
+mod tests;
