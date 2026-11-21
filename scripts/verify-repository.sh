@@ -143,7 +143,17 @@ run_native_platform() {
         "${CARGO[@]}" clean --target-dir "$ROOT_DIR/target-shared"
       fi
       run_swiftpm build --package-path "$ROOT_DIR/clients/macos"
-      run_swiftpm test --package-path "$ROOT_DIR/clients/macos" --no-parallel
+      # Swift Testing currently ignores module filters under Xcode's build system, so run it once
+      # with the first XCTest target and disable it for the remaining target-sized XCTest batches.
+      run_swiftpm test --package-path "$ROOT_DIR/clients/macos" \
+        --no-parallel --filter ChatOSAgentRuntimeTests
+      for test_target in \
+        ChatOSWorkerRuntimeTests ChatOSCoreTests ChatOSAPITests ChatOSConnectorTests \
+        ChatOSAppTests ChatOSMediaWorkerTests ChatOSCodeReadWorkerTests; do
+        run_swiftpm test \
+          --package-path "$ROOT_DIR/clients/macos" --no-parallel \
+          --disable-swift-testing --filter "$test_target"
+      done
       run_swiftpm build --package-path "$ROOT_DIR/plugins/computer-use"
       run_swiftpm test --package-path "$ROOT_DIR/plugins/computer-use" --no-parallel
       ;;
