@@ -1,3 +1,19 @@
+mod cleanup;
+mod commands;
+mod platform;
+#[cfg(test)]
+mod tests;
+
+use cleanup::cleanup_attachment_temporaries;
+pub use commands::{
+    activate_conversation_attachment_scope, attachment_protocol,
+    deactivate_conversation_attachment_scope, discard_conversation_attachments,
+    import_conversation_clipboard, load_persisted_conversation_attachments,
+    pick_conversation_attachments, preview_conversation_attachment_text,
+    preview_persisted_conversation_attachment_text,
+};
+use platform::*;
+
 use chatos_local_agent_protocol::{
     GetConversationAttachmentCommand, HostCommand, HostResult, LocalConversationAttachmentRecord,
     LocalConversationAttachmentSpec,
@@ -19,7 +35,6 @@ use uuid::Uuid;
 
 use crate::{
     app_data_transaction::{create_owned_file, ensure_owned_directory, replace_owned_file},
-    app_owned_export::try_remove_stale_owned_file,
     host_lifecycle::HostManager,
     machine_resource_governor::{
         MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
@@ -693,276 +708,4 @@ impl AttachmentManager {
             truncated,
         })
     }
-
-    fn protocol_response(&self, request: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
-        match self.protocol_body(request.uri().path()) {
-            Ok((media_type, body)) => http::Response::builder()
-                .status(http::StatusCode::OK)
-                .header(http::header::CONTENT_TYPE, media_type)
-                .header("X-Content-Type-Options", "nosniff")
-                .header("Cache-Control", "no-store")
-                .body(body)
-                .expect("valid attachment preview response"),
-            Err(status) => http::Response::builder()
-                .status(status)
-                .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
-                .body(b"Attachment preview unavailable".to_vec())
-                .expect("valid attachment error response"),
-        }
-    }
-
-    fn protocol_body(&self, path: &str) -> Result<(String, Vec<u8>), http::StatusCode> {
-        let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
-        if parts.len() != 3
-            || !valid_hash(parts[0])
-            || !valid_hash(parts[1])
-            || !valid_token(parts[2])
-        {
-            return Err(http::StatusCode::BAD_REQUEST);
-        }
-        let scope = ScopeKey {
-            owner_hash: parts[0].to_owned(),
-            conversation_hash: parts[1].to_owned(),
-        };
-        let directory = self
-            .validated_scope_directory(&scope)
-            .map_err(|_| http::StatusCode::NOT_FOUND)?;
-        let metadata =
-            read_metadata(&directory, parts[2]).map_err(|_| http::StatusCode::NOT_FOUND)?;
-        if metadata.token != parts[2] || !safe_preview_media_type(&metadata.media_type) {
-            return Err(http::StatusCode::FORBIDDEN);
-        }
-        let body = self
-            .read_verified_file(&scope, &metadata)
-            .map_err(|_| http::StatusCode::NOT_FOUND)?;
-        Ok((metadata.media_type, body))
-    }
-
-    fn verify_file(&self, scope: &ScopeKey, metadata: &VaultMetadata) -> Result<(), String> {
-        self.read_verified_file(scope, metadata).map(|_| ())
-    }
-
-    fn read_verified_file(
-        &self,
-        scope: &ScopeKey,
-        metadata: &VaultMetadata,
-    ) -> Result<Vec<u8>, String> {
-        let directory = self.validated_scope_directory(scope)?;
-        let file = directory.join(&metadata.token);
-        let link_metadata =
-            fs::symlink_metadata(&file).map_err(|_| "附件已失效，请重新添加。".to_string())?;
-        if !link_metadata.file_type().is_file() || link_metadata.file_type().is_symlink() {
-            return Err("附件完整性校验失败，请重新添加。".into());
-        }
-        let mut options = fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW);
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::OpenOptionsExt;
-            const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-            options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-        }
-        let mut handle = options
-            .open(file)
-            .map_err(|_| "附件已失效，请重新添加。".to_string())?;
-        let before = handle
-            .metadata()
-            .map_err(|_| "附件完整性校验失败，请重新添加。".to_string())?;
-        if !before.file_type().is_file()
-            || before.len() != metadata.byte_size
-            || metadata.byte_size == 0
-            || metadata.byte_size > MAXIMUM_ATTACHMENT_BYTES as u64
-        {
-            return Err("附件完整性校验失败，请重新添加。".into());
-        }
-        let mut bytes = Vec::with_capacity(metadata.byte_size as usize);
-        (&mut handle)
-            .take((MAXIMUM_ATTACHMENT_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|_| "附件完整性校验失败，请重新添加。".to_string())?;
-        let after = handle
-            .metadata()
-            .map_err(|_| "附件完整性校验失败，请重新添加。".to_string())?;
-        if before.len() != after.len()
-            || before.modified().ok() != after.modified().ok()
-            || bytes.len() != metadata.byte_size as usize
-            || digest(&bytes) != metadata.sha256
-        {
-            return Err("附件完整性校验失败，请重新添加。".into());
-        }
-        Ok(bytes)
-    }
-
-    fn record_metadata(
-        &self,
-        scope: &ScopeKey,
-        record: &LocalConversationAttachmentRecord,
-    ) -> Result<VaultMetadata, String> {
-        let token = record
-            .authorized_local_ref
-            .strip_prefix(REFERENCE_PREFIX)
-            .filter(|token| valid_token(token))
-            .ok_or_else(|| "The attachment reference is invalid.".to_string())?;
-        let directory = self.validated_scope_directory(scope)?;
-        let metadata = read_metadata(&directory, token)
-            .map_err(|_| "The authorized attachment is unavailable.".to_string())?;
-        if metadata.token != token
-            || metadata.attachment_id != record.attachment_id
-            || metadata.display_name != record.display_name
-            || metadata.media_type != record.media_type
-            || metadata.byte_size != record.byte_size
-            || metadata.sha256 != record.sha256
-        {
-            return Err("The authorized attachment failed its integrity check.".into());
-        }
-        Ok(metadata)
-    }
-
-    #[cfg(test)]
-    fn scope_directory(&self, scope: &ScopeKey) -> PathBuf {
-        self.inner
-            .root
-            .join(&scope.owner_hash)
-            .join(&scope.conversation_hash)
-    }
-
-    fn ensure_scope_directory(&self, scope: &ScopeKey) -> Result<PathBuf, String> {
-        let owner = self.inner.root.join(&scope.owner_hash);
-        ensure_private_directory(&owner)?;
-        let directory = owner.join(&scope.conversation_hash);
-        ensure_private_directory(&directory)?;
-        self.validated_scope_directory(scope)
-    }
-
-    fn validated_scope_directory(&self, scope: &ScopeKey) -> Result<PathBuf, String> {
-        let owner = self.inner.root.join(&scope.owner_hash);
-        let directory = owner.join(&scope.conversation_hash);
-        for candidate in [&owner, &directory] {
-            let metadata = fs::symlink_metadata(candidate)
-                .map_err(|_| "附件保险库作用域不可用。".to_string())?;
-            if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
-                return Err("附件保险库作用域无效。".into());
-            }
-        }
-        let canonical =
-            fs::canonicalize(&directory).map_err(|_| "附件保险库作用域不可用。".to_string())?;
-        if !canonical.starts_with(&self.inner.root) || canonical != directory {
-            return Err("附件保险库作用域无效。".into());
-        }
-        Ok(directory)
-    }
-
-    fn state(&self) -> Result<std::sync::MutexGuard<'_, AttachmentState>, String> {
-        self.inner
-            .state
-            .lock()
-            .map_err(|_| "附件状态不可用。".to_string())
-    }
 }
-
-fn cleanup_attachment_temporaries(root: &Path, cutoff: SystemTime) -> usize {
-    let mut visited = 0;
-    let mut removed = 0;
-    cleanup_attachment_directory(root, 0, cutoff, &mut visited, &mut removed);
-    removed
-}
-
-fn cleanup_attachment_directory(
-    directory: &Path,
-    depth: usize,
-    cutoff: SystemTime,
-    visited: &mut usize,
-    removed: &mut usize,
-) {
-    if *visited >= MAXIMUM_CLEANUP_ENTRIES || validate_cleanup_directory(directory).is_err() {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(directory) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if *visited >= MAXIMUM_CLEANUP_ENTRIES {
-            return;
-        }
-        *visited += 1;
-        let path = entry.path();
-        let Ok(metadata) = fs::symlink_metadata(&path) else {
-            continue;
-        };
-        if metadata.file_type().is_dir()
-            && !metadata.file_type().is_symlink()
-            && !is_windows_reparse_point(&metadata)
-            && depth < MAXIMUM_CLEANUP_DEPTH
-        {
-            cleanup_attachment_directory(&path, depth + 1, cutoff, visited, removed);
-            continue;
-        }
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-            continue;
-        };
-        if !canonical_attachment_temporary_name(&name)
-            || !metadata.file_type().is_file()
-            || metadata.file_type().is_symlink()
-            || is_windows_reparse_point(&metadata)
-            || !metadata.modified().is_ok_and(|modified| modified <= cutoff)
-        {
-            continue;
-        }
-        if try_remove_stale_owned_file(&path, cutoff) {
-            *removed += 1;
-        }
-    }
-}
-
-fn validate_cleanup_directory(path: &Path) -> Result<(), ()> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| ())?;
-    if metadata.file_type().is_dir()
-        && !metadata.file_type().is_symlink()
-        && !is_windows_reparse_point(&metadata)
-    {
-        Ok(())
-    } else {
-        Err(())
-    }
-}
-
-fn canonical_attachment_temporary_name(name: &str) -> bool {
-    let legacy_token = name
-        .strip_suffix(".json.tmp")
-        .or_else(|| name.strip_suffix(".tmp"));
-    if legacy_token.is_some_and(valid_attachment_temporary_token) {
-        return true;
-    }
-    [".attachment-payload-", ".attachment-metadata-"]
-        .iter()
-        .any(|prefix| {
-            name.strip_prefix(prefix)
-                .and_then(|value| value.strip_suffix(".tmp"))
-                .is_some_and(valid_attachment_temporary_token)
-        })
-}
-
-fn valid_attachment_temporary_token(value: &str) -> bool {
-    Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value)
-}
-
-#[cfg(windows)]
-fn is_windows_reparse_point(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn is_windows_reparse_point(_: &fs::Metadata) -> bool {
-    false
-}
-
-include!("conversation_attachments/platform.rs");
-include!("conversation_attachments/commands.rs");
-include!("conversation_attachments/tests.rs");

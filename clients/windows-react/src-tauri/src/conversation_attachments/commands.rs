@@ -1,3 +1,5 @@
+use super::*;
+
 #[tauri::command]
 pub async fn activate_conversation_attachment_scope(
     manager: State<'_, AttachmentManager>,
