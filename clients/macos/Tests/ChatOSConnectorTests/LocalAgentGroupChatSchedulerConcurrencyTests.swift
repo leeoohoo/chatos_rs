@@ -1190,8 +1190,7 @@ extension LocalAgentGroupChatSchedulerTests {
             service: service,
             services: CommunicationFastLaneServices(probe: probe),
             settings: .init(suiteName: settingsSuite),
-            maximumConcurrentExecutions: 1,
-            now: { 300 }
+            maximumConcurrentExecutions: 1, now: { 300 }
         )
 
         let communicationDrain = Task {

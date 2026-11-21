@@ -461,24 +461,14 @@ extension LocalAgentGroupChatScheduler {
             var inFlightCount = 0
             var shouldSchedule = true
             var firstError: Error?
-
             while inFlightCount > 0
-                    || (shouldSchedule
-                        && !Task.isCancelled
-                        && nextRunIndex < runs.count
+                    || (shouldSchedule && !Task.isCancelled && nextRunIndex < runs.count
                         && completed.count < maximumRuns) {
-                while shouldSchedule,
-                      !Task.isCancelled,
-                      nextRunIndex < runs.count,
+                while shouldSchedule, !Task.isCancelled, nextRunIndex < runs.count,
                       completed.count + inFlightCount < maximumRuns {
                     let run = runs[nextRunIndex]
                     let deliveryID = run.context.deliveryID
-                    if await activeDeliveryRegistry.isActive(
-                        deliveryID: deliveryID,
-                        ownerUserID: ownerUserID,
-                        agentID: run.context.agentID,
-                        lane: run.context.lane
-                    ) {
+                    if await activeDeliveryRegistry.isActive(run.context, ownerUserID: ownerUserID) {
                         nextRunIndex += 1
                         continue
                     }

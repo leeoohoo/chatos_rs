@@ -63,14 +63,10 @@ actor LocalAgentActiveDeliveryRegistry {
     private var deliveryIDs: Set<String> = []
     private var managers: [ManagerKey: String] = [:]
 
-    func isActive(
-        deliveryID: String,
-        ownerUserID: String,
-        agentID: String,
-        lane: LocalAgentRunLane
-    ) -> Bool {
-        deliveryIDs.contains(deliveryID)
-            || (lane == .manager && managers[.init(ownerUserID: ownerUserID, agentID: agentID)] != nil)
+    func isActive(_ context: LocalAgentChatRunContext, ownerUserID: String) -> Bool {
+        deliveryIDs.contains(context.deliveryID)
+            || (context.lane == .manager
+                && managers[.init(ownerUserID: ownerUserID, agentID: context.agentID)] != nil)
     }
 
     /// Atomically claims in-process ownership of a delivery. Manual resume, Human retry, and
