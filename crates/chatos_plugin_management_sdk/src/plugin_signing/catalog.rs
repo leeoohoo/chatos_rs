@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use ring::signature::{UnparsedPublicKey, ED25519};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -12,10 +11,12 @@ use crate::plugin_runtime::{
 };
 
 use super::{
-    decode_base64_field, parse_timestamp, validate_sha256, validate_signing_key_usage,
-    validate_signing_key_window, verify_plugin_release_signature, PluginReleaseVerificationContext,
-    PluginSignatureVerificationError, SigningKeyRef, PLUGIN_SIGNATURE_ALGORITHM_ED25519,
-    PLUGIN_SIGNING_KEY_USAGE_CATALOG, PLUGIN_SIGNING_KEY_USAGE_RELEASE,
+    decode_base64_field, parse_timestamp, validate_sha256,
+    validate_signature_algorithm_and_marketplace, validate_signing_key_usage,
+    validate_signing_key_window, verify_ed25519_signature, verify_plugin_release_signature,
+    PluginReleaseVerificationContext, PluginSignatureVerificationError, SigningKeyRef,
+    PLUGIN_SIGNATURE_ALGORITHM_ED25519, PLUGIN_SIGNING_KEY_USAGE_CATALOG,
+    PLUGIN_SIGNING_KEY_USAGE_RELEASE,
 };
 
 pub const PLUGIN_CATALOG_SIGNATURE_PURPOSE_V1: &str = "chatos.plugin.catalog.v1";
@@ -118,16 +119,11 @@ pub fn verify_plugin_catalog_signature(
     signature: &PluginCatalogSignature,
     trusted_key: &SigningKeyRef,
 ) -> Result<(), PluginSignatureVerificationError> {
-    if signature.algorithm != PLUGIN_SIGNATURE_ALGORITHM_ED25519 {
-        return Err(PluginSignatureVerificationError::UnsupportedAlgorithm(
-            signature.algorithm.clone(),
-        ));
-    }
-    if signature.marketplace_id != context.marketplace_id {
-        return Err(PluginSignatureVerificationError::IdentityMismatch {
-            field: "marketplace_id",
-        });
-    }
+    validate_signature_algorithm_and_marketplace(
+        signature.algorithm.as_str(),
+        signature.marketplace_id.as_str(),
+        context.marketplace_id,
+    )?;
     if trusted_key.key_id != signature.key_id {
         return Err(PluginSignatureVerificationError::IdentityMismatch { field: "key_id" });
     }
@@ -138,20 +134,8 @@ pub fn verify_plugin_catalog_signature(
     }
     validate_signing_key_usage(trusted_key, PLUGIN_SIGNING_KEY_USAGE_CATALOG)?;
     validate_signing_key_window(signature.signed_at.as_str(), trusted_key)?;
-    let public_key = decode_base64_field(
-        "trusted_key.public_key_base64",
-        trusted_key.public_key_base64.as_str(),
-        32,
-    )?;
-    let signature_bytes = decode_base64_field(
-        "signature.signature_base64",
-        signature.signature_base64.as_str(),
-        64,
-    )?;
     let payload = plugin_catalog_signing_payload(context, signature)?;
-    UnparsedPublicKey::new(&ED25519, public_key)
-        .verify(payload.as_slice(), signature_bytes.as_slice())
-        .map_err(|_| PluginSignatureVerificationError::InvalidSignature)
+    verify_ed25519_signature(trusted_key, signature.signature_base64.as_str(), &payload)
 }
 
 pub fn verify_plugin_catalog_document(

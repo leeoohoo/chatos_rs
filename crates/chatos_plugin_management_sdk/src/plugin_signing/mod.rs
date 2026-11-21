@@ -148,19 +148,23 @@ pub fn verify_plugin_release_signature(
         return Err(PluginSignatureVerificationError::ManifestHashMismatch);
     }
 
+    let payload = plugin_release_signing_payload(context, signature)?;
+    verify_ed25519_signature(trusted_key, signature.signature_base64.as_str(), &payload)
+}
+
+pub(super) fn verify_ed25519_signature(
+    trusted_key: &SigningKeyRef,
+    signature_base64: &str,
+    payload: &[u8],
+) -> Result<(), PluginSignatureVerificationError> {
     let public_key = decode_base64_field(
         "trusted_key.public_key_base64",
         trusted_key.public_key_base64.as_str(),
         32,
     )?;
-    let signature_bytes = decode_base64_field(
-        "signature.signature_base64",
-        signature.signature_base64.as_str(),
-        64,
-    )?;
-    let payload = plugin_release_signing_payload(context, signature)?;
+    let signature_bytes = decode_base64_field("signature.signature_base64", signature_base64, 64)?;
     UnparsedPublicKey::new(&ED25519, public_key)
-        .verify(payload.as_slice(), signature_bytes.as_slice())
+        .verify(payload, signature_bytes.as_slice())
         .map_err(|_| PluginSignatureVerificationError::InvalidSignature)
 }
 
@@ -190,16 +194,11 @@ fn validate_release_identity(
     signature: &PluginReleaseSignature,
     trusted_key: &SigningKeyRef,
 ) -> Result<(), PluginSignatureVerificationError> {
-    if signature.algorithm != PLUGIN_SIGNATURE_ALGORITHM_ED25519 {
-        return Err(PluginSignatureVerificationError::UnsupportedAlgorithm(
-            signature.algorithm.clone(),
-        ));
-    }
-    if signature.marketplace_id != context.marketplace_id {
-        return Err(PluginSignatureVerificationError::IdentityMismatch {
-            field: "marketplace_id",
-        });
-    }
+    validate_signature_algorithm_and_marketplace(
+        signature.algorithm.as_str(),
+        signature.marketplace_id.as_str(),
+        context.marketplace_id,
+    )?;
     if signature.publisher_id != context.publisher_id {
         return Err(PluginSignatureVerificationError::IdentityMismatch {
             field: "publisher_id",
@@ -216,6 +215,24 @@ fn validate_release_identity(
     if trusted_key.algorithm != signature.algorithm {
         return Err(PluginSignatureVerificationError::IdentityMismatch {
             field: "trusted_key.algorithm",
+        });
+    }
+    Ok(())
+}
+
+pub(super) fn validate_signature_algorithm_and_marketplace(
+    algorithm: &str,
+    marketplace_id: &str,
+    expected_marketplace_id: &str,
+) -> Result<(), PluginSignatureVerificationError> {
+    if algorithm != PLUGIN_SIGNATURE_ALGORITHM_ED25519 {
+        return Err(PluginSignatureVerificationError::UnsupportedAlgorithm(
+            algorithm.to_string(),
+        ));
+    }
+    if marketplace_id != expected_marketplace_id {
+        return Err(PluginSignatureVerificationError::IdentityMismatch {
+            field: "marketplace_id",
         });
     }
     Ok(())
