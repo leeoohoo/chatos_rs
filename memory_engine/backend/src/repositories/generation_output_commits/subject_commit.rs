@@ -1,3 +1,5 @@
+use super::*;
+
 #[cfg(test)]
 pub async fn commit_subject_memory_generation(
     db: &Db,
@@ -262,7 +264,7 @@ fn validate_subject_finalization(
     Ok(())
 }
 
-fn validate_frozen_source_ids(
+pub(super) fn validate_frozen_source_ids(
     generation: &GenerationCommit,
     source_ids: &[String],
     label: &str,

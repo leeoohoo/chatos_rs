@@ -1,4 +1,7 @@
-fn validate_l0_finalization(
+use super::subject_commit::validate_frozen_source_ids;
+use super::*;
+
+pub(super) fn validate_l0_finalization(
     generation: &GenerationCommit,
     output: &ThreadSummaryGenerationOutput<'_>,
     finalization: &ThreadL0GenerationFinalization<'_>,
@@ -53,7 +56,7 @@ fn validate_l0_finalization(
     Ok(())
 }
 
-fn validate_resummarization_finalization(
+pub(super) fn validate_resummarization_finalization(
     generation: &GenerationCommit,
     output: &ThreadSummaryGenerationOutput<'_>,
     finalization: &ThreadL0ResummarizationFinalization<'_>,
@@ -98,7 +101,7 @@ fn validate_resummarization_finalization(
     Ok(())
 }
 
-async fn supersede_resummarized_range(
+pub(super) async fn supersede_resummarized_range(
     tx: &mut Transaction<'_, Postgres>,
     generation: &GenerationCommit,
     replacement: &EngineSummary,
@@ -294,7 +297,7 @@ async fn supersede_resummarized_range(
     Ok(())
 }
 
-async fn finalize_thread_l0_resummarization(
+pub(super) async fn finalize_thread_l0_resummarization(
     tx: &mut Transaction<'_, Postgres>,
     generation: &GenerationCommit,
     summary: &EngineSummary,

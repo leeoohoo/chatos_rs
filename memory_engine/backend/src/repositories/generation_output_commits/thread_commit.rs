@@ -1,3 +1,5 @@
+use super::*;
+
 #[cfg(test)]
 pub async fn commit_thread_summary_generation(
     db: &Db,

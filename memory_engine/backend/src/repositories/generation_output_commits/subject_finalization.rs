@@ -1,4 +1,6 @@
-async fn finalize_subject_memory_generation(
+use super::*;
+
+pub(super) async fn finalize_subject_memory_generation(
     tx: &mut Transaction<'_, Postgres>,
     generation: &GenerationCommit,
     output: &EngineSubjectMemory,

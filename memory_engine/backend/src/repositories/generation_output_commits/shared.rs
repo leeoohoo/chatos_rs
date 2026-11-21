@@ -1,4 +1,6 @@
-async fn lock_running_generation_job(
+use super::*;
+
+pub(super) async fn lock_running_generation_job(
     tx: &mut Transaction<'_, Postgres>,
     generation: &GenerationCommit,
     expected_thread_id: Option<&str>,
@@ -28,7 +30,7 @@ async fn lock_running_generation_job(
     Ok(())
 }
 
-async fn finish_generation_job(
+pub(super) async fn finish_generation_job(
     tx: &mut Transaction<'_, Postgres>,
     generation: &GenerationCommit,
     thread_id: &str,
@@ -85,7 +87,7 @@ async fn finish_generation_job(
     Ok(())
 }
 
-fn validate_summary_output(
+pub(super) fn validate_summary_output(
     generation: &GenerationCommit,
     output: &ThreadSummaryGenerationOutput<'_>,
 ) -> Result<(), String> {
@@ -149,7 +151,7 @@ fn validate_summary_output(
     Ok(())
 }
 
-async fn load_committed_thread_summary(
+pub(super) async fn load_committed_thread_summary(
     db: &Db,
     generation: &GenerationCommit,
 ) -> Result<EngineSummary, String> {
@@ -183,7 +185,7 @@ async fn load_committed_thread_summary(
     .and_then(decode)
 }
 
-fn validate_subject_output(
+pub(super) fn validate_subject_output(
     generation: &GenerationCommit,
     output: &SubjectMemoryGenerationOutput<'_>,
 ) -> Result<(), String> {
@@ -232,7 +234,7 @@ fn validate_subject_output(
     Ok(())
 }
 
-async fn load_committed_subject_memory(
+pub(super) async fn load_committed_subject_memory(
     db: &Db,
     generation: &GenerationCommit,
 ) -> Result<EngineSubjectMemory, String> {

@@ -21,6 +21,27 @@ use crate::repositories::subject_memories::common::{
 };
 use crate::repositories::summaries::common::new_summary;
 
+mod shared;
+mod subject_commit;
+mod subject_finalization;
+mod thread_commit;
+mod thread_l0_finalization;
+mod thread_rollup_finalization;
+
+use shared::*;
+#[cfg(test)]
+pub use subject_commit::commit_subject_memory_generation;
+pub use subject_commit::commit_subject_memory_generation_final;
+use subject_finalization::*;
+#[cfg(test)]
+pub use thread_commit::commit_thread_summary_generation;
+pub use thread_commit::{
+    commit_thread_rollup_generation_final, commit_thread_summary_generation_final,
+    commit_thread_summary_resummarization_final,
+};
+use thread_l0_finalization::*;
+use thread_rollup_finalization::*;
+
 pub struct SubjectMemoryGenerationOutput<'a> {
     pub subject_id: &'a str,
     pub memory_key: &'a str,
@@ -89,10 +110,3 @@ pub struct SubjectMemoryGenerationFinalization<'a> {
     pub scope_claim: Option<SubjectMemoryScopeClaim<'a>>,
     pub job_result: FinishEngineJobRunRequest,
 }
-
-include!("generation_output_commits/thread_commit.rs");
-include!("generation_output_commits/subject_commit.rs");
-include!("generation_output_commits/subject_finalization.rs");
-include!("generation_output_commits/thread_l0_finalization.rs");
-include!("generation_output_commits/thread_rollup_finalization.rs");
-include!("generation_output_commits/shared.rs");

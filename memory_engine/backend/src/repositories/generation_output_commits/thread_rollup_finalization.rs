@@ -1,4 +1,6 @@
-fn validate_rollup_finalization(
+use super::*;
+
+pub(super) fn validate_rollup_finalization(
     generation: &GenerationCommit,
     output: &ThreadSummaryGenerationOutput<'_>,
     finalization: &ThreadRollupGenerationFinalization<'_>,
@@ -55,7 +57,7 @@ fn validate_rollup_finalization(
     Ok(())
 }
 
-async fn finalize_thread_l0_generation(
+pub(super) async fn finalize_thread_l0_generation(
     tx: &mut Transaction<'_, Postgres>,
     generation: &GenerationCommit,
     summary: &EngineSummary,
@@ -157,7 +159,7 @@ async fn finalize_thread_l0_generation(
     .await
 }
 
-async fn finalize_thread_rollup_generation(
+pub(super) async fn finalize_thread_rollup_generation(
     tx: &mut Transaction<'_, Postgres>,
     generation: &GenerationCommit,
     output: &EngineSummary,
