@@ -237,17 +237,7 @@ struct SignedCatalogFixture {
 }
 
 fn signed_catalog_fixture() -> SignedCatalogFixture {
-    let manifest = parse_plugin_manifest(
-        r#"{
-          "name":"demo-plugin",
-          "version":"1.0.0",
-          "description":"Demo plugin",
-          "author":{"name":"Demo Publisher"},
-          "skills":"./skills",
-          "interface":{"displayName":"Demo","shortDescription":"Demo","longDescription":"Demo plugin","developerName":"Demo Publisher","category":"Developer Tools"}
-        }"#,
-    )
-    .expect("Catalog manifest");
+    let manifest = catalog_manifest();
     let catalog_signer = test_signer(
         "catalog-root-v1",
         "marketplace-authority",
@@ -301,48 +291,8 @@ fn signed_catalog_fixture() -> SignedCatalogFixture {
         published_at: "2026-07-22T01:00:00Z".to_string(),
         revoked_at: None,
     };
-    let plugin = PluginCatalogRecord {
-        id: "plugin-demo".to_string(),
-        plugin_key: "demo-plugin@marketplace-demo".to_string(),
-        marketplace_id: "marketplace-demo".to_string(),
-        owner_user_id: None,
-        name: manifest.name.clone(),
-        display_name: manifest.interface.display_name.clone(),
-        description: manifest.description.clone(),
-        publisher: PluginPublisher {
-            id: "publisher-demo".to_string(),
-            name: "Demo Publisher".to_string(),
-            website: Some("https://plugins.example.com".to_string()),
-            verified: true,
-        },
-        interface: manifest.interface.clone(),
-        keywords: Vec::new(),
-        visibility: "public".to_string(),
-        featured: false,
-        enabled: true,
-        has_ui: false,
-        latest_release_id: release.id.clone(),
-        license: PluginLicenseMetadata {
-            license_id: "MIT".to_string(),
-            license_url: None,
-            redistributable: true,
-            reviewed_at: Some("2026-07-22T00:00:00Z".to_string()),
-        },
-        created_at: "2026-07-22T00:00:00Z".to_string(),
-        updated_at: "2026-07-22T01:00:00Z".to_string(),
-    };
-    let component_snapshots = release
-        .components
-        .iter()
-        .cloned()
-        .map(|component| PluginComponentSnapshot {
-            plugin_id: release.plugin_id.clone(),
-            release_id: release.id.clone(),
-            component,
-            content_sha256: "b".repeat(64),
-            skill: None,
-        })
-        .collect();
+    let plugin = catalog_plugin(&manifest, &release);
+    let component_snapshots = catalog_component_snapshots(&release);
     let mut document = PluginCatalogDocument {
         schema_version: PLUGIN_CATALOG_SCHEMA_VERSION_V1,
         marketplace_id: "marketplace-demo".to_string(),
@@ -376,6 +326,71 @@ fn signed_catalog_fixture() -> SignedCatalogFixture {
     SignedCatalogFixture {
         document,
         catalog_key: catalog_signer.key,
+    }
+}
+
+fn catalog_manifest() -> crate::plugin_manifest::PluginManifest {
+    parse_plugin_manifest(
+        r#"{
+          "name":"demo-plugin",
+          "version":"1.0.0",
+          "description":"Demo plugin",
+          "author":{"name":"Demo Publisher"},
+          "skills":"./skills",
+          "interface":{"displayName":"Demo","shortDescription":"Demo","longDescription":"Demo plugin","developerName":"Demo Publisher","category":"Developer Tools"}
+        }"#,
+    )
+    .expect("Catalog manifest")
+}
+
+fn catalog_component_snapshots(release: &PluginReleaseRecord) -> Vec<PluginComponentSnapshot> {
+    release
+        .components
+        .iter()
+        .cloned()
+        .map(|component| PluginComponentSnapshot {
+            plugin_id: release.plugin_id.clone(),
+            release_id: release.id.clone(),
+            component,
+            content_sha256: "b".repeat(64),
+            skill: None,
+        })
+        .collect()
+}
+
+fn catalog_plugin(
+    manifest: &crate::plugin_manifest::PluginManifest,
+    release: &PluginReleaseRecord,
+) -> PluginCatalogRecord {
+    PluginCatalogRecord {
+        id: "plugin-demo".to_string(),
+        plugin_key: "demo-plugin@marketplace-demo".to_string(),
+        marketplace_id: "marketplace-demo".to_string(),
+        owner_user_id: None,
+        name: manifest.name.clone(),
+        display_name: manifest.interface.display_name.clone(),
+        description: manifest.description.clone(),
+        publisher: PluginPublisher {
+            id: "publisher-demo".to_string(),
+            name: "Demo Publisher".to_string(),
+            website: Some("https://plugins.example.com".to_string()),
+            verified: true,
+        },
+        interface: manifest.interface.clone(),
+        keywords: Vec::new(),
+        visibility: "public".to_string(),
+        featured: false,
+        enabled: true,
+        has_ui: false,
+        latest_release_id: release.id.clone(),
+        license: PluginLicenseMetadata {
+            license_id: "MIT".to_string(),
+            license_url: None,
+            redistributable: true,
+            reviewed_at: Some("2026-07-22T00:00:00Z".to_string()),
+        },
+        created_at: "2026-07-22T00:00:00Z".to_string(),
+        updated_at: "2026-07-22T01:00:00Z".to_string(),
     }
 }
 

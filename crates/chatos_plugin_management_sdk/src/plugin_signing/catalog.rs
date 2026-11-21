@@ -252,6 +252,30 @@ fn normalized_catalog_payload(
         ));
     }
 
+    let signing_keys = normalized_signing_keys(document)?;
+
+    let plugins = normalized_plugins(document)?;
+
+    let releases = normalized_releases(document, &plugins)?;
+    let component_snapshots = normalized_component_snapshots(document, &releases)?;
+    let revoked_release_ids = normalized_revoked_release_ids(document, &releases)?;
+
+    Ok(NormalizedPluginCatalogPayload {
+        schema_version: document.schema_version,
+        marketplace_id: document.marketplace_id.clone(),
+        revision: document.revision.clone(),
+        issued_at: document.issued_at.clone(),
+        signing_keys,
+        plugins,
+        releases,
+        component_snapshots,
+        revoked_release_ids,
+    })
+}
+
+fn normalized_signing_keys(
+    document: &PluginCatalogDocument,
+) -> Result<Vec<SigningKeyRef>, PluginSignatureVerificationError> {
     let mut signing_keys = document.signing_keys.clone();
     for key in &mut signing_keys {
         key.usages.sort();
@@ -297,7 +321,12 @@ fn normalized_catalog_payload(
             parse_timestamp("catalog.signing_keys.revoked_at", value)?;
         }
     }
+    Ok(signing_keys)
+}
 
+fn normalized_plugins(
+    document: &PluginCatalogDocument,
+) -> Result<Vec<PluginCatalogRecord>, PluginSignatureVerificationError> {
     let mut plugins = document.plugins.clone();
     plugins.sort_by(|left, right| {
         left.plugin_key
@@ -330,7 +359,13 @@ fn normalized_catalog_payload(
         parse_timestamp("catalog.plugins.created_at", plugin.created_at.as_str())?;
         parse_timestamp("catalog.plugins.updated_at", plugin.updated_at.as_str())?;
     }
+    Ok(plugins)
+}
 
+fn normalized_releases(
+    document: &PluginCatalogDocument,
+    plugins: &[PluginCatalogRecord],
+) -> Result<Vec<PluginReleaseRecord>, PluginSignatureVerificationError> {
     let mut releases = document.releases.clone();
     releases.sort_by(|left, right| {
         left.plugin_id
@@ -352,51 +387,9 @@ fn normalized_catalog_payload(
         "duplicate Plugin Release version",
     )?;
     for release in &releases {
-        let plugin = plugins
-            .iter()
-            .find(|plugin| plugin.id == release.plugin_id)
-            .ok_or_else(|| invalid_catalog("Release references an unknown Plugin"))?;
-        Version::parse(release.version.as_str())
-            .map_err(|_| invalid_catalog("Release version must use strict SemVer"))?;
-        if release.version != release.normalized_manifest.version
-            || plugin.name != release.normalized_manifest.name
-            || release.manifest_schema_version != release.normalized_manifest.schema_version
-            || release.components != plugin_component_descriptors(&release.normalized_manifest)
-            || release.dependencies != release.normalized_manifest.dependencies
-            || release.permissions != release.normalized_manifest.permissions
-            || release.supported_platforms
-                != release.normalized_manifest.dependencies.supported_platforms
-        {
-            return Err(invalid_catalog(
-                "Release identity or requirements differ from its normalized Manifest",
-            ));
-        }
-        if !matches!(
-            release.release_channel.as_str(),
-            "stable" | "beta" | "canary"
-        ) {
-            return Err(invalid_catalog("unsupported Release channel"));
-        }
-        parse_timestamp(
-            "catalog.releases.published_at",
-            release.published_at.as_str(),
-        )?;
-        if let Some(revoked_at) = release.revoked_at.as_deref() {
-            parse_timestamp("catalog.releases.revoked_at", revoked_at)?;
-        }
-        if release.revoked_at.is_none() {
-            let sbom_ref = release
-                .sbom_ref
-                .as_deref()
-                .ok_or_else(|| invalid_catalog("active Release is missing an embedded SBOM"))?;
-            if sbom_ref.contains("://") || normalize_plugin_relative_path(sbom_ref).is_err() {
-                return Err(invalid_catalog(
-                    "active Release SBOM must be a Plugin-relative artifact path",
-                ));
-            }
-        }
+        validate_release(release, plugins)?;
     }
-    for plugin in &plugins {
+    for plugin in plugins {
         if !plugin.latest_release_id.is_empty()
             && !releases.iter().any(|release| {
                 release.id == plugin.latest_release_id
@@ -410,9 +403,65 @@ fn normalized_catalog_payload(
             ));
         }
     }
+    Ok(releases)
+}
 
-    let mut component_snapshots = document.component_snapshots.clone();
-    component_snapshots.sort_by(|left, right| {
+fn validate_release(
+    release: &PluginReleaseRecord,
+    plugins: &[PluginCatalogRecord],
+) -> Result<(), PluginSignatureVerificationError> {
+    let plugin = plugins
+        .iter()
+        .find(|plugin| plugin.id == release.plugin_id)
+        .ok_or_else(|| invalid_catalog("Release references an unknown Plugin"))?;
+    Version::parse(release.version.as_str())
+        .map_err(|_| invalid_catalog("Release version must use strict SemVer"))?;
+    if release.version != release.normalized_manifest.version
+        || plugin.name != release.normalized_manifest.name
+        || release.manifest_schema_version != release.normalized_manifest.schema_version
+        || release.components != plugin_component_descriptors(&release.normalized_manifest)
+        || release.dependencies != release.normalized_manifest.dependencies
+        || release.permissions != release.normalized_manifest.permissions
+        || release.supported_platforms
+            != release.normalized_manifest.dependencies.supported_platforms
+    {
+        return Err(invalid_catalog(
+            "Release identity or requirements differ from its normalized Manifest",
+        ));
+    }
+    if !matches!(
+        release.release_channel.as_str(),
+        "stable" | "beta" | "canary"
+    ) {
+        return Err(invalid_catalog("unsupported Release channel"));
+    }
+    parse_timestamp(
+        "catalog.releases.published_at",
+        release.published_at.as_str(),
+    )?;
+    if let Some(revoked_at) = release.revoked_at.as_deref() {
+        parse_timestamp("catalog.releases.revoked_at", revoked_at)?;
+    }
+    if release.revoked_at.is_none() {
+        let sbom_ref = release
+            .sbom_ref
+            .as_deref()
+            .ok_or_else(|| invalid_catalog("active Release is missing an embedded SBOM"))?;
+        if sbom_ref.contains("://") || normalize_plugin_relative_path(sbom_ref).is_err() {
+            return Err(invalid_catalog(
+                "active Release SBOM must be a Plugin-relative artifact path",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn normalized_component_snapshots(
+    document: &PluginCatalogDocument,
+    releases: &[PluginReleaseRecord],
+) -> Result<Vec<PluginComponentSnapshot>, PluginSignatureVerificationError> {
+    let mut snapshots = document.component_snapshots.clone();
+    snapshots.sort_by(|left, right| {
         left.plugin_id
             .cmp(&right.plugin_id)
             .then(left.release_id.cmp(&right.release_id))
@@ -422,7 +471,7 @@ fn normalized_catalog_payload(
                     .cmp(&right.component.component_key),
             )
     });
-    let snapshot_coordinates = component_snapshots
+    let coordinates = snapshots
         .iter()
         .map(|snapshot| {
             format!(
@@ -432,10 +481,10 @@ fn normalized_catalog_payload(
         })
         .collect::<Vec<_>>();
     ensure_unique(
-        snapshot_coordinates.iter().map(String::as_str),
+        coordinates.iter().map(String::as_str),
         "duplicate Plugin component snapshot",
     )?;
-    for snapshot in &component_snapshots {
+    for snapshot in &snapshots {
         validate_sha256(
             "component_snapshot.content_sha256",
             &snapshot.content_sha256,
@@ -455,9 +504,9 @@ fn normalized_catalog_payload(
             ));
         }
     }
-    for release in &releases {
+    for release in releases {
         for component in &release.components {
-            if !component_snapshots.iter().any(|snapshot| {
+            if !snapshots.iter().any(|snapshot| {
                 snapshot.plugin_id == release.plugin_id
                     && snapshot.release_id == release.id
                     && snapshot.component == *component
@@ -468,7 +517,13 @@ fn normalized_catalog_payload(
             }
         }
     }
+    Ok(snapshots)
+}
 
+fn normalized_revoked_release_ids(
+    document: &PluginCatalogDocument,
+    releases: &[PluginReleaseRecord],
+) -> Result<Vec<String>, PluginSignatureVerificationError> {
     let mut revoked_release_ids = document.revoked_release_ids.clone();
     revoked_release_ids.sort();
     ensure_unique(
@@ -490,18 +545,7 @@ fn normalized_catalog_payload(
             "revoked_release_ids does not match revoked Release records",
         ));
     }
-
-    Ok(NormalizedPluginCatalogPayload {
-        schema_version: document.schema_version,
-        marketplace_id: document.marketplace_id.clone(),
-        revision: document.revision.clone(),
-        issued_at: document.issued_at.clone(),
-        signing_keys,
-        plugins,
-        releases,
-        component_snapshots,
-        revoked_release_ids,
-    })
+    Ok(revoked_release_ids)
 }
 
 fn ensure_unique<'a>(

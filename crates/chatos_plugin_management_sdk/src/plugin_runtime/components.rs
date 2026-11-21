@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::plugin_manifest::{
-    component_key_from_path, PluginComponentKind, PluginManifest, PluginMcpServer, PluginPathRef,
-    PluginPermissionRequirement,
+    component_key_from_path, PluginAgent, PluginCommand, PluginComponentKind, PluginManifest,
+    PluginMcpServer, PluginPathRef, PluginPermissionRequirement, PluginUiContribution,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -78,88 +78,10 @@ pub fn plugin_component_descriptors(manifest: &PluginManifest) -> Vec<PluginComp
         ));
     }
     for command in &manifest.commands {
-        let mut descriptor = component_descriptor(
-            manifest,
-            command.component_key.clone(),
-            PluginComponentKind::Command,
-            "command",
-            Some(command.source.clone()),
-            false,
-        );
-        if let Some(description) = &command.description {
-            descriptor.metadata.insert(
-                "description".to_string(),
-                Value::String(description.clone()),
-            );
-        }
-        if let Some(argument_hint) = &command.argument_hint {
-            descriptor.metadata.insert(
-                "argument_hint".to_string(),
-                Value::String(argument_hint.clone()),
-            );
-        }
-        descriptor.metadata.insert(
-            "requires_confirmation".to_string(),
-            Value::Bool(command.requires_confirmation),
-        );
-        if let Some(target_agent) = &command.target_agent {
-            descriptor.metadata.insert(
-                "target_agent".to_string(),
-                Value::String(target_agent.clone()),
-            );
-        }
-        if !command.allowed_tools.is_empty() {
-            descriptor.metadata.insert(
-                "allowed_tools".to_string(),
-                Value::Array(
-                    command
-                        .allowed_tools
-                        .iter()
-                        .cloned()
-                        .map(Value::String)
-                        .collect(),
-                ),
-            );
-        }
-        descriptors.push(descriptor);
+        descriptors.push(command_descriptor(manifest, command));
     }
     for agent in &manifest.agents {
-        let mut descriptor = component_descriptor(
-            manifest,
-            agent.component_key.clone(),
-            PluginComponentKind::Agent,
-            "agent_profile",
-            Some(agent.source.clone()),
-            false,
-        );
-        if let Some(description) = &agent.description {
-            descriptor.metadata.insert(
-                "description".to_string(),
-                Value::String(description.clone()),
-            );
-        }
-        descriptor.metadata.insert(
-            "base_agent".to_string(),
-            Value::String(agent.base_agent.clone()),
-        );
-        if !agent.allowed_tools.is_empty() {
-            descriptor.metadata.insert(
-                "allowed_tools".to_string(),
-                Value::Array(
-                    agent
-                        .allowed_tools
-                        .iter()
-                        .cloned()
-                        .map(Value::String)
-                        .collect(),
-                ),
-            );
-        }
-        descriptor.metadata.insert(
-            "max_iterations".to_string(),
-            Value::from(agent.max_iterations),
-        );
-        descriptors.push(descriptor);
+        descriptors.push(agent_descriptor(manifest, agent));
     }
     for hook in &manifest.hooks {
         descriptors.push(component_descriptor(
@@ -172,70 +94,168 @@ pub fn plugin_component_descriptors(manifest: &PluginManifest) -> Vec<PluginComp
         ));
     }
     for ui in &manifest.ui {
-        let mut descriptor = component_descriptor(
-            manifest,
-            ui.component_key.clone(),
-            PluginComponentKind::UiContribution,
-            "sandboxed_ui",
-            Some(ui.source.clone()),
-            false,
-        );
-        if let Some(title) = &ui.title {
-            descriptor
-                .metadata
-                .insert("title".to_string(), Value::String(title.clone()));
-        }
-        descriptor.metadata.insert(
-            "surface".to_string(),
-            Value::String(ui.surface.clone().unwrap_or_else(|| {
-                crate::plugin_manifest::PLUGIN_UI_SURFACE_DETAIL_PANEL.to_string()
-            })),
-        );
-        if !ui.assets.is_empty() {
-            descriptor.metadata.insert(
-                "assets".to_string(),
-                Value::Array(
-                    ui.assets
-                        .iter()
-                        .map(|asset| Value::String(asset.path.clone()))
-                        .collect(),
-                ),
-            );
-        }
-        if !ui.bridge_capabilities.is_empty() {
-            descriptor.metadata.insert(
-                "bridge_capabilities".to_string(),
-                Value::Array(
-                    ui.bridge_capabilities
-                        .iter()
-                        .cloned()
-                        .map(Value::String)
-                        .collect(),
-                ),
-            );
-        }
-        if !ui.artifact_mime_types.is_empty() {
-            descriptor.metadata.insert(
-                "artifact_mime_types".to_string(),
-                Value::Array(
-                    ui.artifact_mime_types
-                        .iter()
-                        .cloned()
-                        .map(Value::String)
-                        .collect(),
-                ),
-            );
-        }
-        if let Some(runtime) = &ui.runtime {
-            descriptor.runtime_kind = "local_http_ui".to_string();
-            descriptor.metadata.insert(
-                "runtime".to_string(),
-                serde_json::to_value(runtime).expect("Plugin UI runtime must serialize"),
-            );
-        }
-        descriptors.push(descriptor);
+        descriptors.push(ui_descriptor(manifest, ui));
     }
     descriptors
+}
+
+fn command_descriptor(
+    manifest: &PluginManifest,
+    command: &PluginCommand,
+) -> PluginComponentDescriptor {
+    let mut descriptor = component_descriptor(
+        manifest,
+        command.component_key.clone(),
+        PluginComponentKind::Command,
+        "command",
+        Some(command.source.clone()),
+        false,
+    );
+    if let Some(description) = &command.description {
+        descriptor.metadata.insert(
+            "description".to_string(),
+            Value::String(description.clone()),
+        );
+    }
+    if let Some(argument_hint) = &command.argument_hint {
+        descriptor.metadata.insert(
+            "argument_hint".to_string(),
+            Value::String(argument_hint.clone()),
+        );
+    }
+    descriptor.metadata.insert(
+        "requires_confirmation".to_string(),
+        Value::Bool(command.requires_confirmation),
+    );
+    if let Some(target_agent) = &command.target_agent {
+        descriptor.metadata.insert(
+            "target_agent".to_string(),
+            Value::String(target_agent.clone()),
+        );
+    }
+    if !command.allowed_tools.is_empty() {
+        descriptor.metadata.insert(
+            "allowed_tools".to_string(),
+            Value::Array(
+                command
+                    .allowed_tools
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+    }
+    descriptor
+}
+
+fn agent_descriptor(manifest: &PluginManifest, agent: &PluginAgent) -> PluginComponentDescriptor {
+    let mut descriptor = component_descriptor(
+        manifest,
+        agent.component_key.clone(),
+        PluginComponentKind::Agent,
+        "agent_profile",
+        Some(agent.source.clone()),
+        false,
+    );
+    if let Some(description) = &agent.description {
+        descriptor.metadata.insert(
+            "description".to_string(),
+            Value::String(description.clone()),
+        );
+    }
+    descriptor.metadata.insert(
+        "base_agent".to_string(),
+        Value::String(agent.base_agent.clone()),
+    );
+    if !agent.allowed_tools.is_empty() {
+        descriptor.metadata.insert(
+            "allowed_tools".to_string(),
+            Value::Array(
+                agent
+                    .allowed_tools
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+    }
+    descriptor.metadata.insert(
+        "max_iterations".to_string(),
+        Value::from(agent.max_iterations),
+    );
+    descriptor
+}
+
+fn ui_descriptor(
+    manifest: &PluginManifest,
+    ui: &PluginUiContribution,
+) -> PluginComponentDescriptor {
+    let mut descriptor = component_descriptor(
+        manifest,
+        ui.component_key.clone(),
+        PluginComponentKind::UiContribution,
+        "sandboxed_ui",
+        Some(ui.source.clone()),
+        false,
+    );
+    if let Some(title) = &ui.title {
+        descriptor
+            .metadata
+            .insert("title".to_string(), Value::String(title.clone()));
+    }
+    descriptor.metadata.insert(
+        "surface".to_string(),
+        Value::String(
+            ui.surface.clone().unwrap_or_else(|| {
+                crate::plugin_manifest::PLUGIN_UI_SURFACE_DETAIL_PANEL.to_string()
+            }),
+        ),
+    );
+    if !ui.assets.is_empty() {
+        descriptor.metadata.insert(
+            "assets".to_string(),
+            Value::Array(
+                ui.assets
+                    .iter()
+                    .map(|asset| Value::String(asset.path.clone()))
+                    .collect(),
+            ),
+        );
+    }
+    if !ui.bridge_capabilities.is_empty() {
+        descriptor.metadata.insert(
+            "bridge_capabilities".to_string(),
+            Value::Array(
+                ui.bridge_capabilities
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+    }
+    if !ui.artifact_mime_types.is_empty() {
+        descriptor.metadata.insert(
+            "artifact_mime_types".to_string(),
+            Value::Array(
+                ui.artifact_mime_types
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+    }
+    if let Some(runtime) = &ui.runtime {
+        descriptor.runtime_kind = "local_http_ui".to_string();
+        descriptor.metadata.insert(
+            "runtime".to_string(),
+            serde_json::to_value(runtime).expect("Plugin UI runtime must serialize"),
+        );
+    }
+    descriptor
 }
 
 fn component_descriptor(
