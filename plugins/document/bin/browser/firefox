@@ -11,6 +11,7 @@ mkdir -p "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles"
 render_profile=$(mktemp -d "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles/firefox.XXXXXXXX")
 firefox_app_data="$CHATOS_PLUGIN_CACHE_DIR/firefox-app-data"
 mkdir -p "$firefox_app_data"
+diagnostic=$(mktemp "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles/firefox.XXXXXXXX.log")
 screenshot=''
 for argument in "$@"; do
   case "$argument" in
@@ -18,11 +19,13 @@ for argument in "$@"; do
   esac
 done
 cleanup() {
+  /usr/bin/pkill -TERM -f "$render_profile" 2>/dev/null || true
   if [ -n "${firefox_pid:-}" ] && kill -0 "$firefox_pid" 2>/dev/null; then
     kill -TERM "$firefox_pid" 2>/dev/null || true
     wait "$firefox_pid" 2>/dev/null || true
   fi
   /bin/rm -rf -- "$render_profile"
+  /bin/rm -f -- "$diagnostic"
 }
 trap cleanup EXIT
 firefox_pid=''
@@ -30,12 +33,12 @@ CFFIXED_USER_HOME="$firefox_app_data" \
 MOZ_APP_DATA="$firefox_app_data" \
 MOZ_LOCAL_APP_DATA="$firefox_app_data" \
 MOZ_HEADLESS=1 \
-  "$firefox_bin" --new-instance --profile "$render_profile" "$@" &
+  "$firefox_bin" --new-instance --profile "$render_profile" "$@" >"$diagnostic" 2>&1 &
 firefox_pid=$!
 
 attempts=0
 while [ -n "$screenshot" ] && [ ! -s "$screenshot" ] \
-    && kill -0 "$firefox_pid" 2>/dev/null && [ "$attempts" -lt 300 ]; do
+    && [ "$attempts" -lt 300 ]; do
   /bin/sleep 0.1
   attempts=$((attempts + 1))
 done
@@ -43,8 +46,9 @@ if [ -n "$screenshot" ] && [ -s "$screenshot" ]; then
   /bin/sleep 1
   exit 0
 fi
-if kill -0 "$firefox_pid" 2>/dev/null; then
+if [ -n "$screenshot" ]; then
   echo 'Firefox did not finish the screenshot within 30 seconds.' >&2
+  /usr/bin/tail -n 20 "$diagnostic" >&2
   exit 1
 fi
 if wait "$firefox_pid"; then
