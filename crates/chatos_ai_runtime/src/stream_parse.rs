@@ -66,174 +66,196 @@ pub struct FinalizedStreamState {
 
 pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> StreamPayload {
     let mut payload = StreamPayload::default();
-
     if let Some(event_type) = event.get("type").and_then(Value::as_str) {
-        if event_type == "response.output_text.delta" {
-            if let Some(delta) = event.get("delta").and_then(extract_text_delta) {
-                if !delta.is_empty() {
-                    append_stream_text(&mut state.full_content, delta.as_str());
-                    state.sent_any_chunk = true;
-                    payload.chunk = Some(delta);
-                }
-            }
-        } else if event_type == "response.output_text.done"
-            || event_type == "response.output_text"
-            || event_type == "response.output_text.completed"
-        {
-            if state.full_content.is_empty() {
-                if let Some(text) =
-                    extract_text_from_fields(event, &["text", "output_text", "delta"])
-                {
-                    if !text.is_empty() {
-                        state.full_content.push_str(&text);
-                        state.sent_any_chunk = true;
-                        payload.chunk = Some(text);
-                    }
-                }
-            }
-        } else if event_type == "response.output_item.added"
-            || event_type == "response.output_item.delta"
-            || event_type == "response.output_item.done"
-        {
-            let item = event.get("item").or_else(|| event.get("output_item"));
-            if let Some(item) = item {
-                let extra_arguments_piece = if event_type == "response.output_item.delta" {
-                    event
-                        .get("delta")
-                        .and_then(extract_text_delta)
-                        .or_else(|| extract_text_from_fields(event, &["arguments", "text"]))
-                } else {
-                    None
-                };
-                ingest_tool_call_item(state, event, item, extra_arguments_piece.as_deref());
-            }
-        } else if event_type == "response.function_call_arguments.delta"
-            || event_type == "response.function_call.delta"
-        {
-            if let Some(arguments_piece) = event
-                .get("delta")
-                .and_then(extract_text_delta)
-                .or_else(|| extract_text_from_fields(event, &["arguments", "text"]))
-            {
-                merge_function_call_arguments_delta(state, event, arguments_piece.as_str());
-            }
-        } else if event_type == "response.function_call_arguments.done"
-            || event_type == "response.function_call.done"
-        {
-            let args_piece = extract_text_from_fields(event, &["arguments", "output", "text"]);
-            let name_piece = event.get("name").and_then(Value::as_str);
-            merge_function_call_done(state, event, name_piece, args_piece.as_deref());
-        } else if let Some(reasoning_delta) = extract_reasoning_event_text(event_type, event) {
-            if !reasoning_delta.is_empty() {
-                if event_type.ends_with(".delta") {
-                    append_stream_text(&mut state.reasoning, reasoning_delta.as_str());
-                } else {
-                    state.reasoning =
-                        join_stream_text(state.reasoning.as_str(), reasoning_delta.as_str());
-                }
-                payload.thinking = Some(reasoning_delta);
-            }
-        } else if event_type == "response.completed" || event_type == "response.incomplete" {
-            state.terminal_event_seen = true;
-            state.terminal_event_type = Some(event_type.to_string());
-            if let Some(response) = event.get("response") {
-                state.response_obj = Some(response.clone());
-                capture_response_lifecycle(state, response);
-                ingest_tool_calls_from_response_output(state, response);
-                if state.full_content.is_empty() {
-                    let extracted = extract_output_text(response);
-                    if !extracted.is_empty() {
-                        append_stream_text(&mut state.full_content, extracted.as_str());
-                        state.sent_any_chunk = true;
-                        payload.chunk = Some(extracted);
-                    }
-                }
-            } else {
-                state.response_obj = Some(event.clone());
-                capture_response_lifecycle(state, event);
-                ingest_tool_calls_from_response_output(state, event);
-                if state.full_content.is_empty() {
-                    let extracted = extract_output_text(event);
-                    if !extracted.is_empty() {
-                        append_stream_text(&mut state.full_content, extracted.as_str());
-                        state.sent_any_chunk = true;
-                        payload.chunk = Some(extracted);
-                    }
-                }
-            }
-        } else if event_type == "response.failed" {
-            state.terminal_event_seen = true;
-            state.terminal_event_type = Some(event_type.to_string());
-            state.finish_reason = Some("failed".to_string());
-            if let Some(response) = event.get("response") {
-                state.response_obj = Some(response.clone());
-                capture_response_lifecycle(state, response);
-                if let Some(error_obj) = response.get("error") {
-                    if !error_obj.is_null() {
-                        state.provider_error = Some(error_obj.clone());
-                    }
-                }
-            }
-            if let Some(error_obj) = event.get("error") {
-                if !error_obj.is_null() {
-                    state.provider_error = Some(error_obj.clone());
-                }
-            }
-        } else if event_type == "error" {
-            if let Some(error_obj) = event.get("error") {
-                if !error_obj.is_null() {
-                    state.provider_error = Some(error_obj.clone());
-                }
-            }
-        } else if state.response_obj.is_none() {
-            if let Some(response) = event.get("response") {
-                if response.get("output").is_some()
-                    || response.get("output_text").is_some()
-                    || response.get("status").is_some()
-                {
-                    state.response_obj = Some(response.clone());
-                }
-            } else if event.get("output").is_some() || event.get("output_text").is_some() {
-                state.response_obj = Some(event.clone());
-            }
-        }
+        apply_typed_event(state, event, event_type, &mut payload);
     } else {
-        if state.response_obj.is_none()
-            && (event.get("output").is_some()
-                || event.get("output_text").is_some()
-                || event.get("text").is_some()
-                || event.get("status").is_some()
-                || event.get("error").is_some())
-        {
-            state.response_obj = Some(event.clone());
-        }
+        apply_untyped_event(state, event, &mut payload);
+    }
 
-        if state.full_content.is_empty() {
-            let extracted = extract_output_text(event);
-            if !extracted.is_empty() {
-                append_stream_text(&mut state.full_content, extracted.as_str());
-                state.sent_any_chunk = true;
-                payload.chunk = Some(extracted);
-            }
-        }
+    capture_event_metadata(state, event);
+    payload
+}
 
-        if state.finish_reason.is_none() {
-            if let Some(status) = event.get("status").and_then(Value::as_str) {
-                let normalized = status.trim();
-                if !normalized.is_empty() {
-                    state.finish_reason = Some(normalized.to_string());
-                }
-            }
+fn apply_typed_event(
+    state: &mut StreamState,
+    event: &Value,
+    event_type: &str,
+    payload: &mut StreamPayload,
+) {
+    match event_type {
+        "response.output_text.delta" => apply_text_delta(state, event, payload),
+        "response.output_text.done" | "response.output_text" | "response.output_text.completed" => {
+            let text = extract_text_from_fields(event, &["text", "output_text", "delta"]);
+            capture_initial_content(state, payload, text);
         }
-        capture_response_lifecycle(state, event);
-        if let Some(status) = state.response_status.as_deref() {
-            if matches!(status, "completed" | "incomplete" | "failed") {
-                state.terminal_event_seen = true;
-                state.terminal_event_type = Some(format!("response.{status}"));
+        "response.output_item.added"
+        | "response.output_item.delta"
+        | "response.output_item.done" => apply_output_item_event(state, event, event_type),
+        "response.function_call_arguments.delta" | "response.function_call.delta" => {
+            apply_function_call_delta(state, event)
+        }
+        "response.function_call_arguments.done" | "response.function_call.done" => {
+            let args = extract_text_from_fields(event, &["arguments", "output", "text"]);
+            merge_function_call_done(
+                state,
+                event,
+                event.get("name").and_then(Value::as_str),
+                args.as_deref(),
+            );
+        }
+        "response.completed" | "response.incomplete" => {
+            apply_completed_event(state, event, event_type, payload)
+        }
+        "response.failed" => apply_failed_event(state, event, event_type),
+        "error" => capture_provider_error(state, event.get("error")),
+        _ => {
+            if let Some(reasoning) = extract_reasoning_event_text(event_type, event) {
+                apply_reasoning_event(state, event_type, reasoning, payload);
+            } else {
+                capture_response_candidate(state, event);
             }
         }
     }
+}
 
+fn apply_text_delta(state: &mut StreamState, event: &Value, payload: &mut StreamPayload) {
+    let Some(delta) = event.get("delta").and_then(extract_text_delta) else {
+        return;
+    };
+    if !delta.is_empty() {
+        append_stream_text(&mut state.full_content, delta.as_str());
+        state.sent_any_chunk = true;
+        payload.chunk = Some(delta);
+    }
+}
+
+fn apply_output_item_event(state: &mut StreamState, event: &Value, event_type: &str) {
+    let Some(item) = event.get("item").or_else(|| event.get("output_item")) else {
+        return;
+    };
+    let extra_arguments = (event_type == "response.output_item.delta")
+        .then(|| {
+            event
+                .get("delta")
+                .and_then(extract_text_delta)
+                .or_else(|| extract_text_from_fields(event, &["arguments", "text"]))
+        })
+        .flatten();
+    ingest_tool_call_item(state, event, item, extra_arguments.as_deref());
+}
+
+fn apply_function_call_delta(state: &mut StreamState, event: &Value) {
+    let arguments = event
+        .get("delta")
+        .and_then(extract_text_delta)
+        .or_else(|| extract_text_from_fields(event, &["arguments", "text"]));
+    if let Some(arguments) = arguments {
+        merge_function_call_arguments_delta(state, event, arguments.as_str());
+    }
+}
+
+fn apply_reasoning_event(
+    state: &mut StreamState,
+    event_type: &str,
+    reasoning: String,
+    payload: &mut StreamPayload,
+) {
+    if reasoning.is_empty() {
+        return;
+    }
+    if event_type.ends_with(".delta") {
+        append_stream_text(&mut state.reasoning, reasoning.as_str());
+    } else {
+        state.reasoning = join_stream_text(state.reasoning.as_str(), reasoning.as_str());
+    }
+    payload.thinking = Some(reasoning);
+}
+
+fn apply_completed_event(
+    state: &mut StreamState,
+    event: &Value,
+    event_type: &str,
+    payload: &mut StreamPayload,
+) {
+    state.terminal_event_seen = true;
+    state.terminal_event_type = Some(event_type.to_string());
+    let response = event.get("response").unwrap_or(event);
+    state.response_obj = Some(response.clone());
+    capture_response_lifecycle(state, response);
+    ingest_tool_calls_from_response_output(state, response);
+    capture_initial_content(state, payload, Some(extract_output_text(response)));
+}
+
+fn apply_failed_event(state: &mut StreamState, event: &Value, event_type: &str) {
+    state.terminal_event_seen = true;
+    state.terminal_event_type = Some(event_type.to_string());
+    state.finish_reason = Some("failed".to_string());
+    if let Some(response) = event.get("response") {
+        state.response_obj = Some(response.clone());
+        capture_response_lifecycle(state, response);
+        capture_provider_error(state, response.get("error"));
+    }
+    capture_provider_error(state, event.get("error"));
+}
+
+fn apply_untyped_event(state: &mut StreamState, event: &Value, payload: &mut StreamPayload) {
+    if state.response_obj.is_none()
+        && ["output", "output_text", "text", "status", "error"]
+            .iter()
+            .any(|field| event.get(field).is_some())
+    {
+        state.response_obj = Some(event.clone());
+    }
+    capture_initial_content(state, payload, Some(extract_output_text(event)));
+    if state.finish_reason.is_none() {
+        state.finish_reason = event
+            .get("status")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|status| !status.is_empty())
+            .map(ToOwned::to_owned);
+    }
+    capture_response_lifecycle(state, event);
+    if let Some(status @ ("completed" | "incomplete" | "failed")) = state.response_status.as_deref()
+    {
+        state.terminal_event_seen = true;
+        state.terminal_event_type = Some(format!("response.{status}"));
+    }
+}
+
+fn capture_initial_content(
+    state: &mut StreamState,
+    payload: &mut StreamPayload,
+    content: Option<String>,
+) {
+    if !state.full_content.is_empty() {
+        return;
+    }
+    let Some(content) = content.filter(|content| !content.is_empty()) else {
+        return;
+    };
+    append_stream_text(&mut state.full_content, content.as_str());
+    state.sent_any_chunk = true;
+    payload.chunk = Some(content);
+}
+
+fn capture_response_candidate(state: &mut StreamState, event: &Value) {
+    if state.response_obj.is_some() {
+        return;
+    }
+    if let Some(response) = event.get("response") {
+        if ["output", "output_text", "status"]
+            .iter()
+            .any(|field| response.get(field).is_some())
+        {
+            state.response_obj = Some(response.clone());
+        }
+    } else if event.get("output").is_some() || event.get("output_text").is_some() {
+        state.response_obj = Some(event.clone());
+    }
+}
+
+fn capture_event_metadata(state: &mut StreamState, event: &Value) {
     if let Some(id) = event
         .get("response")
         .and_then(|response| response.get("id"))
@@ -256,21 +278,18 @@ pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> S
     }
 
     if state.provider_error.is_none() {
-        if let Some(error_obj) = event
+        let error = event
             .get("response")
             .and_then(|response| response.get("error"))
-        {
-            if !error_obj.is_null() {
-                state.provider_error = Some(error_obj.clone());
-            }
-        } else if let Some(error_obj) = event.get("error") {
-            if !error_obj.is_null() {
-                state.provider_error = Some(error_obj.clone());
-            }
-        }
+            .or_else(|| event.get("error"));
+        capture_provider_error(state, error);
     }
+}
 
-    payload
+fn capture_provider_error(state: &mut StreamState, error: Option<&Value>) {
+    if let Some(error) = error.filter(|error| !error.is_null()) {
+        state.provider_error = Some(error.clone());
+    }
 }
 
 fn capture_response_lifecycle(state: &mut StreamState, response: &Value) {
