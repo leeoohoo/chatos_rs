@@ -40,3 +40,4 @@ await copyFile(
 
 await chmod(path.join(projectRoot, 'bin', 'chatos-document-mcp'), 0o755);
 await chmod(path.join(projectRoot, 'bin', 'browser', 'google-chrome'), 0o755);
+await chmod(path.join(projectRoot, 'bin', 'browser', 'firefox'), 0o755);

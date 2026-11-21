@@ -1,0 +1,18 @@
+#!/bin/sh
+# Firefox needs an explicit profile when the Plugin runs with an isolated HOME.
+set -eu
+: "${CHATOS_PLUGIN_CACHE_DIR:?Missing isolated Plugin cache}"
+firefox_bin='/Applications/Firefox.app/Contents/MacOS/firefox'
+if [ ! -x "$firefox_bin" ]; then
+  echo 'Firefox is not installed.' >&2
+  exit 69
+fi
+mkdir -p "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles"
+render_profile=$(mktemp -d "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles/firefox.XXXXXXXX")
+cleanup() {
+  /bin/rm -rf -- "$render_profile"
+}
+trap cleanup EXIT
+status=0
+"$firefox_bin" --profile "$render_profile" "$@" || status=$?
+exit "$status"

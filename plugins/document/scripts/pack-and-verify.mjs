@@ -159,6 +159,9 @@ try {
   if (unexpectedDistPaths.length > 0) {
     throw new Error(`packed artifact contains unexpected dist files: ${unexpectedDistPaths.join(', ')}`);
   }
+  for (const launcher of ['bin/browser/google-chrome', 'bin/browser/firefox']) {
+    if (!packedPaths.has(launcher)) throw new Error(`packed artifact is missing browser launcher: ${launcher}`);
+  }
   const requiredComplianceFiles = [
     'SBOM.cdx.json',
     'LICENSE',
