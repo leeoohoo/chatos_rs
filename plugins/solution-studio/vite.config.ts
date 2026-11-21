@@ -7,7 +7,8 @@ export default defineConfig({
   build: {
     outDir: '../ui',
     emptyOutDir: true,
-    rollupOptions: { output: { entryFileNames: 'assets/app.js', chunkFileNames: 'assets/[name].js', assetFileNames: (asset) => asset.name?.endsWith('.css') ? 'assets/app.css' : 'assets/[name][extname]' } }
+    cssCodeSplit: false,
+    rollupOptions: { output: { entryFileNames: 'assets/app.js', chunkFileNames: 'assets/[name].js', manualChunks: (id) => id.includes('/node_modules/') ? 'vendor' : undefined, assetFileNames: (asset) => asset.name?.endsWith('.css') ? 'assets/app.css' : 'assets/[name][extname]' } }
   },
   server: { port: 4197, proxy: { '/api': 'http://127.0.0.1:4198' } }
 });

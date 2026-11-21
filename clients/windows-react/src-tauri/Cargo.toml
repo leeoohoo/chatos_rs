@@ -31,8 +31,8 @@ tokio-util = "0.7"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
 flate2 = "1"
 tar = "0.4"
-zip = { version = "9.0.0-pre2", default-features = false, features = ["deflate"] }
-rusqlite = { version = "0.38.0", features = ["bundled"] }
+zip = { version = "9.0.0", default-features = false, features = ["deflate"] }
+rusqlite = { version = "0.41.0", features = ["bundled"] }
 sha2 = "0.10"
 regex = "1"
 uuid = { version = "1", features = ["v4"] }
@@ -54,7 +54,7 @@ tempfile = "3"
 portable-pty = "0.9"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-clipboard-win = "5.4.1"
+clipboard-win = "5.4.3"
 keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
 windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Isolation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant"] }

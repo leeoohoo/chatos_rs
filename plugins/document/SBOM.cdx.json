@@ -27,11 +27,11 @@
     "properties": [
       {
         "name": "chatos:source:packageLockSha256",
-        "value": "8d78c453ccbcc675a0ca5e8548be02a6cb0ed08b46ea6a4fb4499c265c32093f"
+        "value": "b3a1d1dd97c530ad249870de934f745999d3416abd4aa41507c70fa20fb15999"
       },
       {
         "name": "chatos:source:esbuildMetafileSha256",
-        "value": "4127c2f458b88beb1b80dd4a67b0a4ebcd899a0369f0dba3d24f3c48d45b5480"
+        "value": "c24183419c717b3a2bf0e7bdda152dbd188ea3e343f0f51b0da886a343f46b5b"
       },
       {
         "name": "chatos:scope",
@@ -1165,11 +1165,11 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/fast-uri@3.1.8",
+      "bom-ref": "pkg:npm/fast-uri@3.1.9",
       "name": "fast-uri",
-      "version": "3.1.8",
+      "version": "3.1.9",
       "scope": "required",
-      "purl": "pkg:npm/fast-uri@3.1.8",
+      "purl": "pkg:npm/fast-uri@3.1.9",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -1178,13 +1178,13 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "19932d6544cd4693952040a85f02cd652e7150613e99535b4c1f21ffb4708764c559c05088fcd3832662d39045f543192a42c9bfc5c14494e553bce0f3e65f32"
+          "content": "852ff45addd86b4e37a0a5ecd2c231acca4a4084d784c2c8ad500a2978b8828cc60bdbfb6115959d7219ce334f4ced3633d05dc4b096a8ad7245780dce257225"
         }
       ],
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz"
+          "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz"
         }
       ],
       "properties": [
@@ -1445,11 +1445,11 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/zod@4.4.3",
+      "bom-ref": "pkg:npm/zod@4.6.7",
       "name": "zod",
-      "version": "4.4.3",
+      "version": "4.6.7",
       "scope": "required",
-      "purl": "pkg:npm/zod@4.4.3",
+      "purl": "pkg:npm/zod@4.6.7",
       "licenses": [
         {
           "expression": "MIT"
@@ -1458,13 +1458,13 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "cad10d163209165d94c1882575eda37215b61f09b818914b0e249759d4eb25004837d15cca9ee7e0387124489634024c575fc1a967d6fe4920ef55037072724d"
+          "content": "83c5b60f6914e9af2e9ed734e777d7d6e5412b333bcaa0315bfdf3c24f37fba472176f9228eb95f9cd30043854c335753da19aa66647fab99c5333dffb7086c2"
         }
       ],
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz"
+          "url": "https://registry.npmjs.org/zod/-/zod-4.6.7.tgz"
         }
       ],
       "properties": [
@@ -1556,7 +1556,7 @@
         "pkg:npm/ajv-formats@3.0.1",
         "pkg:npm/ajv@8.20.0",
         "pkg:npm/fast-deep-equal@3.1.3",
-        "pkg:npm/fast-uri@3.1.8",
+        "pkg:npm/fast-uri@3.1.9",
         "pkg:npm/fflate@0.8.3",
         "pkg:npm/json-schema-traverse@1.0.0",
         "pkg:npm/pako@1.0.11",
@@ -1564,7 +1564,7 @@
         "pkg:npm/pdfjs-dist@4.8.69",
         "pkg:npm/tslib@1.14.1",
         "pkg:npm/zod-to-json-schema@3.25.2",
-        "pkg:npm/zod@4.4.3"
+        "pkg:npm/zod@4.6.7"
       ]
     },
     {

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import ELK from 'elkjs/lib/elk.bundled.js';
+import ELK from '../elk-browser';
 import { Background, BackgroundVariant, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, useReactFlow, type NodeProps } from '@xyflow/react';
 import type { ExecutionPlan, ExecutionTask, PlanNodePosition } from '../../src/schema';
 import { readyTaskIds, visibleDependencyEdges } from '../../src/plan-view';
 
 type TaskNodeData = { task: ExecutionTask; ready: boolean; supporting: boolean; hiddenDependencies: string[] };
-const elk = new ELK();
+let elk: ELK | undefined;
 const NODE_WIDTH = 288;
 const NODE_HEIGHT = 176;
 const COLLISION_GAP = 20;
@@ -31,6 +31,7 @@ function TaskNode({ data, selected }: NodeProps) {
 const nodeTypes = { taskNode: TaskNode };
 
 async function automaticPositions(plan: ExecutionPlan, includeRedundant: boolean): Promise<Record<string, PlanNodePosition>> {
+  elk ??= new ELK();
   const graph = await elk.layout({
     id: 'root',
     layoutOptions: {

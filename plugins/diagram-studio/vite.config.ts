@@ -22,12 +22,14 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, 'ui'),
     emptyOutDir: true,
+    cssCodeSplit: false,
     sourcemap: false,
     assetsInlineLimit: 4096,
     rollupOptions: {
       output: {
         entryFileNames: 'assets/app.js',
         chunkFileNames: 'assets/[name].js',
+        manualChunks: (id) => id.includes('/node_modules/') ? 'vendor' : undefined,
         assetFileNames: (assetInfo) => assetInfo.name?.endsWith('.css')
           ? 'assets/app.css'
           : 'assets/[name][extname]'

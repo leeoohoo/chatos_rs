@@ -31,7 +31,7 @@
     "mcp": "node dist/mcp-server.mjs mcp",
     "typecheck": "tsc --noEmit",
     "audit:skill-gates": "node ../../scripts/audit-plugin-skill-gates.mjs --manifest chatos.plugin.json --cwd . -- node bin/chatos-diagram-studio mcp",
-    "test": "npm run build && node --test test/*.test.mjs",
+    "test": "npm run build && node --test --test-concurrency=1 test/*.test.mjs",
     "prepack": "node ../../scripts/run-plugin-prepack.mjs build audit:skill-gates",
     "pack:verify": "npm run test && npm pack --dry-run"
   },

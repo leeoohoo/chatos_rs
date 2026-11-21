@@ -195,7 +195,7 @@ extension NativeLocalConnectorService {
     }
 
     func modelRevision(_ model: GatewayModelConfigDTO) -> String {
-        let fields = [
+        let identityFields: [String] = [
             model.id,
             model.provider,
             model.model,
@@ -203,6 +203,8 @@ extension NativeLocalConnectorService {
             model.taskThinkingLevel ?? "",
             model.temperature.map { String($0) } ?? "",
             model.maxOutputTokens.map { String($0) } ?? "",
+        ]
+        let capabilityFields: [String] = [
             String(model.supportsImages ?? false),
             String(model.supportsResponses ?? false),
             model.modelCapabilityRevision ?? "",
@@ -211,7 +213,8 @@ extension NativeLocalConnectorService {
             model.protocolOverheadEstimatorID ?? "",
             model.tokenizerID ?? "",
             model.responsesCompactionThreshold.map(String.init) ?? "",
-        ].joined(separator: "\u{0}")
+        ]
+        let fields = (identityFields + capabilityFields).joined(separator: "\u{0}")
         let digest = SHA256.hash(data: Data(fields.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
