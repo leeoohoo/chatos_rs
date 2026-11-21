@@ -214,32 +214,51 @@ impl MemoryContextComposer {
     pub async fn compose(&self, scope: &MemoryScope) -> Result<ComposeContextResponse, String> {
         let response = match self.compose_once(scope).await {
             Ok(response) => response,
-            Err(error) if is_transient_memory_error(error.as_str()) => {
-                let Some(cache) = self.resilient_cache.as_ref() else {
-                    return Err(error);
-                };
-                match cache.load(scope).await {
-                    Ok(Some(response)) => {
-                        warn!(
-                            error = error.as_str(),
-                            "retained Memory temporarily unavailable; using fresh local context cache"
-                        );
-                        return Ok(response);
-                    }
-                    Ok(None) => warn!(
-                        error = error.as_str(),
-                        "retained Memory temporarily unavailable and no fresh local cache exists; continuing without Memory context"
-                    ),
-                    Err(cache_error) => warn!(
-                        error = error.as_str(),
-                        cache_error = cache_error.as_str(),
-                        "retained Memory and local context cache temporarily unavailable; continuing without Memory context"
-                    ),
-                }
-                return Ok(empty_context(scope));
-            }
-            Err(error) => return Err(error),
+            Err(error) => return self.fallback_after_compose_error(scope, error).await,
         };
+        self.start_background_compaction(scope, &response);
+        self.store_resilient_cache(scope, &response).await;
+        Ok(response)
+    }
+
+    async fn fallback_after_compose_error(
+        &self,
+        scope: &MemoryScope,
+        error: String,
+    ) -> Result<ComposeContextResponse, String> {
+        if !is_transient_memory_error(error.as_str()) {
+            return Err(error);
+        }
+        let Some(cache) = self.resilient_cache.as_ref() else {
+            return Err(error);
+        };
+        match cache.load(scope).await {
+            Ok(Some(response)) => {
+                warn!(
+                    error = error.as_str(),
+                    "retained Memory temporarily unavailable; using fresh local context cache"
+                );
+                Ok(response)
+            }
+            Ok(None) => {
+                warn!(
+                    error = error.as_str(),
+                    "retained Memory temporarily unavailable and no fresh local cache exists; continuing without Memory context"
+                );
+                Ok(empty_context(scope))
+            }
+            Err(cache_error) => {
+                warn!(
+                    error = error.as_str(),
+                    cache_error = cache_error.as_str(),
+                    "retained Memory and local context cache temporarily unavailable; continuing without Memory context"
+                );
+                Ok(empty_context(scope))
+            }
+        }
+    }
+
+    fn start_background_compaction(&self, scope: &MemoryScope, response: &ComposeContextResponse) {
         if response.meta.needs_compaction {
             let composer = self.clone();
             let scope = scope.clone();
@@ -255,15 +274,17 @@ impl MemoryContextComposer {
                 }
             });
         }
+    }
+
+    async fn store_resilient_cache(&self, scope: &MemoryScope, response: &ComposeContextResponse) {
         if let Some(cache) = self.resilient_cache.as_ref() {
-            if let Err(error) = cache.store(scope, &response).await {
+            if let Err(error) = cache.store(scope, response).await {
                 warn!(
                     error = error.as_str(),
                     "store local Memory context cache failed"
                 );
             }
         }
-        Ok(response)
     }
 
     async fn compose_once(&self, scope: &MemoryScope) -> Result<ComposeContextResponse, String> {
