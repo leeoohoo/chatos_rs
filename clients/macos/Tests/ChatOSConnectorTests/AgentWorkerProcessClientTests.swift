@@ -5,8 +5,7 @@ import Foundation
 import XCTest
 @testable import ChatOSConnector
 
-@MainActor
-final class AgentWorkerProcessClientTests: XCTestCase {
+@MainActor final class AgentWorkerProcessClientTests: XCTestCase {
     func testSequentialRunsReleaseParentFileDescriptors() async throws {
         let executable = try workerExecutable()
         let client = AgentWorkerProcessClient(
