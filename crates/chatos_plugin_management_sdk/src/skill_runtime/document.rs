@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum SkillDocumentError {
     #[error("Skill document must start with YAML frontmatter")]
