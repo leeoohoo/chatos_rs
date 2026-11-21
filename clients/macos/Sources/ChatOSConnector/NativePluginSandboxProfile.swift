@@ -149,6 +149,7 @@ struct NativePluginProcessLaunch: Sendable {
             "/Applications/Google Chrome for Testing.app",
             "/Applications/Chromium.app",
             "/Applications/Microsoft Edge.app",
+            "/Applications/Firefox.app",
         ].compactMap { path in
             guard FileManager.default.fileExists(atPath: path) else { return nil }
             return URL(fileURLWithPath: path, isDirectory: true)

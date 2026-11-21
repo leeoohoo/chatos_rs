@@ -485,7 +485,7 @@ extension NativePluginRuntimeTests {
         let installedBrowserPaths = [
             "/Applications/Google Chrome.app", "/Applications/Google Chrome for Testing.app",
             "/Applications/Chromium.app",
-            "/Applications/Microsoft Edge.app",
+            "/Applications/Microsoft Edge.app", "/Applications/Firefox.app",
         ].filter(FileManager.default.fileExists(atPath:))
         #expect(Set(permitted.executableDirectories.map(\.path)).isSuperset(of: installedBrowserPaths))
         let permittedProfile = try #require(
@@ -782,7 +782,7 @@ extension NativePluginRuntimeTests {
         let installedBrowserPaths = [
             "/Applications/Google Chrome.app", "/Applications/Google Chrome for Testing.app",
             "/Applications/Chromium.app",
-            "/Applications/Microsoft Edge.app",
+            "/Applications/Microsoft Edge.app", "/Applications/Firefox.app",
         ].filter(FileManager.default.fileExists(atPath:))
         #expect(Set(launch.executableDirectories.map(\.path)).isSuperset(of: installedBrowserPaths))
         let process = try NativePluginProcessLauncher.prepare(launch)
