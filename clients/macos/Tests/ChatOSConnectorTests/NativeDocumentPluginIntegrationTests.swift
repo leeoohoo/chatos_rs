@@ -51,7 +51,8 @@ final class NativeDocumentPluginIntegrationTests: XCTestCase {
                     ])])
                 ])
             ]), timeout: .seconds(60))
-            XCTAssertNotEqual(created.jsonObject?["isError"]?.jsonBool, true)
+            XCTAssertNotEqual(created.jsonObject?["isError"]?.jsonBool, true,
+                              created.canonicalJSONString)
             let rendered = try await client.callTool(name: "document_render", arguments: .object([
                 "inputPath": .string("插件验收报告.docx"), "outputPrefix": .string("preview"),
                 "pages": .array([.number(1)])
