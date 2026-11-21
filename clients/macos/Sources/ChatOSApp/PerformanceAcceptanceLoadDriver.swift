@@ -57,9 +57,7 @@ final class PerformanceAcceptanceLoadDriver {
             )
         )
         self.plugin = plugin
-        task = Task(priority: .utility) {
-            await Self.run(configuration: configuration, plugin: plugin)
-        }
+        task = Self.start(configuration: configuration, plugin: plugin)
     }
 
     deinit {
@@ -70,6 +68,15 @@ final class PerformanceAcceptanceLoadDriver {
     func stop() {
         plugin.terminateAllSynchronously()
         task.cancel()
+    }
+
+    private static func start(
+        configuration: PerformanceAcceptanceLoadConfiguration,
+        plugin: NativePluginPerformanceAcceptanceProbe
+    ) -> Task<Void, Never> {
+        Task.detached(priority: .utility) {
+            await run(configuration: configuration, plugin: plugin)
+        }
     }
 
     private static func run(
