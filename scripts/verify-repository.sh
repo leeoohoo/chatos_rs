@@ -134,6 +134,14 @@ run_native_platform() {
       export CHATOS_BROWSER_CDP_CATALOG_EXECUTABLE="$ROOT_DIR/target-shared/debug/chatos-browser-cdp"
       export CHATOS_BROWSER_CDP_CATALOG_PACKAGE_ROOT="$ROOT_DIR/plugins/browser/npm"
       test -x "$CHATOS_BROWSER_CDP_CATALOG_EXECUTABLE"
+      if [[ "${CI:-}" == "true" ]]; then
+        native_runtime_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/chatos-native-platform.XXXXXX")"
+        cp "$CHATOS_LOCAL_AGENT_HOST_PATH" "$native_runtime_dir/chatos_local_agent_host"
+        cp "$CHATOS_BROWSER_CDP_CATALOG_EXECUTABLE" "$native_runtime_dir/chatos-browser-cdp"
+        export CHATOS_LOCAL_AGENT_HOST_PATH="$native_runtime_dir/chatos_local_agent_host"
+        export CHATOS_BROWSER_CDP_CATALOG_EXECUTABLE="$native_runtime_dir/chatos-browser-cdp"
+        "${CARGO[@]}" clean --target-dir "$ROOT_DIR/target-shared"
+      fi
       run_swiftpm build --package-path "$ROOT_DIR/clients/macos"
       run_swiftpm test --package-path "$ROOT_DIR/clients/macos" --no-parallel
       run_swiftpm build --package-path "$ROOT_DIR/plugins/computer-use"
