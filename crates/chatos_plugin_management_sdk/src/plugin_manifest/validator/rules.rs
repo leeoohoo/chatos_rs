@@ -1,4 +1,6 @@
-fn validate_plugin_name(value: &str, issues: &mut Vec<PluginManifestValidationIssue>) {
+use super::*;
+
+pub(super) fn validate_plugin_name(value: &str, issues: &mut Vec<PluginManifestValidationIssue>) {
     let valid = !value.is_empty()
         && value.len() <= 64
         && !value.starts_with('-')
@@ -16,7 +18,7 @@ fn validate_plugin_name(value: &str, issues: &mut Vec<PluginManifestValidationIs
     }
 }
 
-fn validate_component_key(
+pub(super) fn validate_component_key(
     field: String,
     value: &str,
     keys: &mut HashSet<String>,
@@ -38,7 +40,7 @@ fn validate_component_key(
     }
 }
 
-fn validate_path(
+pub(super) fn validate_path(
     field: String,
     value: &PluginPathRef,
     issues: &mut Vec<PluginManifestValidationIssue>,
@@ -50,7 +52,7 @@ fn validate_path(
     }
 }
 
-fn validate_interface_assets(
+pub(super) fn validate_interface_assets(
     manifest: &PluginManifest,
     issues: &mut Vec<PluginManifestValidationIssue>,
 ) {
@@ -83,7 +85,7 @@ fn validate_interface_assets(
     }
 }
 
-fn validate_dependencies(
+pub(super) fn validate_dependencies(
     manifest: &PluginManifest,
     issues: &mut Vec<PluginManifestValidationIssue>,
 ) {
@@ -114,7 +116,7 @@ fn validate_dependencies(
     }
 }
 
-fn validate_permissions(
+pub(super) fn validate_permissions(
     manifest: &PluginManifest,
     component_keys: &HashSet<String>,
     issues: &mut Vec<PluginManifestValidationIssue>,
@@ -150,7 +152,7 @@ fn validate_permissions(
     }
 }
 
-fn validate_mcp_runtime_permissions(
+pub(super) fn validate_mcp_runtime_permissions(
     manifest: &PluginManifest,
     issues: &mut Vec<PluginManifestValidationIssue>,
 ) {
@@ -174,7 +176,7 @@ fn validate_mcp_runtime_permissions(
     }
 }
 
-fn validate_ui_runtime_permissions(
+pub(super) fn validate_ui_runtime_permissions(
     manifest: &PluginManifest,
     issues: &mut Vec<PluginManifestValidationIssue>,
 ) {

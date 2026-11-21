@@ -32,6 +32,8 @@ use crate::SystemAgentKey;
 
 mod stdio;
 use stdio::*;
+mod rules;
+use rules::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginManifestValidationError {
@@ -669,5 +671,3 @@ fn validate_optional_max_bytes(
         issue(issues, field, format!("{label} exceeds {max_bytes} bytes"));
     }
 }
-
-include!("validator_part01.rs");
