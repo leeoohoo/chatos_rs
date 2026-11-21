@@ -85,7 +85,6 @@ clients/windows-react/src/features/story-studio/ui/StoryStudioView.tsx	938	2027-
 clients/macos/Sources/ChatOSCore/AgentGroupChat/LocalAgentTodo.swift	916	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/story_studio/batch_execution.rs	904	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/remote_connection/tests.rs	902	2027-02-28	Split remote connection tests by credential, lifecycle, and jump-host behavior
-clients/windows-react/src-tauri/src/requirement_survey.rs	897	2027-02-28	Split existing owned source by responsibility before expiry
 clients/local_agent_host/layers/infrastructure/database/src/schema.rs	887	2027-02-28	Split existing owned source by responsibility before expiry
 clients/windows-react/src-tauri/src/remote_connection/mod.rs	886	2027-02-28	Split remote connection management, command, and credential orchestration responsibilities
 clients/windows-react/src-tauri/src/media_studio/video_provider.rs	885	2027-02-28	Split existing owned source by responsibility before expiry
