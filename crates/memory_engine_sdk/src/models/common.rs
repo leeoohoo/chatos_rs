@@ -8,10 +8,10 @@ pub struct ListResponse<T> {
     pub items: Vec<T>,
 }
 
-pub fn default_active() -> String {
+pub(super) fn default_active() -> String {
     "active".to_string()
 }
 
-pub fn default_pending() -> String {
+pub(super) fn default_pending() -> String {
     "pending".to_string()
 }
