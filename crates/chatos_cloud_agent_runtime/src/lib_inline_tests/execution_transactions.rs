@@ -90,43 +90,8 @@ async fn retry_keeps_exact_input_items_in_the_durable_event() {
 
 #[tokio::test]
 async fn tool_result_transport_retry_keeps_outputs_and_never_republishes_the_tool_batch() {
-    let store = InMemoryCloudAgentRunStore::new();
-    store.allocate_lane_seq("task:task-1").await.unwrap();
-    let mut record = run();
-    record.status = CloudAgentRunStatus::WaitingToolResult;
-    record.phase = CloudAgentRunPhase::ToolBatch;
-    record.ordering.step_seq = 2;
-    record.iteration = 1;
-    record.version = 1;
-    record.pending_batch_id = Some("mcp_batch_run-1_1_1".to_string());
-    record.pending_tool_calls = vec![serde_json::json!({
-        "id": "call-write-1",
-        "function": {
-            "name": "code_maintainer_write_stage_edit_batch",
-            "arguments": "{\"path\":\"src/App.tsx\"}"
-        }
-    })];
-    record.response_input_items = vec![serde_json::json!({
-        "type": "function_call",
-        "call_id": "call-write-1",
-        "name": "code_maintainer_write_stage_edit_batch",
-        "arguments": "{\"path\":\"src/App.tsx\"}"
-    })];
-    store.insert_run(record).await.unwrap();
-
-    let durable_retry_items = vec![
-        serde_json::json!({
-            "type": "function_call",
-            "call_id": "call-write-1",
-            "name": "code_maintainer_write_stage_edit_batch",
-            "arguments": "{\"path\":\"src/App.tsx\"}"
-        }),
-        serde_json::json!({
-            "type": "function_call_output",
-            "call_id": "call-write-1",
-            "output": "{\"written\":true}"
-        }),
-    ];
+    let store = inserted_waiting_tool_result_run().await;
+    let durable_retry_items = durable_tool_retry_items();
     let seen_triggers = Arc::new(Mutex::new(Vec::new()));
     let retry = TestSingleStepExecutor {
         outcome: AiSingleStepOutcome::Retry {
@@ -197,20 +162,7 @@ async fn tool_result_transport_retry_keeps_outputs_and_never_republishes_the_too
         }),
         seen_triggers: Arc::clone(&seen_triggers),
     };
-    let retry_input = CloudAgentConsumeInput {
-        agent_run_id: "run-1".to_string(),
-        event_id: retry_event_id.clone(),
-        trigger: CloudAgentModelTrigger::Retry {
-            event_id: retry_event_id,
-            model_attempt: 2,
-            payload: Value::Null,
-        },
-        expected_status: CloudAgentRunStatus::RetryScheduled,
-        expected_phase: CloudAgentRunPhase::RetryDelay,
-        claim_token: "claim-retry-final".to_string(),
-        claim_until: Utc::now() + chrono::Duration::seconds(30),
-        output_routing_key: "cloud_agent.task_runner.runtime".to_string(),
-    };
+    let retry_input = retry_consume_input(retry_event_id);
     assert_eq!(
         consume_cloud_agent_single_step(&store, &final_executor, retry_input)
             .await
@@ -228,6 +180,66 @@ async fn tool_result_transport_retry_keeps_outputs_and_never_republishes_the_too
         .unwrap()
         .iter()
         .all(|intent| intent.topic != "mcp_tool_call_command"));
+}
+
+async fn inserted_waiting_tool_result_run() -> InMemoryCloudAgentRunStore {
+    let store = InMemoryCloudAgentRunStore::new();
+    store.allocate_lane_seq("task:task-1").await.unwrap();
+    let mut record = run();
+    record.status = CloudAgentRunStatus::WaitingToolResult;
+    record.phase = CloudAgentRunPhase::ToolBatch;
+    record.ordering.step_seq = 2;
+    record.iteration = 1;
+    record.version = 1;
+    record.pending_batch_id = Some("mcp_batch_run-1_1_1".to_string());
+    record.pending_tool_calls = vec![serde_json::json!({
+        "id": "call-write-1",
+        "function": {
+            "name": "code_maintainer_write_stage_edit_batch",
+            "arguments": "{\"path\":\"src/App.tsx\"}"
+        }
+    })];
+    record.response_input_items = vec![serde_json::json!({
+        "type": "function_call",
+        "call_id": "call-write-1",
+        "name": "code_maintainer_write_stage_edit_batch",
+        "arguments": "{\"path\":\"src/App.tsx\"}"
+    })];
+    store.insert_run(record).await.unwrap();
+    store
+}
+
+fn durable_tool_retry_items() -> Vec<Value> {
+    vec![
+        serde_json::json!({
+            "type": "function_call",
+            "call_id": "call-write-1",
+            "name": "code_maintainer_write_stage_edit_batch",
+            "arguments": "{\"path\":\"src/App.tsx\"}"
+        }),
+        serde_json::json!({
+            "type": "function_call_output",
+            "call_id": "call-write-1",
+            "output": "{\"written\":true}"
+        }),
+    ]
+}
+
+fn retry_consume_input(event_id: String) -> CloudAgentConsumeInput {
+    CloudAgentConsumeInput {
+        agent_run_id: "run-1".to_string(),
+        event_id: event_id.clone(),
+        trigger: CloudAgentModelTrigger::Retry {
+            event_id,
+            model_attempt: 2,
+            payload: Value::Null,
+        },
+        expected_status: CloudAgentRunStatus::RetryScheduled,
+        expected_phase: CloudAgentRunPhase::RetryDelay,
+        claim_token: "claim-retry-final".to_string(),
+        claim_until: Utc::now() + chrono::Duration::seconds(30),
+        output_routing_key: "cloud_agent.task_runner.runtime".to_string(),
+    }
 }
 
 fn struct_with_retry_items(

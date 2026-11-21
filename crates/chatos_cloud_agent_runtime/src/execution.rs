@@ -240,7 +240,7 @@ where
         expected_status: input.expected_status,
         expected_phase: input.expected_phase,
         expected_version: run.version,
-        claim_token: input.claim_token,
+        claim_token: input.claim_token.clone(),
         claim_until: now + claim_lease,
     };
     match store.acquire_short_claim(&claim).await? {
@@ -258,101 +258,7 @@ where
     let heartbeat_interval = std::time::Duration::from_millis(
         u64::try_from((claim_lease.num_milliseconds() / 3).max(1)).unwrap_or(1),
     );
-    let result = async {
-        // An owner/profile error means this durable model step could not be
-        // prepared or executed. Model-provider retries are represented by the
-        // explicit `AiSingleStepOutcome::Retry` variant; blindly returning the
-        // owner error to the MQ consumer would release the claim and replay the
-        // same delivery forever. Persist it as a terminal failure instead so
-        // the run is finalized exactly once and the user can start a fresh run.
-        let execution_result = match run.deadline_at {
-            Some(deadline_at) => match deadline_at.signed_duration_since(Utc::now()).to_std() {
-                Ok(remaining) if !remaining.is_zero() => {
-                    match tokio::time::timeout(
-                        remaining,
-                        executor.execute_single_step(&run, &input.trigger),
-                    )
-                    .await
-                    {
-                        Ok(result) => result,
-                        Err(_) => Err("Cloud Agent execution deadline exceeded".to_string()),
-                    }
-                }
-                _ => Err("Cloud Agent execution deadline exceeded".to_string()),
-            },
-            None => executor.execute_single_step(&run, &input.trigger).await,
-        };
-        let execution = match execution_result {
-            Ok(execution) => execution,
-            Err(error) => CloudAgentSingleStepExecution::Apply(Box::new(
-                CloudAgentSingleStepOutput::new(AiSingleStepOutcome::Failed { error }),
-            )),
-        };
-        let CloudAgentSingleStepExecution::Apply(output) = execution else {
-            return Ok(None);
-        };
-        let mut transition = reduce_single_step(
-            &run,
-            claim.clone(),
-            input.event_id.as_str(),
-            input.output_routing_key.as_str(),
-            output.outcome,
-        )?;
-        if let Some(next_input) = output.next_input {
-            transition.next_input = next_input;
-        }
-        if transition.next_status == CloudAgentRunStatus::RetryScheduled {
-            if let Some(input_items) = output.retry_input_items.as_ref() {
-                transition.response_input_items = input_items.clone();
-            }
-        }
-        if transition.next_status.is_terminal() {
-            if let Some(overlay) = output.terminal_outcome_overlay {
-                transition.terminal_outcome = Some(merge_terminal_outcome_overlay(
-                    transition.terminal_outcome.take(),
-                    overlay,
-                ));
-                if let Some(terminal_outcome) = transition.terminal_outcome.clone() {
-                    for intent in &mut transition.outbox {
-                        if intent.topic == "owner_lifecycle_terminal" {
-                            intent.payload["terminal_outcome"] = terminal_outcome.clone();
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(session_ref) = output.mcp_runtime_session_ref {
-            transition.mcp_runtime_session_ref = Some(session_ref);
-        }
-        for intent in &mut transition.outbox {
-            if intent.topic == "ai_runtime_retry" {
-                if let Some(input_items) = output.retry_input_items.as_ref() {
-                    intent.payload["input_items"] = Value::Array(input_items.clone());
-                }
-            } else if intent.topic == "mcp_tool_call_command" {
-                let command_queue = output
-                    .mcp_command_queue
-                    .as_deref()
-                    .ok_or_else(|| "Cloud Agent MCP command queue was not provided".to_string())?;
-                intent.routing_key = command_queue.to_string();
-                let session_ref = transition
-                    .mcp_runtime_session_ref
-                    .as_deref()
-                    .ok_or_else(|| "Cloud Agent MCP session was not persisted".to_string())?;
-                let transition_run = CloudAgentRunRecord {
-                    mcp_runtime_session_ref: Some(session_ref.to_string()),
-                    ..run.clone()
-                };
-                materialize_mcp_command(
-                    &transition_run,
-                    intent,
-                    session_ref,
-                    input.output_routing_key.as_str(),
-                )?;
-            }
-        }
-        store.commit_transition(transition).await.map(Some)
-    };
+    let result = execute_claimed_step(store, executor, &input, &run, &claim);
     tokio::pin!(result);
     let mut heartbeat = tokio::time::interval_at(
         tokio::time::Instant::now() + heartbeat_interval,
@@ -389,4 +295,123 @@ where
             Err(error)
         }
     }
+}
+
+async fn execute_claimed_step<S, E>(
+    store: &S,
+    executor: &E,
+    input: &CloudAgentConsumeInput,
+    run: &CloudAgentRunRecord,
+    claim: &CloudAgentClaim,
+) -> Result<Option<bool>, String>
+where
+    S: CloudAgentRunStore,
+    E: CloudAgentSingleStepExecutor,
+{
+    let execution = execute_with_deadline(executor, run, &input.trigger).await;
+    let CloudAgentSingleStepExecution::Apply(output) = execution else {
+        return Ok(None);
+    };
+    let transition = transition_from_output(run, claim, input, *output)?;
+    store.commit_transition(transition).await.map(Some)
+}
+
+async fn execute_with_deadline<E>(
+    executor: &E,
+    run: &CloudAgentRunRecord,
+    trigger: &CloudAgentModelTrigger,
+) -> CloudAgentSingleStepExecution
+where
+    E: CloudAgentSingleStepExecutor,
+{
+    // Owner errors must become a durable terminal failure; returning them to
+    // the MQ consumer would release the claim and replay forever.
+    let result = match run.deadline_at {
+        Some(deadline_at) => match deadline_at.signed_duration_since(Utc::now()).to_std() {
+            Ok(remaining) if !remaining.is_zero() => {
+                match tokio::time::timeout(remaining, executor.execute_single_step(run, trigger))
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err("Cloud Agent execution deadline exceeded".to_string()),
+                }
+            }
+            _ => Err("Cloud Agent execution deadline exceeded".to_string()),
+        },
+        None => executor.execute_single_step(run, trigger).await,
+    };
+    result.unwrap_or_else(|error| {
+        CloudAgentSingleStepExecution::Apply(Box::new(CloudAgentSingleStepOutput::new(
+            AiSingleStepOutcome::Failed { error },
+        )))
+    })
+}
+
+fn transition_from_output(
+    run: &CloudAgentRunRecord,
+    claim: &CloudAgentClaim,
+    input: &CloudAgentConsumeInput,
+    output: CloudAgentSingleStepOutput,
+) -> Result<crate::run_contract::CloudAgentAtomicTransition, String> {
+    let mut transition = reduce_single_step(
+        run,
+        claim.clone(),
+        input.event_id.as_str(),
+        input.output_routing_key.as_str(),
+        output.outcome,
+    )?;
+    if let Some(next_input) = output.next_input {
+        transition.next_input = next_input;
+    }
+    if transition.next_status == CloudAgentRunStatus::RetryScheduled {
+        if let Some(input_items) = output.retry_input_items.as_ref() {
+            transition.response_input_items = input_items.clone();
+        }
+    }
+    if transition.next_status.is_terminal() {
+        if let Some(overlay) = output.terminal_outcome_overlay {
+            transition.terminal_outcome = Some(merge_terminal_outcome_overlay(
+                transition.terminal_outcome.take(),
+                overlay,
+            ));
+            if let Some(terminal_outcome) = transition.terminal_outcome.clone() {
+                for intent in &mut transition.outbox {
+                    if intent.topic == "owner_lifecycle_terminal" {
+                        intent.payload["terminal_outcome"] = terminal_outcome.clone();
+                    }
+                }
+            }
+        }
+    }
+    if let Some(session_ref) = output.mcp_runtime_session_ref {
+        transition.mcp_runtime_session_ref = Some(session_ref);
+    }
+    for intent in &mut transition.outbox {
+        if intent.topic == "ai_runtime_retry" {
+            if let Some(input_items) = output.retry_input_items.as_ref() {
+                intent.payload["input_items"] = Value::Array(input_items.clone());
+            }
+        } else if intent.topic == "mcp_tool_call_command" {
+            let command_queue = output
+                .mcp_command_queue
+                .as_deref()
+                .ok_or_else(|| "Cloud Agent MCP command queue was not provided".to_string())?;
+            intent.routing_key = command_queue.to_string();
+            let session_ref = transition
+                .mcp_runtime_session_ref
+                .as_deref()
+                .ok_or_else(|| "Cloud Agent MCP session was not persisted".to_string())?;
+            let transition_run = CloudAgentRunRecord {
+                mcp_runtime_session_ref: Some(session_ref.to_string()),
+                ..run.clone()
+            };
+            materialize_mcp_command(
+                &transition_run,
+                intent,
+                session_ref,
+                input.output_routing_key.as_str(),
+            )?;
+        }
+    }
+    Ok(transition)
 }

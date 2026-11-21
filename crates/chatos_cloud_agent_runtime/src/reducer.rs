@@ -6,7 +6,7 @@ use crate::input_history::{
     accumulate_usage, append_continuation_items, append_response_output_items,
 };
 use crate::run_contract::{CloudAgentAtomicTransition, CloudAgentOutboxIntent};
-use chatos_ai_runtime::AiSingleStepOutcome;
+use chatos_ai_runtime::{AiRuntimeResult, AiSingleStepOutcome};
 use chatos_cloud_agent_protocol::{
     CloudAgentOrdering, CloudAgentRunPhase, CloudAgentRunRecord, CloudAgentRunStatus,
 };
@@ -38,6 +38,15 @@ pub enum CloudAgentModelTrigger {
     },
 }
 
+struct ReductionContext<'a> {
+    run: &'a CloudAgentRunRecord,
+    claim: &'a CloudAgentClaim,
+    causation_id: &'a str,
+    result_routing_key: &'a str,
+    next_step_seq: u64,
+    next_iteration: u32,
+}
+
 pub fn reduce_single_step(
     run: &CloudAgentRunRecord,
     claim: CloudAgentClaim,
@@ -55,178 +64,33 @@ pub fn reduce_single_step(
         .checked_add(1)
         .ok_or_else(|| "step_seq overflow".to_string())?;
     let next_iteration = run.iteration.saturating_add(1);
+    let context = ReductionContext {
+        run,
+        claim: &claim,
+        causation_id,
+        result_routing_key,
+        next_step_seq,
+        next_iteration,
+    };
     let transition = match outcome {
         AiSingleStepOutcome::ToolCommand {
             response,
             tool_calls,
-        } => {
-            let batch_id = stable_batch_id(&claim.ordering);
-            CloudAgentAtomicTransition {
-                claim: claim.clone(),
-                next_input: run.input.clone(),
-                next_status: CloudAgentRunStatus::WaitingToolResult,
-                next_phase: CloudAgentRunPhase::ToolBatch,
-                next_step_seq,
-                next_iteration,
-                next_retry_count: 0,
-                previous_response_id: None,
-                continuation_mode: Some("mcp_tool_results".to_string()),
-                current_input_items_ref: format!(
-                    "cloud_agent:{}:{}:{}:tool_results",
-                    claim.ordering.agent_run_id, claim.ordering.generation, claim.ordering.step_seq
-                ),
-                mcp_runtime_session_ref: run.mcp_runtime_session_ref.clone(),
-                pending_batch_id: Some(batch_id.clone()),
-                pending_tool_calls: tool_calls.as_array().cloned().unwrap_or_default(),
-                pending_tool_results: Vec::new(),
-                response_input_items: append_response_output_items(
-                    response.request_input_items.as_slice(),
-                    response.response_output_items.as_slice(),
-                    Some(&tool_calls),
-                ),
-                usage_accumulator: accumulate_usage(
-                    &run.usage_accumulator,
-                    response.usage.as_ref(),
-                ),
-                terminal_outcome: None,
-                outbox: vec![outbox_intent(
-                    &claim.ordering,
-                    causation_id,
-                    "mcp_tool_call_command",
-                    result_routing_key,
-                    serde_json::json!({
-                        "batch_id": batch_id,
-                        "source_step_seq": claim.ordering.step_seq,
-                        "calls": tool_calls,
-                        "response_id": response.response_id,
-                    }),
-                    Utc::now(),
-                )],
-            }
-        }
+        } => tool_command_transition(&context, response, tool_calls),
         AiSingleStepOutcome::Continue {
             response,
             input_items,
             reason,
-        } => CloudAgentAtomicTransition {
-            claim: claim.clone(),
-            next_input: run.input.clone(),
-            next_status: CloudAgentRunStatus::ModelReady,
-            next_phase: CloudAgentRunPhase::Ready,
-            next_step_seq,
-            next_iteration,
-            next_retry_count: 0,
-            previous_response_id: None,
-            continuation_mode: Some(reason.clone()),
-            current_input_items_ref: format!(
-                "cloud_agent:{}:{}:{}:continuation",
-                claim.ordering.agent_run_id, claim.ordering.generation, claim.ordering.step_seq
-            ),
-            mcp_runtime_session_ref: run.mcp_runtime_session_ref.clone(),
-            pending_batch_id: None,
-            pending_tool_calls: Vec::new(),
-            pending_tool_results: Vec::new(),
-            response_input_items: append_continuation_items(
-                response.request_input_items.as_slice(),
-                response.response_output_items.as_slice(),
-                input_items.as_slice(),
-            ),
-            usage_accumulator: accumulate_usage(&run.usage_accumulator, response.usage.as_ref()),
-            terminal_outcome: None,
-            outbox: vec![outbox_intent(
-                &claim.ordering,
-                causation_id,
-                "ai_runtime_continuation",
-                result_routing_key,
-                serde_json::json!({
-                    "reason": reason,
-                    "input_items": input_items,
-                    "response_id": response.response_id,
-                }),
-                Utc::now(),
-            )],
-        },
+        } => continuation_transition(&context, response, input_items, reason),
         AiSingleStepOutcome::Retry {
             error,
             retry_kind,
             next_model_attempt,
             backoff_ms,
-        } => CloudAgentAtomicTransition {
-            claim: claim.clone(),
-            next_input: run.input.clone(),
-            next_status: CloudAgentRunStatus::RetryScheduled,
-            next_phase: CloudAgentRunPhase::RetryDelay,
-            next_step_seq: claim.ordering.step_seq,
-            next_iteration: run.iteration,
-            next_retry_count: u32::try_from(next_model_attempt.saturating_sub(1))
-                .unwrap_or(u32::MAX),
-            previous_response_id: None,
-            continuation_mode: run.continuation_mode.clone(),
-            current_input_items_ref: run.current_input_items_ref.clone(),
-            mcp_runtime_session_ref: run.mcp_runtime_session_ref.clone(),
-            pending_batch_id: run.pending_batch_id.clone(),
-            pending_tool_calls: run.pending_tool_calls.clone(),
-            pending_tool_results: run.pending_tool_results.clone(),
-            response_input_items: run.response_input_items.clone(),
-            usage_accumulator: run.usage_accumulator.clone(),
-            terminal_outcome: None,
-            outbox: vec![retry_outbox_intent(
-                &claim.ordering,
-                causation_id,
-                result_routing_key,
-                serde_json::json!({
-                    "error": error,
-                    "retry_kind": retry_kind,
-                    "model_attempt": next_model_attempt,
-                }),
-                next_model_attempt,
-                Utc::now()
-                    + chrono::Duration::milliseconds(i64::try_from(backoff_ms).unwrap_or(i64::MAX)),
-            )],
-        },
-        AiSingleStepOutcome::Final(result) => CloudAgentAtomicTransition {
-            claim: claim.clone(),
-            next_input: run.input.clone(),
-            next_status: CloudAgentRunStatus::Succeeded,
-            next_phase: CloudAgentRunPhase::Terminal,
-            next_step_seq,
-            next_iteration,
-            next_retry_count: 0,
-            previous_response_id: None,
-            continuation_mode: None,
-            current_input_items_ref: run.current_input_items_ref.clone(),
-            mcp_runtime_session_ref: run.mcp_runtime_session_ref.clone(),
-            pending_batch_id: None,
-            pending_tool_calls: Vec::new(),
-            pending_tool_results: Vec::new(),
-            response_input_items: append_response_output_items(
-                result.request_input_items.as_slice(),
-                result.response_output_items.as_slice(),
-                result.tool_calls.as_ref(),
-            ),
-            usage_accumulator: accumulate_usage(&run.usage_accumulator, result.usage.as_ref()),
-            terminal_outcome: Some(serde_json::json!({
-                "content": result.content,
-                "reasoning": result.reasoning,
-                "finish_reason": result.finish_reason,
-                "usage": result.usage,
-                "response_id": result.response_id,
-            })),
-            outbox: vec![terminal_outbox_intent(
-                &claim.ordering,
-                causation_id,
-                CloudAgentRunStatus::Succeeded,
-                serde_json::json!({
-                    "content": result.content,
-                    "reasoning": result.reasoning,
-                    "finish_reason": result.finish_reason,
-                    "usage": result.usage,
-                    "response_id": result.response_id,
-                }),
-            )],
-        },
+        } => retry_transition(&context, error, retry_kind, next_model_attempt, backoff_ms),
+        AiSingleStepOutcome::Final(result) => final_transition(&context, result),
         AiSingleStepOutcome::Failed { error } => terminal_transition(
-            claim,
+            claim.clone(),
             run.input.clone(),
             run.mcp_runtime_session_ref.clone(),
             run.usage_accumulator.clone(),
@@ -236,7 +100,7 @@ pub fn reduce_single_step(
             serde_json::json!({"error": error}),
         ),
         AiSingleStepOutcome::Cancelled => terminal_transition(
-            claim,
+            claim.clone(),
             run.input.clone(),
             run.mcp_runtime_session_ref.clone(),
             run.usage_accumulator.clone(),
@@ -248,6 +112,197 @@ pub fn reduce_single_step(
     };
     transition.validate()?;
     Ok(transition)
+}
+
+fn tool_command_transition(
+    context: &ReductionContext<'_>,
+    response: AiRuntimeResult,
+    tool_calls: Value,
+) -> CloudAgentAtomicTransition {
+    let batch_id = stable_batch_id(&context.claim.ordering);
+    CloudAgentAtomicTransition {
+        claim: context.claim.clone(),
+        next_input: context.run.input.clone(),
+        next_status: CloudAgentRunStatus::WaitingToolResult,
+        next_phase: CloudAgentRunPhase::ToolBatch,
+        next_step_seq: context.next_step_seq,
+        next_iteration: context.next_iteration,
+        next_retry_count: 0,
+        previous_response_id: None,
+        continuation_mode: Some("mcp_tool_results".to_string()),
+        current_input_items_ref: format!(
+            "cloud_agent:{}:{}:{}:tool_results",
+            context.claim.ordering.agent_run_id,
+            context.claim.ordering.generation,
+            context.claim.ordering.step_seq
+        ),
+        mcp_runtime_session_ref: context.run.mcp_runtime_session_ref.clone(),
+        pending_batch_id: Some(batch_id.clone()),
+        pending_tool_calls: tool_calls.as_array().cloned().unwrap_or_default(),
+        pending_tool_results: Vec::new(),
+        response_input_items: append_response_output_items(
+            response.request_input_items.as_slice(),
+            response.response_output_items.as_slice(),
+            Some(&tool_calls),
+        ),
+        usage_accumulator: accumulate_usage(
+            &context.run.usage_accumulator,
+            response.usage.as_ref(),
+        ),
+        terminal_outcome: None,
+        outbox: vec![outbox_intent(
+            &context.claim.ordering,
+            context.causation_id,
+            "mcp_tool_call_command",
+            context.result_routing_key,
+            serde_json::json!({
+                "batch_id": batch_id,
+                "source_step_seq": context.claim.ordering.step_seq,
+                "calls": tool_calls,
+                "response_id": response.response_id,
+            }),
+            Utc::now(),
+        )],
+    }
+}
+
+fn continuation_transition(
+    context: &ReductionContext<'_>,
+    response: AiRuntimeResult,
+    input_items: Vec<Value>,
+    reason: String,
+) -> CloudAgentAtomicTransition {
+    CloudAgentAtomicTransition {
+        claim: context.claim.clone(),
+        next_input: context.run.input.clone(),
+        next_status: CloudAgentRunStatus::ModelReady,
+        next_phase: CloudAgentRunPhase::Ready,
+        next_step_seq: context.next_step_seq,
+        next_iteration: context.next_iteration,
+        next_retry_count: 0,
+        previous_response_id: None,
+        continuation_mode: Some(reason.clone()),
+        current_input_items_ref: format!(
+            "cloud_agent:{}:{}:{}:continuation",
+            context.claim.ordering.agent_run_id,
+            context.claim.ordering.generation,
+            context.claim.ordering.step_seq
+        ),
+        mcp_runtime_session_ref: context.run.mcp_runtime_session_ref.clone(),
+        pending_batch_id: None,
+        pending_tool_calls: Vec::new(),
+        pending_tool_results: Vec::new(),
+        response_input_items: append_continuation_items(
+            response.request_input_items.as_slice(),
+            response.response_output_items.as_slice(),
+            input_items.as_slice(),
+        ),
+        usage_accumulator: accumulate_usage(
+            &context.run.usage_accumulator,
+            response.usage.as_ref(),
+        ),
+        terminal_outcome: None,
+        outbox: vec![outbox_intent(
+            &context.claim.ordering,
+            context.causation_id,
+            "ai_runtime_continuation",
+            context.result_routing_key,
+            serde_json::json!({
+                "reason": reason,
+                "input_items": input_items,
+                "response_id": response.response_id,
+            }),
+            Utc::now(),
+        )],
+    }
+}
+
+fn retry_transition(
+    context: &ReductionContext<'_>,
+    error: String,
+    retry_kind: String,
+    next_model_attempt: usize,
+    backoff_ms: u64,
+) -> CloudAgentAtomicTransition {
+    CloudAgentAtomicTransition {
+        claim: context.claim.clone(),
+        next_input: context.run.input.clone(),
+        next_status: CloudAgentRunStatus::RetryScheduled,
+        next_phase: CloudAgentRunPhase::RetryDelay,
+        next_step_seq: context.claim.ordering.step_seq,
+        next_iteration: context.run.iteration,
+        next_retry_count: u32::try_from(next_model_attempt.saturating_sub(1)).unwrap_or(u32::MAX),
+        previous_response_id: None,
+        continuation_mode: context.run.continuation_mode.clone(),
+        current_input_items_ref: context.run.current_input_items_ref.clone(),
+        mcp_runtime_session_ref: context.run.mcp_runtime_session_ref.clone(),
+        pending_batch_id: context.run.pending_batch_id.clone(),
+        pending_tool_calls: context.run.pending_tool_calls.clone(),
+        pending_tool_results: context.run.pending_tool_results.clone(),
+        response_input_items: context.run.response_input_items.clone(),
+        usage_accumulator: context.run.usage_accumulator.clone(),
+        terminal_outcome: None,
+        outbox: vec![retry_outbox_intent(
+            &context.claim.ordering,
+            context.causation_id,
+            context.result_routing_key,
+            serde_json::json!({
+                "error": error,
+                "retry_kind": retry_kind,
+                "model_attempt": next_model_attempt,
+            }),
+            next_model_attempt,
+            Utc::now()
+                + chrono::Duration::milliseconds(i64::try_from(backoff_ms).unwrap_or(i64::MAX)),
+        )],
+    }
+}
+
+fn final_transition(
+    context: &ReductionContext<'_>,
+    result: AiRuntimeResult,
+) -> CloudAgentAtomicTransition {
+    CloudAgentAtomicTransition {
+        claim: context.claim.clone(),
+        next_input: context.run.input.clone(),
+        next_status: CloudAgentRunStatus::Succeeded,
+        next_phase: CloudAgentRunPhase::Terminal,
+        next_step_seq: context.next_step_seq,
+        next_iteration: context.next_iteration,
+        next_retry_count: 0,
+        previous_response_id: None,
+        continuation_mode: None,
+        current_input_items_ref: context.run.current_input_items_ref.clone(),
+        mcp_runtime_session_ref: context.run.mcp_runtime_session_ref.clone(),
+        pending_batch_id: None,
+        pending_tool_calls: Vec::new(),
+        pending_tool_results: Vec::new(),
+        response_input_items: append_response_output_items(
+            result.request_input_items.as_slice(),
+            result.response_output_items.as_slice(),
+            result.tool_calls.as_ref(),
+        ),
+        usage_accumulator: accumulate_usage(&context.run.usage_accumulator, result.usage.as_ref()),
+        terminal_outcome: Some(serde_json::json!({
+            "content": result.content,
+            "reasoning": result.reasoning,
+            "finish_reason": result.finish_reason,
+            "usage": result.usage,
+            "response_id": result.response_id,
+        })),
+        outbox: vec![terminal_outbox_intent(
+            &context.claim.ordering,
+            context.causation_id,
+            CloudAgentRunStatus::Succeeded,
+            serde_json::json!({
+                "content": result.content,
+                "reasoning": result.reasoning,
+                "finish_reason": result.finish_reason,
+                "usage": result.usage,
+                "response_id": result.response_id,
+            }),
+        )],
+    }
 }
 
 pub fn materialize_mcp_command(
