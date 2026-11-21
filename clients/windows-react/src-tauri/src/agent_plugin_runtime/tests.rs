@@ -121,7 +121,7 @@ async fn journal_replays_completed_results_and_never_replays_running_intents() {
             & 0o777;
         assert_eq!(root_mode, 0o700);
         let base = journal.path("owner-1", "run-1", "call-1").await.unwrap();
-        let result_mode = std::fs::metadata(journal_stage_path(&base, "result"))
+        let result_mode = std::fs::metadata(journal::journal_stage_path(&base, "result"))
             .unwrap()
             .permissions()
             .mode()

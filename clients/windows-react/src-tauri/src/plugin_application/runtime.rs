@@ -2,7 +2,7 @@ use super::{
     plugin_catalog_error, plugin_unavailable, valid_health_path, validate_text,
     PresentedPluginApplication, ResolvedPluginApplication,
 };
-#[cfg(windows)]
+#[cfg(all(windows, not(test)))]
 use crate::windows_appcontainer::WorkspaceLeaseManager;
 use crate::{
     machine_resource_governor::{

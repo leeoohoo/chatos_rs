@@ -31,7 +31,7 @@ mod mcp;
 mod skills;
 
 #[cfg(test)]
-use journal::{cleanup_stale_journal_temporaries_before, journal_stage_path};
+use journal::cleanup_stale_journal_temporaries_before;
 use journal::{InvocationJournal, JournalBegin};
 use mcp::McpSession;
 pub(crate) use skills::{load_agent_plugin_skill_snapshot, AgentPluginSkillSnapshot};

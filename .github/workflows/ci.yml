@@ -272,6 +272,7 @@ jobs:
       - name: Verify Tauri Rust layer and real Host handshake
         env:
           CHATOS_LOCAL_AGENT_HOST_TEST_PATH: ${{ github.workspace }}\clients\windows-react\src-tauri\resources\chatos_local_agent_host.exe
+          RUST_TEST_THREADS: "1"
         run: |
           cargo fmt --manifest-path clients/windows-react/src-tauri/Cargo.toml -- --check
           cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml
