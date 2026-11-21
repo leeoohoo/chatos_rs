@@ -208,6 +208,34 @@ fn failed_deduplicated_mcp_result_keeps_the_structured_diagnosis() {
     assert!(!result.content.contains("Duplicate JSON text omitted"));
 }
 
+#[test]
+fn shared_tool_call_validation_preserves_parser_modes_and_errors() {
+    let missing_name = json!({"id": "call-missing", "function": {"arguments": "{}"}});
+    let Err(error) = super::prepare_tool_call(&missing_name, crate::arguments::parse_tool_args)
+    else {
+        panic!("missing tool name must fail");
+    };
+    assert_eq!(error.call_id, "call-missing");
+    assert_eq!(error.tool_name, "unknown");
+    assert_eq!(error.message, "工具名称不能为空");
+
+    let fenced_args = json!({
+        "id": "call-fenced",
+        "function": {
+            "name": "search",
+            "arguments": "```json\n{\"query\":\"rust\"}\n```"
+        }
+    });
+    let Ok(prepared) = super::prepare_tool_call(&fenced_args, crate::arguments::parse_tool_args)
+    else {
+        panic!("sequential parser must keep accepting repaired arguments");
+    };
+    assert_eq!(prepared.args, json!({"query": "rust"}));
+    assert!(
+        super::prepare_tool_call(&fenced_args, crate::arguments::parse_json_tool_args).is_err()
+    );
+}
+
 #[tokio::test]
 async fn sequential_execution_emits_stream_and_final_results() {
     let callback_count = Arc::new(AtomicUsize::new(0));

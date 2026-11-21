@@ -18,6 +18,71 @@ use crate::types::{
 
 const TOOL_ABORT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+struct PreparedToolCall {
+    call_id: String,
+    tool_name: String,
+    args: Value,
+}
+
+struct ToolCallInputError {
+    call_id: String,
+    tool_name: String,
+    message: String,
+}
+
+fn prepare_tool_call(
+    tool_call: &Value,
+    parse_args: fn(Value) -> Result<Value, serde_json::Error>,
+) -> Result<PreparedToolCall, ToolCallInputError> {
+    let tool_name = extract_tool_call_name(tool_call).unwrap_or("").to_string();
+    let call_id = extract_tool_call_id(tool_call).unwrap_or("").to_string();
+    if tool_name.is_empty() {
+        return Err(ToolCallInputError {
+            call_id,
+            tool_name: "unknown".to_string(),
+            message: "工具名称不能为空".to_string(),
+        });
+    }
+    let args =
+        parse_args(clone_tool_call_arguments(tool_call)).map_err(|error| ToolCallInputError {
+            call_id: call_id.clone(),
+            tool_name: tool_name.clone(),
+            message: format!("参数解析失败: {error}"),
+        })?;
+    Ok(PreparedToolCall {
+        call_id,
+        tool_name,
+        args,
+    })
+}
+
+fn invalid_tool_call_result(error: ToolCallInputError, context: &ToolCallContext) -> ToolResult {
+    tool_result_error(
+        error.call_id,
+        error.tool_name,
+        context.conversation_turn_id.clone(),
+        error.message,
+        false,
+    )
+}
+
+async fn wait_for_tool_outcome<Fut>(outcome: Fut, context: &ToolCallContext) -> Option<Fut::Output>
+where
+    Fut: Future,
+{
+    tokio::pin!(outcome);
+    loop {
+        tokio::select! {
+            outcome = &mut outcome => return Some(outcome),
+            _ = tokio::time::sleep(TOOL_ABORT_POLL_INTERVAL) => {
+                if context.is_aborted() {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
 pub async fn execute_tool_calls_stream<F, Fut>(
     tool_calls: &[Value],
     context: ToolCallContext,
@@ -35,41 +100,20 @@ where
             break;
         }
 
-        let tool_name = extract_tool_call_name(tool_call).unwrap_or("").to_string();
-        let call_id = extract_tool_call_id(tool_call).unwrap_or("").to_string();
-
-        if tool_name.is_empty() {
-            push_tool_result(
-                &mut results,
-                tool_result_error(
-                    call_id,
-                    "unknown".to_string(),
-                    context.conversation_turn_id.clone(),
-                    "工具名称不能为空".to_string(),
-                    false,
-                ),
-                &context,
-                on_tool_result.as_ref(),
-            );
-            continue;
-        }
-
-        let args = match parse_tool_args(clone_tool_call_arguments(tool_call)) {
-            Ok(value) => value,
-            Err(err) => {
+        let PreparedToolCall {
+            call_id,
+            tool_name,
+            args,
+        } = match prepare_tool_call(tool_call, parse_tool_args) {
+            Ok(prepared) => prepared,
+            Err(error) => {
                 warn!(
                     "[MCP] parse tool args failed: tool={}, call_id={}, err={}",
-                    tool_name, call_id, err
+                    error.tool_name, error.call_id, error.message
                 );
                 push_tool_result(
                     &mut results,
-                    tool_result_error(
-                        call_id,
-                        tool_name,
-                        context.conversation_turn_id.clone(),
-                        format!("参数解析失败: {err}"),
-                        false,
-                    ),
+                    invalid_tool_call_result(error, &context),
                     &context,
                     on_tool_result.as_ref(),
                 );
@@ -83,18 +127,11 @@ where
             tool_name.as_str(),
             &context,
         );
-        let outcome = call_tool_once(tool_name.clone(), args, stream_callback);
-        tokio::pin!(outcome);
-        let outcome = loop {
-            tokio::select! {
-                outcome = &mut outcome => break Some(outcome),
-                _ = tokio::time::sleep(TOOL_ABORT_POLL_INTERVAL) => {
-                    if context.is_aborted() {
-                        break None;
-                    }
-                }
-            }
-        };
+        let outcome = wait_for_tool_outcome(
+            call_tool_once(tool_name.clone(), args, stream_callback),
+            &context,
+        )
+        .await;
         let Some(outcome) = outcome else {
             break;
         };
@@ -169,29 +206,14 @@ where
             break;
         }
 
-        let tool_name = extract_tool_call_name(tool_call).unwrap_or("").to_string();
-        let call_id = extract_tool_call_id(tool_call).unwrap_or("").to_string();
-        if tool_name.is_empty() {
-            results[index] = Some(tool_result_error(
-                call_id,
-                "unknown".to_string(),
-                context.conversation_turn_id.clone(),
-                "工具名称不能为空".to_string(),
-                false,
-            ));
-            continue;
-        }
-
-        let args = match parse_json_tool_args(clone_tool_call_arguments(tool_call)) {
-            Ok(value) => value,
-            Err(err) => {
-                results[index] = Some(tool_result_error(
-                    call_id,
-                    tool_name,
-                    context.conversation_turn_id.clone(),
-                    format!("参数解析失败: {err}"),
-                    false,
-                ));
+        let PreparedToolCall {
+            call_id,
+            tool_name,
+            args,
+        } = match prepare_tool_call(tool_call, parse_json_tool_args) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                results[index] = Some(invalid_tool_call_result(error, &context));
                 continue;
             }
         };
@@ -257,6 +279,35 @@ where
         );
     }
 
+    collect_parallel_results(
+        &mut join_set,
+        &mut pending_contexts,
+        results.as_mut_slice(),
+        &context,
+    )
+    .await;
+
+    let mut ordered_results = Vec::new();
+    for result in results.into_iter().flatten() {
+        if !context.is_active() {
+            break;
+        }
+        push_tool_result(
+            &mut ordered_results,
+            result,
+            &context,
+            on_tool_result.as_ref(),
+        );
+    }
+    ordered_results
+}
+
+async fn collect_parallel_results(
+    join_set: &mut JoinSet<(usize, ToolResult)>,
+    pending_contexts: &mut HashMap<Id, PendingToolContext>,
+    results: &mut [Option<ToolResult>],
+    context: &ToolCallContext,
+) {
     while !join_set.is_empty() {
         let joined = tokio::select! {
             joined = join_set.join_next_with_id() => joined,
@@ -303,20 +354,6 @@ where
             break;
         }
     }
-
-    let mut ordered_results = Vec::new();
-    for result in results.into_iter().flatten() {
-        if !context.is_active() {
-            break;
-        }
-        push_tool_result(
-            &mut ordered_results,
-            result,
-            &context,
-            on_tool_result.as_ref(),
-        );
-    }
-    ordered_results
 }
 
 fn build_stream_callback(
