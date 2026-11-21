@@ -20,7 +20,7 @@ cleanup() {
 }
 trap cleanup EXIT
 status=0
-"$firefox_bin" --new-instance "$@" --profile "$render_profile" || status=$?
+"$firefox_bin" --new-instance --profile "$render_profile" "$@" || status=$?
 if [ "$status" -eq 0 ] && [ -n "$screenshot" ]; then
   attempts=0
   while [ ! -s "$screenshot" ] && [ "$attempts" -lt 300 ]; do
