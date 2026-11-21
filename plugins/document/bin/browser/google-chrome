@@ -28,7 +28,7 @@ do
   found_browser=1
   render_profile=$(mktemp -d "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles/render.XXXXXXXX")
   : > "$diagnostic"
-  if "$browser_bin" "--user-data-dir=$render_profile" --no-first-run --no-default-browser-check "$@" 2>"$diagnostic"; then
+  if "$browser_bin" "--user-data-dir=$render_profile" --no-sandbox --no-first-run --no-default-browser-check "$@" 2>"$diagnostic"; then
     exit 0
   else
     last_status=$?
