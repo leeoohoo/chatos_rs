@@ -28,6 +28,97 @@ pub(super) async fn dispatch_model_request(
     provider_stream: bool,
     force_identity_encoding: bool,
 ) -> Result<AiResponse, String> {
+    log_model_request_dispatch(
+        request_handler,
+        request,
+        options,
+        iteration,
+        iteration_reason,
+        input_item_count,
+        input_bytes,
+        tool_count,
+        request_attempt,
+        provider_stream,
+        force_identity_encoding,
+    );
+    emit_before_model_request_callbacks(
+        request_handler,
+        request,
+        options,
+        iteration,
+        iteration_reason,
+        input_item_count,
+        tool_count,
+        request_attempt,
+        provider_stream,
+    );
+
+    let started_at = Instant::now();
+    let raw_result = request_handler
+        .handle_request_with_options(
+            request.base_url.as_str(),
+            request.api_key.as_str(),
+            request.input.clone(),
+            request.model.clone(),
+            request.instructions.clone(),
+            Some(request.tools.clone()),
+            request.temperature,
+            request.max_output_tokens,
+            Some(request.provider.clone()),
+            request.thinking_level.clone(),
+            build_ai_request_options(
+                request,
+                options,
+                stream_output,
+                provider_stream,
+                force_identity_encoding,
+            ),
+        )
+        .await;
+    let model_request_ms = started_at.elapsed().as_millis();
+    if let Some(callback) = &options.callbacks.on_model_response {
+        callback(build_model_response_event_payload(
+            &raw_result,
+            request,
+            iteration,
+            iteration_reason,
+            request_attempt,
+            model_request_ms,
+        ));
+    }
+    let result = raw_result.and_then(|response| {
+        if let Some(error) = failed_ai_response_error(&response) {
+            Err(error)
+        } else {
+            Ok(response)
+        }
+    });
+    log_model_request_result(
+        &result,
+        request,
+        options,
+        iteration,
+        iteration_reason,
+        request_attempt,
+        provider_stream,
+        model_request_ms,
+    );
+    result
+}
+
+fn log_model_request_dispatch(
+    request_handler: &AiRequestHandler,
+    request: &ModelRequest,
+    options: &AiRuntimeOptions,
+    iteration: usize,
+    iteration_reason: &str,
+    input_item_count: usize,
+    input_bytes: usize,
+    tool_count: usize,
+    request_attempt: usize,
+    provider_stream: bool,
+    force_identity_encoding: bool,
+) {
     info!(
         conversation_id = options.conversation_id.as_deref().unwrap_or(""),
         conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
@@ -49,6 +140,19 @@ pub(super) async fn dispatch_model_request(
         },
         "ai runtime dispatching model request"
     );
+}
+
+fn emit_before_model_request_callbacks(
+    request_handler: &AiRequestHandler,
+    request: &ModelRequest,
+    options: &AiRuntimeOptions,
+    iteration: usize,
+    iteration_reason: &str,
+    input_item_count: usize,
+    tool_count: usize,
+    request_attempt: usize,
+    provider_stream: bool,
+) {
     if let Some(callback) = &options.callbacks.on_turn_phase {
         callback(build_model_request_phase_payload(
             request,
@@ -64,9 +168,15 @@ pub(super) async fn dispatch_model_request(
     if let Some(callback) = &options.callbacks.on_before_model_input {
         callback(request.input.clone());
     }
-    let on_before_send_model_request = options.callbacks.on_before_send_model_request.clone();
+}
 
-    let started_at = Instant::now();
+fn build_ai_request_options(
+    request: &ModelRequest,
+    options: &AiRuntimeOptions,
+    stream_output: bool,
+    provider_stream: bool,
+    force_identity_encoding: bool,
+) -> AiRequestOptions {
     let prompt_cache_key = request.prompt_cache_key.clone().or_else(|| {
         options
             .conversation_id
@@ -75,63 +185,43 @@ pub(super) async fn dispatch_model_request(
             .filter(|value| !value.is_empty())
             .map(|value| format!("chatos:{value}"))
     });
-    let raw_result = request_handler
-        .handle_request_with_options(
-            request.base_url.as_str(),
-            request.api_key.as_str(),
-            request.input.clone(),
-            request.model.clone(),
-            request.instructions.clone(),
-            Some(request.tools.clone()),
-            request.temperature,
-            request.max_output_tokens,
-            Some(request.provider.clone()),
-            request.thinking_level.clone(),
-            AiRequestOptions {
-                callbacks: StreamCallbacks {
-                    on_chunk: stream_output
-                        .then(|| options.callbacks.on_chunk.clone())
-                        .flatten(),
-                    on_thinking: stream_output
-                        .then(|| options.callbacks.on_thinking.clone())
-                        .flatten(),
-                },
-                prompt_cache_key,
-                previous_response_id: None,
-                request_cwd: request.request_cwd.clone(),
-                include_prompt_cache_retention: request.include_prompt_cache_retention,
-                request_body_limit_bytes: request.request_body_limit_bytes,
-                abort_token: options.abort_token.clone(),
-                force_identity_encoding,
-                on_before_send_model_request,
-                stream: provider_stream,
-                output_format: request.output_format.clone(),
-                responses_compaction_threshold: request
-                    .supports_responses
-                    .then_some(request.responses_compaction_threshold)
-                    .flatten(),
-            },
-        )
-        .await;
-    let model_request_ms = started_at.elapsed().as_millis();
-    if let Some(callback) = &options.callbacks.on_model_response {
-        callback(build_model_response_event_payload(
-            &raw_result,
-            request,
-            iteration,
-            iteration_reason,
-            request_attempt,
-            model_request_ms,
-        ));
+    AiRequestOptions {
+        callbacks: StreamCallbacks {
+            on_chunk: stream_output
+                .then(|| options.callbacks.on_chunk.clone())
+                .flatten(),
+            on_thinking: stream_output
+                .then(|| options.callbacks.on_thinking.clone())
+                .flatten(),
+        },
+        prompt_cache_key,
+        previous_response_id: None,
+        request_cwd: request.request_cwd.clone(),
+        include_prompt_cache_retention: request.include_prompt_cache_retention,
+        request_body_limit_bytes: request.request_body_limit_bytes,
+        abort_token: options.abort_token.clone(),
+        force_identity_encoding,
+        on_before_send_model_request: options.callbacks.on_before_send_model_request.clone(),
+        stream: provider_stream,
+        output_format: request.output_format.clone(),
+        responses_compaction_threshold: request
+            .supports_responses
+            .then_some(request.responses_compaction_threshold)
+            .flatten(),
     }
-    let result = raw_result.and_then(|response| {
-        if let Some(error) = failed_ai_response_error(&response) {
-            Err(error)
-        } else {
-            Ok(response)
-        }
-    });
-    match &result {
+}
+
+fn log_model_request_result(
+    result: &Result<AiResponse, String>,
+    request: &ModelRequest,
+    options: &AiRuntimeOptions,
+    iteration: usize,
+    iteration_reason: &str,
+    request_attempt: usize,
+    provider_stream: bool,
+    model_request_ms: u128,
+) {
+    match result {
         Ok(response) => {
             let usage = response.usage.as_ref().map(extract_usage_snapshot);
             info!(
@@ -161,23 +251,20 @@ pub(super) async fn dispatch_model_request(
                 "ai runtime model request completed"
             );
         }
-        Err(err) => {
-            warn!(
-                conversation_id = options.conversation_id.as_deref().unwrap_or(""),
-                conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
-                iteration,
-                reason = iteration_reason,
-                model = request.model.as_str(),
-                provider = request.provider.as_str(),
-                request_attempt,
-                provider_stream,
-                model_request_ms,
-                error = err.as_str(),
-                "ai runtime model request failed"
-            );
-        }
+        Err(error) => warn!(
+            conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+            conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
+            iteration,
+            reason = iteration_reason,
+            model = request.model.as_str(),
+            provider = request.provider.as_str(),
+            request_attempt,
+            provider_stream,
+            model_request_ms,
+            error = error.as_str(),
+            "ai runtime model request failed"
+        ),
     }
-    result
 }
 
 fn build_model_response_event_payload(
