@@ -156,9 +156,24 @@ run_native_platform() {
       done
       while IFS= read -r test_class; do
         [[ -n "$test_class" ]] || continue
-        run_swiftpm test \
-          --package-path "$ROOT_DIR/clients/macos" --no-parallel \
-          --disable-swift-testing --filter "$test_class"
+        if [[ "$test_class" == "ChatOSConnectorTests.LocalAgentGroupChatSchedulerTests" ]]; then
+          scheduler_test_count=0
+          while IFS= read -r test_case; do
+            [[ "$test_case" == "$test_class/"* ]] || continue
+            run_swiftpm test \
+              --package-path "$ROOT_DIR/clients/macos" --no-parallel \
+              --disable-swift-testing --filter "$test_case"
+            ((scheduler_test_count += 1))
+          done < <(
+            run_swiftpm test list --package-path "$ROOT_DIR/clients/macos" \
+              --disable-swift-testing
+          )
+          ((scheduler_test_count > 0))
+        else
+          run_swiftpm test \
+            --package-path "$ROOT_DIR/clients/macos" --no-parallel \
+            --disable-swift-testing --filter "$test_class"
+        fi
       done < <(
         run_swiftpm test list --package-path "$ROOT_DIR/clients/macos" \
           --disable-swift-testing \
