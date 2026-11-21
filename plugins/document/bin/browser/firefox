@@ -14,5 +14,5 @@ cleanup() {
 }
 trap cleanup EXIT
 status=0
-"$firefox_bin" --no-remote --wait-for-browser "$@" --profile "$render_profile" || status=$?
+"$firefox_bin" --new-instance "$@" --profile "$render_profile" || status=$?
 exit "$status"
