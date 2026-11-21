@@ -161,16 +161,38 @@ run_native_platform() {
         [[ -n "$test_class" ]] || continue
         if [[ "$test_class" == "ChatOSConnectorTests.LocalAgentGroupChatSchedulerTests" ]]; then
           scheduler_test_count=0
+          scheduler_batch_count=0
           scheduler_test_filter=""
           while IFS= read -r test_case; do
             [[ "$test_case" == "$test_class/"* ]] || continue
             ((scheduler_test_count += 1))
+            case "${test_case##*/}" in
+              testRecoveryCircuitStopsOnlyRepeatedlyCrashingRunAndContinuesIndependentRun|\
+              testRecoveryDoesNotReenterHumanRetryWhileExecutorIsStillRunning|\
+              testRecoveryDoesNotResumeLiveCommunicationFastLane|\
+              testRecoveryRefillsCapacityBeforeSlowIndependentRunFinishes|\
+              testResumePreservesSyncedRouterWhenCurrentCatalogHasChanged)
+                if [[ -n "$scheduler_test_filter" ]]; then
+                  run_swiftpm test \
+                    --package-path "$ROOT_DIR/clients/macos" --skip-build --no-parallel \
+                    --disable-swift-testing --filter "$scheduler_test_filter"
+                  scheduler_test_filter=""
+                  scheduler_batch_count=0
+                fi
+                run_swiftpm test \
+                  --package-path "$ROOT_DIR/clients/macos" --skip-build --no-parallel \
+                  --disable-swift-testing --filter "$test_case"
+                continue
+                ;;
+            esac
             scheduler_test_filter="${scheduler_test_filter:+$scheduler_test_filter|}$test_case"
-            if ((scheduler_test_count % 5 == 0)); then
+            ((scheduler_batch_count += 1))
+            if ((scheduler_batch_count == 5)); then
               run_swiftpm test \
                 --package-path "$ROOT_DIR/clients/macos" --skip-build --no-parallel \
                 --disable-swift-testing --filter "$scheduler_test_filter"
               scheduler_test_filter=""
+              scheduler_batch_count=0
             fi
           done < "$connector_test_list"
           ((scheduler_test_count > 0))
