@@ -234,9 +234,20 @@ pub async fn list_context_records(
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
-    limit: Option<i64>,
+    excluded_turn_id: Option<&str>,
+    limit: i64,
 ) -> Result<Vec<EngineRecord>, String> {
-    list_context_records_inner(db, tenant_id, source_id, thread_id, None, false, limit).await
+    list_context_records_inner(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        None,
+        false,
+        excluded_turn_id,
+        limit,
+    )
+    .await
 }
 
 pub async fn list_context_records_for_project(
@@ -245,7 +256,8 @@ pub async fn list_context_records_for_project(
     source_id: &str,
     thread_id: &str,
     project_subject_id: Option<&str>,
-    limit: Option<i64>,
+    excluded_turn_id: Option<&str>,
+    limit: i64,
 ) -> Result<Vec<EngineRecord>, String> {
     list_context_records_inner(
         db,
@@ -254,6 +266,7 @@ pub async fn list_context_records_for_project(
         thread_id,
         project_subject_id,
         true,
+        excluded_turn_id,
         limit,
     )
     .await
@@ -266,7 +279,8 @@ async fn list_context_records_inner(
     thread_id: &str,
     project_subject_id: Option<&str>,
     filter_project: bool,
-    limit: Option<i64>,
+    excluded_turn_id: Option<&str>,
+    limit: i64,
 ) -> Result<Vec<EngineRecord>, String> {
     let mut query =
         QueryBuilder::<Postgres>::new("SELECT data FROM engine_records WHERE tenant_id=");
@@ -281,18 +295,16 @@ async fn list_context_records_inner(
     if filter_project {
         append_context_project_filter(&mut query, project_subject_id);
     }
-    let reverse = limit.is_some();
-    if let Some(limit) = limit {
+    if let Some(turn_id) = normalized(excluded_turn_id) {
         query
-            .push(" ORDER BY created_at DESC,id DESC LIMIT ")
-            .push_bind(limit.max(1));
-    } else {
-        query.push(" ORDER BY created_at ASC,id ASC");
+            .push(" AND COALESCE(data #>> '{metadata,conversation_turn_id}','')<>")
+            .push_bind(turn_id);
     }
+    query
+        .push(" ORDER BY created_at DESC,id DESC LIMIT ")
+        .push_bind(limit.max(1));
     let mut records = fetch(db, query).await?;
-    if reverse {
-        records.reverse();
-    }
+    records.reverse();
     Ok(records)
 }
 

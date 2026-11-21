@@ -27,24 +27,15 @@ pub(in crate::api) async fn list_model_configs(
     Query(query): Query<UserScopeQuery>,
 ) -> ApiResult<Vec<serde_json::Value>> {
     let owner_user_id = resolve_target_user_id(&principal, query.user_id.as_deref())?;
-    let items = if principal.is_super_admin() && owner_user_id.is_none() {
-        state.store.list_user_model_configs(None).await
-    } else {
-        state
-            .store
-            .list_user_model_configs(owner_user_id.as_deref())
-            .await
-    }
-    .map_err(internal_error)?;
-    let providers = if principal.is_super_admin() && owner_user_id.is_none() {
-        state.store.list_user_model_providers(None).await
-    } else {
-        state
-            .store
-            .list_user_model_providers(owner_user_id.as_deref())
-            .await
-    }
-    .map_err(internal_error)?;
+    let items = state
+        .store
+        .list_public_user_model_configs(
+            owner_user_id.as_deref(),
+            query.limit.unwrap_or(500),
+            query.offset.unwrap_or(0),
+        )
+        .await
+        .map_err(internal_error)?;
 
     Ok(Json(
         items
@@ -53,7 +44,6 @@ pub(in crate::api) async fn list_model_configs(
                 !item.model.trim().is_empty() && is_supported_provider(item.provider.as_str())
             })
             .filter(|item| crate::model_catalog::is_selectable_model(&item.model))
-            .filter(|item| model_config_has_backing_provider(item, providers.as_slice()))
             .map(|item| model_config_public_value(item, false, None))
             .collect::<Vec<_>>(),
     ))

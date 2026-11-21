@@ -6,6 +6,8 @@ use serde::Deserialize;
 #[derive(Debug, Default, Deserialize)]
 pub(in crate::api) struct UserScopeQuery {
     pub(super) user_id: Option<String>,
+    pub(super) limit: Option<i64>,
+    pub(super) offset: Option<i64>,
 }
 
 #[derive(Debug, Default, Deserialize)]

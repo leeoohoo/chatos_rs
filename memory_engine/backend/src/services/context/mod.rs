@@ -73,15 +73,26 @@ pub async fn compose_context(
         req.query_text.as_deref(),
     )
     .await?;
+    let block_tokens = block_token_count(context_blocks.blocks.as_slice());
+    let recent_budget = policy
+        .max_recent_record_tokens
+        .min(policy.max_memory_tokens.saturating_sub(block_tokens));
+    let record_limit = recent_record_query_limit(recent_budget);
+    let current_turn_id = req
+        .current_turn_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
 
-    let mut recent_records = if allow_dynamic_project {
+    let recent_records = if allow_dynamic_project {
         records::list_context_records_for_project(
             db,
             req.tenant_id.as_str(),
             req.source_id.as_str(),
             thread.id.as_str(),
             context_project_subject_id,
-            None,
+            current_turn_id,
+            record_limit,
         )
         .await?
     } else {
@@ -90,33 +101,15 @@ pub async fn compose_context(
             req.tenant_id.as_str(),
             req.source_id.as_str(),
             thread.id.as_str(),
-            None,
+            current_turn_id,
+            record_limit,
         )
         .await?
     };
-    if let Some(current_turn_id) = req
-        .current_turn_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        recent_records.retain(|record| {
-            record
-                .metadata
-                .as_ref()
-                .and_then(|metadata| metadata.get("conversation_turn_id"))
-                .and_then(serde_json::Value::as_str)
-                != Some(current_turn_id)
-        });
-    }
     let recent_candidate_count = recent_records.len();
     let oldest_pending_record_at = recent_records
         .first()
         .map(|record| record.created_at.clone());
-    let block_tokens = block_token_count(context_blocks.blocks.as_slice());
-    let recent_budget = policy
-        .max_recent_record_tokens
-        .min(policy.max_memory_tokens.saturating_sub(block_tokens));
     let retained_records = retain_newest_records_within_budget(recent_records, recent_budget);
     let recent_records = retained_records.records;
 
@@ -166,6 +159,12 @@ pub async fn compose_context(
             project_context_verified: true,
         },
     })
+}
+
+fn recent_record_query_limit(token_budget: usize) -> i64 {
+    i64::try_from(token_budget / 12)
+        .unwrap_or(i64::MAX - 1)
+        .saturating_add(1)
 }
 
 struct RetainedRecords {

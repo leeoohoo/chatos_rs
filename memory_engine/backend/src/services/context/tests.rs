@@ -118,6 +118,14 @@ fn recent_record_budget_keeps_a_tool_turn_as_one_atomic_unit() {
     assert!(too_small.records.is_empty());
 }
 
+#[test]
+fn recent_record_query_reads_only_one_more_than_can_fit() {
+    assert_eq!(super::recent_record_query_limit(0), 1);
+    assert_eq!(super::recent_record_query_limit(11), 1);
+    assert_eq!(super::recent_record_query_limit(12), 2);
+    assert_eq!(super::recent_record_query_limit(120), 11);
+}
+
 fn thread(
     subject_id: &str,
     labels: Option<Vec<&str>>,

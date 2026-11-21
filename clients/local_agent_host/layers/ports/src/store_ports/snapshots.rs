@@ -1,3 +1,5 @@
+use super::*;
+
 #[async_trait]
 pub trait LocalCapabilitySnapshotStore: Send + Sync {
     /// Stores an immutable revision. Repeating the same value is safe; reusing

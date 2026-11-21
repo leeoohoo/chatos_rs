@@ -31,7 +31,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 use uuid::Uuid;
 
 const MAXIMUM_EVENT_CONTEXT_BYTES: usize = 512 * 1_024;
@@ -41,6 +41,8 @@ const MAXIMUM_STDERR_SUMMARY_BYTES: usize = 4_096;
 const MAXIMUM_PARENT_DEPTH: usize = 64;
 const OUTPUT_SPILL_THRESHOLD_BYTES: usize = 16 * 1_024;
 const MAXIMUM_STOP_BLOCKS: u64 = 3;
+const MAXIMUM_CONCURRENT_HOOKS: usize = 8;
+const MAXIMUM_MATCHING_HOOKS_PER_EVENT: usize = 256;
 
 /// Executes the trusted Codex-compatible lifecycle Hooks which must run before
 /// a model request. The durable runtime owns replay; this coordinator owns
@@ -54,6 +56,7 @@ pub struct LocalHookCoordinator {
     session_generations: Mutex<HashMap<String, u64>>,
     connected_clients: AtomicUsize,
     inflight_events: Mutex<HashMap<String, Weak<AsyncMutex<()>>>>,
+    hook_execution_permits: Arc<Semaphore>,
 }
 
 pub(crate) enum LocalHookPromptDecision {
@@ -85,6 +88,7 @@ impl LocalHookCoordinator {
             session_generations: Mutex::new(HashMap::new()),
             connected_clients: AtomicUsize::new(0),
             inflight_events: Mutex::new(HashMap::new()),
+            hook_execution_permits: Arc::new(Semaphore::new(MAXIMUM_CONCURRENT_HOOKS)),
         })
     }
 

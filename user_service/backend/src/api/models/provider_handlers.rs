@@ -30,15 +30,15 @@ pub(in crate::api) async fn list_model_providers(
     Query(query): Query<UserScopeQuery>,
 ) -> ApiResult<Vec<serde_json::Value>> {
     let owner_user_id = resolve_target_user_id(&principal, query.user_id.as_deref())?;
-    let items = if principal.is_super_admin() && owner_user_id.is_none() {
-        state.store.list_user_model_providers(None).await
-    } else {
-        state
-            .store
-            .list_user_model_providers(owner_user_id.as_deref())
-            .await
-    }
-    .map_err(internal_error)?;
+    let items = state
+        .store
+        .list_public_user_model_providers(
+            owner_user_id.as_deref(),
+            query.limit.unwrap_or(500),
+            query.offset.unwrap_or(0),
+        )
+        .await
+        .map_err(internal_error)?;
 
     Ok(Json(
         items

@@ -125,7 +125,7 @@ async fn stable_agent_context_is_isolated_by_current_project() {
         (None, "main-chat", "summary-main-chat"),
     ] {
         let scoped_records = crate::repositories::records::list_context_records_for_project(
-            &pool, &tenant, &source, &thread_id, project, None,
+            &pool, &tenant, &source, &thread_id, project, None, 100,
         )
         .await
         .expect("list project-scoped context records");

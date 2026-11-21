@@ -7,7 +7,6 @@ use crate::login_throttle::LoginThrottle;
 use crate::retention::UserDataRetention;
 use crate::store::AppStore;
 use crate::wechat::WeChatMiniProgramClient;
-use tracing::info;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -29,17 +28,6 @@ impl AppState {
         )?;
         let store = AppStore::new(db);
         store.initialize().await?;
-        let migrated_model_count = store.migrate_legacy_model_task_enabled().await?;
-        if migrated_model_count > 0 {
-            info!(
-                migrated_model_count,
-                "migrated legacy model enabled state into task_enabled"
-            );
-        }
-        let repaired_model_count = store.reconcile_provider_model_catalog().await?;
-        if repaired_model_count > 0 {
-            info!(repaired_model_count, "reconciled provider availability");
-        }
         store.ensure_default_super_admin(&config).await?;
         let wechat_mini_program = WeChatMiniProgramClient::from_config(&config)?;
         Ok(Self {

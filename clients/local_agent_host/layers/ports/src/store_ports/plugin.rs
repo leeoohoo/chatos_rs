@@ -1,3 +1,5 @@
+use super::*;
+
 #[async_trait]
 pub trait LocalPluginInstallationStore: Send + Sync {
     async fn put_plugin_installation(

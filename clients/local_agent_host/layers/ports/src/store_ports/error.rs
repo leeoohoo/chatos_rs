@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Error)]
 pub enum ClientStorageError {
     #[error("client storage database error: {0}")]

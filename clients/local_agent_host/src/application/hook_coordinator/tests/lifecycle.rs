@@ -358,6 +358,36 @@ async fn matching_hooks_run_concurrently_but_merge_in_stable_bundle_order() {
     assert!(context.find("first").unwrap() < context.find("last").unwrap());
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn matching_hooks_respect_the_process_concurrency_limit() {
+    let (storage, runtime, runner) = fixture().await;
+    activate_bundle(
+        &storage,
+        "bundle-many",
+        (0..12)
+            .map(|index| {
+                hook(
+                    &format!("prompt-{index}"),
+                    "UserPromptSubmit",
+                    &format!("delay:{index}"),
+                )
+            })
+            .collect(),
+    )
+    .await;
+    let coordinator = LocalHookCoordinator::new(runtime, runner.clone(), None).unwrap();
+    let event = coordinator
+        .events_for_claim(&claim(run("run-limited")))
+        .await
+        .unwrap()
+        .pop()
+        .expect("prompt event");
+
+    coordinator.execute_event(event).await.unwrap();
+
+    assert_eq!(runner.maximum_active.load(Ordering::SeqCst), 8);
+}
+
 #[tokio::test]
 async fn tool_hooks_deny_before_execution_update_input_and_preserve_host_approval() {
     let (storage, runtime, runner) = fixture().await;

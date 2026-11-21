@@ -1,3 +1,5 @@
+use super::*;
+
 pub trait LocalAgentStore:
     LocalAgentRunStore
     + LocalAgentToolStore

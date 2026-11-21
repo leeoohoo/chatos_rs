@@ -3,39 +3,11 @@
 
 use crate::models::{UserModelConfigRecord, UserModelProviderRecord, UserModelSettingsRecord};
 use crate::secrets::{decrypt_optional_secret, encrypt_optional_secret};
+use sqlx::{Postgres, QueryBuilder};
 
-use super::{fetch_all, fetch_optional, json, now_rfc3339, timestamp, AppStore};
+use super::{fetch_all, fetch_optional, json, timestamp, AppStore};
 
 impl AppStore {
-    /// Repair provider-derived availability for every account after the importer
-    /// incorrectly coupled it to chat budgeting. Preserve task-list preferences,
-    /// identities, credentials, and explicitly published model-specific budgets.
-    pub async fn reconcile_provider_model_catalog(&self) -> Result<usize, String> {
-        let providers = self.list_user_model_providers(None).await?;
-        let configs = self.list_user_model_configs(None).await?;
-        let mut repaired = 0;
-        for mut config in configs {
-            let Some(provider) = providers.iter().find(|provider| {
-                provider.owner_user_id == config.owner_user_id
-                    && (config.source_provider_id.as_deref() == Some(&provider.id)
-                        || (config.source_provider_id.is_none()
-                            && config.provider == provider.provider
-                            && normalized_base_url(config.base_url.as_deref())
-                                == normalized_base_url(provider.base_url.as_deref())))
-            }) else {
-                continue;
-            };
-            let changed = config.enabled != provider.enabled;
-            config.enabled = provider.enabled;
-            if changed {
-                config.updated_at = now_rfc3339();
-                self.save_user_model_config(&config).await?;
-                repaired += 1;
-            }
-        }
-        Ok(repaired)
-    }
-
     fn has_usable_api_key(value: Option<&str>) -> bool {
         value.map(str::trim).is_some_and(|value| !value.is_empty())
     }
@@ -104,31 +76,40 @@ impl AppStore {
             .collect()
     }
 
-    pub async fn migrate_legacy_model_task_enabled(&self) -> Result<usize, String> {
-        let providers = self.list_user_model_providers(None).await?;
-        let configs = self.list_user_model_configs(None).await?;
-        let mut migrated = 0;
-        for mut config in configs {
-            if config.task_enabled.is_some() {
-                continue;
-            }
-            let legacy_enabled = config.enabled;
-            config.task_enabled = Some(legacy_enabled);
-            if let Some(provider) = providers.iter().find(|provider| {
-                provider.owner_user_id == config.owner_user_id
-                    && (config.source_provider_id.as_deref() == Some(&provider.id)
-                        || (config.source_provider_id.is_none()
-                            && config.provider == provider.provider
-                            && normalized_base_url(config.base_url.as_deref())
-                                == normalized_base_url(provider.base_url.as_deref())))
-            }) {
-                config.source_provider_id = Some(provider.id.clone());
-                config.enabled = provider.enabled;
-            }
-            self.save_user_model_config(&config).await?;
-            migrated += 1;
+    pub async fn list_public_user_model_configs(
+        &self,
+        owner_user_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<UserModelConfigRecord>, String> {
+        let mut query = QueryBuilder::<Postgres>::new(
+            "SELECT config.data FROM user_model_configs config WHERE ",
+        );
+        if let Some(owner) = owner_user_id {
+            query
+                .push("config.owner_user_id=")
+                .push_bind(owner)
+                .push(" AND ");
         }
-        Ok(migrated)
+        query.push(
+            "EXISTS(SELECT 1 FROM user_model_providers provider \
+             WHERE provider.owner_user_id=config.owner_user_id AND (provider.id=config.source_provider_id \
+             OR (config.source_provider_id IS NULL AND provider.data->>'provider'=config.data->>'provider' \
+             AND RTRIM(BTRIM(COALESCE(provider.data->>'base_url','')),'/')=RTRIM(BTRIM(COALESCE(config.data->>'base_url','')),'/')))) \
+             ORDER BY config.updated_at DESC,config.created_at DESC,config.id LIMIT ",
+        );
+        query
+            .push_bind(limit.clamp(1, 2_000))
+            .push(" OFFSET ")
+            .push_bind(offset.max(0));
+        let rows = fetch_all(query.build_query_scalar(), &self.pool).await?;
+        rows.into_iter()
+            .map(|mut config: UserModelConfigRecord| {
+                config.api_key = None;
+                apply_published_capability(&mut config)?;
+                Ok(config)
+            })
+            .collect()
     }
 
     pub async fn find_user_model_config_by_id(
@@ -198,6 +179,29 @@ impl AppStore {
             .collect()
     }
 
+    pub async fn list_public_user_model_providers(
+        &self,
+        owner_user_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<UserModelProviderRecord>, String> {
+        let mut query = QueryBuilder::<Postgres>::new("SELECT data FROM user_model_providers");
+        if let Some(owner) = owner_user_id {
+            query.push(" WHERE owner_user_id=").push_bind(owner);
+        }
+        query.push(" ORDER BY updated_at DESC,created_at DESC,id LIMIT ");
+        query
+            .push_bind(limit.clamp(1, 2_000))
+            .push(" OFFSET ")
+            .push_bind(offset.max(0));
+        let mut rows: Vec<UserModelProviderRecord> =
+            fetch_all(query.build_query_scalar(), &self.pool).await?;
+        for provider in &mut rows {
+            provider.api_key = None;
+        }
+        Ok(rows)
+    }
+
     pub async fn find_user_model_provider_by_id(
         &self,
         id: &str,
@@ -261,15 +265,6 @@ impl AppStore {
         .map_err(|err| err.to_string())?;
         Ok(settings.clone())
     }
-}
-
-fn normalized_base_url(value: Option<&str>) -> String {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or_default()
-        .trim_end_matches('/')
-        .to_string()
 }
 
 fn clear_model_capability(model: &mut UserModelConfigRecord) {

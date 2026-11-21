@@ -42,6 +42,8 @@ pub(crate) struct ProductSkillRuntime {
 
 #[derive(Clone, Debug)]
 struct ProductSkillSession {
+    owner_user_id: String,
+    run_id: String,
     bundle_fingerprint: String,
     activated_skill_refs: HashSet<String>,
 }
@@ -87,6 +89,9 @@ impl ProductSkillRuntime {
 
         let session_key = format!("{owner_user_id}\0{run_id}");
         let durable = load_durable_activations(host, owner_user_id, run_id).await?;
+        if self.sessions.lock().await.len() >= MAXIMUM_RUNTIME_SESSIONS {
+            self.prune_terminal_sessions(host).await;
+        }
         let mut sessions = self.sessions.lock().await;
         let bundle_changed = sessions
             .get(&session_key)
@@ -98,6 +103,8 @@ impl ProductSkillRuntime {
             sessions.insert(
                 session_key.clone(),
                 ProductSkillSession {
+                    owner_user_id: owner_user_id.to_owned(),
+                    run_id: run_id.to_owned(),
                     bundle_fingerprint: bundle.fingerprint.clone(),
                     activated_skill_refs: durable
                         .into_iter()
@@ -111,6 +118,8 @@ impl ProductSkillRuntime {
             sessions.insert(
                 session_key.clone(),
                 ProductSkillSession {
+                    owner_user_id: owner_user_id.to_owned(),
+                    run_id: run_id.to_owned(),
                     bundle_fingerprint: bundle.fingerprint.clone(),
                     activated_skill_refs: HashSet::new(),
                 },
@@ -137,6 +146,42 @@ impl ProductSkillRuntime {
             }
         };
         Ok(Some(outcome))
+    }
+
+    async fn prune_terminal_sessions(&self, host: &dyn ProductSkillHost) {
+        let candidates = self
+            .sessions
+            .lock()
+            .await
+            .iter()
+            .map(|(key, session)| {
+                (
+                    key.clone(),
+                    session.owner_user_id.clone(),
+                    session.run_id.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut terminal = Vec::new();
+        for (key, owner_user_id, run_id) in candidates {
+            let command = HostCommand::GetRun(GetRunCommand {
+                owner_user_id,
+                run_id,
+            });
+            if matches!(
+                host.execute(command).await,
+                Ok(HostResult::Run { run }) if run.status.is_terminal()
+            ) {
+                terminal.push(key);
+            }
+        }
+        if terminal.is_empty() {
+            return;
+        }
+        let mut sessions = self.sessions.lock().await;
+        for key in terminal {
+            sessions.remove(&key);
+        }
     }
 }
 
@@ -406,7 +451,8 @@ fn product_skill_runtime_error() -> String {
 mod tests {
     use super::*;
     use chatos_local_agent_protocol::{
-        LocalSkillResourceSnapshot, LocalToolSkillActivationPolicy, LocalToolSkillBindingSnapshot,
+        LocalAgentRunRecord, LocalAgentRunStatus, LocalSkillResourceSnapshot,
+        LocalToolSkillActivationPolicy, LocalToolSkillBindingSnapshot,
     };
     use std::sync::Mutex as StandardMutex;
 
@@ -414,6 +460,7 @@ mod tests {
         bundle: StandardMutex<LocalSkillBundleSnapshot>,
         activations: StandardMutex<Vec<String>>,
         commands: StandardMutex<Vec<&'static str>>,
+        run_statuses: StandardMutex<HashMap<String, LocalAgentRunStatus>>,
     }
 
     impl FakeProductSkillHost {
@@ -422,11 +469,19 @@ mod tests {
                 bundle: StandardMutex::new(bundle),
                 activations: StandardMutex::new(activations),
                 commands: StandardMutex::new(Vec::new()),
+                run_statuses: StandardMutex::new(HashMap::new()),
             }
         }
 
         fn replace_bundle(&self, bundle: LocalSkillBundleSnapshot) {
             *self.bundle.lock().unwrap() = bundle;
+        }
+
+        fn set_run_status(&self, run_id: &str, status: LocalAgentRunStatus) {
+            self.run_statuses
+                .lock()
+                .unwrap()
+                .insert(run_id.into(), status);
         }
     }
 
@@ -448,9 +503,43 @@ mod tests {
                             skill_refs: self.activations.lock().unwrap().clone(),
                         })
                     }
+                    HostCommand::GetRun(command) => {
+                        let status = self.run_statuses.lock().unwrap()[&command.run_id];
+                        Ok(HostResult::Run {
+                            run: run(&command.owner_user_id, &command.run_id, status),
+                        })
+                    }
                     _ => panic!("unexpected Product Skill command"),
                 }
             })
+        }
+    }
+
+    fn run(owner_user_id: &str, run_id: &str, status: LocalAgentRunStatus) -> LocalAgentRunRecord {
+        LocalAgentRunRecord {
+            run_id: run_id.into(),
+            owner_user_id: owner_user_id.into(),
+            owner_entity_type: "conversation_turn".into(),
+            owner_entity_id: "turn-1".into(),
+            profile_key: "main_chat".into(),
+            model_config_ref: "model-1".into(),
+            model_config_revision: "1".into(),
+            capability_policy_revision: "1".into(),
+            input: Value::Null,
+            status,
+            iteration: 0,
+            model_attempt: 0,
+            max_iterations: 1,
+            version: 1,
+            claim_token: None,
+            claim_until_unix_ms: None,
+            next_attempt_at_unix_ms: None,
+            pending_tool_batch: None,
+            checkpoint: Value::Null,
+            continuation_input: None,
+            terminal_outcome: None,
+            created_at_unix_ms: 0,
+            updated_at_unix_ms: 0,
         }
     }
 
@@ -670,5 +759,32 @@ mod tests {
             .await
             .is_err());
         assert_eq!(host.commands.lock().unwrap().as_slice(), ["bundle"]);
+    }
+
+    #[tokio::test]
+    async fn prunes_only_terminal_run_sessions() {
+        let host = FakeProductSkillHost::new(snapshot(), vec![]);
+        host.set_run_status("finished", LocalAgentRunStatus::Succeeded);
+        host.set_run_status("active", LocalAgentRunStatus::ModelRunning);
+        let runtime = ProductSkillRuntime::default();
+        let mut sessions = runtime.sessions.lock().await;
+        for run_id in ["finished", "active"] {
+            sessions.insert(
+                run_id.into(),
+                ProductSkillSession {
+                    owner_user_id: "owner-1".into(),
+                    run_id: run_id.into(),
+                    bundle_fingerprint: "bundle".into(),
+                    activated_skill_refs: HashSet::new(),
+                },
+            );
+        }
+        drop(sessions);
+
+        runtime.prune_terminal_sessions(&host).await;
+
+        let sessions = runtime.sessions.lock().await;
+        assert!(!sessions.contains_key("finished"));
+        assert!(sessions.contains_key("active"));
     }
 }

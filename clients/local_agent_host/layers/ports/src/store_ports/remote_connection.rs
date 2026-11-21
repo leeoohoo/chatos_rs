@@ -1,3 +1,5 @@
+use super::*;
+
 #[async_trait]
 pub trait LocalRemoteConnectionStore: Send + Sync {
     async fn list_remote_connections(

@@ -12,6 +12,7 @@ use crate::types::McpStdioServer;
 
 const MCP_TOOLS_LIST_SUCCESS_CACHE_TTL: Duration = Duration::from_secs(60);
 const MCP_TOOLS_LIST_ERROR_CACHE_TTL: Duration = Duration::from_secs(10);
+pub(super) const MCP_TOOLS_LIST_CACHE_MAX_ENTRIES: usize = 256;
 pub(super) static MCP_TOOLS_LIST_CACHE: OnceLock<Mutex<HashMap<String, ToolsListCacheEntry>>> =
     OnceLock::new();
 
@@ -43,7 +44,26 @@ pub(super) fn store_tools_list_cache(cache_key: String, result: Result<Vec<Value
     };
     let cache = MCP_TOOLS_LIST_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(mut guard) = cache.lock() {
+        prune_tools_list_cache(&mut guard, Instant::now(), cache_key.as_str());
         guard.insert(cache_key, ToolsListCacheEntry { expires_at, result });
+    }
+}
+
+pub(super) fn prune_tools_list_cache(
+    cache: &mut HashMap<String, ToolsListCacheEntry>,
+    now: Instant,
+    incoming_key: &str,
+) {
+    cache.retain(|_, entry| entry.expires_at > now);
+    if cache.len() < MCP_TOOLS_LIST_CACHE_MAX_ENTRIES || cache.contains_key(incoming_key) {
+        return;
+    }
+    if let Some(key) = cache
+        .iter()
+        .min_by_key(|(_, entry)| entry.expires_at)
+        .map(|(key, _)| key.clone())
+    {
+        cache.remove(&key);
     }
 }
 

@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Clone)]
 pub struct LocalNotepadImageWrite {
     pub image: LocalNotepadImage,

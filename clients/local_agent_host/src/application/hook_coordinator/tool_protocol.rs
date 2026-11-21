@@ -195,6 +195,11 @@ fn matching_hooks(
                 None => true,
             };
             if matched {
+                if matches.len() >= MAXIMUM_MATCHING_HOOKS_PER_EVENT {
+                    return Err(format!(
+                        "Hook event matches more than {MAXIMUM_MATCHING_HOOKS_PER_EVENT} definitions"
+                    ));
+                }
                 matches.push((bundle.clone(), hook.clone()));
             }
         }

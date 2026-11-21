@@ -1,6 +1,6 @@
 use chatos_local_agent_protocol::{
-    GetRunCapabilityDisclosuresCommand, GetRunSkillActivationsCommand, HostCommand, HostResult,
-    LocalAgentToolOutcome,
+    GetRunCapabilityDisclosuresCommand, GetRunCommand, GetRunSkillActivationsCommand, HostCommand,
+    HostResult, LocalAgentToolOutcome,
 };
 use chatos_plugin_management_sdk::SkillGateDeclaration;
 use serde_json::{json, Map, Value};
@@ -137,6 +137,9 @@ impl AgentPluginRuntime {
         if let Some(stale) = stale {
             stale.invalidate().await;
         }
+        if self.sessions.lock().await.len() >= 32 {
+            self.prune_terminal_sessions(host).await;
+        }
         let resource_permit = if resolved.executable.is_some() {
             Some(
                 self.resources
@@ -185,6 +188,48 @@ impl AgentPluginRuntime {
         self.restore_session_state(host, context, selection, &session)
             .await?;
         Ok(session)
+    }
+
+    async fn prune_terminal_sessions(&self, host: &HostManager) {
+        let candidates = self
+            .sessions
+            .lock()
+            .await
+            .iter()
+            .map(|(key, session)| (key.clone(), Arc::clone(session)))
+            .collect::<Vec<_>>();
+        let mut terminal = Vec::new();
+        for (key, session) in candidates {
+            let command = HostCommand::GetRun(GetRunCommand {
+                owner_user_id: session.owner_user_id.clone(),
+                run_id: session.run_id.clone(),
+            });
+            if matches!(
+                host.execute(command).await,
+                Ok(HostResult::Run { run }) if run.status.is_terminal()
+            ) {
+                terminal.push((key, session));
+            }
+        }
+        if terminal.is_empty() {
+            return;
+        }
+        let removed = {
+            let mut sessions = self.sessions.lock().await;
+            terminal
+                .into_iter()
+                .filter_map(|(key, expected)| {
+                    sessions
+                        .get(&key)
+                        .is_some_and(|current| Arc::ptr_eq(current, &expected))
+                        .then(|| sessions.remove(&key))
+                        .flatten()
+                })
+                .collect::<Vec<_>>()
+        };
+        for session in removed {
+            session.invalidate().await;
+        }
     }
 
     async fn restore_session_state(

@@ -1,3 +1,5 @@
+use super::*;
+
 #[async_trait]
 pub trait LocalPluginHookBundleStore: Send + Sync {
     /// Appends an immutable trust snapshot. Repeating the same bundle is

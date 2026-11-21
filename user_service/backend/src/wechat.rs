@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use chatos_service_runtime::http_body::read_response_bytes_limited;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -11,6 +12,8 @@ use tokio::sync::Mutex;
 use crate::config::AppConfig;
 
 const CODE_MAX_BYTES: usize = 512;
+const WECHAT_JSON_RESPONSE_LIMIT_BYTES: usize = 64 * 1_024;
+const WECHAT_CODE_RESPONSE_LIMIT_BYTES: usize = 2 * 1_024 * 1_024;
 const INVALID_ACCESS_TOKEN_CODES: &[i64] = &[40001, 40014, 42001];
 
 #[derive(Clone)]
@@ -149,11 +152,10 @@ impl WeChatMiniProgramClient {
             .await
             .map_err(|_| WeChatExchangeError::Transport)?;
         let status = response.status();
-        let body = response
-            .bytes()
+        let body = read_response_bytes_limited(response, WECHAT_JSON_RESPONSE_LIMIT_BYTES)
             .await
             .map_err(|_| WeChatExchangeError::Transport)?;
-        parse_exchange_response(status, body.as_ref())
+        parse_exchange_response(status, body.as_slice())
     }
 
     pub async fn generate_bind_code(&self, scene: &str) -> Result<Vec<u8>, WeChatExchangeError> {
@@ -196,11 +198,10 @@ impl WeChatMiniProgramClient {
             .await
             .map_err(|_| WeChatExchangeError::Transport)?;
         let status = response.status();
-        let body = response
-            .bytes()
+        let body = read_response_bytes_limited(response, WECHAT_CODE_RESPONSE_LIMIT_BYTES)
             .await
             .map_err(|_| WeChatExchangeError::Transport)?;
-        parse_mini_program_code_response(status, body.as_ref())
+        parse_mini_program_code_response(status, body.as_slice())
     }
 
     async fn invalidate_access_token(&self, rejected_token: &str) {
@@ -234,11 +235,10 @@ impl WeChatMiniProgramClient {
             .await
             .map_err(|_| WeChatExchangeError::Transport)?;
         let status = response.status();
-        let body = response
-            .bytes()
+        let body = read_response_bytes_limited(response, WECHAT_JSON_RESPONSE_LIMIT_BYTES)
             .await
             .map_err(|_| WeChatExchangeError::Transport)?;
-        let (value, expires_in) = parse_access_token_response(status, body.as_ref())?;
+        let (value, expires_in) = parse_access_token_response(status, body.as_slice())?;
         *cache = Some(CachedAccessToken {
             value: value.clone(),
             refresh_after_unix: now + expires_in.saturating_sub(120).max(60),
@@ -303,7 +303,7 @@ fn parse_mini_program_code_response(
         return Err(WeChatExchangeError::Transport);
     }
     if body.starts_with(b"\x89PNG\r\n\x1a\n") || body.starts_with(&[0xff, 0xd8, 0xff]) {
-        if body.len() > 2 * 1_024 * 1_024 {
+        if body.len() > WECHAT_CODE_RESPONSE_LIMIT_BYTES {
             return Err(WeChatExchangeError::InvalidResponse);
         }
         return Ok(body.to_vec());

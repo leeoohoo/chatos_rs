@@ -84,6 +84,7 @@ impl LocalHookCoordinator {
             Self::execute_invocation_with(
                 Arc::clone(&self.runtime),
                 Arc::clone(&self.runner),
+                Arc::clone(&self.hook_execution_permits),
                 workspace_root.clone(),
                 &event,
                 bundle,
@@ -109,12 +110,14 @@ impl LocalHookCoordinator {
             }
             let runtime = Arc::clone(&self.runtime);
             let runner = Arc::clone(&self.runner);
+            let hook_execution_permits = Arc::clone(&self.hook_execution_permits);
             let workspace_root = workspace_root.clone();
             let event = event.clone();
             tokio::spawn(async move {
                 let _ = Self::execute_invocation_with(
                     runtime,
                     runner,
+                    hook_execution_permits,
                     workspace_root,
                     &event,
                     bundle,
@@ -174,6 +177,7 @@ impl LocalHookCoordinator {
     async fn execute_invocation_with(
         runtime: Arc<LocalAgentRuntime>,
         runner: Arc<dyn LocalHookRunner>,
+        hook_execution_permits: Arc<Semaphore>,
         workspace_root: Option<PathBuf>,
         event: &HookEvent,
         bundle: LocalPluginHookBundleRecord,
@@ -196,6 +200,10 @@ impl LocalHookCoordinator {
                 updated_input: protocol_output.updated_input,
             });
         }
+        let _permit = hook_execution_permits
+            .acquire_owned()
+            .await
+            .map_err(|_| "Hook execution limiter is closed".to_string())?;
         let result = runner
             .run(LocalHookInvocation {
                 bundle: bundle.spec.clone(),

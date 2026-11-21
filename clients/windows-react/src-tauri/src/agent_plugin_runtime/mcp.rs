@@ -39,6 +39,8 @@ pub(in crate::agent_plugin_runtime) use transport::McpConnection;
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 pub(super) struct McpSession {
+    pub(super) owner_user_id: String,
+    pub(super) run_id: String,
     pub(super) runtime_fingerprint: String,
     pub(super) definitions: Vec<ToolDefinition>,
     pub(super) skills_by_option: BTreeMap<String, AgentPluginSkillDocument>,
@@ -77,6 +79,8 @@ impl McpSession {
                 return Err(plugin_runtime_error());
             }
             return Ok(Self {
+                owner_user_id: context.owner_user_id.clone(),
+                run_id: context.run_id.clone(),
                 runtime_fingerprint,
                 definitions: Vec::new(),
                 skills_by_option,
@@ -183,6 +187,8 @@ impl McpSession {
             }
         };
         let session = Self {
+            owner_user_id: context.owner_user_id.clone(),
+            run_id: context.run_id.clone(),
             runtime_fingerprint: runtime_fingerprint.clone(),
             definitions: Vec::new(),
             skills_by_option: BTreeMap::new(),
@@ -220,6 +226,8 @@ impl McpSession {
         let tools = session.list_tools().await.map_err(|error| error.message)?;
         let definitions = decode_tool_definitions(context, &resolved, tools)?;
         Ok(Self {
+            owner_user_id: session.owner_user_id,
+            run_id: session.run_id,
             runtime_fingerprint,
             definitions,
             skills_by_option,

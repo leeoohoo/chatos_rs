@@ -1,3 +1,5 @@
+use super::*;
+
 #[async_trait]
 pub trait LocalAgentArtifactStore: Send + Sync {
     async fn create_artifact(

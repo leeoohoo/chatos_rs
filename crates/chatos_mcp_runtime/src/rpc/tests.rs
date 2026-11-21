@@ -262,6 +262,45 @@ fn tools_list_cache_returns_fresh_entries_and_drops_expired_entries() {
     assert!(cached_tools_list(key.as_str()).is_none());
 }
 
+#[test]
+fn tools_list_cache_pruning_drops_expired_entries_and_caps_size() {
+    let now = Instant::now();
+    let mut cache = (0..MCP_TOOLS_LIST_CACHE_MAX_ENTRIES)
+        .map(|index| {
+            (
+                format!("key-{index}"),
+                ToolsListCacheEntry {
+                    expires_at: now + Duration::from_secs(60 + index as u64),
+                    result: Ok(Vec::new()),
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    cache.insert(
+        "expired".into(),
+        ToolsListCacheEntry {
+            expires_at: now - Duration::from_secs(1),
+            result: Ok(Vec::new()),
+        },
+    );
+
+    prune_tools_list_cache(&mut cache, now, "incoming");
+
+    assert_eq!(cache.len(), MCP_TOOLS_LIST_CACHE_MAX_ENTRIES - 1);
+    assert!(!cache.contains_key("expired"));
+
+    cache.insert(
+        "replacement".into(),
+        ToolsListCacheEntry {
+            expires_at: now + Duration::from_secs(500),
+            result: Ok(Vec::new()),
+        },
+    );
+    prune_tools_list_cache(&mut cache, now, "incoming");
+    assert_eq!(cache.len(), MCP_TOOLS_LIST_CACHE_MAX_ENTRIES - 1);
+    assert!(!cache.contains_key("key-0"));
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn stdio_jsonrpc_reuses_session_for_same_config() {

@@ -1,3 +1,5 @@
+use super::*;
+
 #[async_trait]
 pub trait LocalConversationStore: Send + Sync {
     async fn create_conversation(

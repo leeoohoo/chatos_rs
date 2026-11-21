@@ -44,15 +44,5 @@ pub use memory_transcript::{
 mod task_store_port;
 pub use task_store_port::{LocalAgentTaskStore, LocalTaskListFilter};
 
-include!("store_ports/error.rs");
-include!("store_ports/run.rs");
-include!("store_ports/tool.rs");
-include!("store_ports/plugin.rs");
-include!("store_ports/hook.rs");
-include!("store_ports/snapshots.rs");
-include!("store_ports/conversation.rs");
-include!("store_ports/notepad.rs");
-include!("store_ports/remote_connection.rs");
-include!("store_ports/artifact.rs");
-include!("store_ports/requirement_survey.rs");
-include!("store_ports/aggregate.rs");
+mod store_ports;
+pub use store_ports::*;
