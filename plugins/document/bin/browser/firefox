@@ -9,10 +9,27 @@ if [ ! -x "$firefox_bin" ]; then
 fi
 mkdir -p "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles"
 render_profile=$(mktemp -d "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles/firefox.XXXXXXXX")
+screenshot=''
+for argument in "$@"; do
+  case "$argument" in
+    --screenshot=*) screenshot=${argument#--screenshot=} ;;
+  esac
+done
 cleanup() {
   /bin/rm -rf -- "$render_profile"
 }
 trap cleanup EXIT
 status=0
 "$firefox_bin" --new-instance "$@" --profile "$render_profile" || status=$?
+if [ "$status" -eq 0 ] && [ -n "$screenshot" ]; then
+  attempts=0
+  while [ ! -s "$screenshot" ] && [ "$attempts" -lt 300 ]; do
+    /bin/sleep 0.1
+    attempts=$((attempts + 1))
+  done
+  if [ ! -s "$screenshot" ]; then
+    echo 'Firefox did not finish the screenshot before its launcher exited.' >&2
+    status=1
+  fi
+fi
 exit "$status"
