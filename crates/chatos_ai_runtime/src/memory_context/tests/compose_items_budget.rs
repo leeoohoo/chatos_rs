@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use super::*;
+
 #[test]
 fn compose_response_to_input_items_keeps_oldest_output_and_rejects_later_overflow() {
     let tool_call_record = |record_id: &str, call_id: &str, created_at: &str| EngineRecord {

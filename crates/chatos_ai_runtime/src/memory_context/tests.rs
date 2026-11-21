@@ -147,6 +147,9 @@ async fn accept_record_sync(
     }))
 }
 
-include!("tests/record_and_composer.rs");
-include!("tests/compose_items_basic.rs");
-include!("tests/compose_items_budget.rs");
+#[path = "tests/compose_items_basic.rs"]
+mod compose_items_basic;
+#[path = "tests/compose_items_budget.rs"]
+mod compose_items_budget;
+#[path = "tests/record_and_composer.rs"]
+mod record_and_composer;

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use super::*;
+
 #[test]
 fn compose_response_to_input_items_rebuilds_tool_exchange_in_responses_shape() {
     let response = ComposeContextResponse {

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use super::*;
+
 #[test]
 fn memory_scope_builder_keeps_runtime_source_key() {
     let policy = ComposeContextPolicy {
@@ -50,7 +52,7 @@ fn memory_record_writer_resolves_multi_user_tenant_from_record_metadata() {
         "local_agent",
     )
     .expect("client");
-    let writer = super::MemoryEngineRecordWriter::from_client(
+    let writer = super::super::MemoryEngineRecordWriter::from_client(
         client,
         MemoryRecordScope::per_record_tenant("tenant_id"),
     )
@@ -101,7 +103,7 @@ async fn memory_record_writer_creates_each_thread_before_syncing_records() {
         "chatos",
     )
     .expect("client");
-    let writer = super::MemoryEngineRecordWriter::from_client(
+    let writer = super::super::MemoryEngineRecordWriter::from_client(
         client,
         MemoryRecordScope::per_record_tenant("tenant_id"),
     )
@@ -307,13 +309,13 @@ async fn composer_uses_fresh_cache_when_remote_is_temporarily_unavailable() {
 
 #[test]
 fn only_transient_memory_failures_are_degraded() {
-    assert!(super::is_transient_memory_error(
+    assert!(super::super::is_transient_memory_error(
         "stage=decode_json is_timeout=true is_connect=false"
     ));
-    assert!(super::is_transient_memory_error(
+    assert!(super::super::is_transient_memory_error(
         "status=503 Service Unavailable"
     ));
-    assert!(!super::is_transient_memory_error(
+    assert!(!super::super::is_transient_memory_error(
         "status=400 Bad Request detail=invalid scope"
     ));
 }

@@ -443,4 +443,5 @@ fn is_non_retryable_quota_error(message: &str) -> bool {
 }
 
 #[cfg(test)]
-include!("error_policy_inline_tests.rs");
+#[path = "error_policy_inline_tests.rs"]
+mod tests;
