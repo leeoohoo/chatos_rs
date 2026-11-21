@@ -1,6 +1,7 @@
 import XCTest
 @testable import ChatOSWorkerRuntime
 
+@MainActor
 final class ClientMachineResourceGovernorTests: XCTestCase {
     func testAgentAndBothFileKindsBorrowOneWeightedPoolWithoutExceedingIt() async throws {
         let governor = makeGovernor()
