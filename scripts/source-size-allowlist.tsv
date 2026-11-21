@@ -60,7 +60,6 @@ clients/local_agent_host/layers/infrastructure/database/src/schema.rs	887	2027-0
 clients/windows-react/src-tauri/src/remote_connection/mod.rs	886	2027-02-28	Split existing production responsibilities before expiry
 clients/windows-react/src-tauri/src/media_studio/video_provider.rs	885	2027-02-28	Split existing production responsibilities before expiry
 memory_engine/backend/src/services/memory_cloud_agent.rs	878	2027-02-28	Split existing production responsibilities before expiry
-clients/windows-react/src-tauri/src/story_studio/memory.rs	863	2027-02-28	Split existing production responsibilities before expiry
 memory_engine/backend/src/api/admin_api/reliability.rs	861	2027-02-28	Split existing production responsibilities before expiry
 clients/macos/Sources/ChatOSApp/Features/Pet/PetQuickChatView.swift	842	2027-02-28	Split existing production responsibilities before expiry
 clients/macos/Sources/ChatOSConnector/NativeAgentPluginToolProvider.swift	840	2027-02-28	Split existing production responsibilities before expiry
