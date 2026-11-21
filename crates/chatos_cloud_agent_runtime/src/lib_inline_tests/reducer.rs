@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use super::*;
+
 #[test]
 fn tool_batch_uses_a_stable_step_identity_and_one_outbox_command() {
     let transition = reduce_single_step(

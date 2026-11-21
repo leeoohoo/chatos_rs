@@ -71,4 +71,5 @@ impl CloudAgentClaim {
 }
 
 #[cfg(test)]
-include!("lib_inline_tests.rs");
+#[path = "lib_inline_tests.rs"]
+mod tests;

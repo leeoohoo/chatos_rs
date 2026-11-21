@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use super::fixtures::*;
+use super::*;
+
 #[tokio::test]
 async fn owner_step_error_is_committed_as_terminal_failure() {
     #[derive(Clone)]
