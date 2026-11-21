@@ -11,10 +11,13 @@ pub mod rpc;
 pub mod schema;
 pub mod stdio_policy;
 pub mod text;
+mod text_budget;
 pub mod tool_call;
 pub mod types;
 
-pub use arguments::{parse_json_loose, parse_json_tool_args, parse_tool_args};
+pub use arguments::{
+    inject_agent_builder_args, parse_json_loose, parse_json_tool_args, parse_tool_args,
+};
 pub use builtin_catalog::{
     builtin_kind_by_any, builtin_kind_by_command, builtin_kind_by_config_id,
     builtin_kind_by_kind_name, builtin_kind_by_server_name, BuiltinMcpKind, AGENT_BUILDER_COMMAND,
@@ -44,8 +47,8 @@ pub use stdio_policy::{
     StdioPolicyViolation,
 };
 pub use text::{
-    capability_description_budget_error, inject_agent_builder_args, structured_result_payload,
-    to_text_and_structured_result, to_text_and_structured_result_with_transient,
+    capability_description_budget_error, structured_result_payload, to_text_and_structured_result,
+    to_text_and_structured_result_with_transient,
     to_text_and_structured_result_with_transient_limit,
 };
 pub use types::{

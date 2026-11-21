@@ -36,6 +36,24 @@ pub fn parse_json_tool_args(args: Value) -> Result<Value, serde_json::Error> {
     }
 }
 
+pub fn inject_agent_builder_args(args: Value, caller_model: Option<&str>) -> Value {
+    let Some(model_name) = caller_model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return args;
+    };
+    let mut object = match args {
+        Value::Object(object) => object,
+        Value::Null => serde_json::Map::new(),
+        _ => return args,
+    };
+    object
+        .entry("caller_model".to_string())
+        .or_insert_with(|| Value::String(model_name.to_string()));
+    Value::Object(object)
+}
+
 fn parse_tool_args_from_str(raw: &str) -> Result<Value, serde_json::Error> {
     if let Ok(value) = serde_json::from_str::<Value>(raw) {
         return parse_nested_json_string_value(value);
@@ -179,7 +197,9 @@ fn remove_trailing_commas(raw: &str) -> String {
 mod tests {
     use serde_json::{json, Value};
 
-    use super::{parse_json_loose, parse_json_tool_args, parse_tool_args};
+    use super::{
+        inject_agent_builder_args, parse_json_loose, parse_json_tool_args, parse_tool_args,
+    };
 
     #[test]
     fn loose_parser_extracts_fenced_and_embedded_json_without_repairing() {
@@ -219,5 +239,21 @@ mod tests {
     fn strict_parser_rejects_repaired_json_forms() {
         assert!(parse_json_tool_args(Value::String("```json\n{}\n```".to_string())).is_err());
         assert!(parse_json_tool_args(Value::String("{\"value\":1,}".to_string())).is_err());
+    }
+
+    #[test]
+    fn agent_builder_injects_only_a_missing_model_on_object_inputs() {
+        assert_eq!(
+            inject_agent_builder_args(json!({"task":"demo"}), Some(" gpt-test ")),
+            json!({"task":"demo", "caller_model":"gpt-test"})
+        );
+        assert_eq!(
+            inject_agent_builder_args(json!({"caller_model":"fixed"}), Some("other")),
+            json!({"caller_model":"fixed"})
+        );
+        assert_eq!(
+            inject_agent_builder_args(json!("raw"), Some("model")),
+            json!("raw")
+        );
     }
 }
