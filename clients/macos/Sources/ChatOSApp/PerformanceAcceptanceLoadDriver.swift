@@ -57,7 +57,7 @@ final class PerformanceAcceptanceLoadDriver {
             )
         )
         self.plugin = plugin
-        task = Task.detached(priority: .utility) {
+        task = Task(priority: .utility) {
             await Self.run(configuration: configuration, plugin: plugin)
         }
     }
