@@ -7,8 +7,8 @@ use std::fmt;
 use semver::{Version, VersionReq};
 
 use super::components::{
-    component_key_from_path, PluginMcpServer, PluginPathRef, PluginRuntimeContextScope,
-    PluginRuntimeContextStorageIsolation, PLUGIN_AGENT_MAX_ITERATIONS,
+    component_key_from_path, PluginMcpServer, PluginPathRef, PluginRuntimeContext,
+    PluginRuntimeContextScope, PluginRuntimeContextStorageIsolation, PLUGIN_AGENT_MAX_ITERATIONS,
     PLUGIN_COMMAND_MAX_ALLOWED_TOOLS, PLUGIN_COMMAND_MAX_TOOL_NAME_BYTES,
     PLUGIN_RUNTIME_CONTEXT_FIELD_PROJECT_ID, PLUGIN_RUNTIME_CONTEXT_FIELD_WORKSPACE_ID,
     PLUGIN_RUNTIME_CONTEXT_FIELD_WORKSPACE_ROOT, PLUGIN_RUNTIME_CONTEXT_MAX_COMPONENTS,
@@ -54,212 +54,15 @@ pub fn validate_plugin_manifest(
 ) -> Result<(), PluginManifestValidationError> {
     let mut issues = Vec::new();
 
-    if manifest.schema_version != PLUGIN_MANIFEST_SCHEMA_VERSION {
-        issue(
-            &mut issues,
-            "schemaVersion",
-            format!(
-                "unsupported schema version {}; expected {}",
-                manifest.schema_version, PLUGIN_MANIFEST_SCHEMA_VERSION
-            ),
-        );
-    }
-    validate_plugin_name(manifest.name.as_str(), &mut issues);
-    if Version::parse(manifest.version.as_str()).is_err() {
-        issue(&mut issues, "version", "version must use strict semver");
-    }
-    required_text(&mut issues, "description", manifest.description.as_str());
-    required_text(&mut issues, "author.name", manifest.author.name.as_str());
-    validate_optional_email(manifest.author.email.as_deref(), &mut issues);
-    validate_optional_https_url("author.url", manifest.author.url.as_deref(), &mut issues);
-    validate_optional_https_url("homepage", manifest.homepage.as_deref(), &mut issues);
-    validate_optional_https_url("repository", manifest.repository.as_deref(), &mut issues);
-
-    required_text(
-        &mut issues,
-        "interface.displayName",
-        manifest.interface.display_name.as_str(),
-    );
-    required_text(
-        &mut issues,
-        "interface.shortDescription",
-        manifest.interface.short_description.as_str(),
-    );
-    required_text(
-        &mut issues,
-        "interface.longDescription",
-        manifest.interface.long_description.as_str(),
-    );
-    required_text(
-        &mut issues,
-        "interface.developerName",
-        manifest.interface.developer_name.as_str(),
-    );
-    required_text(
-        &mut issues,
-        "interface.category",
-        manifest.interface.category.as_str(),
-    );
-    validate_optional_https_url(
-        "interface.websiteURL",
-        manifest.interface.website_url.as_deref(),
-        &mut issues,
-    );
-    validate_optional_https_url(
-        "interface.privacyPolicyURL",
-        manifest.interface.privacy_policy_url.as_deref(),
-        &mut issues,
-    );
-    validate_optional_https_url(
-        "interface.termsOfServiceURL",
-        manifest.interface.terms_of_service_url.as_deref(),
-        &mut issues,
-    );
-    validate_brand_color(manifest.interface.brand_color.as_deref(), &mut issues);
-    validate_interface_assets(manifest, &mut issues);
-
+    validate_manifest_metadata(manifest, &mut issues);
     let mut component_keys = HashSet::new();
-    for (index, path) in manifest.skills.iter().enumerate() {
-        validate_path(format!("skills[{index}]"), path, &mut issues);
-        let key = component_key_from_path(path.path.as_str(), "skills", index);
-        validate_component_key(
-            format!("skills[{index}].component_key"),
-            key.as_str(),
-            &mut component_keys,
-            &mut issues,
-        );
-    }
-
-    for (index, server) in manifest.mcp_servers.iter().enumerate() {
-        validate_component_key(
-            format!("mcpServers[{index}].component_key"),
-            server.component_key(),
-            &mut component_keys,
-            &mut issues,
-        );
-        match server {
-            PluginMcpServer::Stdio { bin, args, env, .. } => {
-                validate_npm_bin(index, bin, args, &mut issues);
-                validate_stdio_environment(index, env, &mut issues);
-            }
-            PluginMcpServer::Http { url, .. } => {
-                validate_mcp_http_url(format!("mcpServers[{index}].url"), url, &mut issues)
-            }
-        }
-    }
-
-    for (index, app) in manifest.apps.iter().enumerate() {
-        validate_component_key(
-            format!("apps[{index}].component_key"),
-            app.component_key.as_str(),
-            &mut component_keys,
-            &mut issues,
-        );
-        validate_path(
-            format!("apps[{index}].manifest"),
-            &app.manifest,
-            &mut issues,
-        );
-    }
-    for (index, command) in manifest.commands.iter().enumerate() {
-        validate_component_key(
-            format!("commands[{index}].component_key"),
-            command.component_key.as_str(),
-            &mut component_keys,
-            &mut issues,
-        );
-        validate_path(
-            format!("commands[{index}].source"),
-            &command.source,
-            &mut issues,
-        );
-        validate_optional_max_bytes(
-            format!("commands[{index}].description").as_str(),
-            command.description.as_deref(),
-            4096,
-            "description",
-            &mut issues,
-        );
-        validate_optional_max_bytes(
-            format!("commands[{index}].argument_hint").as_str(),
-            command.argument_hint.as_deref(),
-            1024,
-            "argument hint",
-            &mut issues,
-        );
-        if let Some(target_agent) = command.target_agent.as_deref() {
-            if target_agent != SystemAgentKey::LocalAgentExecutionAgent.as_str() {
-                issue(
-                    &mut issues,
-                    format!("commands[{index}].target_agent").as_str(),
-                    "target agent must be the execution system agent",
-                );
-            }
-        }
-        validate_allowed_tools(
-            format!("commands[{index}].allowed_tools").as_str(),
-            &command.allowed_tools,
-            &mut issues,
-        );
-    }
-    for (index, agent) in manifest.agents.iter().enumerate() {
-        validate_component_key(
-            format!("agents[{index}].component_key"),
-            agent.component_key.as_str(),
-            &mut component_keys,
-            &mut issues,
-        );
-        validate_path(
-            format!("agents[{index}].source"),
-            &agent.source,
-            &mut issues,
-        );
-        validate_optional_max_bytes(
-            format!("agents[{index}].description").as_str(),
-            agent.description.as_deref(),
-            4096,
-            "description",
-            &mut issues,
-        );
-        if agent.base_agent != SystemAgentKey::LocalAgentExecutionAgent.as_str() {
-            issue(
-                &mut issues,
-                format!("agents[{index}].base_agent").as_str(),
-                "base agent must be the execution system agent",
-            );
-        }
-        validate_allowed_tools(
-            format!("agents[{index}].allowed_tools").as_str(),
-            &agent.allowed_tools,
-            &mut issues,
-        );
-        if !(1..=PLUGIN_AGENT_MAX_ITERATIONS).contains(&agent.max_iterations) {
-            issue(
-                &mut issues,
-                format!("agents[{index}].max_iterations").as_str(),
-                format!("max iterations must be between 1 and {PLUGIN_AGENT_MAX_ITERATIONS}"),
-            );
-        }
-    }
-    for (index, hook) in manifest.hooks.iter().enumerate() {
-        validate_component_key(
-            format!("hooks[{index}].component_key"),
-            hook.component_key.as_str(),
-            &mut component_keys,
-            &mut issues,
-        );
-        validate_path(format!("hooks[{index}].source"), &hook.source, &mut issues);
-    }
-    for (index, ui) in manifest.ui.iter().enumerate() {
-        validate_component_key(
-            format!("ui[{index}].component_key"),
-            ui.component_key.as_str(),
-            &mut component_keys,
-            &mut issues,
-        );
-        validate_path(format!("ui[{index}].source"), &ui.source, &mut issues);
-        validate_ui_contribution(index, ui, &mut issues);
-    }
+    validate_skills(manifest, &mut component_keys, &mut issues);
+    validate_mcp_servers(manifest, &mut component_keys, &mut issues);
+    validate_apps(manifest, &mut component_keys, &mut issues);
+    validate_commands(manifest, &mut component_keys, &mut issues);
+    validate_agents(manifest, &mut component_keys, &mut issues);
+    validate_hooks(manifest, &mut component_keys, &mut issues);
+    validate_ui(manifest, &mut component_keys, &mut issues);
 
     validate_dependencies(manifest, &mut issues);
     validate_permissions(manifest, &component_keys, &mut issues);
@@ -289,6 +92,251 @@ pub fn validate_plugin_manifest(
     }
 }
 
+fn validate_manifest_metadata(
+    manifest: &PluginManifest,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    if manifest.schema_version != PLUGIN_MANIFEST_SCHEMA_VERSION {
+        issue(
+            issues,
+            "schemaVersion",
+            format!(
+                "unsupported schema version {}; expected {}",
+                manifest.schema_version, PLUGIN_MANIFEST_SCHEMA_VERSION
+            ),
+        );
+    }
+    validate_plugin_name(manifest.name.as_str(), issues);
+    if Version::parse(manifest.version.as_str()).is_err() {
+        issue(issues, "version", "version must use strict semver");
+    }
+    required_text(issues, "description", manifest.description.as_str());
+    required_text(issues, "author.name", manifest.author.name.as_str());
+    validate_optional_email(manifest.author.email.as_deref(), issues);
+    validate_optional_https_url("author.url", manifest.author.url.as_deref(), issues);
+    validate_optional_https_url("homepage", manifest.homepage.as_deref(), issues);
+    validate_optional_https_url("repository", manifest.repository.as_deref(), issues);
+
+    required_text(
+        issues,
+        "interface.displayName",
+        manifest.interface.display_name.as_str(),
+    );
+    required_text(
+        issues,
+        "interface.shortDescription",
+        manifest.interface.short_description.as_str(),
+    );
+    required_text(
+        issues,
+        "interface.longDescription",
+        manifest.interface.long_description.as_str(),
+    );
+    required_text(
+        issues,
+        "interface.developerName",
+        manifest.interface.developer_name.as_str(),
+    );
+    required_text(
+        issues,
+        "interface.category",
+        manifest.interface.category.as_str(),
+    );
+    validate_optional_https_url(
+        "interface.websiteURL",
+        manifest.interface.website_url.as_deref(),
+        issues,
+    );
+    validate_optional_https_url(
+        "interface.privacyPolicyURL",
+        manifest.interface.privacy_policy_url.as_deref(),
+        issues,
+    );
+    validate_optional_https_url(
+        "interface.termsOfServiceURL",
+        manifest.interface.terms_of_service_url.as_deref(),
+        issues,
+    );
+    validate_brand_color(manifest.interface.brand_color.as_deref(), issues);
+    validate_interface_assets(manifest, issues);
+}
+
+fn validate_skills(
+    manifest: &PluginManifest,
+    component_keys: &mut HashSet<String>,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    for (index, path) in manifest.skills.iter().enumerate() {
+        validate_path(format!("skills[{index}]"), path, issues);
+        let key = component_key_from_path(path.path.as_str(), "skills", index);
+        validate_component_key(
+            format!("skills[{index}].component_key"),
+            key.as_str(),
+            component_keys,
+            issues,
+        );
+    }
+}
+
+fn validate_mcp_servers(
+    manifest: &PluginManifest,
+    component_keys: &mut HashSet<String>,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    for (index, server) in manifest.mcp_servers.iter().enumerate() {
+        validate_component_key(
+            format!("mcpServers[{index}].component_key"),
+            server.component_key(),
+            component_keys,
+            issues,
+        );
+        match server {
+            PluginMcpServer::Stdio { bin, args, env, .. } => {
+                validate_npm_bin(index, bin, args, issues);
+                validate_stdio_environment(index, env, issues);
+            }
+            PluginMcpServer::Http { url, .. } => {
+                validate_mcp_http_url(format!("mcpServers[{index}].url"), url, issues)
+            }
+        }
+    }
+}
+
+fn validate_apps(
+    manifest: &PluginManifest,
+    component_keys: &mut HashSet<String>,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    for (index, app) in manifest.apps.iter().enumerate() {
+        validate_component_key(
+            format!("apps[{index}].component_key"),
+            app.component_key.as_str(),
+            component_keys,
+            issues,
+        );
+        validate_path(format!("apps[{index}].manifest"), &app.manifest, issues);
+    }
+}
+
+fn validate_commands(
+    manifest: &PluginManifest,
+    component_keys: &mut HashSet<String>,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    for (index, command) in manifest.commands.iter().enumerate() {
+        validate_component_key(
+            format!("commands[{index}].component_key"),
+            command.component_key.as_str(),
+            component_keys,
+            issues,
+        );
+        validate_path(format!("commands[{index}].source"), &command.source, issues);
+        validate_optional_max_bytes(
+            format!("commands[{index}].description").as_str(),
+            command.description.as_deref(),
+            4096,
+            "description",
+            issues,
+        );
+        validate_optional_max_bytes(
+            format!("commands[{index}].argument_hint").as_str(),
+            command.argument_hint.as_deref(),
+            1024,
+            "argument hint",
+            issues,
+        );
+        if let Some(target_agent) = command.target_agent.as_deref() {
+            if target_agent != SystemAgentKey::LocalAgentExecutionAgent.as_str() {
+                issue(
+                    issues,
+                    format!("commands[{index}].target_agent").as_str(),
+                    "target agent must be the execution system agent",
+                );
+            }
+        }
+        validate_allowed_tools(
+            format!("commands[{index}].allowed_tools").as_str(),
+            &command.allowed_tools,
+            issues,
+        );
+    }
+}
+
+fn validate_agents(
+    manifest: &PluginManifest,
+    component_keys: &mut HashSet<String>,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    for (index, agent) in manifest.agents.iter().enumerate() {
+        validate_component_key(
+            format!("agents[{index}].component_key"),
+            agent.component_key.as_str(),
+            component_keys,
+            issues,
+        );
+        validate_path(format!("agents[{index}].source"), &agent.source, issues);
+        validate_optional_max_bytes(
+            format!("agents[{index}].description").as_str(),
+            agent.description.as_deref(),
+            4096,
+            "description",
+            issues,
+        );
+        if agent.base_agent != SystemAgentKey::LocalAgentExecutionAgent.as_str() {
+            issue(
+                issues,
+                format!("agents[{index}].base_agent").as_str(),
+                "base agent must be the execution system agent",
+            );
+        }
+        validate_allowed_tools(
+            format!("agents[{index}].allowed_tools").as_str(),
+            &agent.allowed_tools,
+            issues,
+        );
+        if !(1..=PLUGIN_AGENT_MAX_ITERATIONS).contains(&agent.max_iterations) {
+            issue(
+                issues,
+                format!("agents[{index}].max_iterations").as_str(),
+                format!("max iterations must be between 1 and {PLUGIN_AGENT_MAX_ITERATIONS}"),
+            );
+        }
+    }
+}
+
+fn validate_hooks(
+    manifest: &PluginManifest,
+    component_keys: &mut HashSet<String>,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    for (index, hook) in manifest.hooks.iter().enumerate() {
+        validate_component_key(
+            format!("hooks[{index}].component_key"),
+            hook.component_key.as_str(),
+            component_keys,
+            issues,
+        );
+        validate_path(format!("hooks[{index}].source"), &hook.source, issues);
+    }
+}
+
+fn validate_ui(
+    manifest: &PluginManifest,
+    component_keys: &mut HashSet<String>,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    for (index, ui) in manifest.ui.iter().enumerate() {
+        validate_component_key(
+            format!("ui[{index}].component_key"),
+            ui.component_key.as_str(),
+            component_keys,
+            issues,
+        );
+        validate_path(format!("ui[{index}].source"), &ui.source, issues);
+        validate_ui_contribution(index, ui, issues);
+    }
+}
+
 fn validate_runtime_context(
     manifest: &PluginManifest,
     component_keys: &HashSet<String>,
@@ -297,36 +345,7 @@ fn validate_runtime_context(
     let Some(context) = manifest.runtime_context.as_ref() else {
         return;
     };
-    if context.components.is_empty() {
-        issue(
-            issues,
-            "runtimeContext.components",
-            "at least one component is required",
-        );
-    }
-    if context.components.len() > PLUGIN_RUNTIME_CONTEXT_MAX_COMPONENTS {
-        issue(
-            issues,
-            "runtimeContext.components",
-            format!("at most {PLUGIN_RUNTIME_CONTEXT_MAX_COMPONENTS} components are allowed"),
-        );
-    }
-    let mut seen_components = HashSet::new();
-    for (index, component) in context.components.iter().enumerate() {
-        if !component_keys.contains(component) {
-            issue(
-                issues,
-                format!("runtimeContext.components[{index}]").as_str(),
-                "component is not declared by this plugin",
-            );
-        } else if !seen_components.insert(component.as_str()) {
-            issue(
-                issues,
-                format!("runtimeContext.components[{index}]").as_str(),
-                "duplicate component",
-            );
-        }
-    }
+    validate_runtime_context_components(context, component_keys, issues);
 
     let allowed_fields = [
         PLUGIN_RUNTIME_CONTEXT_FIELD_PROJECT_ID,
@@ -399,6 +418,43 @@ fn validate_runtime_context(
             "runtimeContext.storageIsolation",
             "workspace storage isolation requires workspace or project scope",
         );
+    }
+}
+
+fn validate_runtime_context_components(
+    context: &PluginRuntimeContext,
+    component_keys: &HashSet<String>,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    if context.components.is_empty() {
+        issue(
+            issues,
+            "runtimeContext.components",
+            "at least one component is required",
+        );
+    }
+    if context.components.len() > PLUGIN_RUNTIME_CONTEXT_MAX_COMPONENTS {
+        issue(
+            issues,
+            "runtimeContext.components",
+            format!("at most {PLUGIN_RUNTIME_CONTEXT_MAX_COMPONENTS} components are allowed"),
+        );
+    }
+    let mut seen_components = HashSet::new();
+    for (index, component) in context.components.iter().enumerate() {
+        if !component_keys.contains(component) {
+            issue(
+                issues,
+                format!("runtimeContext.components[{index}]").as_str(),
+                "component is not declared by this plugin",
+            );
+        } else if !seen_components.insert(component.as_str()) {
+            issue(
+                issues,
+                format!("runtimeContext.components[{index}]").as_str(),
+                "duplicate component",
+            );
+        }
     }
 }
 

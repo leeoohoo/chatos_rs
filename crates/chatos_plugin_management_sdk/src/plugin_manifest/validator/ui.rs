@@ -61,6 +61,16 @@ pub(super) fn validate_ui_contribution(
     if let Some(runtime) = &ui.runtime {
         validate_ui_runtime(index, ui.surface.as_deref(), runtime, issues);
     }
+    validate_ui_assets(index, ui, issues);
+    validate_bridge_capabilities(index, ui, issues);
+    validate_artifact_mime_types(index, ui, issues);
+}
+
+fn validate_ui_assets(
+    index: usize,
+    ui: &PluginUiContribution,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
     if ui.assets.len() > PLUGIN_UI_MAX_ASSETS {
         issue(
             issues,
@@ -106,6 +116,13 @@ pub(super) fn validate_ui_contribution(
             );
         }
     }
+}
+
+fn validate_bridge_capabilities(
+    index: usize,
+    ui: &PluginUiContribution,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
     if ui.bridge_capabilities.len() > PLUGIN_UI_MAX_BRIDGE_CAPABILITIES {
         issue(
             issues,
@@ -139,6 +156,13 @@ pub(super) fn validate_ui_contribution(
             );
         }
     }
+}
+
+fn validate_artifact_mime_types(
+    index: usize,
+    ui: &PluginUiContribution,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
     if ui.artifact_mime_types.len() > PLUGIN_UI_MAX_ARTIFACT_MIME_TYPES {
         issue(
             issues,
