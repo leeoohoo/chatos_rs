@@ -683,16 +683,16 @@ extension NativePluginRuntimeTests {
         #expect(sandboxProfile.contains("com[.]google[.]Chrome"))
         let browserServices = ["com.apple.lsd.mapdb", "com.apple.hiservices-xpcservice", "com.apple.runningboard",
                                "com.apple.tccd.system", "(global-name-prefix \"org.chromium.\")",
-                               "(local-name-prefix \"\")", "apple.shm.notification_center"]
+                               "(local-name-prefix \"\")", "apple.shm.notification_center", "code_sign_clone"]
         #expect(browserServices.allSatisfy { sandboxProfile.contains($0) })
         #expect(!sandboxProfile.contains("(global-name \"com.apple.tccd\")") && !sandboxProfile.contains("com.apple.replayd"))
-        let temporaryRoot = NativePluginSandboxProfile.canonicalPath(
-            FileManager.default.temporaryDirectory.path
-        )
+        let temporaryRoot = NativePluginSandboxProfile.canonicalPath(try #require(
+            NativePluginSandboxProfile.darwinUserDirectory(_CS_DARWIN_USER_TEMP_DIR)
+        ))
         let escapedTemporaryRoot = NSRegularExpression.escapedPattern(for: temporaryRoot)
             .replacingOccurrences(of: "\"", with: "\\\"")
         #expect(sandboxProfile.contains(
-            "^\(escapedTemporaryRoot)/(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.]Edge)"
+            "^\(escapedTemporaryRoot)/[.]?(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.](Edge|edgemac))"
         ))
         #expect(!sandboxProfile.contains("(subpath \"\(temporaryRoot)\")"))
     }

@@ -236,6 +236,14 @@ jobs:
       - name: Render an unpacked Document package inside the Native sandbox
         run: bash clients/evals/native-document-sandbox-smoke.sh
 
+      - name: Report Document sandbox denials
+        if: failure()
+        shell: bash
+        run: |
+          /usr/bin/log show --last 5m --style compact \
+            --predicate 'eventMessage CONTAINS[c] "Sandbox:" AND (eventMessage CONTAINS[c] "Chrome" OR eventMessage CONTAINS[c] "Edge" OR eventMessage CONTAINS[c] "Firefox")' \
+            | tail -n 400
+
   windows-react-client:
     name: Windows React client
     runs-on: windows-latest

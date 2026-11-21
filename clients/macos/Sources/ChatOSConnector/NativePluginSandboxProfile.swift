@@ -287,10 +287,20 @@ enum NativePluginSandboxProfile {
             // never matches Chromium's ProcessSingleton directory and Chrome
             // exits with code 21 before DevTools starts.
             let temporaryRoot = Self.canonicalPath(
-                FileManager.default.temporaryDirectory.path
+                Self.darwinUserDirectory(_CS_DARWIN_USER_TEMP_DIR)
+                    ?? FileManager.default.temporaryDirectory.path
             )
             let browserTemporaryPath = Self.regexLiteral(temporaryRoot)
-            rules.append("(allow file-read* file-write* (regex #\"^\(browserTemporaryPath)/(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.]Edge)[.][^/]+(/.*)?$\"))")
+            rules.append("(allow file-read* file-write* (regex #\"^\(browserTemporaryPath)/[.]?(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.](Edge|edgemac))[.][^/]+(/.*)?$\"))")
+            if let userDirectory = Self.darwinUserDirectory(_CS_DARWIN_USER_DIR) {
+                let codeSignCloneRoot = URL(fileURLWithPath: userDirectory, isDirectory: true)
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("X", isDirectory: true).path
+                let browserCodeSignPath = Self.regexLiteral(
+                    Self.canonicalPath(codeSignCloneRoot)
+                )
+                rules.append("(allow file-read* file-write* (regex #\"^\(browserCodeSignPath)/(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.](Edge|edgemac))[.]code_sign_clone(/.*)?$\"))")
+            }
             rules.append("(allow network* (local unix-socket))")
             // The host Seatbelt profile remains the security boundary. Chromium's
             // nested sandbox cannot initialize inside it, so allow only the macOS
@@ -366,7 +376,7 @@ enum NativePluginSandboxProfile {
             // Swift writes imported SDK modules below the Darwin per-user cache
             // while compiling REA's ownership helper. Scope the exception to the
             // compiler's ModuleCache instead of exposing the full cache root.
-            if let cacheRoot = Self.darwinUserCacheDirectory() {
+            if let cacheRoot = Self.darwinUserDirectory(_CS_DARWIN_USER_CACHE_DIR) {
                 let moduleCache = URL(fileURLWithPath: cacheRoot, isDirectory: true)
                     .appendingPathComponent("clang", isDirectory: true)
                     .appendingPathComponent("ModuleCache", isDirectory: true)
@@ -400,11 +410,11 @@ enum NativePluginSandboxProfile {
         }
     }
 
-    private static func darwinUserCacheDirectory() -> String? {
-        let requiredLength = confstr(_CS_DARWIN_USER_CACHE_DIR, nil, 0)
+    static func darwinUserDirectory(_ key: Int32) -> String? {
+        let requiredLength = confstr(key, nil, 0)
         guard requiredLength > 0 else { return nil }
         var buffer = [CChar](repeating: 0, count: requiredLength)
-        guard confstr(_CS_DARWIN_USER_CACHE_DIR, &buffer, requiredLength) > 0 else {
+        guard confstr(key, &buffer, requiredLength) > 0 else {
             return nil
         }
         return String(

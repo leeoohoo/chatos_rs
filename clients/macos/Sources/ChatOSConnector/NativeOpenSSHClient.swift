@@ -637,7 +637,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
           name=${item##*/}; token=${name#.chatos-upload-}; token=${token%.tmp}; \
           [ ${#token} -eq 36 ] || continue; \
           case "$token" in ????????-????-????-????-????????????) ;; *) continue ;; esac; \
-          case "$token" in *[!0-9a-f-]*) continue ;; esac; \
+          case "$token" in *[!0123456789abcdef-]*) continue ;; esac; \
           links=$(stat -c '%h' -- "$item" 2>/dev/null || stat -f '%l' "$item" 2>/dev/null) || continue; \
           owner=$(stat -c '%u' -- "$item" 2>/dev/null || stat -f '%u' "$item" 2>/dev/null) || continue; \
           modified=$(stat -c '%Y' -- "$item" 2>/dev/null || stat -f '%m' "$item" 2>/dev/null) || continue; \
