@@ -18,24 +18,39 @@ for argument in "$@"; do
   esac
 done
 cleanup() {
+  if [ -n "${firefox_pid:-}" ] && kill -0 "$firefox_pid" 2>/dev/null; then
+    kill -TERM "$firefox_pid" 2>/dev/null || true
+    wait "$firefox_pid" 2>/dev/null || true
+  fi
   /bin/rm -rf -- "$render_profile"
 }
 trap cleanup EXIT
-status=0
+firefox_pid=''
 CFFIXED_USER_HOME="$firefox_app_data" \
 MOZ_APP_DATA="$firefox_app_data" \
 MOZ_LOCAL_APP_DATA="$firefox_app_data" \
 MOZ_HEADLESS=1 \
-  "$firefox_bin" --new-instance --profile "$render_profile" "$@" || status=$?
-if [ "$status" -eq 0 ] && [ -n "$screenshot" ]; then
-  attempts=0
-  while [ ! -s "$screenshot" ] && [ "$attempts" -lt 300 ]; do
-    /bin/sleep 0.1
-    attempts=$((attempts + 1))
-  done
-  if [ ! -s "$screenshot" ]; then
-    echo 'Firefox did not finish the screenshot before its launcher exited.' >&2
-    status=1
-  fi
+  "$firefox_bin" --new-instance --profile "$render_profile" "$@" &
+firefox_pid=$!
+
+attempts=0
+while [ -n "$screenshot" ] && [ ! -s "$screenshot" ] \
+    && kill -0 "$firefox_pid" 2>/dev/null && [ "$attempts" -lt 300 ]; do
+  /bin/sleep 0.1
+  attempts=$((attempts + 1))
+done
+if [ -n "$screenshot" ] && [ -s "$screenshot" ]; then
+  /bin/sleep 1
+  exit 0
 fi
+if kill -0 "$firefox_pid" 2>/dev/null; then
+  echo 'Firefox did not finish the screenshot within 30 seconds.' >&2
+  exit 1
+fi
+if wait "$firefox_pid"; then
+  status=0
+else
+  status=$?
+fi
+firefox_pid=''
 exit "$status"
