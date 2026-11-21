@@ -76,7 +76,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
                 memorySourceID: "test-local-agent",
                 maximumConcurrentWorkItems: 4
             ),
-            pressureRecoveryDelay: .milliseconds(100)
+            pressureRecoveryDelay: .milliseconds(500)
         )
 
         do {
@@ -95,7 +95,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             XCTAssertEqual(resources.effectiveMaximumConcurrentWorkItems, 1)
             XCTAssertEqual(resources.pressureLevel, .critical)
 
-            try await Task.sleep(for: .milliseconds(120))
+            try await Task.sleep(for: .milliseconds(600))
             observed = await lifecycle.resourceSnapshot()
             resources = try XCTUnwrap(observed)
             XCTAssertEqual(resources.effectiveMaximumConcurrentWorkItems, 4)
