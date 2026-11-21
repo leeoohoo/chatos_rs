@@ -1,3 +1,7 @@
+use super::*;
+
+mod execution;
+
 #[derive(Clone)]
 pub struct LocalTaskProcessToolExecutor {
     runtime: Arc<LocalAgentRuntime>,
@@ -102,18 +106,18 @@ fn default_service_scheme() -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ServiceAllocation {
-    port: u16,
+pub(super) struct ServiceAllocation {
+    pub(super) port: u16,
     scheme: String,
 }
 
 #[derive(Default)]
-struct RunServicePortRegistry {
+pub(super) struct RunServicePortRegistry {
     allocations: BTreeMap<(String, String), ServiceAllocation>,
 }
 
 impl RunServicePortRegistry {
-    fn allocate(
+    pub(super) fn allocate(
         &mut self,
         run_id: &str,
         service_name: &str,
@@ -141,7 +145,11 @@ impl RunServicePortRegistry {
         Ok(allocation)
     }
 
-    fn release(&mut self, run_id: &str, service_name: &str) -> Option<ServiceAllocation> {
+    pub(super) fn release(
+        &mut self,
+        run_id: &str,
+        service_name: &str,
+    ) -> Option<ServiceAllocation> {
         self.allocations
             .remove(&(run_id.to_string(), service_name.to_string()))
     }

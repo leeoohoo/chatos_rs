@@ -28,9 +28,13 @@ pub const TASK_PROCESS_TOOL_NAMES: [&str; 3] = [
 const PROCESS_ENTRY_MAX_CHARS: usize = 16_000;
 const OUTCOME_REASON_MAX_CHARS: usize = 2_000;
 
-include!("task_process_tools/model_tools.rs");
-include!("task_process_tools/service_registry.rs");
-include!("task_process_tools/execution.rs");
+mod model_tools;
+mod service_registry;
+
+pub use model_tools::{task_process_model_tools, task_process_prompt_item};
+pub use service_registry::LocalTaskProcessToolExecutor;
+#[cfg(test)]
+use service_registry::RunServicePortRegistry;
 
 #[cfg(test)]
 mod tests;
