@@ -678,14 +678,14 @@ extension NativePluginRuntimeTests {
         #expect(launch.managedBrowserAccess)
         let sandboxProfile = try #require(process.arguments.dropFirst(2).first)
         #expect(sandboxProfile.contains("com.apple.FSEvents"))
-        #expect(sandboxProfile.contains(dataDirectory + ".lock"))
-        #expect(sandboxProfile.contains(cacheDirectory + ".lock"))
-        #expect(sandboxProfile.contains("(allow iokit-open)"))
-        #expect(sandboxProfile.contains("(allow network* (local unix-socket))"))
-        #expect(sandboxProfile.contains("MachPortRendezvousServer"))
+        #expect(sandboxProfile.contains(dataDirectory + ".lock") && sandboxProfile.contains(cacheDirectory + ".lock"))
+        #expect(sandboxProfile.contains("(allow iokit-open)") && sandboxProfile.contains("(allow network* (local unix-socket))"))
         #expect(sandboxProfile.contains("com[.]google[.]Chrome"))
-        #expect(!sandboxProfile.contains("com.apple.tccd"))
-        #expect(!sandboxProfile.contains("com.apple.replayd"))
+        let browserServices = ["com.apple.lsd.mapdb", "com.apple.hiservices-xpcservice", "com.apple.runningboard",
+                               "com.apple.tccd.system", "(global-name-prefix \"org.chromium.\")",
+                               "(local-name-prefix \"\")", "apple.shm.notification_center"]
+        #expect(browserServices.allSatisfy { sandboxProfile.contains($0) })
+        #expect(!sandboxProfile.contains("(global-name \"com.apple.tccd\")") && !sandboxProfile.contains("com.apple.replayd"))
         let temporaryRoot = NativePluginSandboxProfile.canonicalPath(
             FileManager.default.temporaryDirectory.path
         )

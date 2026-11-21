@@ -293,12 +293,41 @@ enum NativePluginSandboxProfile {
             rules.append("(allow file-read* file-write* (regex #\"^\(browserTemporaryPath)/(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.]Edge)[.][^/]+(/.*)?$\"))")
             rules.append("(allow network* (local unix-socket))")
             // The host Seatbelt profile remains the security boundary. Chromium's
-            // nested sandbox cannot initialize inside it, so its helper rendezvous
-            // ports are explicitly scoped to known browser service names.
+            // nested sandbox cannot initialize inside it, so allow only the macOS
+            // app services and browser-owned Mach names needed during startup.
             rules.append("(allow iokit-open)")
-            rules.append("(allow mach-lookup (global-name \"com.apple.windowserver.active\") (global-name \"com.apple.WindowServer\") (global-name \"com.apple.CARenderServer\") (global-name \"com.apple.coreservices.launchservicesd\"))")
-            rules.append("(allow mach-register (global-name-regex #\"^(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.](MachPortRendezvousServer[.][0-9]+|apps[.][A-Fa-f0-9]+)$\"))")
-            rules.append("(allow mach-lookup (global-name-regex #\"^(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.]MachPortRendezvousServer[.][0-9]+$\"))")
+            rules.append("""
+                (allow mach-lookup
+                  (global-name "com.apple.coreservices.launchservicesd")
+                  (global-name "com.apple.lsd.mapdb")
+                  (global-name "com.apple.lsd.modifydb")
+                  (global-name "com.apple.CoreServices.coreservicesd")
+                  (global-name "com.apple.windowserver.active")
+                  (global-name "com.apple.WindowServer")
+                  (global-name "com.apple.CARenderServer")
+                  (global-name "com.apple.hiservices-xpcservice")
+                  (global-name "com.apple.dock.server")
+                  (global-name "com.apple.dock.fullscreen")
+                  (global-name "com.apple.window_proxies")
+                  (global-name "com.apple.windowmanager.server")
+                  (global-name "com.apple.distributed_notifications@Uv3")
+                  (global-name "com.apple.system.notification_center")
+                  (global-name "com.apple.runningboard")
+                  (global-name "com.apple.fonts")
+                  (global-name "com.apple.logd")
+                  (global-name "com.apple.touchbarserver.mig")
+                  (global-name "com.apple.tccd.system")
+                  (global-name "com.apple.system.opendirectoryd.api")
+                  (global-name-prefix "org.chromium.")
+                  (global-name-regex #"^(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.].+$"))
+                """)
+            rules.append("""
+                (allow mach-register
+                  (local-name-prefix "")
+                  (global-name-prefix "org.chromium.")
+                  (global-name-regex #"^(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.].+$"))
+                """)
+            rules.append("(allow ipc-posix-shm-read-data (ipc-posix-name \"apple.shm.notification_center\"))")
         }
         if let workspace = launch.workspaceRoot?.standardizedFileURL.resolvingSymlinksInPath().path {
             if launch.permissionSnapshot.contains("workspace.write") {
