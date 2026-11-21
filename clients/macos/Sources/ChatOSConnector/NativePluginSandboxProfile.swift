@@ -291,7 +291,7 @@ enum NativePluginSandboxProfile {
                     ?? FileManager.default.temporaryDirectory.path
             )
             let browserTemporaryPath = Self.regexLiteral(temporaryRoot)
-            rules.append("(allow file-read* file-write* (regex #\"^\(browserTemporaryPath)/[.]?(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.](Edge|edgemac))[.][^/]+(/.*)?$\"))")
+            rules.append("(allow file-read* file-write* (regex #\"^\(browserTemporaryPath)/[.]?(com[.]google[.](Chrome([.]forTesting)?|chrome[.]for[.]testing)|org[.]chromium[.]Chromium|com[.]microsoft[.](Edge|edgemac))[.][^/]+(/.*)?$\"))")
             if let userDirectory = Self.darwinUserDirectory(_CS_DARWIN_USER_DIR) {
                 let codeSignCloneRoot = URL(fileURLWithPath: userDirectory, isDirectory: true)
                     .deletingLastPathComponent()
@@ -299,7 +299,7 @@ enum NativePluginSandboxProfile {
                 let browserCodeSignPath = Self.regexLiteral(
                     Self.canonicalPath(codeSignCloneRoot)
                 )
-                rules.append("(allow file-read* file-write* (regex #\"^\(browserCodeSignPath)/(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.](Edge|edgemac))[.]code_sign_clone(/.*)?$\"))")
+                rules.append("(allow file-read* file-write* (regex #\"^\(browserCodeSignPath)/(com[.]google[.](Chrome([.]forTesting)?|chrome[.]for[.]testing)|org[.]chromium[.]Chromium|com[.]microsoft[.](Edge|edgemac))[.]code_sign_clone(/.*)?$\"))")
             }
             rules.append("(allow network* (local unix-socket))")
             // The host Seatbelt profile remains the security boundary. Chromium's
@@ -329,13 +329,13 @@ enum NativePluginSandboxProfile {
                   (global-name "com.apple.tccd.system")
                   (global-name "com.apple.system.opendirectoryd.api")
                   (global-name-prefix "org.chromium.")
-                  (global-name-regex #"^(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.].+$"))
+                  (global-name-regex #"^(com[.]google[.](Chrome([.]forTesting)?|chrome[.]for[.]testing)|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.].+$"))
                 """)
             rules.append("""
                 (allow mach-register
                   (local-name-prefix "")
                   (global-name-prefix "org.chromium.")
-                  (global-name-regex #"^(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.].+$"))
+                  (global-name-regex #"^(com[.]google[.](Chrome([.]forTesting)?|chrome[.]for[.]testing)|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.].+$"))
                 """)
             rules.append("(allow ipc-posix-shm-read-data (ipc-posix-name \"apple.shm.notification_center\"))")
         }

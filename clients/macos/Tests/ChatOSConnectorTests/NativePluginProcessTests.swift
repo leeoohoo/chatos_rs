@@ -680,10 +680,10 @@ extension NativePluginRuntimeTests {
         #expect(sandboxProfile.contains("com.apple.FSEvents"))
         #expect(sandboxProfile.contains(dataDirectory + ".lock") && sandboxProfile.contains(cacheDirectory + ".lock"))
         #expect(sandboxProfile.contains("(allow iokit-open)") && sandboxProfile.contains("(allow network* (local unix-socket))"))
-        #expect(sandboxProfile.contains("com[.]google[.]Chrome"))
+        #expect(sandboxProfile.contains("com[.]google[.](Chrome"))
         let browserServices = ["com.apple.lsd.mapdb", "com.apple.hiservices-xpcservice", "com.apple.runningboard",
                                "com.apple.tccd.system", "(global-name-prefix \"org.chromium.\")",
-                               "(local-name-prefix \"\")", "apple.shm.notification_center", "code_sign_clone"]
+                               "(local-name-prefix \"\")", "apple.shm.notification_center", "code_sign_clone", "chrome[.]for[.]testing"]
         #expect(browserServices.allSatisfy { sandboxProfile.contains($0) })
         #expect(!sandboxProfile.contains("(global-name \"com.apple.tccd\")") && !sandboxProfile.contains("com.apple.replayd"))
         let temporaryRoot = NativePluginSandboxProfile.canonicalPath(try #require(
@@ -692,7 +692,7 @@ extension NativePluginRuntimeTests {
         let escapedTemporaryRoot = NSRegularExpression.escapedPattern(for: temporaryRoot)
             .replacingOccurrences(of: "\"", with: "\\\"")
         #expect(sandboxProfile.contains(
-            "^\(escapedTemporaryRoot)/[.]?(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.](Edge|edgemac))"
+            "^\(escapedTemporaryRoot)/[.]?(com[.]google[.](Chrome([.]forTesting)?|chrome[.]for[.]testing)|org[.]chromium[.]Chromium|com[.]microsoft[.](Edge|edgemac))"
         ))
         #expect(!sandboxProfile.contains("(subpath \"\(temporaryRoot)\")"))
     }
