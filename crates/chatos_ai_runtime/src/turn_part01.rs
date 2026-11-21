@@ -467,31 +467,31 @@ async fn every_model_input_composition_fetches_latest_memory_engine_context() {
     assert!(second.to_string().contains("memory-2"));
 }
 
+async fn count_memory_compose_calls(State(calls): State<Arc<AtomicUsize>>) -> Json<Value> {
+    calls.fetch_add(1, Ordering::SeqCst);
+    Json(json!({
+        "thread_id": "thread-1",
+        "blocks": [],
+        "recent_records": [],
+        "meta": memory_engine_sdk::ComposeContextMeta::default()
+    }))
+}
+
+async fn capture_provider_request(
+    State(payload): State<Arc<std::sync::Mutex<Option<Value>>>>,
+    Json(request): Json<Value>,
+) -> Json<Value> {
+    *payload.lock().expect("provider request") = Some(request);
+    Json(json!({
+        "id": "response-1",
+        "status": "completed",
+        "output_text": "ok",
+        "output": []
+    }))
+}
+
 #[tokio::test]
 async fn responses_compaction_skips_memory_and_reaches_provider_above_soft_limit() {
-    async fn compose_call(State(calls): State<Arc<AtomicUsize>>) -> Json<Value> {
-        calls.fetch_add(1, Ordering::SeqCst);
-        Json(json!({
-            "thread_id": "thread-1",
-            "blocks": [],
-            "recent_records": [],
-            "meta": memory_engine_sdk::ComposeContextMeta::default()
-        }))
-    }
-
-    async fn model_call(
-        State(payload): State<Arc<std::sync::Mutex<Option<Value>>>>,
-        Json(request): Json<Value>,
-    ) -> Json<Value> {
-        *payload.lock().expect("provider request") = Some(request);
-        Json(json!({
-            "id": "response-1",
-            "status": "completed",
-            "output_text": "ok",
-            "output": []
-        }))
-    }
-
     let compose_calls = Arc::new(AtomicUsize::new(0));
     let memory_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -503,7 +503,10 @@ async fn responses_compaction_skips_memory_and_reaches_provider_above_soft_limit
             let _ = axum::serve(
                 memory_listener,
                 Router::new()
-                    .route("/api/memory-engine/v1/context/compose", post(compose_call))
+                    .route(
+                        "/api/memory-engine/v1/context/compose",
+                        post(count_memory_compose_calls),
+                    )
                     .with_state(compose_calls),
             )
             .await;
@@ -530,7 +533,7 @@ async fn responses_compaction_skips_memory_and_reaches_provider_above_soft_limit
             let _ = axum::serve(
                 provider_listener,
                 Router::new()
-                    .route("/responses", post(model_call))
+                    .route("/responses", post(capture_provider_request))
                     .with_state(provider_payload),
             )
             .await;

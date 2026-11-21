@@ -119,7 +119,7 @@ pub(super) async fn execute_once(
         force_identity_encoding,
     )
     .await;
-    let mut response = match response {
+    let response = match response {
         Ok(response) => response,
         Err(error) => return Ok(retry_or_fail(error, &iteration_request, model_attempt)),
     };
@@ -169,6 +169,25 @@ pub(super) async fn execute_once(
         });
     }
 
+    finish_final_response(
+        runtime,
+        response,
+        &runtime_options,
+        iteration,
+        reason,
+        request_input_items,
+    )
+    .await
+}
+
+async fn finish_final_response(
+    runtime: &AiRuntime,
+    mut response: crate::request::AiResponse,
+    runtime_options: &AiRuntimeOptions,
+    iteration: usize,
+    reason: String,
+    request_input_items: Vec<Value>,
+) -> Result<AiSingleStepOutcome, String> {
     if let Some(hook) = &runtime_options.lifecycle_hook {
         match hook
             .after_final_response(RuntimeFinalResponseContext {
@@ -223,7 +242,7 @@ pub(super) async fn execute_once(
     };
     runtime
         .save_assistant_record(
-            &runtime_options,
+            runtime_options,
             &response,
             response.tool_calls.clone(),
             None,
