@@ -22,7 +22,11 @@ cleanup() {
 }
 trap cleanup EXIT
 status=0
-MOZ_APP_DATA="$firefox_app_data" "$firefox_bin" --new-instance --profile "$render_profile" "$@" || status=$?
+CFFIXED_USER_HOME="$firefox_app_data" \
+MOZ_APP_DATA="$firefox_app_data" \
+MOZ_LOCAL_APP_DATA="$firefox_app_data" \
+MOZ_HEADLESS=1 \
+  "$firefox_bin" --new-instance --profile "$render_profile" "$@" || status=$?
 if [ "$status" -eq 0 ] && [ -n "$screenshot" ]; then
   attempts=0
   while [ ! -s "$screenshot" ] && [ "$attempts" -lt 300 ]; do
