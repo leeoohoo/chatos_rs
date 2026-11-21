@@ -175,6 +175,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.94.0
 
       - name: Verify native platform contracts
+        timeout-minutes: 60
         shell: bash
         run: bash scripts/verify-repository.sh native-platform
 

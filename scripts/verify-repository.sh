@@ -154,32 +154,41 @@ run_native_platform() {
           --package-path "$ROOT_DIR/clients/macos" --skip-build --no-parallel \
           --disable-swift-testing --filter "$test_target"
       done
+      connector_test_list="$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/chatos-connector-tests.XXXXXX")"
+      run_swiftpm test list --package-path "$ROOT_DIR/clients/macos" --skip-build \
+        --disable-swift-testing > "$connector_test_list"
       while IFS= read -r test_class; do
         [[ -n "$test_class" ]] || continue
         if [[ "$test_class" == "ChatOSConnectorTests.LocalAgentGroupChatSchedulerTests" ]]; then
           scheduler_test_count=0
+          scheduler_test_filter=""
           while IFS= read -r test_case; do
             [[ "$test_case" == "$test_class/"* ]] || continue
+            ((scheduler_test_count += 1))
+            scheduler_test_filter="${scheduler_test_filter:+$scheduler_test_filter|}$test_case"
+            if ((scheduler_test_count % 5 == 0)); then
+              run_swiftpm test \
+                --package-path "$ROOT_DIR/clients/macos" --skip-build --no-parallel \
+                --disable-swift-testing --filter "$scheduler_test_filter"
+              scheduler_test_filter=""
+            fi
+          done < "$connector_test_list"
+          ((scheduler_test_count > 0))
+          if [[ -n "$scheduler_test_filter" ]]; then
             run_swiftpm test \
               --package-path "$ROOT_DIR/clients/macos" --skip-build --no-parallel \
-              --disable-swift-testing --filter "$test_case"
-            ((scheduler_test_count += 1))
-          done < <(
-            run_swiftpm test list --package-path "$ROOT_DIR/clients/macos" --skip-build \
-              --disable-swift-testing
-          )
-          ((scheduler_test_count > 0))
+              --disable-swift-testing --filter "$scheduler_test_filter"
+          fi
         else
           run_swiftpm test \
             --package-path "$ROOT_DIR/clients/macos" --skip-build --no-parallel \
             --disable-swift-testing --filter "$test_class"
         fi
       done < <(
-        run_swiftpm test list --package-path "$ROOT_DIR/clients/macos" --skip-build \
-          --disable-swift-testing \
-          | sed -n 's#^\(ChatOSConnectorTests\.[^/]*\)/.*#\1#p' \
+        sed -n 's#^\(ChatOSConnectorTests\.[^/]*\)/.*#\1#p' "$connector_test_list" \
           | sort -u
       )
+      rm -f "$connector_test_list"
       run_swiftpm build --package-path "$ROOT_DIR/plugins/computer-use"
       run_swiftpm test --package-path "$ROOT_DIR/plugins/computer-use" --no-parallel
       ;;
