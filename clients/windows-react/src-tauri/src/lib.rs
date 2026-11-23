@@ -37,6 +37,7 @@ mod model_selection;
 mod notepad;
 mod pet;
 mod pet_translation;
+mod platform;
 mod platform_execution_context;
 mod plugin_application;
 mod plugin_credentials;

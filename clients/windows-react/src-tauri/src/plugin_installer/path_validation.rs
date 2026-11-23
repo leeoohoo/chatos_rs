@@ -182,14 +182,6 @@ pub(super) fn remove_confined_directory(
     fs::remove_dir_all(requested).map_err(|_| install_error("Plugin 临时目录清理失败"))
 }
 
-pub(super) fn windows_compatible(platforms: &[String]) -> bool {
-    platforms.is_empty()
-        || platforms.iter().any(|platform| {
-            let platform = platform.trim().to_ascii_lowercase();
-            platform == "windows" || platform.starts_with("windows-")
-        })
-}
-
 pub(super) fn valid_executable_name(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128

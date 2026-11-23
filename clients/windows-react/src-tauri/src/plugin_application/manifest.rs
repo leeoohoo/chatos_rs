@@ -3,6 +3,7 @@ use super::{
     MAXIMUM_MCP_SERVERS, MAXIMUM_UI_CONTRIBUTIONS,
 };
 use crate::{
+    platform::windows_compatible,
     plugin_installation_metadata::{canonical_plugin_root, record_matches_summary},
     plugin_integrity::{requires_installation_integrity, verify_installation_integrity},
 };
@@ -127,12 +128,7 @@ fn validate_manifest(manifest: &PluginManifest) -> Result<(), String> {
         .as_ref()
         .map(|dependencies| &dependencies.supported_platforms)
     {
-        if platforms.len() > 32
-            || (!platforms.is_empty()
-                && !platforms
-                    .iter()
-                    .any(|platform| platform.eq_ignore_ascii_case("windows")))
-        {
+        if platforms.len() > 32 || !windows_compatible(platforms) {
             return Err(plugin_catalog_error());
         }
     }

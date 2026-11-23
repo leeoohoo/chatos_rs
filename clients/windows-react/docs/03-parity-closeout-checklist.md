@@ -6,6 +6,8 @@
 
 Windows 产品版本：`3.0.9`
 
+- 2026-11-24 对齐 macOS `009f6232c` 的 Plugin 平台兼容合同：Windows 统一按当前 CPU 识别 `windows`、`windows-x64`/`windows-x86_64` 或 `windows-arm64`/`windows-aarch64`，已安装应用、设置目录、Marketplace 安装器和 Computer Use 解析共用同一门禁；未知 `windows-*` 架构失败关闭，不兼容 Marketplace Plugin 隐藏，已安装的不兼容记录保留为不可安装状态。新增平台 helper 与已安装应用准入/拒绝回归。Windows Tauri `--all-targets` 为 `647 passed, 0 failed, 7 ignored`，React/Vitest `152` 个测试文件 / `603 passed`，TypeScript、production build、architecture audit、Bundle audit、Skill 示例审计、Rustfmt 和 `git diff --check` 全部通过。
+
 - 2026-11-24 补齐团队运行列表的审查态回显：团队 Run 列表在已有安全详情预取返回 `reviewing_followup`、`waiting_confirmation` 或 `needs_review` 时，立即把卡片状态提升为对应中文标签和 attention 视觉，不再被粗粒度 Delivery 的“运行中”覆盖；详情页原有轮询、取消和恢复门禁保持不变。新增 Agent 管理定向回归覆盖审查态标签与优先级样式。真实合法 Run 的原生逐态窗口取证仍单独保留，不用测试 fixture 冒充完成。
 
 - 2026-11-24 补齐快速翻译的 macOS 自动目标：Windows 现在支持并默认使用“中英自动”，按 macOS 同一策略将中文为主内容翻译成英文、英文为主内容翻译成简体中文，混合或其他语言默认使用简体中文；协议、历史投影、历史方向标识和翻译提示词均已同步，原有“中文/English”显式目标仍可选择。新增 Store 回归验证默认请求携带 `automatic`；本机默认环境缺少 NASM/CMake，但沿用仓库已有 `AWS_LC_SYS_PREBUILT_NASM=1` 路径后 Rust 定向与 Windows Tauri 全量门禁均已通过。

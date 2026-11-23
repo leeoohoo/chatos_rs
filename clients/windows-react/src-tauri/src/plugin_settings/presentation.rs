@@ -17,6 +17,8 @@ use std::{
     path::Path,
 };
 
+pub(crate) use crate::platform::windows_compatible;
+
 pub(super) fn project_snapshot(
     plugin_root: &Path,
     sources: Result<PluginInstallSourceList, String>,
@@ -362,14 +364,6 @@ pub(super) fn runtime_status(installed: bool, enabled: bool) -> &'static str {
     } else {
         "disabled"
     }
-}
-
-pub(super) fn windows_compatible(platforms: &[String]) -> bool {
-    platforms.is_empty()
-        || platforms.iter().any(|platform| {
-            let platform = platform.trim().to_ascii_lowercase();
-            platform == "windows" || platform.starts_with("windows-")
-        })
 }
 
 pub(super) fn safe_text(value: &str, fallback: &str) -> String {

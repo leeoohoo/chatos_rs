@@ -1469,4 +1469,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 148. [已完成] macOS `e01361712` 更新团队需求调研的用户文案与回流语义说明。Windows 团队目录页同步显示“项目需求调研”和“团队发起的正式调研由 Local Agent Host 保存；提交后会恢复原团队 Todo 并继续整理方案。”，继续通过同一入口进入全局调研中心；原有 `sourceTeamRoute` 的 owner/project/Todo 绑定与提交后定位逻辑保持不变。Agent 管理 UI 定向回归已锁定新文案。
 
+149. [已完成] 对齐 macOS `009f6232c` 的 Plugin 平台兼容合同。macOS 会按 `dependencies.supportedPlatforms` 和当前 CPU 只加载兼容清单；Windows 原先的已安装 Plugin 应用校验只接受精确 `windows`，而设置目录/安装器又会放行任意 `windows-*`，导致 `windows-x64` / `windows-arm64` 拆包清单可能被误拒或错误放行。Windows 现统一使用当前架构门禁：通用 `windows`、x64 的 `windows-x64`/历史 `windows-x86_64`、arm64 的 `windows-arm64`/历史 `windows-aarch64` 才能进入；不兼容的 Marketplace Plugin 仍隐藏，已安装的不兼容记录保留为不可安装状态，应用运行时也复用同一校验。新增平台 helper、已安装应用 x64/arm64 准入/拒绝回归与未知架构失败关闭测试；Windows Tauri `--all-targets` 为 `647 passed, 0 failed, 7 ignored`，React/Vitest `152` 个测试文件、`603 passed`，TypeScript、production build、architecture audit、Bundle audit、Skill 示例审计和 `git diff --check` 均通过。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

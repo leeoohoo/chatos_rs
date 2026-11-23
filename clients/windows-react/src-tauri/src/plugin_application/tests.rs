@@ -947,6 +947,48 @@ async fn catalog_ignores_manifests_without_windows_support() {
 }
 
 #[tokio::test]
+async fn catalog_accepts_current_windows_architecture_manifest() {
+    let fixture = CatalogFixture::new();
+    let mut manifest = CatalogFixture::valid_manifest();
+    #[cfg(target_arch = "x86_64")]
+    let platforms = json!(["windows-x64"]);
+    #[cfg(target_arch = "aarch64")]
+    let platforms = json!(["windows-arm64"]);
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let platforms = json!(["windows"]);
+    manifest["dependencies"]["supportedPlatforms"] = platforms;
+    fixture.write_manifest(manifest);
+    let record = fixture.record();
+    let client = catalog_client(&record);
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let applications = manager.list(&client, "owner-1").await.unwrap();
+
+    assert_eq!(applications.len(), 1);
+}
+
+#[tokio::test]
+async fn catalog_rejects_other_windows_architecture_manifest() {
+    let fixture = CatalogFixture::new();
+    let mut manifest = CatalogFixture::valid_manifest();
+    #[cfg(target_arch = "x86_64")]
+    let platforms = json!(["windows-arm64"]);
+    #[cfg(target_arch = "aarch64")]
+    let platforms = json!(["windows-x64"]);
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let platforms = json!(["windows-mips64"]);
+    manifest["dependencies"]["supportedPlatforms"] = platforms;
+    fixture.write_manifest(manifest);
+    let record = fixture.record();
+    let client = catalog_client(&record);
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let applications = manager.list(&client, "owner-1").await.unwrap();
+
+    assert!(applications.is_empty());
+}
+
+#[tokio::test]
 async fn local_http_application_requires_component_scoped_process_spawn() {
     let fixture = CatalogFixture::new();
     let mut manifest = CatalogFixture::valid_manifest();

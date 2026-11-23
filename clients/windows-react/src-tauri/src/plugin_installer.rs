@@ -28,6 +28,7 @@ use uuid::Uuid;
 use crate::{
     agent_plugin_runtime::load_agent_plugin_skill_snapshot,
     app_data_transaction::ensure_owned_directory,
+    platform::windows_compatible,
     plugin_integrity::{remove_installation_integrity, write_installation_integrity},
     plugin_repository::{download_release_archive, extract_release_archive},
     terminal_runtime::process::ProcessTermination,
