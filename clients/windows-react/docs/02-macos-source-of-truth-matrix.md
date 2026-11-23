@@ -1467,4 +1467,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 147. [部分完成] macOS `3d91f8f47` 将工作流视频节点统一到 MiniMax-H3 的合法尺寸、比例和时长，并在读取旧清单时把 OpenAI 尺寸与旧时长迁移到当前协议。Windows 原有校验和新建默认值已使用同一协议，但旧清单只迁移 `1280x720` 尺寸；本次补齐四种 OpenAI 旧尺寸识别、1–120 秒旧时长向 4–15 秒边界的安全迁移、未知尺寸失败关闭，并加入原生 Store 回归。Windows UI 继续只显示受支持的下拉选项，视频节点运行前仍经过完整模型/参数校验。定向工作流测试 `12 passed`，Windows Tauri `--all-targets` 为 `643 passed, 0 failed, 7 ignored`；使用仓库既有 `AWS_LC_SYS_PREBUILT_NASM=1` 构建路径通过，未把环境阻断写成失败。
 
+148. [已完成] macOS `e01361712` 更新团队需求调研的用户文案与回流语义说明。Windows 团队目录页同步显示“项目需求调研”和“团队发起的正式调研由 Local Agent Host 保存；提交后会恢复原团队 Todo 并继续整理方案。”，继续通过同一入口进入全局调研中心；原有 `sourceTeamRoute` 的 owner/project/Todo 绑定与提交后定位逻辑保持不变。Agent 管理 UI 定向回归已锁定新文案。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

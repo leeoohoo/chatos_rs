@@ -1027,8 +1027,8 @@ describe("AgentManagementView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Alpha Agent 团队" }));
     fireEvent.click(await screen.findByRole("button", { name: "需求调研" }));
     const workspace = await screen.findByRole("region", { name: "Agent 团队需求调研" });
-    expect(within(workspace).getByText("需求调研已迁移")).toBeVisible();
-    expect(within(workspace).getByText("Task 调研现在由 Local Agent Host 保存并恢复原 Run，不再属于 Agent 群聊。")).toBeVisible();
+    expect(within(workspace).getByText("项目需求调研")).toBeVisible();
+    expect(within(workspace).getByText("团队发起的正式调研由 Local Agent Host 保存；提交后会恢复原团队 Todo 并继续整理方案。")).toBeVisible();
     fireEvent.click(within(workspace).getByRole("button", { name: "打开需求调研" }));
     expect(onOpenRequirementSurveys).toHaveBeenCalledTimes(1);
     expect(listProjectRequirementSurveys).not.toHaveBeenCalled();

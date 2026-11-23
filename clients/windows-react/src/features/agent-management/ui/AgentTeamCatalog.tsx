@@ -298,8 +298,8 @@ function ProjectRequirementSurveysView({
         <path d="M9 5.5h6M9.75 3h4.5a1.25 1.25 0 0 1 1.25 1.25v1.5A1.25 1.25 0 0 1 14.25 7h-4.5A1.25 1.25 0 0 1 8.5 5.75v-1.5A1.25 1.25 0 0 1 9.75 3Z" />
         <path d="M8.5 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1.5M8.5 11h7M8.5 15h7M8.5 18h4" />
       </svg>
-      <strong>需求调研已迁移</strong>
-      <p>Task 调研现在由 Local Agent Host 保存并恢复原 Run，不再属于 Agent 群聊。</p>
+      <strong>项目需求调研</strong>
+      <p>团队发起的正式调研由 Local Agent Host 保存；提交后会恢复原团队 Todo 并继续整理方案。</p>
       <button className="primary-button" onClick={onOpenRequirementSurveys} type="button">打开需求调研</button>
     </div>
   );
