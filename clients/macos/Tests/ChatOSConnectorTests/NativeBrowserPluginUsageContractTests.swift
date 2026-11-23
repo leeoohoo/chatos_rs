@@ -18,7 +18,7 @@ enum NativeBrowserPluginUsageFixture {
     ])
     static let navigationArguments = NativeJSONValue.object([
         "timeout_ms": .number(30_000),
-        "url": .string("data:text/html,%3Ctitle%3EChatOS%20Browser%20Fixture%3C/title%3E%3Ch1%3EIsolated%20test%3C/h1%3E%3Cbutton%3ETest%20action%3C/button%3E"),
+        "url": .string("https://example.com"),
     ])
 }
 

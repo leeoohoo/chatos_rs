@@ -149,6 +149,10 @@ impl BrowserBackend for DirectCdpBackend {
             .user_data_dir(&profile_dir)
             .launch_timeout(Duration::from_secs(20))
             .request_timeout(Duration::from_secs(15));
+        // Chromium cannot initialize a nested Seatbelt sandbox inside the host boundary.
+        if disable_nested_browser_sandbox(std::env::var("CHATOS_PLUGIN_SANDBOX").ok().as_deref()) {
+            builder = builder.no_sandbox();
+        }
         builder = if request.headless {
             builder.new_headless_mode()
         } else {
@@ -694,6 +698,10 @@ impl BrowserBackend for DirectCdpBackend {
         }
         Ok(())
     }
+}
+
+fn disable_nested_browser_sandbox(host_sandbox: Option<&str>) -> bool {
+    cfg!(target_os = "macos") && host_sandbox == Some("macos-seatbelt")
 }
 
 include!("lib_part01.rs");

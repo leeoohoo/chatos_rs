@@ -710,6 +710,24 @@ extension NativePluginRuntimeTests {
             "/managed-app")
     }
 
+    @Test("managed browsers may write only their plugin-scoped macOS cache mirrors")
+    func managedBrowserCacheMirrorsStayPluginScoped() {
+        let home = URL(fileURLWithPath: "/Users/tester", isDirectory: true)
+        let directories = NativePluginProcessLaunch.browserCacheWritableDirectories(
+            environment: [
+                "CHATOS_PLUGIN_DATA_DIR": "/Users/tester/Library/Application Support/ChatOSSwift/NativeConnector/PluginRuntime/data/users/user/plugin",
+                "CHATOS_PLUGIN_CACHE_DIR": "/Users/tester/Library/Application Support/ChatOSSwift/NativeConnector/PluginRuntime/cache/users/user/plugin",
+                "CHATOS_PLUGIN_ARTIFACT_DIR": "/Users/tester/Library/Application Support/ChatOSSwift/NativeConnector/PluginRuntime/artifacts/session",
+            ],
+            homeDirectory: home
+        ).map(\.path)
+
+        #expect(directories == [
+            "/Users/tester/Library/Caches/ChatOSSwift/NativeConnector/PluginRuntime/data/users/user/plugin",
+            "/Users/tester/Library/Caches/ChatOSSwift/NativeConnector/PluginRuntime/cache/users/user/plugin",
+        ])
+    }
+
     @Test("Document Tools may launch an installed browser for offline visual verification")
     func documentPluginLaunchSupportsVisualVerification() throws {
         let root = FileManager.default.temporaryDirectory

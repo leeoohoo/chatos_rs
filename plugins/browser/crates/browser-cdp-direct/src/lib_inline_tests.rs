@@ -3,6 +3,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn disables_only_the_nested_macos_seatbelt_browser_sandbox() {
+        assert_eq!(
+            disable_nested_browser_sandbox(Some("macos-seatbelt")),
+            cfg!(target_os = "macos")
+        );
+        assert!(!disable_nested_browser_sandbox(None));
+        assert!(!disable_nested_browser_sandbox(Some("windows-appcontainer")));
+    }
+
+    #[test]
     fn wildcard_patterns_are_anchored_when_no_outer_star_is_present() {
         assert!(wildcard_match("*/api/*", "https://example.com/api/data"));
         assert!(wildcard_match(

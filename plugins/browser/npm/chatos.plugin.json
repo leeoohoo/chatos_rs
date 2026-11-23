@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "name": "chatos-browser-cdp",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "description": "Control the user's paired Google Chrome automatically, with an isolated Chromium fallback before authorization, through the Chrome DevTools Protocol.",
   "author": {
     "name": "Chatos",
@@ -62,6 +62,12 @@
       "permission": "process.spawn",
       "required": true,
       "reason": "Launch the installed Browser CDP stdio MCP executable.",
+      "components": ["browser-cdp-mcp"]
+    },
+    {
+      "permission": "network.client",
+      "required": true,
+      "reason": "Allow the managed browser fallback to navigate to user-requested web pages.",
       "components": ["browser-cdp-mcp"]
     },
     {

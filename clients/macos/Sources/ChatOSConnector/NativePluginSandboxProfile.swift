@@ -88,6 +88,12 @@ struct NativePluginProcessLaunch: Sendable {
             || isBrowserPlugin || isWebDesignPlugin || isDocumentPlugin
         let requiresLoopbackServer = hasManagedBrowserPermission
             || isBrowserPlugin || isWebDesignPlugin
+        if requiresManagedBrowser {
+            // Chromium mirrors profile caches from Application Support into Library/Caches.
+            writableDirectories.append(contentsOf: Self.browserCacheWritableDirectories(
+                environment: launch.environment
+            ))
+        }
         let browserHome = isBrowserPlugin
             && launch.permissionSnapshot.contains("browser.chrome.attach")
             ? FileManager.default.homeDirectoryForCurrentUser
@@ -119,6 +125,27 @@ struct NativePluginProcessLaunch: Sendable {
             homeDirectory: browserHome,
             managedBrowserAccess: requiresManagedBrowser
         )
+    }
+
+    static func browserCacheWritableDirectories(
+        environment: [String: String],
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> [URL] {
+        let applicationSupport = homeDirectory
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
+            .standardizedFileURL.path + "/"
+        let cacheRoot = homeDirectory
+            .appendingPathComponent("Library/Caches", isDirectory: true)
+        return ["CHATOS_PLUGIN_DATA_DIR", "CHATOS_PLUGIN_CACHE_DIR"].compactMap { key in
+            guard let path = environment[key] else { return nil }
+            let standardizedPath = URL(fileURLWithPath: path, isDirectory: true)
+                .standardizedFileURL.path
+            guard standardizedPath.hasPrefix(applicationSupport) else { return nil }
+            return cacheRoot.appendingPathComponent(
+                String(standardizedPath.dropFirst(applicationSupport.count)),
+                isDirectory: true
+            )
+        }
     }
 
     private static func browserBridgeWritableDirectories(

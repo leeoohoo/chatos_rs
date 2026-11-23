@@ -369,11 +369,25 @@ extension NativePluginRuntimeTests {
             NativePluginManifest.self,
             from: Data(contentsOf: installation.appendingPathComponent("chatos.plugin.json"))
         )
-        let runtimeRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: runtimeRoot) }
+        let runtimeID = UUID().uuidString
+        let runtimeRelativePath = "ChatOSSwift/NativeConnector/PluginIntegrationTests/\(runtimeID)"
+        let runtimeRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
+            .appendingPathComponent(runtimeRelativePath, isDirectory: true)
+        let runtimeCacheMirror = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches", isDirectory: true)
+            .appendingPathComponent(runtimeRelativePath, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: runtimeRoot)
+            try? FileManager.default.removeItem(at: runtimeCacheMirror)
+        }
         let launch = try NativePluginManifestLoader.prepare(
-            record: try NativeBrowserPluginUsageFixture.installedRecord(at: installation),
+            record: try nativePluginTestRecord(
+                installationURL: installation,
+                pluginID: "browser-integration",
+                version: manifest.version
+            ),
+            manifest: manifest,
             componentKey: NativeBrowserPluginIdentity.componentKey,
             serverKey: nil,
             adapterSessionID: UUID().uuidString.lowercased(),
@@ -415,7 +429,10 @@ extension NativePluginRuntimeTests {
                 timeout: .seconds(30)
             )
             #expect(snapshot.jsonObject?["isError"]?.jsonBool != true)
-            #expect(snapshot.jsonObject?["structuredContent"]?.jsonArray?.isEmpty == false)
+            #expect(
+                snapshot.jsonObject?["structuredContent"]?.jsonObject?["nodes"]?
+                    .jsonArray?.isEmpty == false
+            )
 
             let status = try await client.callTool(
                 name: "browser_session_status",
