@@ -175,7 +175,7 @@ async fn call_tool(
         "browser_session_open" => {
             let request: OpenBrowserRequest = serde_json::from_value(arguments)
                 .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
-            let opened = runtime.open_session(request).await?;
+            let opened = runtime.open_preferred_session(request).await?;
             *active_browser_session.lock().await = Some(opened.browser_session_id.clone());
             serde_json::to_value(opened).unwrap()
         }

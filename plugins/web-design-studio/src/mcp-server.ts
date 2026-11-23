@@ -9,7 +9,7 @@ import { store, TOOL_DEFINITIONS } from './mcp-runtime-context.js';
 import { callTool } from './mcp-tool-router.js';
 
 const SERVER_NAME = 'chatos-web-design-studio';
-const SERVER_VERSION = '3.0.33';
+const SERVER_VERSION = '3.0.34';
 
 interface HandoffArtifactFile {
   producerArtifactId: string;

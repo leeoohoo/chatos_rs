@@ -14,6 +14,7 @@
     "assets/",
     "bin/",
     "dist/",
+    "!dist/chatos-artifacts/",
     "!dist/*.test.mjs",
     "!dist/test-helpers.mjs",
     "skills/",

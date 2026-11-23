@@ -267,6 +267,25 @@ impl BrowserRuntime {
         Ok(summary)
     }
 
+    pub async fn open_preferred_session(
+        &self,
+        request: OpenBrowserRequest,
+    ) -> CoreResult<BrowserSessionSummary> {
+        match self.open_session(request.clone()).await {
+            Err(CoreError::Backend(message))
+                if request.mode == BrowserMode::ChromeExtension
+                    && message.starts_with("Chrome extension is not connected.") =>
+            {
+                self.open_session(OpenBrowserRequest {
+                    mode: BrowserMode::Managed,
+                    ..request
+                })
+                .await
+            }
+            result => result,
+        }
+    }
+
     pub async fn session_status(
         &self,
         browser_session_id: &str,

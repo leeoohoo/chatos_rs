@@ -108,6 +108,21 @@ struct WaitingBackendFactory {
     backend: Arc<WaitingBackend>,
 }
 
+struct UnavailableExtensionFactory;
+
+#[async_trait]
+impl BrowserBackendFactory for UnavailableExtensionFactory {
+    fn supports(&self, mode: BrowserMode) -> bool {
+        mode == BrowserMode::ChromeExtension
+    }
+
+    async fn create(&self, _mode: BrowserMode) -> CoreResult<Arc<dyn BrowserBackend>> {
+        Err(CoreError::Backend(
+            "Chrome extension is not connected. Start a Browser CDP task, then click First connect in the Chatos Browser Bridge extension.".into(),
+        ))
+    }
+}
+
 struct ObservedLinkBackend {
     page: StdMutex<PageState>,
     methods: StdMutex<Vec<String>>,
@@ -250,6 +265,33 @@ impl BrowserBackendFactory for WaitingBackendFactory {
     async fn create(&self, _mode: BrowserMode) -> CoreResult<Arc<dyn BrowserBackend>> {
         Ok(self.backend.clone())
     }
+}
+
+#[tokio::test]
+async fn preferred_session_falls_back_when_the_paired_extension_is_unavailable() {
+    let runtime = BrowserRuntime::new(
+        vec![
+            Arc::new(UnavailableExtensionFactory),
+            Arc::new(WaitingBackendFactory {
+                backend: Arc::new(WaitingBackend {
+                    first_evaluation: Notify::new(),
+                }),
+            }),
+        ],
+        std::env::temp_dir(),
+    );
+
+    let session = runtime
+        .open_preferred_session(OpenBrowserRequest {
+            mode: BrowserMode::ChromeExtension,
+            headless: true,
+            persistent_profile: false,
+            session_name: Some("automatic fallback".into()),
+        })
+        .await
+        .expect("open managed fallback");
+
+    assert_eq!(session.mode, BrowserMode::Managed);
 }
 
 #[tokio::test]
