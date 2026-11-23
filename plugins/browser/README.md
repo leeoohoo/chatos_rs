@@ -82,8 +82,8 @@ CHATOS_BROWSER_EXTENSION_ID=<extension-id> \
 
 In `chrome_extension` mode, `browser_session_open.session_name` becomes the native Chrome tab-group
 title. Tabs created by the task join that group automatically. Explicitly shared user tabs are
-never moved into it. Closing the browser session preserves and collapses the task group for review
-while removing those tabs from the next task's control catalog.
+never moved into it. Closing the browser session closes only the task-created tabs, which removes
+their group without affecting user-owned tabs or another task's control catalog.
 
 Browser plugin 0.1.23 with extension 0.1.6 supports multiple Browser tasks concurrently. Each MCP
 process owns a distinct Bridge connection and each task can control only its own targets, tab group,

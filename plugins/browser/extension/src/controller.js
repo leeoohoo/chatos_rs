@@ -198,12 +198,10 @@ export class ExtensionController {
         this.#targets.delete(targetId);
         this.#targetByTab.delete(tabId);
       }
-    }
-    if (Number.isSafeInteger(this.#groupId)) {
       try {
-        await this.#chrome.tabGroups.update(this.#groupId, {collapsed: true});
+        await this.#chrome.tabs.remove(tabId);
       } catch {
-        // The user may have ungrouped or closed the task tabs already.
+        // The user may have closed the task tab already.
       }
     }
     const changed = ownedTabIds.length > 0;

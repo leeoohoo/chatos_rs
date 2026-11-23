@@ -24,4 +24,4 @@ reconnection for all local Browser tasks.
 
 Explicitly shared tabs are held in service-worker memory so an extension restart fails closed. Tabs
 created by an MCP task can be placed in that task's named native Chrome tab group; ending one task
-keeps its tabs available for review and collapses its group without affecting another task.
+closes only its task-created tabs and removes its group without affecting user tabs or another task.

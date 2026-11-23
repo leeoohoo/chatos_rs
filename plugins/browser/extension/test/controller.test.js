@@ -125,7 +125,7 @@ test('agent-created tabs enter one named native Chrome tab group while shared ta
   assert.equal(controller.targets().some(target => target.id === 'target_shared'), true);
 });
 
-test('ending a session preserves and collapses owned tabs but removes them from the next target catalog', async () => {
+test('ending a session closes owned tabs but preserves shared user tabs', async () => {
   const harness = createHarness();
   const controller = new ExtensionController({
     chromeApi: harness.chrome,
@@ -140,11 +140,9 @@ test('ending a session preserves and collapses owned tabs but removes them from 
   await controller.handleRequest('extension.endSession');
 
   assert.deepEqual(controller.targets().map(target => target.id), [shared.id]);
-  assert.equal(harness.tabs.has(9), true);
-  assert.deepEqual(harness.groupUpdates.at(-1), {
-    groupId: 101,
-    update: {collapsed: true}
-  });
+  assert.equal(harness.tabs.has(7), true);
+  assert.equal(harness.tabs.has(9), false);
+  assert.equal(harness.groupUpdates.length, 1);
   assert.deepEqual(controller.status().ownedTabIds, []);
 });
 
@@ -176,6 +174,8 @@ test('concurrent controllers keep task tabs, groups, and debugger sessions isola
 
   await first.endSession();
   assert.deepEqual(first.targets(), []);
+  assert.equal(harness.tabs.has(9), false);
+  assert.equal(harness.tabs.has(10), true);
   assert.deepEqual(second.targets().map(target => target.url), ['https://two.test/']);
   assert.deepEqual(second.status().ownedTabIds, [10]);
   first.stop();
