@@ -1,12 +1,25 @@
-import { useEffect } from "react";
+import { useEffect, type ClipboardEvent } from "react";
 import { usePetTranslationStore } from "../application/petTranslationStore";
 import type { PetTranslationPort } from "../ports/PetTranslationPort";
 import type { PetTranslationOutputStyle, PetTranslationRecord, PetTranslationTarget } from "../domain/petTranslation";
 import type { AuthenticationPort } from "../../authentication/ports/AuthenticationPort";
+import { formatAttachmentSize, type ConversationAttachmentDraft } from "../../conversation-attachments/domain/conversationAttachment";
 import "./petTranslation.css";
 
 export function PetTranslationSurface({ authentication, port }: { authentication: AuthenticationPort; port: PetTranslationPort }) {
   const state = usePetTranslationStore();
+  const closeSurface = () => {
+    const current = usePetTranslationStore.getState();
+    const ids = current.attachments.map(({ id }) => id);
+    const ownerUserId = current.session?.user.id;
+    if (ownerUserId && ids.length) {
+      void port.discardAttachments({ ownerUserId, conversationId: "pet-translation", draftGeneration: 0 }, ids)
+        .catch(() => undefined)
+        .finally(() => void port.close());
+      return;
+    }
+    void port.close();
+  };
 
   useEffect(() => {
     let active = true;
@@ -22,7 +35,7 @@ export function PetTranslationSurface({ authentication, port }: { authentication
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        void port.close();
+        closeSurface();
       }
       if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
         event.preventDefault();
@@ -34,7 +47,13 @@ export function PetTranslationSurface({ authentication, port }: { authentication
   }, [port]);
 
   const english = state.target === "english";
-  const translateDisabled = state.isTranslating || state.isLoading || !state.sourceText.trim() || !state.session;
+  const translateDisabled = state.isTranslating || state.isLoading || (!state.sourceText.trim() && !state.attachments.length) || !state.session;
+  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const hasImage = [...event.clipboardData.types].some((type) => type.startsWith("image/") || type === "Files");
+    if (!hasImage) return;
+    event.preventDefault();
+    void state.importClipboard(port);
+  };
   return (
     <main className="pet-translation-surface">
       <header className="pet-translation-titlebar" data-tauri-drag-region>
@@ -43,7 +62,7 @@ export function PetTranslationSurface({ authentication, port }: { authentication
           <strong>{english ? "Quick Translate" : "快速翻译"}</strong>
           <span>{english ? "Translate text with your configured AI model" : "使用已配置的 AI 模型翻译文字"}</span>
         </div>
-        <button aria-label={english ? "Close" : "关闭"} className="pet-translation-titlebar__close" onClick={() => void port.close()} type="button">×</button>
+        <button aria-label={english ? "Close" : "关闭"} className="pet-translation-titlebar__close" onClick={closeSurface} type="button">×</button>
       </header>
 
       <div className="pet-translation-layout">
@@ -66,6 +85,7 @@ export function PetTranslationSurface({ authentication, port }: { authentication
                 autoFocus
                 maxLength={20_000}
                 onChange={(event) => state.setSourceText(event.target.value)}
+                onPaste={handlePaste}
                 placeholder={english ? "Paste text to translate…" : "粘贴或输入要翻译的内容…"}
                 value={state.sourceText}
               />
@@ -77,6 +97,22 @@ export function PetTranslationSurface({ authentication, port }: { authentication
               {state.translatedText && <button className="pet-translation-copy" onClick={() => void copyText(state.translatedText)} type="button">{english ? "Copy" : "复制"}</button>}
             </div>
           </div>
+          <div className="pet-translation-attachments" aria-label={english ? "Image attachments" : "图片附件"}>
+            <div className="pet-translation-attachments__header">
+              <span>{english ? "Images" : "图片"} ({state.attachments.length}/10)</span>
+              <button
+                disabled={state.isTranslating || state.isImportingAttachments || state.attachments.length >= 10}
+                onClick={() => void state.pickAttachments(port)}
+                type="button"
+              >{state.isImportingAttachments ? (english ? "Reading…" : "读取中…") : (english ? "Add image" : "添加图片")}</button>
+            </div>
+            {state.attachments.length > 0 ? (
+              <div className="pet-translation-attachments__list">
+                {state.attachments.map((attachment) => <AttachmentChip english={english} key={attachment.id} onRemove={() => void state.removeAttachment(port, attachment.id)} attachment={attachment} />)}
+              </div>
+            ) : <small>{english ? "Paste a screenshot or add PNG, JPEG, GIF, or WebP images." : "可直接粘贴截图，或添加 PNG、JPEG、GIF、WebP 图片。"}</small>}
+          </div>
+          {state.attachmentError && <div className="pet-translation-error" role="alert"><span aria-hidden="true">!</span><p>{state.attachmentError}</p><button aria-label={english ? "Dismiss attachment error" : "关闭附件错误"} onClick={() => usePetTranslationStore.setState({ attachmentError: null })} type="button">×</button></div>}
           {state.error && <div className="pet-translation-error" role="alert"><span aria-hidden="true">!</span><p>{state.error}</p><button aria-label={english ? "Dismiss error" : "关闭错误"} onClick={state.clearError} type="button">×</button></div>}
           <div className="pet-translation-actions">
             <span>{english ? "Ctrl + Enter to translate" : "Ctrl + Enter 翻译"}</span>
@@ -93,6 +129,10 @@ export function PetTranslationSurface({ authentication, port }: { authentication
   );
 }
 
+function AttachmentChip({ english, attachment, onRemove }: { english: boolean; attachment: ConversationAttachmentDraft; onRemove(): void }) {
+  return <div className="pet-translation-attachment-chip"><span aria-hidden="true">▧</span><span><strong>{attachment.name}</strong><small>{formatAttachmentSize(attachment.byteSize)}</small></span><button aria-label={`${english ? "Remove" : "移除"} ${attachment.name}`} onClick={onRemove} type="button">×</button></div>;
+}
+
 function TargetButton({ active, label, onClick }: { active: boolean; label: string; onClick(): void }) {
   return <button aria-pressed={active} className={active ? "is-active" : ""} onClick={onClick} type="button">{label}</button>;
 }
@@ -102,9 +142,9 @@ function StyleButton({ active, label, onClick }: { active: boolean; label: strin
 }
 
 function HistoryRow({ english, onClick, record, selected }: { english: boolean; onClick(): void; record: PetTranslationRecord; selected: boolean }) {
-  const preview = record.sourceText.replace(/\s+/gu, " ").trim();
+  const preview = record.sourceText.replace(/\s+/gu, " ").trim() || (english ? "Image translation" : "图片翻译");
   const date = new Date(record.createdAtUnixMs).toLocaleString(english ? "en-US" : "zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  return <button className={`pet-translation-history__row ${selected ? "is-selected" : ""}`} onClick={onClick} type="button"><span className="pet-translation-history__arrow">{record.target === "english" ? "中→英" : "英→中"}</span><span><strong>{preview}</strong><small>{date} · {record.outputStyle === "bilingual" ? (english ? "Bilingual" : "双语") : (english ? "Translation" : "仅译文")}</small></span></button>;
+  return <button className={`pet-translation-history__row ${selected ? "is-selected" : ""}`} onClick={onClick} type="button"><span className="pet-translation-history__arrow">{record.attachments.length ? "▧" : record.target === "english" ? "中→英" : "英→中"}</span><span><strong>{preview}</strong><small>{date} · {record.outputStyle === "bilingual" ? (english ? "Bilingual" : "双语") : (english ? "Translation" : "仅译文")}</small></span></button>;
 }
 
 async function copyText(value: string) {

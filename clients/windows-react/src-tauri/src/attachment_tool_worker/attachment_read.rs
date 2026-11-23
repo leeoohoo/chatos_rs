@@ -123,6 +123,34 @@ pub(super) fn model_image_output(
     {
         return Err("This attachment is not an image. Use content delivery for text.".into());
     }
+    let (model_mime, model_bytes) = normalize_verified_image(&attachment.media_type, bytes)?;
+    let fields = json!({
+        "display_name": attachment.display_name,
+        "media_type": attachment.media_type,
+        "byte_size": attachment.byte_size,
+        "sha256": attachment.sha256,
+        "sha256_verified": true,
+        "delivery": "model",
+        "model_image_supplied": true
+    });
+    let mut output = fields.as_object().cloned().unwrap_or_default();
+    output.insert("text".into(), Value::String(fields.to_string()));
+    output.insert("_structured_result".into(), fields);
+    output.insert(
+        "_model_input".into(),
+        json!([{
+            "type": "input_image",
+            "image_url": format!("data:{model_mime};base64,{}", BASE64.encode(model_bytes)),
+            "detail": "high"
+        }]),
+    );
+    Ok(Value::Object(output))
+}
+
+pub(super) fn normalize_verified_image(
+    _declared_media_type: &str,
+    bytes: &[u8],
+) -> Result<(String, Vec<u8>), String> {
     let reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|_| "The verified attachment could not be decoded as an image.".to_string())?;
@@ -147,34 +175,11 @@ pub(super) fn model_image_output(
         && bytes.len() <= MAXIMUM_MODEL_IMAGE_BYTES
         && width <= 4_096
         && height <= 4_096;
-    let (model_bytes, model_mime) = if let Some(mime) = original_mime.filter(|_| preserve_original)
-    {
-        (bytes.to_vec(), mime.to_owned())
-    } else {
-        image.apply_orientation(orientation);
-        normalize_model_image(&image)?
-    };
-    let fields = json!({
-        "display_name": attachment.display_name,
-        "media_type": attachment.media_type,
-        "byte_size": attachment.byte_size,
-        "sha256": attachment.sha256,
-        "sha256_verified": true,
-        "delivery": "model",
-        "model_image_supplied": true
-    });
-    let mut output = fields.as_object().cloned().unwrap_or_default();
-    output.insert("text".into(), Value::String(fields.to_string()));
-    output.insert("_structured_result".into(), fields);
-    output.insert(
-        "_model_input".into(),
-        json!([{
-            "type": "input_image",
-            "image_url": format!("data:{model_mime};base64,{}", BASE64.encode(model_bytes)),
-            "detail": "high"
-        }]),
-    );
-    Ok(Value::Object(output))
+    if let Some(mime) = original_mime.filter(|_| preserve_original) {
+        return Ok((mime.to_owned(), bytes.to_vec()));
+    }
+    image.apply_orientation(orientation);
+    normalize_model_image(&image).map(|(bytes, mime)| (mime, bytes))
 }
 
 fn model_media_type(format: ImageFormat) -> Option<&'static str> {

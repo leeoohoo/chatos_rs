@@ -1,10 +1,12 @@
 # Windows React 与 macOS 功能拉齐关闭清单
 
-更新时间：2026-11-20
+更新时间：2026-11-24
 
-分支：`3.0.9.3.1`
+分支：`3.0.9.13.1`
 
 Windows 产品版本：`3.0.9`
+
+- 2026-11-24 完成宠物快速翻译的图片输入垂直闭环。Windows 复用现有账号作用域的附件保险库、剪贴板导入和图片安全归一化：最多 10 张图片、总暂存大小 20 MB，提交前复验文件摘要，解码后限制 4,096×4,096 与 4,000 万像素，并按模型能力筛选视觉模型；图片归一化为受控 `input_image` data URL 后才进入一次性无工具翻译请求，提交后立即清理暂存本体，历史只保留文件名/MIME 元数据，不保存图片内容。前端支持图片选择、截图粘贴、图片-only 翻译、移除/关闭清理和 owner-scoped 历史恢复；非图片输入会在 UI 与 Rust 边界双重拒绝。React/Vitest `152` 个测试文件、`600` 项通过，定向宠物翻译 Store `4` 项通过；TypeScript、production build、architecture audit、Bundle audit（入口 `449.22 KiB raw / 135.26 KiB gzip`）、Rustfmt 和差异检查通过。Windows Tauri Rust 编译门禁本轮受当前环境缺少 NASM/CMake 的 `aws-lc-sys` 工具链阻断，未把该环境阻断写成编译成功；既有正式 Release 原生验收仍需在可用 Windows 构建环境重新取证。
 
 - 2026-11-20 完成 `origin/3.0.9.12`（`30d2943d9`）向 Windows 分支的集成与真实回归。共享变更包含 Local Agent durable checkpoint/任务状态、AI durable response history、模型选择、字符串会话历史游标、Plugin `local_http` runtime 与压力治理；Windows 端同步补齐 v50 Contact identity 迁移、共享 reparse-safe Connector storage、原子文件提交、共享本机/远端交互 PTY 和统一终端画布。Diagram Studio 打包测试修正 Windows npm CLI 调用后为 `60 passed, 0 failed`，并验证脱离仓库 `node_modules` 的打包插件可真实启动本地后端；0.4.8 已安装启用状态保持，未启动应用卡片。Rust 门禁为 AI runtime `212 passed`、Client storage/migration `227 passed`、Windows Tauri `641 passed, 0 failed, 7 ignored`，Windows `--all-targets`、根 workspace 全量测试及两套 Clippy `-D warnings` 均通过；React/Vitest 在原生复测发现并关闭“清空终端搜索仍保留 xterm 选择”后为 `150` 个文件 / `594 passed`，TypeScript、production build、architecture audit、Bundle audit（入口 `459.74 KiB raw / 138.88 KiB gzip`）、Skill 示例审计、Rustfmt 和差异检查均通过。正式 `--no-bundle` Release 为 `61,842,432` bytes，SHA-256 `50A7FBDDF5190A06940095FDCADE0DDDE90BD4688D2CEC477AA5183D07D36E2A`；现有测试账号真实恢复 Host ready、项目目录、插件安装助手历史、Agent 项目经理职业及 33 个职业 Skill，本机 PowerShell 会话、搜索、搜索清除和清屏/中断/关闭菜单均可达。终端搜索先真实命中 `PowerShell`，清空后匹配选择和上下项状态同步消失；全程未通过 UI 输入终端命令、未发送消息、未修改业务数据。
 

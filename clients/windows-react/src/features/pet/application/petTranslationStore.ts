@@ -2,6 +2,11 @@ import { create } from "zustand";
 import type { AuthSession } from "../../authentication/domain/authentication";
 import type { PetTranslationPort } from "../ports/PetTranslationPort";
 import type {
+  AttachmentImportResult,
+  AttachmentScope,
+  ConversationAttachmentDraft,
+} from "../../conversation-attachments/domain/conversationAttachment";
+import type {
   PetTranslationOutputStyle,
   PetTranslationRecord,
   PetTranslationTarget,
@@ -18,11 +23,17 @@ interface PetTranslationState {
   isTranslating: boolean;
   error: string | null;
   selectedRecordId: string | null;
+  attachments: ConversationAttachmentDraft[];
+  attachmentError: string | null;
+  isImportingAttachments: boolean;
   setSourceText(value: string): void;
   setTarget(value: PetTranslationTarget): void;
   setOutputStyle(value: PetTranslationOutputStyle): void;
   load(port: PetTranslationPort, session: AuthSession | null): Promise<void>;
   translate(port: PetTranslationPort): Promise<void>;
+  pickAttachments(port: PetTranslationPort): Promise<void>;
+  importClipboard(port: PetTranslationPort): Promise<void>;
+  removeAttachment(port: PetTranslationPort, attachmentId: string): Promise<void>;
   selectRecord(record: PetTranslationRecord): void;
   clear(port: PetTranslationPort): Promise<void>;
   clearError(): void;
@@ -39,6 +50,9 @@ export const usePetTranslationStore = create<PetTranslationState>((set, get) => 
   isTranslating: false,
   error: null,
   selectedRecordId: null,
+  attachments: [],
+  attachmentError: null,
+  isImportingAttachments: false,
 
   setSourceText(sourceText) { set({ sourceText, error: null }); },
   setTarget(target) { set({ target }); },
@@ -65,8 +79,8 @@ export const usePetTranslationStore = create<PetTranslationState>((set, get) => 
       set({ error: "请先登录 ChatOS。" });
       return;
     }
-    if (!sourceText) {
-      set({ error: "请输入要翻译的内容。" });
+    if (!sourceText && state.attachments.length === 0) {
+      set({ error: "请输入要翻译的内容或添加图片。" });
       return;
     }
     if (state.isTranslating) return;
@@ -77,11 +91,14 @@ export const usePetTranslationStore = create<PetTranslationState>((set, get) => 
         sourceText,
         target: state.target,
         outputStyle: state.outputStyle,
+        attachmentIds: state.attachments.map(({ id }) => id),
       });
       set((current) => ({
         records: [record, ...current.records.filter((item) => item.id !== record.id)],
         translatedText: record.translatedText,
         selectedRecordId: record.id,
+        attachments: [],
+        attachmentError: null,
         isTranslating: false,
       }));
     } catch (failure) {
@@ -112,8 +129,89 @@ export const usePetTranslationStore = create<PetTranslationState>((set, get) => 
     }
   },
 
+  async pickAttachments(port) {
+    const session = get().session;
+    if (!session || get().isTranslating || get().isImportingAttachments) return;
+    set({ isImportingAttachments: true, attachmentError: null });
+    try {
+      const result = await port.pickAttachments(scopeFor(session.user.id));
+      await acceptAttachmentImport(port, result, session.user.id);
+    } catch (failure) {
+      set({ attachmentError: errorMessage(failure) });
+    } finally {
+      set({ isImportingAttachments: false });
+    }
+  },
+
+  async importClipboard(port) {
+    const session = get().session;
+    if (!session || get().isTranslating || get().isImportingAttachments) return;
+    set({ isImportingAttachments: true, attachmentError: null });
+    try {
+      const result = await port.importClipboard(scopeFor(session.user.id));
+      if (result.kind === "text") {
+        set((current) => ({ sourceText: current.sourceText + (result.text ?? "") }));
+      } else if (result.kind === "attachments" && result.result) {
+        await acceptAttachmentImport(port, result.result, session.user.id);
+      }
+    } catch (failure) {
+      set({ attachmentError: errorMessage(failure) });
+    } finally {
+      set({ isImportingAttachments: false });
+    }
+  },
+
+  async removeAttachment(port, attachmentId) {
+    const session = get().session;
+    if (!session) return;
+    try {
+      await port.discardAttachments(scopeFor(session.user.id), [attachmentId]);
+      set((current) => ({
+        attachments: current.attachments.filter(({ id }) => id !== attachmentId),
+        attachmentError: current.attachments.length <= 1 ? null : current.attachmentError,
+      }));
+    } catch (failure) {
+      set({ attachmentError: errorMessage(failure) });
+    }
+  },
+
   clearError() { set({ error: null }); },
 }));
+
+const MAXIMUM_TRANSLATION_ATTACHMENTS = 10;
+
+function scopeFor(ownerUserId: string): AttachmentScope {
+  return { ownerUserId, conversationId: "pet-translation", draftGeneration: 0 };
+}
+
+async function acceptAttachmentImport(
+  port: PetTranslationPort,
+  result: AttachmentImportResult,
+  ownerUserId: string,
+) {
+  const accepted = result.attachments.filter(({ kind, mimeType }) => (
+    kind === "image"
+      && ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType.toLowerCase())
+  ));
+  const rejected = result.attachments.filter((attachment) => !accepted.includes(attachment));
+  const current = usePetTranslationStore.getState().attachments;
+  const available = Math.max(0, MAXIMUM_TRANSLATION_ATTACHMENTS - current.length);
+  const overflow = accepted.slice(available);
+  const retained = accepted.slice(0, available);
+  const discardIds = [...rejected, ...overflow].map(({ id }) => id);
+  if (discardIds.length) {
+    await port.discardAttachments(scopeFor(ownerUserId), discardIds);
+  }
+  const messages = [
+    ...result.errors,
+    ...(rejected.length ? ["快速翻译仅支持 PNG、JPEG、GIF 或 WebP 图片。"] : []),
+    ...(overflow.length ? [`快速翻译最多添加 ${MAXIMUM_TRANSLATION_ATTACHMENTS} 张图片。`] : []),
+  ];
+  usePetTranslationStore.setState((state) => ({
+    attachments: [...state.attachments, ...retained],
+    attachmentError: messages.length ? messages.join("；") : null,
+  }));
+}
 
 function errorMessage(failure: unknown): string {
   if (failure instanceof Error && failure.message.trim()) return failure.message;

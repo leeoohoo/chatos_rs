@@ -5,8 +5,13 @@ export const petTranslationOutputStyleSchema = z.enum(["bilingual", "translation
 
 export const petTranslationRecordSchema = z.object({
   id: z.uuid(),
-  sourceText: z.string().min(1).max(20_000),
+  sourceText: z.string().max(20_000),
   translatedText: z.string().min(1).max(40_000),
+  attachments: z.array(z.object({
+    name: z.string().min(1).max(255),
+    mimeType: z.string().min(1).max(255),
+    isImage: z.literal(true),
+  }).strict()).max(10).default([]),
   target: petTranslationTargetSchema,
   outputStyle: petTranslationOutputStyleSchema,
   createdAtUnixMs: z.number().int().nonnegative(),
@@ -26,4 +31,5 @@ export interface PetTranslationRequest {
   sourceText: string;
   target: PetTranslationTarget;
   outputStyle: PetTranslationOutputStyle;
+  attachmentIds: string[];
 }
