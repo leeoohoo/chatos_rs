@@ -6,6 +6,8 @@
 
 Windows 产品版本：`3.0.9`
 
+- 2026-11-24 补齐团队运行列表的审查态回显：团队 Run 列表在已有安全详情预取返回 `reviewing_followup`、`waiting_confirmation` 或 `needs_review` 时，立即把卡片状态提升为对应中文标签和 attention 视觉，不再被粗粒度 Delivery 的“运行中”覆盖；详情页原有轮询、取消和恢复门禁保持不变。新增 Agent 管理定向回归覆盖审查态标签与优先级样式。真实合法 Run 的原生逐态窗口取证仍单独保留，不用测试 fixture 冒充完成。
+
 - 2026-11-24 补齐快速翻译账号切换的草稿生命周期：会话恢复或账号切换时，旧账号未提交的图片附件按原 owner scope 主动丢弃，原文、译文和选中历史也不会带入新账号；历史读取增加 request identity，迟到的旧账号响应不能覆盖当前账号。新增宠物翻译 Store 定向回归覆盖附件清理、草稿清空和 latest-wins；既有图片翻译的 owner/session generation 与附件摘要边界保持不变。
 
 - 2026-11-24 完成宠物快速翻译的图片输入垂直闭环。Windows 复用现有账号作用域的附件保险库、剪贴板导入和图片安全归一化：最多 10 张图片、总暂存大小 20 MB，提交前复验文件摘要，解码后限制 4,096×4,096 与 4,000 万像素，并按模型能力筛选视觉模型；图片归一化为受控 `input_image` data URL 后才进入一次性无工具翻译请求，提交后立即清理暂存本体，历史只保留文件名/MIME 元数据，不保存图片内容。前端支持图片选择、截图粘贴、图片-only 翻译、移除/关闭清理和 owner-scoped 历史恢复；非图片输入会在 UI 与 Rust 边界双重拒绝。React/Vitest `152` 个测试文件、`600` 项通过，定向宠物翻译 Store `4` 项通过；TypeScript、production build、architecture audit、Bundle audit（入口 `449.22 KiB raw / 135.26 KiB gzip`）、Rustfmt 和差异检查通过。Windows Tauri Rust 编译门禁本轮受当前环境缺少 NASM/CMake 的 `aws-lc-sys` 工具链阻断，未把该环境阻断写成编译成功；既有正式 Release 原生验收仍需在可用 Windows 构建环境重新取证。
@@ -598,7 +600,7 @@ Windows 产品版本：`3.0.9`
 - [x] 宠物快捷聊天、快速翻译与快速记事本 Windows 纵向切片。单击宠物浮窗打开主窗口快捷聊天面板，按当前账号列出联系人和项目并可回到对应工作区；双击打开独立翻译窗口，支持简体中文/英文、双语/仅译文、结果复制、PNG/JPEG/GIF/WebP 图片与截图粘贴翻译；翻译历史以 owner-scoped 原子 JSON 保存，支持重新打开和清空，账号切换会清理旧账号未提交的图片草稿并拒绝迟到历史写回；右键唤起主窗口中的快速记事本面板，复用完整记事本的账号隔离、实时同步、编辑、预览、复制、导出与保存。Rust surface command/event、React domain/port/adapter/store/UI 已接入；`npm run typecheck`、`npm test`、`npm run build`、架构审计、Bundle 审计和 `git diff --check` 通过。
 
 - [x] Codex/Ponytail Hook 的 Windows 端完整闭环。最终 NSIS 安装包已真实启动 AppContainer runner，写入并激活受信 Bundle，触发 `UserPromptSubmit`，回传上下文，按 `continue=false` 阻断 Prompt，并在 Host 重启后恢复 active Bundle；报告为 `%TEMP%\\chatos-windows-installed-hook-restart.json`。原生窗口逐态视觉走查仍单独保留为未完成项。
-- [ ] `3.0.9.4` 新增的任务审查优先级展示仍需原生窗口逐态核对。Windows 原生任务图 DTO 现同时保留 Host 原始状态和 `reviewing_followup` / `waiting_confirmation` 展示状态；Task Graph、Run Inspector、对话 Timeline 状态胶囊与宠物活动摘要均让新门禁覆盖旧 Run 活动并保持轮询，`needs_review` 的恢复操作继续保留。各入口的原生视觉优先级仍需取证，当前不声称完全一致。
+- [ ] `3.0.9.4` 新增的任务审查优先级展示仍需原生窗口逐态核对。Windows 原生任务图 DTO 现同时保留 Host 原始状态和 `reviewing_followup` / `waiting_confirmation` 展示状态；Task Graph、Run Inspector、团队 Run 列表、对话 Timeline 状态胶囊与宠物活动摘要均让新门禁覆盖旧 Run 活动并保持轮询，`needs_review` 的恢复操作继续保留。各入口的原生视觉优先级仍需取证，当前不声称完全一致。
 - [x] Run Inspector 已补齐 macOS 对应的“插件与工具”页签：Windows 从真实 `tool_batch_requested` / `tool_batch_completed` / Run capability disclosure 事件生成安全摘要，展示已选插件、工具路由、状态和调用次数，不向 React 暴露原始 arguments 或结果内容；React/Rust 定向回归通过。该项不替代任务审查逐态原生视觉取证。
 - [x] Run Inspector 的 capability disclosure 进一步按任务冻结的 `plugin_release_snapshots` 将发布实例 ID 映射回 `plugin_key`，避免真实 Plugin 调用在插件汇总卡片中被误报为“未调用”；回归同时覆盖 provider ID 映射和敏感 arguments 不外泄。
 - [x] 团队 Run 检查器已补齐 macOS 对应的“工具调用”区域：Windows 从真实 `tool_batch_completed` 事件投影每个调用的安全摘要（工具名、路由、状态和结果大小），同一 `call_id` 按事件游标保留最新状态；缺少必要标识的调用会被忽略，arguments/result 内容不会进入 React。Rust 8 项 Run Inspector 测试、前端相关 97 项测试和 TypeScript 类型检查均通过，提交 `28789861e` 已推送。

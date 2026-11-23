@@ -541,6 +541,7 @@
 .agent-team-runs__list em.is-running { color: var(--accent); }
 .agent-team-runs__list em.is-completed { color: #24a148; }
 .agent-team-runs__list em.is-failed { color: #c9342d; background: rgba(255,59,48,.10); }
+.agent-team-runs__lanes em.is-attention,.agent-team-runs__list em.is-attention { color: #a65300; background: rgba(255,149,0,.12); }
 .agent-team-runs__list article header > b { margin-left: 1px; color: var(--tertiary); font-size: 13px; font-weight: 500; }
 .agent-team-runs__list article p { overflow: hidden; margin: 0; color: var(--secondary); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
 .agent-team-runs__list article footer { display: flex; min-width: 0; align-items: center; gap: 9px; }

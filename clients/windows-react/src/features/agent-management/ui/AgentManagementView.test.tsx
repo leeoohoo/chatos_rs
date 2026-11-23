@@ -22,6 +22,10 @@ import {
   TeamSystemMessage,
   teamRunDetailStatusLabel,
 } from "./AgentManagementView";
+import {
+  teamRunCheckpointStatusLabel,
+  teamRunStatusClass,
+} from "./agentTeamRunPresentation";
 
 vi.mock("../../conversation-history/ui/ConversationHistoryView", () => ({
   ConversationHistoryView: ({ agentBound, assistantName }: { agentBound?: boolean; assistantName: string }) => (
@@ -48,6 +52,13 @@ describe("AgentManagementView", () => {
     expect(shouldPollTeamRunDetail("reviewing_followup")).toBe(true);
     expect(shouldPollTeamRunDetail(" waiting_confirmation ")).toBe(true);
     expect(shouldPollTeamRunDetail("succeeded")).toBe(false);
+  });
+
+  it("keeps review gate labels when the run list hydrates detail status", () => {
+    expect(teamRunCheckpointStatusLabel("reviewing_followup")).toBe("审查追加要求");
+    expect(teamRunCheckpointStatusLabel("waiting_confirmation")).toBe("等待确认");
+    expect(teamRunStatusClass("reviewing_followup")).toBe("attention");
+    expect(teamRunStatusClass("waiting_confirmation")).toBe("attention");
   });
 
   it("offers cancellation for every non-terminal Host Run state", () => {

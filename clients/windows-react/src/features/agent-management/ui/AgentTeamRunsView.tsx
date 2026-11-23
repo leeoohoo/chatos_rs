@@ -10,8 +10,8 @@ import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import { formatTeamMessageTime, Pagination } from "./AgentManagementUiPrimitives";
 import { AgentTeamRunDetailSheet } from "./AgentTeamRunDetailSheet";
 import {
-  teamRunCheckpointStatusLabel,
   teamRunMemoryThreadId,
+  teamRunDetailStatusLabel,
   teamRunStatusClass,
   teamRunTriggerLabel,
 } from "./agentTeamRunPresentation";
@@ -43,7 +43,7 @@ export function AgentTeamRunsView({
   const selectedRunTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(20);
-  const [runMetrics, setRunMetrics] = useState<Record<string, { eventCount: number; hasMoreEvents: boolean; modelCalls: number }>>({});
+  const [runMetrics, setRunMetrics] = useState<Record<string, { eventCount: number; hasMoreEvents: boolean; modelCalls: number; detailStatus: string }>>({});
   const visibleSnapshot = snapshot?.teamId === detail.team.id ? snapshot : null;
   const hasActiveRun = visibleSnapshot?.runs.some(
     (run) => run.deliveryStatus === "pending" || run.deliveryStatus === "running",
@@ -103,6 +103,7 @@ export function AgentTeamRunsView({
         eventCount: loaded.events.length,
         hasMoreEvents: loaded.eventsHasMore,
         modelCalls: loaded.run.iteration,
+        detailStatus: loaded.run.status,
       }] as const;
     })).then((results) => {
       if (!active) return;
@@ -113,6 +114,9 @@ export function AgentTeamRunsView({
     });
     return () => { active = false; };
   }, [ownerUserId, pagedRuns, runInspectorPort, runMetrics]);
+
+  const managerRun = visibleRuns.find((run) => run.lane === "manager") ?? null;
+  const executorRun = visibleRuns.find((run) => run.lane === "executor") ?? null;
 
   if (!port.loadTeamRuns) {
     return (
@@ -137,8 +141,8 @@ export function AgentTeamRunsView({
       </header>
       {selectedAgentId != null && (
         <div className="agent-team-runs__lanes">
-          <AgentTeamRunLaneSummary lane="manager" run={visibleRuns.find((run) => run.lane === "manager") ?? null} onInspect={openRunDetail} />
-          <AgentTeamRunLaneSummary lane="executor" run={visibleRuns.find((run) => run.lane === "executor") ?? null} onInspect={openRunDetail} />
+          <AgentTeamRunLaneSummary detailStatus={managerRun ? runMetrics[managerRun.runId]?.detailStatus : undefined} lane="manager" run={managerRun} onInspect={openRunDetail} />
+          <AgentTeamRunLaneSummary detailStatus={executorRun ? runMetrics[executorRun.runId]?.detailStatus : undefined} lane="executor" run={executorRun} onInspect={openRunDetail} />
         </div>
       )}
       {error && (
@@ -160,7 +164,8 @@ export function AgentTeamRunsView({
           const metrics = runMetrics[run.runId];
           const agentName = profileNames.get(run.agentId) ?? run.agentId;
           const laneLabel = run.lane === "manager" ? "通讯" : "任务执行";
-          const statusLabel = teamRunCheckpointStatusLabel(run.runStatus);
+          const displayStatus = metrics?.detailStatus ?? run.runStatus;
+          const statusLabel = teamRunDetailStatusLabel(displayStatus, run.runStatus);
           const triggerLabel = teamRunTriggerLabel(run.triggerKind);
           return (
             <article key={run.runId}>
@@ -173,7 +178,7 @@ export function AgentTeamRunsView({
                 <header>
                   <strong>{agentName}</strong>
                   <span className={`agent-team-runs__lane is-${run.lane}`}>{laneLabel}</span>
-                  <em className={`is-${teamRunStatusClass(run.runStatus)}`}>{statusLabel}</em>
+                  <em className={`is-${teamRunStatusClass(displayStatus)}`}>{statusLabel}</em>
                   <b aria-hidden="true">›</b>
                 </header>
                 <p>{triggerLabel} · {metrics
@@ -217,17 +222,20 @@ export function AgentTeamRunsView({
 function AgentTeamRunLaneSummary({
   lane,
   run,
+  detailStatus,
   onInspect,
 }: {
   lane: "manager" | "executor";
   run: AgentTeamRunSummary | null;
+  detailStatus?: string;
   onInspect(runId: string, trigger: HTMLButtonElement): void;
 }) {
+  const displayStatus = detailStatus ?? run?.runStatus ?? "ready";
   return (
     <button disabled={!run} onClick={(event) => { if (run) onInspect(run.runId, event.currentTarget); }} type="button">
       <header>
         <span className={`agent-team-runs__lane is-${lane}`}>{lane === "manager" ? "通讯" : "任务执行"}</span>
-        {run ? <em className={`is-${teamRunStatusClass(run.runStatus)}`}>{teamRunCheckpointStatusLabel(run.runStatus)}</em> : <em>暂无记录</em>}
+        {run ? <em className={`is-${teamRunStatusClass(displayStatus)}`}>{teamRunDetailStatusLabel(displayStatus, run.runStatus)}</em> : <em>暂无记录</em>}
       </header>
       {run ? <><strong>{teamRunTriggerLabel(run.triggerKind)}</strong><span>更新于 {formatTeamMessageTime(run.updatedAtUnixMs)}</span></> : (
         <span>{lane === "manager" ? "等待消息、心跳或任务状态唤醒" : "等待已启动的团队任务"}</span>
