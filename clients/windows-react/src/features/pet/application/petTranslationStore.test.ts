@@ -14,7 +14,7 @@ describe("petTranslationStore", () => {
       records: [],
       sourceText: "",
       translatedText: "",
-      target: "simplifiedChinese",
+      target: "automatic",
       outputStyle: "translationOnly",
       isLoading: false,
       isTranslating: false,
@@ -48,6 +48,7 @@ describe("petTranslationStore", () => {
     usePetTranslationStore.getState().setSourceText("hello");
     await usePetTranslationStore.getState().translate(port);
     const state = usePetTranslationStore.getState();
+    expect(port.translate).toHaveBeenCalledWith(expect.objectContaining({ target: "automatic" }));
     expect(state.translatedText).toBe("你好");
     expect(state.records).toHaveLength(1);
     expect(state.selectedRecordId).toBe(state.records[0]?.id);

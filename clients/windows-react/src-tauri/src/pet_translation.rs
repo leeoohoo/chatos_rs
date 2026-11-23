@@ -60,6 +60,7 @@ struct StoredTranslationRecord {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum TranslationTarget {
+    Automatic,
     SimplifiedChinese,
     English,
 }
@@ -492,16 +493,13 @@ async fn translate_with_model(
     target: TranslationTarget,
     output_style: TranslationOutputStyle,
 ) -> Result<String, String> {
-    let target_label = match target {
-        TranslationTarget::SimplifiedChinese => "简体中文",
-        TranslationTarget::English => "English",
-    };
+    let target_instruction = translation_target_instruction(target);
     let style_instruction = match output_style {
         TranslationOutputStyle::Bilingual => "先输出原文，再输出译文；使用清晰的标题分隔两部分。",
         TranslationOutputStyle::TranslationOnly => "只输出译文，不要解释、评论或添加前后缀。",
     };
     let system_prompt = format!(
-        "你是 ChatOS 的快速翻译助手。把用户内容准确翻译成 {target_label}。保留代码、Markdown、链接、数字和专有名词的格式。{style_instruction}"
+        "你是 ChatOS 的快速翻译助手。{target_instruction} 保留代码、Markdown、链接、数字和专有名词的格式。{style_instruction}"
     );
     let input = build_translation_input(source_text, images);
     let request = ModelRequest::openai_compatible(
@@ -566,6 +564,14 @@ async fn translate_with_model(
             AiSingleStepOutcome::ToolCommand { .. } => return Err("翻译模型返回了不支持的工具调用。".into()),
             AiSingleStepOutcome::Cancelled => return Err("快速翻译已取消。".into()),
         }
+    }
+}
+
+fn translation_target_instruction(target: TranslationTarget) -> &'static str {
+    match target {
+        TranslationTarget::Automatic => "自动判断源语言：中文为主的内容翻译成自然英文；英文为主的内容翻译成简体中文；混合或其他语言默认翻译成简体中文，除非上下文明确需要英文。",
+        TranslationTarget::SimplifiedChinese => "把全部源内容翻译成自然的简体中文。",
+        TranslationTarget::English => "把全部源内容翻译成自然的英文。",
     }
 }
 
@@ -652,6 +658,14 @@ fn translation_error() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_target_matches_macos_direction_policy() {
+        let instruction = translation_target_instruction(TranslationTarget::Automatic);
+        assert!(instruction.contains("中文为主的内容翻译成自然英文"));
+        assert!(instruction.contains("英文为主的内容翻译成简体中文"));
+        assert!(instruction.contains("混合或其他语言默认翻译成简体中文"));
+    }
 
     #[test]
     fn history_is_scoped_to_owner_and_newest_first() {

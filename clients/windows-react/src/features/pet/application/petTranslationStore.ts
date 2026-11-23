@@ -46,7 +46,7 @@ export const usePetTranslationStore = create<PetTranslationState>((set, get) => 
   records: [],
   sourceText: "",
   translatedText: "",
-  target: "simplifiedChinese",
+  target: "automatic",
   outputStyle: "translationOnly",
   isLoading: false,
   isTranslating: false,

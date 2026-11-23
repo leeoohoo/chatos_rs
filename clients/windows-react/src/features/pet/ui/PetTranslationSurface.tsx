@@ -69,6 +69,7 @@ export function PetTranslationSurface({ authentication, port }: { authentication
         <section className="pet-translation-editor" aria-label={english ? "Translator" : "翻译器"}>
           <div className="pet-translation-toolbar">
             <div className="pet-translation-segmented" role="group" aria-label={english ? "Target language" : "目标语言"}>
+              <TargetButton active={state.target === "automatic"} label={english ? "Auto" : "自动"} onClick={() => state.setTarget("automatic")} />
               <TargetButton active={state.target === "simplifiedChinese"} label="中文" onClick={() => state.setTarget("simplifiedChinese")} />
               <TargetButton active={state.target === "english"} label="English" onClick={() => state.setTarget("english")} />
             </div>
@@ -144,7 +145,11 @@ function StyleButton({ active, label, onClick }: { active: boolean; label: strin
 function HistoryRow({ english, onClick, record, selected }: { english: boolean; onClick(): void; record: PetTranslationRecord; selected: boolean }) {
   const preview = record.sourceText.replace(/\s+/gu, " ").trim() || (english ? "Image translation" : "图片翻译");
   const date = new Date(record.createdAtUnixMs).toLocaleString(english ? "en-US" : "zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  return <button className={`pet-translation-history__row ${selected ? "is-selected" : ""}`} onClick={onClick} type="button"><span className="pet-translation-history__arrow">{record.attachments.length ? "▧" : record.target === "english" ? "中→英" : "英→中"}</span><span><strong>{preview}</strong><small>{date} · {record.outputStyle === "bilingual" ? (english ? "Bilingual" : "双语") : (english ? "Translation" : "仅译文")}</small></span></button>;
+  const direction = record.attachments.length
+    ? "▧"
+    : record.target === "automatic" ? (english ? "Auto" : "中英自动")
+      : record.target === "english" ? "中→英" : "英→中";
+  return <button className={`pet-translation-history__row ${selected ? "is-selected" : ""}`} onClick={onClick} type="button"><span className="pet-translation-history__arrow">{direction}</span><span><strong>{preview}</strong><small>{date} · {record.outputStyle === "bilingual" ? (english ? "Bilingual" : "双语") : (english ? "Translation" : "仅译文")}</small></span></button>;
 }
 
 async function copyText(value: string) {

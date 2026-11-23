@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const petTranslationTargetSchema = z.enum(["simplifiedChinese", "english"]);
+export const petTranslationTargetSchema = z.enum(["automatic", "simplifiedChinese", "english"]);
 export const petTranslationOutputStyleSchema = z.enum(["bilingual", "translationOnly"]);
 
 export const petTranslationRecordSchema = z.object({
