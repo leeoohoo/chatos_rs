@@ -40,20 +40,21 @@ usage() {
   cat <<'EOF'
 Usage:
   scripts/deploy-online.sh                    # interactive menu
-  scripts/deploy-online.sh all                # cloud services + all maintained Plugins
+  scripts/deploy-online.sh all                # cloud services + host-default Plugins
   scripts/deploy-online.sh cloud              # all cloud services
   scripts/deploy-online.sh cloud-backends     # all backend services
   scripts/deploy-online.sh cloud-frontends    # all frontend services
   scripts/deploy-online.sh gateway            # APISIX + public Nginx configuration only
   scripts/deploy-online.sh service NAME [...] # selected cloud services
-  scripts/deploy-online.sh plugin all
+  scripts/deploy-online.sh plugin all             # host-default set; Windows Computer Use is explicit
   scripts/deploy-online.sh plugin browser
-  scripts/deploy-online.sh plugin computer-use
+  scripts/deploy-online.sh plugin computer-use-macos
+  scripts/deploy-online.sh plugin computer-use-windows
   scripts/deploy-online.sh plugin document
   scripts/deploy-online.sh plugin diagram-studio
   scripts/deploy-online.sh plugin web-design-studio
   scripts/deploy-online.sh plugin solution-studio
-  scripts/deploy-online.sh plugin browser computer-use
+  scripts/deploy-online.sh plugin browser computer-use-macos
   scripts/deploy-online.sh client mac
   scripts/deploy-online.sh client windows
   scripts/deploy-online.sh status
@@ -229,11 +230,17 @@ build_plugin_artifact() {
       artifact_name="$(cd "$ROOT_DIR/plugins/browser/npm" && npm pack --pack-destination "$DEPLOY_TMP" | tail -n 1)"
       printf '%s\n' "$DEPLOY_TMP/$artifact_name"
       ;;
-    computer-use)
-      echo "[INFO] building Computer Use Plugin"
-      npm --prefix "$ROOT_DIR/plugins/computer-use" run pack:chatos >&2
+    computer-use|computer-use-macos)
+      echo "[INFO] building Computer Use macOS Plugin"
+      npm --prefix "$ROOT_DIR/plugins/computer-use" run pack:macos >&2
       version="$(jq -r '.version' "$ROOT_DIR/plugins/computer-use/package.json")"
       printf '%s\n' "$ROOT_DIR/plugins/computer-use/dist/chatos-artifacts/open-computer-use-$version.tgz"
+      ;;
+    computer-use-windows)
+      echo "[INFO] building Computer Use Windows Plugin"
+      npm --prefix "$ROOT_DIR/plugins/computer-use" run pack:windows >&2
+      version="$(jq -r '.version' "$ROOT_DIR/plugins/computer-use/windows/package.json")"
+      printf '%s\n' "$ROOT_DIR/plugins/computer-use/dist/chatos-artifacts/open-computer-use-windows-$version.tgz"
       ;;
     document)
       echo "[INFO] verifying and building Document Tools Plugin"
@@ -271,7 +278,10 @@ plugin_publisher_json() {
     browser|document|diagram-studio|web-design-studio|solution-studio)
       jq -nc '{id:"chatos",name:"Chatos",website:"https://github.com/chatos-ai"}'
       ;;
-    computer-use)
+    computer-use|computer-use-macos)
+      jq -nc '{id:"open-computer-use",name:"Open Computer Use",website:"https://github.com/iFurySt/open-codex-computer-use"}'
+      ;;
+    computer-use-windows)
       jq -nc '{id:"open-computer-use",name:"Open Computer Use",website:"https://github.com/iFurySt/open-codex-computer-use"}'
       ;;
   esac
@@ -306,7 +316,7 @@ publish_plugin() {
   publisher_name="$(jq -r '.name' <<< "$publisher")"
   publisher_website="$(jq -r '.website' <<< "$publisher")"
   license_url=""
-  if [[ "$plugin" == "computer-use" ]]; then
+  if [[ "$plugin" == "computer-use" || "$plugin" == "computer-use-macos" || "$plugin" == "computer-use-windows" ]]; then
     license_url="https://github.com/iFurySt/open-codex-computer-use/blob/main/LICENSE"
   fi
 
@@ -366,7 +376,7 @@ deploy_plugins() {
   local plugins=("$@")
   local plugin
   if [[ ${#plugins[@]} -eq 0 ]]; then
-    echo "[ERROR] expected Plugin: all, browser, computer-use, document, diagram-studio, web-design-studio, or solution-studio" >&2
+    echo "[ERROR] expected Plugin: all, browser, computer-use-macos, computer-use-windows, document, diagram-studio, web-design-studio, or solution-studio" >&2
     exit 2
   fi
   if [[ "${plugins[0]}" == "all" ]]; then
@@ -374,11 +384,11 @@ deploy_plugins() {
       echo "[ERROR] Plugin 'all' cannot be combined with individual Plugins" >&2
       exit 2
     fi
-    plugins=(browser computer-use document diagram-studio web-design-studio solution-studio)
+    plugins=(browser computer-use-macos document diagram-studio web-design-studio solution-studio)
   fi
   for plugin in "${plugins[@]}"; do
     case "$plugin" in
-      browser|computer-use|document|diagram-studio|web-design-studio|solution-studio) ;;
+      browser|computer-use|computer-use-macos|computer-use-windows|document|diagram-studio|web-design-studio|solution-studio) ;;
       *)
         echo "[ERROR] unknown Plugin: $plugin" >&2
         exit 2
@@ -416,7 +426,8 @@ Cloud configuration components:
   gateway-config
 Plugins:
   browser
-  computer-use
+  computer-use-macos
+  computer-use-windows
   document
   diagram-studio
   web-design-studio
@@ -430,20 +441,21 @@ EOF
 interactive_menu() {
   cat <<'EOF'
 ChatOS online deployment
-  1) Deploy everything online (cloud + all maintained Plugins)
+  1) Deploy cloud + host-default Plugins
   2) Deploy all cloud services
   3) Deploy all backend services
   4) Deploy selected cloud service(s)
   5) Deploy gateway configuration only
-  6) Deploy all Plugins
+  6) Deploy host-default Plugins (Windows Computer Use is separate)
   7) Deploy Browser CDP
-  8) Deploy Computer Use
- 9) Deploy Document Tools
- 10) Deploy Diagram Studio
- 11) Deploy Web Design Studio
- 12) Deploy Solution Studio
- 13) Show deployment status
- 14) Follow deployment logs
+  8) Deploy Computer Use (macOS)
+  9) Deploy Computer Use (Windows)
+ 10) Deploy Document Tools
+ 11) Deploy Diagram Studio
+ 12) Deploy Web Design Studio
+ 13) Deploy Solution Studio
+ 14) Show deployment status
+ 15) Follow deployment logs
 EOF
   read -r -p "Select: " selection
   case "$selection" in
@@ -459,13 +471,14 @@ EOF
     5) set -- gateway ;;
     6) set -- plugin all ;;
     7) set -- plugin browser ;;
-    8) set -- plugin computer-use ;;
-    9) set -- plugin document ;;
-    10) set -- plugin diagram-studio ;;
-    11) set -- plugin web-design-studio ;;
-    12) set -- plugin solution-studio ;;
-    13) set -- status ;;
-    14)
+    8) set -- plugin computer-use-macos ;;
+    9) set -- plugin computer-use-windows ;;
+    10) set -- plugin document ;;
+    11) set -- plugin diagram-studio ;;
+    12) set -- plugin web-design-studio ;;
+    13) set -- plugin solution-studio ;;
+    14) set -- status ;;
+    15)
       read -r -p "Service name (empty for all): " service
       set -- logs "$service"
       ;;

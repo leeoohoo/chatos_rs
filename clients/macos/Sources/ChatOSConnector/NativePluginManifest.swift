@@ -38,13 +38,31 @@ enum NativePluginManifestLoader {
     static let maximumManifestBytes = 2 * 1_024 * 1_024
 
     static func loadManifest(from url: URL) throws -> NativePluginManifest {
-        try JSONDecoder().decode(
+        let manifest = try JSONDecoder().decode(
             NativePluginManifest.self,
             from: NativeBoundedFileReader.read(
                 url,
                 maximumBytes: maximumManifestBytes
             )
         )
+        guard macOSCompatible(manifest.dependencies.supportedPlatforms) else {
+            throw NativePluginRuntimeError.invalidManifest("Plugin 不支持当前 Mac")
+        }
+        return manifest
+    }
+
+    static func macOSCompatible(_ platforms: [String]) -> Bool {
+        #if arch(arm64)
+        let currentPlatform = "macos-arm64"
+        #elseif arch(x86_64)
+        let currentPlatform = "macos-x64"
+        #else
+        let currentPlatform = "macos"
+        #endif
+        return platforms.isEmpty || platforms.contains { value in
+            let platform = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return platform == "macos" || platform == currentPlatform
+        }
     }
 
     static func prepare(

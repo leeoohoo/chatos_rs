@@ -81,7 +81,7 @@ macOS 客户端已经包含项目工作区、任务视图、插件应用、Local
 | 插件 | 用途 |
 | --- | --- |
 | [Browser](./plugins/browser/README.md) | 基于 CDP 操作受管理 Chromium，或用户明确共享的 Chrome 标签页。 |
-| [Computer Use](./plugins/computer-use/README.md) | 以真实截图为事实来源，通过平台原生输入能力执行可视化电脑操作。 |
+| [Computer Use](./plugins/computer-use/README.md) | 以真实截图为事实来源；macOS 与 Windows 独立发布，共享工具与 Skills。 |
 | [Document Tools](./plugins/document/README.md) | 在工作区边界内检查、渲染、创建和编辑 Word、Excel、PowerPoint 与 PDF。 |
 | [Diagram Studio](./plugins/diagram-studio/README.md) | 带本地可视化工作台、可由 AI 编辑并支持 PlantUML 互操作的图表工具。 |
 

@@ -6,17 +6,23 @@ import { fileURLToPath } from "node:url";
 
 import {
   assertMacPackagingHost,
+  assertWindowsPackagingHost,
   readDeclaredVersion,
   windowsPlatformFromPortableExecutable,
 } from "./package-support.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-test("requires a macOS host for the cross-platform package", () => {
+test("platform packages require only their native host", () => {
   assertMacPackagingHost("darwin");
   assert.throws(
     () => assertMacPackagingHost("win32"),
-    /requires a macOS host.*received win32.*build:windows.*smoke:windows/s,
+    /macOS Computer Use package requires macOS.*received win32/s,
+  );
+  assertWindowsPackagingHost("win32");
+  assert.throws(
+    () => assertWindowsPackagingHost("darwin"),
+    /Windows Computer Use package requires Windows.*received darwin/s,
   );
 });
 
@@ -51,12 +57,18 @@ test("reads the shared release version from project sources", () => {
   assert.throws(() => readDeclaredVersion("Version=latest", "invalid"));
 });
 
-test("keeps package, manifest, and both native implementations on one release", () => {
-  const packageMetadata = JSON.parse(
+test("keeps separate platform packages on the shared native version", () => {
+  const macPackage = JSON.parse(
     readFileSync(path.join(projectRoot, "package.json"), "utf8"),
   );
-  const manifest = JSON.parse(
+  const macManifest = JSON.parse(
     readFileSync(path.join(projectRoot, "chatos.plugin.json"), "utf8"),
+  );
+  const windowsPackage = JSON.parse(
+    readFileSync(path.join(projectRoot, "windows", "package.json"), "utf8"),
+  );
+  const windowsManifest = JSON.parse(
+    readFileSync(path.join(projectRoot, "windows", "chatos.plugin.json"), "utf8"),
   );
   const swiftService = readFileSync(
     path.join(projectRoot, "Sources", "VisualComputerUseMCP", "MCPService.swift"),
@@ -81,12 +93,18 @@ test("keeps package, manifest, and both native implementations on one release", 
     "utf8",
   );
 
-  assert.equal(manifest.version, packageMetadata.version);
-  assert.equal(readDeclaredVersion(swiftService, "Swift service"), packageMetadata.version);
-  assert.equal(readDeclaredVersion(windowsProject, "Windows project"), packageMetadata.version);
-  assert.equal(readDeclaredVersion(windowsService, "Windows service"), packageMetadata.version);
-  assert.deepEqual(manifest.dependencies.supportedPlatforms, [
-    "macos-arm64",
+  assert.equal(macPackage.name, "open-computer-use");
+  assert.equal(windowsPackage.name, "open-computer-use-windows");
+  assert.equal(macManifest.name, macPackage.name);
+  assert.equal(windowsManifest.name, windowsPackage.name);
+  assert.equal(macManifest.version, macPackage.version);
+  assert.equal(windowsManifest.version, windowsPackage.version);
+  assert.equal(windowsPackage.version, macPackage.version);
+  assert.equal(readDeclaredVersion(swiftService, "Swift service"), macPackage.version);
+  assert.equal(readDeclaredVersion(windowsProject, "Windows project"), windowsPackage.version);
+  assert.equal(readDeclaredVersion(windowsService, "Windows service"), windowsPackage.version);
+  assert.deepEqual(macManifest.dependencies.supportedPlatforms, ["macos-arm64"]);
+  assert.deepEqual(windowsManifest.dependencies.supportedPlatforms, [
     "windows-x64",
     "windows-arm64",
   ]);

@@ -33,13 +33,21 @@ pub(super) fn project_snapshot(
     let grouped = group_records(records, owner_user_id)?;
     let mut plugins = BTreeMap::<String, PresentedPlugin>::new();
     for source in &sources.items {
-        validate_plugin_manifest(&source.release.normalized_manifest)
+        let manifest = &source.release.normalized_manifest;
+        validate_plugin_manifest(manifest)
             .map_err(|_| "Marketplace 返回了无效的 Plugin 清单。".to_owned())?;
+        let installed = grouped.get(&source.catalog.id);
+        if installed.is_none()
+            && (!windows_compatible(&source.release.supported_platforms)
+                || !windows_compatible(&manifest.dependencies.supported_platforms))
+        {
+            continue;
+        }
         plugins.insert(
             source.catalog.id.clone(),
             project_marketplace_plugin(
                 source,
-                grouped.get(&source.catalog.id),
+                installed,
                 plugin_root,
                 owner_user_id,
                 applications,

@@ -464,6 +464,13 @@ fn platform_gate_only_accepts_windows_or_universal_plugins() {
 }
 
 #[test]
+fn computer_use_identity_accepts_legacy_and_windows_packages() {
+    assert!(is_computer_use_package("open-computer-use"));
+    assert!(is_computer_use_package("open-computer-use-windows"));
+    assert!(!is_computer_use_package("open-computer-use-macos"));
+}
+
+#[test]
 fn presented_text_and_skill_names_do_not_expose_paths() {
     assert_eq!(safe_text("  Diagram Studio  ", "Plugin"), "Diagram Studio");
     assert_eq!(safe_text("bad\0text", "Plugin"), "Plugin");

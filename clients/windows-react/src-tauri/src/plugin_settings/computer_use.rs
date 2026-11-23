@@ -16,6 +16,10 @@ use std::path::PathBuf;
 
 use super::presentation::windows_compatible;
 
+pub(super) fn is_computer_use_package(name: &str) -> bool {
+    matches!(name, "open-computer-use" | "open-computer-use-windows")
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ComputerUseInstallation {
     Missing,
@@ -35,7 +39,7 @@ pub(crate) async fn resolve_computer_use_installation(
             Ok(manifest) => manifest,
             Err(_) => continue,
         };
-        if manifest.name != "open-computer-use"
+        if !is_computer_use_package(&manifest.name)
             || !windows_compatible(&manifest.dependencies.supported_platforms)
         {
             continue;
@@ -179,7 +183,11 @@ pub(super) fn apply_computer_use_runtime_health(
     health: Option<PluginRuntimeHealthProjection>,
 ) {
     let Some(plugin) = snapshot.plugins.iter_mut().find(|plugin| {
-        plugin.installed && plugin.package_name.as_deref() == Some("open-computer-use")
+        plugin.installed
+            && plugin
+                .package_name
+                .as_deref()
+                .is_some_and(is_computer_use_package)
     }) else {
         return;
     };

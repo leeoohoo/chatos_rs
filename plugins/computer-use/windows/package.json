@@ -1,0 +1,16 @@
+{
+  "name": "open-computer-use-windows",
+  "version": "0.9.0",
+  "description": "Visual-first Windows Computer Use MCP server for ChatOS.",
+  "license": "MIT",
+  "bin": {
+    "open-computer-use": "bin/open-computer-use"
+  },
+  "files": [
+    "bin/",
+    "chatos.plugin.json",
+    "skills/",
+    "README.md",
+    "LICENSE"
+  ]
+}

@@ -6,7 +6,15 @@ export const supportedWindowsRuntimes = Object.freeze({
 export function assertMacPackagingHost(platform = process.platform) {
   if (platform !== "darwin") {
     throw new Error(
-      `ChatOS Computer Use packaging requires a macOS host for the Swift app, lipo, and PlistBuddy toolchain; received ${platform}. Windows worker builds and smoke tests remain available through npm run build:windows and npm run smoke:windows.`,
+      `The macOS Computer Use package requires macOS for Swift, lipo, and PlistBuddy; received ${platform}.`,
+    );
+  }
+}
+
+export function assertWindowsPackagingHost(platform = process.platform) {
+  if (platform !== "win32") {
+    throw new Error(
+      `The Windows Computer Use package requires Windows for native build and smoke validation; received ${platform}.`,
     );
   }
 }

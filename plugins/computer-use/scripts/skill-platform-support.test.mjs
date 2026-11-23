@@ -44,7 +44,7 @@ test("router documents both capability and activation contracts", () => {
 
   assert.match(router, /Screen Recording or Accessibility/);
   assert.match(router, /interactive-desktop, capture, input, or Administrator\/UIPI/);
-  assert.match(router, /macOS requires `bundle_identifier`/);
+  assert.match(router, /macOS accepts either.*`application`.*`bundle_identifier`/);
   assert.match(router, /Windows requires `application`/);
   assert.match(router, /real screenshots|screenshot.*source of truth/i);
   assert.match(router, /Move and visually verify.*before every click/i);
@@ -56,7 +56,8 @@ test("leaf Skills preserve platform-specific focus, coordinates, and shortcuts",
   const targeting = readSkill("visual-observation-targeting/SKILL.md");
   const interaction = readSkill("visual-pointer-keyboard/SKILL.md");
 
-  assert.match(focus, /macOS, pass `bundle_identifier`/);
+  assert.match(focus, /macOS, pass `application`.*running app.*`bundle_identifier`/);
+  assert.match(focus, /never send `application` and `bundle_identifier` together/);
   assert.match(focus, /Windows, pass `application`/);
   assert.match(focus, /process name, executable, Shell application name, or path/);
   assert.match(targeting, /macOS coordinates are global display points/);

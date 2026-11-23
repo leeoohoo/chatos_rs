@@ -1,6 +1,24 @@
 import Foundation
 
 struct NativePluginManifest: Decodable, Sendable {
+    struct Dependencies: Decodable, Sendable {
+        var supportedPlatforms: [String]
+
+        init() {
+            supportedPlatforms = []
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            supportedPlatforms = try container.decodeIfPresent(
+                [String].self,
+                forKey: .supportedPlatforms
+            ) ?? []
+        }
+
+        private enum CodingKeys: String, CodingKey { case supportedPlatforms }
+    }
+
     struct PathReference: Decodable, Sendable {
         var path: String
 
@@ -205,6 +223,7 @@ struct NativePluginManifest: Decodable, Sendable {
     var interface: Interface?
     var permissions: [Permission]
     var runtimeContext: RuntimeContext?
+    var dependencies: Dependencies
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -219,10 +238,11 @@ struct NativePluginManifest: Decodable, Sendable {
         interface = try container.decodeIfPresent(Interface.self, forKey: .interface)
         permissions = try container.decodeIfPresent([Permission].self, forKey: .permissions) ?? []
         runtimeContext = try container.decodeIfPresent(RuntimeContext.self, forKey: .runtimeContext)
+        dependencies = try container.decodeIfPresent(Dependencies.self, forKey: .dependencies) ?? .init()
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, name, version, description, skills, mcpServers, hooks, ui, interface, permissions
-        case runtimeContext
+        case runtimeContext, dependencies
     }
 }

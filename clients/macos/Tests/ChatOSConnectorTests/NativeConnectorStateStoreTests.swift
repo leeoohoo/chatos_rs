@@ -470,6 +470,18 @@ struct NativeConnectorStateStoreTests {
     }
 
     @Test
+    func macOSPlatformGateRejectsWindowsOnlyPlugins() {
+        #expect(NativePluginManifestLoader.macOSCompatible([]))
+        #expect(NativePluginManifestLoader.macOSCompatible(["macos"]))
+        #if arch(arm64)
+        #expect(NativePluginManifestLoader.macOSCompatible(["macos-arm64"]))
+        #elseif arch(x86_64)
+        #expect(NativePluginManifestLoader.macOSCompatible(["macos-x64"]))
+        #endif
+        #expect(!NativePluginManifestLoader.macOSCompatible(["windows-x64", "windows-arm64"]))
+    }
+
+    @Test
     func webDesignStudioUpdateFrom0100To0110IsAvailable() {
         let installed = NativeInstalledPluginRecord(
             pluginID: "14993149-32e7-40a8-b166-dc7639edebfc",

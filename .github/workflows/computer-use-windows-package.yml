@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+name: Computer Use Windows Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "computer-use-windows-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build Windows ChatOS package
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Test package validators
+        run: npm --prefix plugins/computer-use run test:packaging
+
+      - name: Build and pack Windows artifact
+        run: npm --prefix plugins/computer-use run pack:windows
+
+      - name: Smoke packaged Windows worker
+        run: npm --prefix plugins/computer-use run smoke:windows
+
+      - name: Write SHA-256 checksum
+        shell: pwsh
+        run: |
+          $artifact = Get-Item plugins/computer-use/dist/chatos-artifacts/open-computer-use-windows-*.tgz
+          $hash = (Get-FileHash $artifact.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($artifact.Name)" | Set-Content plugins/computer-use/dist/chatos-artifacts/SHA256SUMS-windows
+
+      - name: Upload signed-release input
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-computer-use-windows-${{ github.ref_name }}
+          path: |
+            plugins/computer-use/dist/chatos-artifacts/open-computer-use-windows-*.tgz
+            plugins/computer-use/dist/chatos-artifacts/SHA256SUMS-windows
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

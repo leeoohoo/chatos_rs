@@ -13,6 +13,11 @@ const auditScript = path.resolve(
   "scripts",
   "audit-plugin-skill-gates.mjs",
 );
+const hasManifestArgument = process.argv[2] === "--manifest" && Boolean(process.argv[3]);
+const manifestArgument = hasManifestArgument ? process.argv[3] : "chatos.plugin.json";
+if (process.argv.length !== (hasManifestArgument ? 4 : 2)) {
+  throw new Error("Usage: audit-skill-gates.mjs [--manifest relative/path.json]");
+}
 
 function nativeMcpCommand() {
   if (process.platform === "win32") {
@@ -35,7 +40,7 @@ const result = spawnSync(
   [
     auditScript,
     "--manifest",
-    "chatos.plugin.json",
+    manifestArgument,
     "--cwd",
     ".",
     "--",

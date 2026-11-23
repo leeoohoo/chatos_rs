@@ -216,6 +216,10 @@ extension NativeLocalConnectorService {
             let id = source.catalog.id
             let installedRecord = state.installedPluginRecords?[id]
             let installed = installedRecord != nil || state.installedPluginIDs.contains(id)
+            let platformCompatible = NativePluginManifestLoader.macOSCompatible(
+                source.release.supportedPlatforms ?? []
+            )
+            guard platformCompatible || installed else { continue }
             var installationIssue = await pluginInstallationIssue(
                 installed: installed,
                 record: installedRecord,
@@ -254,11 +258,12 @@ extension NativeLocalConnectorService {
                 latestVersion: source.release.version ?? source.release.id,
                 installedVersion: installedRecord?.version,
                 installed: installed,
-                updateAvailable: Self.pluginUpdateAvailable(
+                updateAvailable: platformCompatible && Self.pluginUpdateAvailable(
                     installed: installedRecord,
                     release: source.release
                 ),
-                installAvailable: source.release.artifactSHA256 != nil
+                installAvailable: platformCompatible
+                    && source.release.artifactSHA256 != nil
                     && source.release.npmPackage != nil,
                 enabled: state.pluginPreferences[id] ?? source.preference?.enabled ?? true,
                 hasUI: source.catalog.hasUI ?? installedManifest.map { !$0.ui.isEmpty },
@@ -382,6 +387,11 @@ extension NativeLocalConnectorService {
         }
         guard expectedReleaseID == nil || source.release.id == expectedReleaseID else {
             throw NativeConnectorError.pluginInstallation("平台插件版本已变化，请重新查询后安装")
+        }
+        guard NativePluginManifestLoader.macOSCompatible(
+            source.release.supportedPlatforms ?? []
+        ) else {
+            throw NativeConnectorError.pluginInstallation("这个 Plugin 不支持当前 Mac")
         }
         let token = try requireAccessToken()
         let record = try await pluginInstaller.install(source: source, token: token, gateway: gateway)

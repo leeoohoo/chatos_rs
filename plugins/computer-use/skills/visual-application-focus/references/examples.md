@@ -2,7 +2,7 @@
 
 ## Positive
 
-Inspect the current `activate_application` schema. On macOS, activate the known `bundle_identifier`; on Windows, activate the known `application`. Verify the returned identity and visible window, click the intended editor, verify focus, then type.
+Inspect the current `activate_application` schema. On macOS, activate an already-running app by its exact visible `application` name or use a known `bundle_identifier`; on Windows, activate the known `application`. Verify the returned identity and visible window, click the intended editor, verify focus, then type.
 
 ## Negative
 

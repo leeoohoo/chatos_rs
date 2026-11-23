@@ -77,6 +77,55 @@ actor ComputerController {
         )
     }
 
+    func activateApplication(named applicationName: String) async throws -> ActiveApplicationDTO {
+        virtualCursorTrail = []
+        return try await Self.activateApplicationOnMain(
+            named: applicationName
+        )
+    }
+
+    @MainActor
+    private static func activateApplicationOnMain(
+        named applicationName: String
+    ) async throws -> ActiveApplicationDTO {
+        let query = applicationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            throw VisualComputerUseError.invalidArgument("application must not be empty.")
+        }
+
+        let matches = NSWorkspace.shared.runningApplications.filter { application in
+            !application.isTerminated && application.activationPolicy == .regular &&
+                applicationMatches(
+                    query,
+                    name: application.localizedName,
+                    bundleIdentifier: application.bundleIdentifier,
+                    executableName: application.executableURL?.lastPathComponent,
+                    bundleName: application.bundleURL?.lastPathComponent
+                )
+        }
+        guard !matches.isEmpty else {
+            throw VisualComputerUseError.invalidArgument(
+                "No running application matches '\(query)'. Use bundle_identifier to launch an installed application."
+            )
+        }
+
+        let bundleIdentifiers = Set(matches.compactMap(\.bundleIdentifier))
+        guard matches.count == 1 || bundleIdentifiers.count == 1 else {
+            let candidates = matches.map {
+                "\($0.localizedName ?? "unknown") (\($0.bundleIdentifier ?? "pid \($0.processIdentifier)"))"
+            }.sorted().joined(separator: ", ")
+            throw VisualComputerUseError.invalidArgument(
+                "Application name '\(query)' is ambiguous. Use bundle_identifier. Matches: \(candidates)."
+            )
+        }
+
+        let application = matches[0]
+        return try await activateRunningApplication(
+            application,
+            identifier: application.bundleIdentifier ?? query
+        )
+    }
+
     @MainActor
     private static func activateApplicationOnMain(
         bundleIdentifier: String
@@ -88,20 +137,9 @@ actor ComputerController {
         if let application = NSRunningApplication.runningApplications(
             withBundleIdentifier: bundleIdentifier
         ).first {
-            var activationAccepted = false
-            for _ in 0..<3 {
-                if application.activate(options: [.activateAllWindows]) {
-                    activationAccepted = true
-                    break
-                }
-                try await Task.sleep(nanoseconds: 40_000_000)
-            }
-            guard activationAccepted else {
-                throw VisualComputerUseError.applicationActivationFailed(bundleIdentifier)
-            }
-            return try await waitForFrontmost(
+            return try await activateRunningApplication(
                 application,
-                bundleIdentifier: bundleIdentifier
+                identifier: bundleIdentifier
             )
         }
 
@@ -137,13 +175,37 @@ actor ComputerController {
     }
 
     @MainActor
+    private static func activateRunningApplication(
+        _ application: NSRunningApplication,
+        identifier: String
+    ) async throws -> ActiveApplicationDTO {
+        var activationAccepted = false
+        for _ in 0..<3 {
+            if application.activate(options: [.activateAllWindows]) {
+                activationAccepted = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 40_000_000)
+        }
+        guard activationAccepted else {
+            throw VisualComputerUseError.applicationActivationFailed(identifier)
+        }
+        return try await waitForFrontmost(
+            application,
+            bundleIdentifier: application.bundleIdentifier
+        )
+    }
+
+    @MainActor
     private static func waitForFrontmost(
         _ application: NSRunningApplication,
-        bundleIdentifier: String
+        bundleIdentifier: String?
     ) async throws -> ActiveApplicationDTO {
         for attempt in 0..<40 {
-            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleIdentifier {
-                return applicationDTO(NSWorkspace.shared.frontmostApplication)
+            if let frontmost = NSWorkspace.shared.frontmostApplication,
+               frontmost.processIdentifier == application.processIdentifier ||
+                (bundleIdentifier != nil && frontmost.bundleIdentifier == bundleIdentifier) {
+                return applicationDTO(frontmost)
             }
             if application.isTerminated {
                 break
@@ -153,7 +215,33 @@ actor ComputerController {
             }
             try await Task.sleep(nanoseconds: 25_000_000)
         }
-        throw VisualComputerUseError.applicationActivationFailed(bundleIdentifier)
+        throw VisualComputerUseError.applicationActivationFailed(
+            bundleIdentifier ?? application.localizedName ?? "pid \(application.processIdentifier)"
+        )
+    }
+
+    static func applicationMatches(
+        _ query: String,
+        name: String?,
+        bundleIdentifier: String?,
+        executableName: String?,
+        bundleName: String?
+    ) -> Bool {
+        let normalizedQuery = normalizedApplicationName(query)
+        return [name, bundleIdentifier, executableName, bundleName]
+            .compactMap { $0 }
+            .contains { normalizedApplicationName($0) == normalizedQuery }
+    }
+
+    private static func normalizedApplicationName(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let withoutAppSuffix = trimmed.lowercased().hasSuffix(".app")
+            ? String(trimmed.dropLast(4))
+            : trimmed
+        return withoutAppSuffix.folding(
+            options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+            locale: .current
+        )
     }
 
     func displays() throws -> [DisplayDTO] {

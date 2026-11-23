@@ -214,11 +214,13 @@ struct GatewayPluginReleaseDTO: Decodable, Sendable {
     var version: String?
     var artifactSHA256: String?
     var npmPackage: GatewayPluginNPMPackageDTO?
+    var supportedPlatforms: [String]? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, version
         case artifactSHA256 = "artifact_sha256"
         case npmPackage = "npm_package"
+        case supportedPlatforms = "supported_platforms"
     }
 }
 

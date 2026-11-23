@@ -1,6 +1,6 @@
 # Visual Computer Use MCP
 
-macOS 主实现使用 Swift；独立的 Windows 原生核心位于 [`windows/`](./windows/README.md)，使用 C# / .NET 8 / WPF。两端保持同一套 11 个通用 MCP 工具和“真实截图 → 虚拟定位 → 视觉确认 → 真实输入”的工作流。ChatOS Marketplace 包同时携带 macOS arm64、Windows x64 和 Windows arm64 worker，并由宿主按当前平台与架构选择原生入口。
+macOS 主实现使用 Swift；独立的 Windows 原生核心位于 [`windows/`](./windows/README.md)，使用 C# / .NET 8 / WPF。两端保持同一套 11 个通用 MCP 工具和“真实截图 → 虚拟定位 → 视觉确认 → 真实输入”的工作流，但作为两个独立 ChatOS Plugin 构建和发布：macOS 沿用 `open-computer-use`，Windows 使用 `open-computer-use-windows`。
 
 ## macOS（Swift）
 
@@ -105,27 +105,43 @@ tool_timeout_sec = 60
 
 ## 接入 ChatOS Plugin Marketplace
 
-这个仓库同时提供 ChatOS schema v3 Plugin 包装，并沿用市场中的
-`open-computer-use` Plugin identity，以便从旧实现直接升级到当前视觉实现。
+这个仓库同时提供 ChatOS schema v3 Plugin 包装。macOS 沿用市场中的
+`open-computer-use` identity，以便从旧实现直接升级；Windows 使用独立的
+`open-computer-use-windows` identity。
 
-构建标准、跨平台的 npm `.tgz`。打包机需要 macOS arm64、Xcode/Swift 和 .NET 8 SDK；Windows worker 以 self-contained single-file 方式发布，目标机器不需要另装 .NET：
+客户端不按名称猜测平台，而是读取签名 Release 的 `supported_platforms`：macOS
+包声明 `macos-arm64`，Windows 包声明 `windows-x64` 和 `windows-arm64`。不匹配
+当前系统的平台包不会进入安装流程；包名只用于标识与升级兼容。
+
+macOS 和 Windows 使用独立包与发布流水线，共享源码版本和 Skills，但不会互相依赖构建工具。macOS 打包只需要 Xcode/Swift：
 
 ```bash
-npm run pack:chatos
+npm run pack:macos
 ```
 
-产物：
+macOS 产物：
 
 ```text
 dist/chatos-artifacts/open-computer-use-0.9.0.tgz
 ```
 
-包内平台入口：
+Windows 打包必须在 Windows + .NET 8 SDK 上运行：
+
+```powershell
+npm run pack:windows
+```
+
+Windows 产物：
 
 ```text
-bin/open-computer-use
-bin/windows-x64/open-computer-use.exe
-bin/windows-arm64/open-computer-use.exe
+dist/chatos-artifacts/open-computer-use-windows-0.9.0.tgz
+```
+
+包内入口分别为：
+
+```text
+open-computer-use:         bin/open-computer-use + dist/Visual Computer Use.app
+open-computer-use-windows: bin/open-computer-use + bin/windows-{x64,arm64}/open-computer-use.exe
 ```
 
 Windows React/Tauri 安装器会优先选择与当前 CPU 架构精确匹配的 `.exe`；Node/npm 入口也会做相同选择。macOS 的 `bin/open-computer-use` 会把 `Visual Computer Use.app` 原子复制到稳定目录：
@@ -138,7 +154,7 @@ ChatOS MCP component key 保持为 `computer-use`。Local Connector 调用
 `open-computer-use doctor` 时会检查真实 App 权限；缺少权限时自动打开当前
 managed App 的原生权限引导窗口。
 
-`.github/workflows/computer-use-package.yml` 可手动运行，也会在 `computer-use-v*` tag 上构建、校验并上传 `.tgz` 与 SHA-256 清单，作为 Marketplace 签名发布的输入；它不会绕过 Marketplace 的 Release 签名与可信发布流程。
+`.github/workflows/computer-use-macos-package.yml` 和 `computer-use-windows-package.yml` 分别在 `computer-use-macos-v*`、`computer-use-windows-v*` tag 上构建、校验并上传各自 `.tgz` 与 SHA-256 清单。两条流水线互不安装对方平台的工具链，也不会绕过 Marketplace 的 Release 签名与可信发布流程。
 
 ## 坐标与 Retina
 

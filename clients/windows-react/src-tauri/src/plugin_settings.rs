@@ -60,7 +60,9 @@ use chatos_local_agent_protocol::{
     LocalPluginInstallationSpec, SetActivePluginHookBundlesCommand,
 };
 #[cfg(test)]
-use computer_use::{required_component_permission, PluginRuntimeHealthProjection};
+use computer_use::{
+    is_computer_use_package, required_component_permission, PluginRuntimeHealthProjection,
+};
 #[cfg(test)]
 use hooks::publish_inactive_hook_bundles;
 #[cfg(test)]

@@ -139,14 +139,20 @@ struct MCPService: Sendable {
             return try await Self.jsonResult(controller.activeApplication())
 
         case "activate_application":
-            guard let bundleIdentifier = Self.string(arguments, "bundle_identifier") else {
+            let bundleIdentifier = Self.string(arguments, "bundle_identifier")
+            let application = Self.string(arguments, "application")
+            guard (bundleIdentifier == nil) != (application == nil) else {
                 throw VisualComputerUseError.invalidArgument(
-                    "bundle_identifier is required."
+                    "Provide exactly one of application or bundle_identifier."
                 )
             }
-            _ = try await controller.activateApplication(
-                bundleIdentifier: bundleIdentifier
-            )
+            if let application {
+                _ = try await controller.activateApplication(named: application)
+            } else if let bundleIdentifier {
+                _ = try await controller.activateApplication(
+                    bundleIdentifier: bundleIdentifier
+                )
+            }
             try await controller.wait(
                 milliseconds: try Self.settleMilliseconds(arguments, default: 120)
             )
@@ -291,14 +297,8 @@ struct MCPService: Sendable {
         Tool(
             name: "activate_application",
             title: "Activate application and observe",
-            description: "Launch or activate an application through public NSWorkspace APIs, then return a real screenshot. Example bundle id: com.apple.Notes.",
-            inputSchema: objectSchema(
-                properties: mergedProperties([
-                    "bundle_identifier": .object(["type": "string"]),
-                    "settle_ms": settleProperty(default: 120)
-                ], captureProperties(defaultMaxWidth: 1400)),
-                required: ["bundle_identifier"]
-            ),
+            description: "Activate a running application by its exact visible name, executable name, or bundle id; alternatively launch or activate an installed application with bundle_identifier. Provide exactly one identifier, then verify the returned screenshot.",
+            inputSchema: activationSchema(),
             annotations: .init(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true)
         ),
         Tool(
@@ -607,6 +607,27 @@ struct MCPService: Sendable {
             schema["required"] = .array(required.map(Value.string))
         }
         return .object(schema)
+    }
+
+    private static func activationSchema() -> Value {
+        var schema = objectSchema(properties: mergedProperties([
+            "application": .object([
+                "type": "string",
+                "description": "Exact visible name, executable name, or bundle id of a running application, such as QQMusic or com.tencent.QQMusicMac."
+            ]),
+            "bundle_identifier": .object([
+                "type": "string",
+                "description": "Bundle identifier of an installed application to launch or activate, such as com.apple.Notes."
+            ]),
+            "settle_ms": settleProperty(default: 120)
+        ], captureProperties(defaultMaxWidth: 1400)))
+        guard var object = schema.objectValue else { return schema }
+        object["oneOf"] = .array([
+            .object(["required": .array([.string("application")])]),
+            .object(["required": .array([.string("bundle_identifier")])])
+        ])
+        schema = .object(object)
+        return schema
     }
 
     private static func bool(_ arguments: [String: Value], _ key: String, default fallback: Bool) -> Bool {

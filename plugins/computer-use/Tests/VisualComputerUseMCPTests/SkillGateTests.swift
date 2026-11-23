@@ -25,3 +25,18 @@ import Testing
     #expect(MCPService.normalizedDisplayID(0) == nil)
     #expect(MCPService.normalizedDisplayID(42) == 42)
 }
+
+@Test func macOSApplicationActivationAcceptsExactlyOneIdentifier() throws {
+    let tool = try #require(MCPService.tools.first { $0.name == "activate_application" })
+    let schema = try #require(tool.inputSchema.objectValue)
+    let properties = try #require(schema["properties"]?.objectValue)
+    #expect(properties["application"] != nil)
+    #expect(properties["bundle_identifier"] != nil)
+
+    let alternatives = try #require(schema["oneOf"]?.arrayValue)
+    #expect(alternatives.count == 2)
+    let requiredFields = alternatives.compactMap { alternative in
+        alternative.objectValue?["required"]?.arrayValue?.first?.stringValue
+    }
+    #expect(Set(requiredFields) == ["application", "bundle_identifier"])
+}

@@ -5,6 +5,27 @@ import Foundation
 import Testing
 
 extension NativePluginRuntimeTests {
+    @Test("macOS manifest loader rejects Windows-only plugins")
+    func manifestLoaderRejectsWindowsOnlyPlugin() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manifestURL = root.appendingPathComponent("chatos.plugin.json")
+        try Data("""
+        {
+          "schemaVersion": 3,
+          "name": "windows-only",
+          "version": "1.0.0",
+          "dependencies": {"supportedPlatforms": ["windows-x64", "windows-arm64"]}
+        }
+        """.utf8).write(to: manifestURL)
+
+        #expect(throws: NativePluginRuntimeError.self) {
+            _ = try NativePluginManifestLoader.loadManifest(from: manifestURL)
+        }
+    }
+
     @Test("installation status rejects legacy records without trusted file hashes")
     func installationStatusRequiresIntegritySnapshot() throws {
         let root = FileManager.default.temporaryDirectory

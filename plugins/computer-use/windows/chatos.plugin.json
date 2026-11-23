@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 3,
+  "name": "open-computer-use-windows",
+  "version": "0.9.0",
+  "description": "Visual-first Windows Computer Use MCP that observes real screenshots and sends native input events.",
+  "author": {
+    "name": "Open Computer Use"
+  },
+  "license": "MIT",
+  "keywords": [
+    "computer-use",
+    "windows",
+    "visual-automation",
+    "mcp"
+  ],
+  "mcpServers": {
+    "computer-use": {
+      "type": "stdio",
+      "bin": "open-computer-use",
+      "requiresExclusiveExecution": true,
+      "args": [
+        "mcp"
+      ]
+    }
+  },
+  "skills": [
+    "./skills/visual-computer-use",
+    "./skills/visual-observation-targeting",
+    "./skills/visual-pointer-keyboard",
+    "./skills/visual-application-focus",
+    "./skills/visual-safety-verification"
+  ],
+  "interface": {
+    "displayName": "Visual Computer Use (Windows)",
+    "shortDescription": "Control Windows from real screenshots",
+    "longDescription": "Uses real Windows screenshots as the UI source of truth, renders a visible virtual cursor, and sends native mouse, keyboard, and scroll events without reading DOM or UI Automation trees.",
+    "developerName": "Open Computer Use",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Call observe_screen before acting and treat the latest screenshot as the UI source of truth",
+      "Use activate_application to bring the requested application forward instead of asking the user to switch it manually",
+      "Call move_mouse and visually verify the virtual cursor hotspot before every click",
+      "Verify the fresh screenshot returned after every action before continuing"
+    ],
+    "brandColor": "#5965F2",
+    "screenshots": []
+  },
+  "dependencies": {
+    "supportedPlatforms": [
+      "windows-x64",
+      "windows-arm64"
+    ]
+  },
+  "permissions": [
+    {
+      "permission": "process.spawn",
+      "required": true,
+      "reason": "Launch the installed Visual Computer Use stdio MCP executable.",
+      "components": [
+        "computer-use"
+      ]
+    },
+    {
+      "permission": "computer.control",
+      "required": true,
+      "reason": "Send user-requested native mouse, keyboard, and scroll events to Windows applications.",
+      "components": [
+        "computer-use"
+      ]
+    }
+  ]
+}

@@ -55,4 +55,36 @@ struct ActiveApplicationTests {
             windowInfo: windows
         ) == nil)
     }
+
+    @Test("running applications match exact user-visible identities")
+    func runningApplicationNameMatching() {
+        #expect(ComputerController.applicationMatches(
+            "QQ音乐",
+            name: "QQ音乐",
+            bundleIdentifier: "com.tencent.QQMusicMac",
+            executableName: "QQMusic",
+            bundleName: "QQMusic.app"
+        ))
+        #expect(ComputerController.applicationMatches(
+            "qqmusic.app",
+            name: "QQ音乐",
+            bundleIdentifier: "com.tencent.QQMusicMac",
+            executableName: "QQMusic",
+            bundleName: "QQMusic.app"
+        ))
+        #expect(ComputerController.applicationMatches(
+            "com.tencent.QQMusicMac",
+            name: "QQ音乐",
+            bundleIdentifier: "com.tencent.QQMusicMac",
+            executableName: "QQMusic",
+            bundleName: "QQMusic.app"
+        ))
+        #expect(!ComputerController.applicationMatches(
+            "QQ",
+            name: "QQ音乐",
+            bundleIdentifier: "com.tencent.QQMusicMac",
+            executableName: "QQMusic",
+            bundleName: "QQMusic.app"
+        ))
+    }
 }

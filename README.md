@@ -81,7 +81,7 @@ See [clients/README.md](./clients/README.md), [clients/macos/README.md](./client
 | Plugin | Purpose |
 | --- | --- |
 | [Browser](./plugins/browser/README.md) | CDP-based browser automation for managed Chromium or explicitly shared Chrome tabs. |
-| [Computer Use](./plugins/computer-use/README.md) | Visual-first native computer control using real screenshots and platform input APIs. |
+| [Computer Use](./plugins/computer-use/README.md) | Visual-first native control shipped as independent macOS and Windows plugins with shared tools and Skills. |
 | [Document Tools](./plugins/document/README.md) | Workspace-bounded Word, Excel, PowerPoint, and PDF inspection, rendering, creation, and editing. |
 | [Diagram Studio](./plugins/diagram-studio/README.md) | AI-editable visual diagrams with a local workbench and PlantUML interoperability. |
 

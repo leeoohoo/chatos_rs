@@ -95,6 +95,7 @@ struct NativeConnectorGatewayDTOTests {
                   "id": "release-1",
                   "version": "0.3.42",
                   "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "supported_platforms": ["macos-arm64"],
                   "npm_package": {
                     "name": "open-computer-use",
                     "version": "0.3.42",
@@ -115,6 +116,7 @@ struct NativeConnectorGatewayDTOTests {
         #expect(source.catalog.interface?.developerName == "OpenAI")
         #expect(source.release.version == "0.3.42")
         #expect(source.release.artifactSHA256?.count == 64)
+        #expect(source.release.supportedPlatforms == ["macos-arm64"])
         #expect(source.release.npmPackage?.name == "open-computer-use")
         #expect(source.release.npmPackage?.integrity == "sha512-YWJj")
         #expect(source.preference?.enabled == true)

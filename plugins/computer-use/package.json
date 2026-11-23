@@ -1,7 +1,7 @@
 {
   "name": "open-computer-use",
   "version": "0.9.0",
-  "description": "Visual-first macOS and Windows Computer Use MCP server for ChatOS.",
+  "description": "Visual-first macOS Computer Use MCP server for ChatOS.",
   "license": "MIT",
   "bin": {
     "open-computer-use": "bin/open-computer-use"
@@ -14,7 +14,9 @@
     "build:windows": "node ./scripts/build-windows-worker.mjs",
     "smoke:windows": "node ./scripts/smoke-windows-worker.mjs",
     "smoke:windows:screen": "node ./scripts/smoke-windows-worker.mjs --screen",
-    "pack:chatos": "npm run audit:skill-gates && node ./scripts/build-chatos-package.mjs"
+    "pack:chatos": "npm run pack:macos",
+    "pack:macos": "node ./scripts/build-chatos-package.mjs --platform macos",
+    "pack:windows": "node ./scripts/build-chatos-package.mjs --platform windows"
   },
   "files": [
     "bin/",
