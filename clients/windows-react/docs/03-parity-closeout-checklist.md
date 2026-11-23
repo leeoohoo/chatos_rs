@@ -6,6 +6,8 @@
 
 Windows 产品版本：`3.0.9`
 
+- 2026-11-24 补齐快速翻译账号切换的草稿生命周期：会话恢复或账号切换时，旧账号未提交的图片附件按原 owner scope 主动丢弃，原文、译文和选中历史也不会带入新账号；历史读取增加 request identity，迟到的旧账号响应不能覆盖当前账号。新增宠物翻译 Store 定向回归覆盖附件清理、草稿清空和 latest-wins；既有图片翻译的 owner/session generation 与附件摘要边界保持不变。
+
 - 2026-11-24 完成宠物快速翻译的图片输入垂直闭环。Windows 复用现有账号作用域的附件保险库、剪贴板导入和图片安全归一化：最多 10 张图片、总暂存大小 20 MB，提交前复验文件摘要，解码后限制 4,096×4,096 与 4,000 万像素，并按模型能力筛选视觉模型；图片归一化为受控 `input_image` data URL 后才进入一次性无工具翻译请求，提交后立即清理暂存本体，历史只保留文件名/MIME 元数据，不保存图片内容。前端支持图片选择、截图粘贴、图片-only 翻译、移除/关闭清理和 owner-scoped 历史恢复；非图片输入会在 UI 与 Rust 边界双重拒绝。React/Vitest `152` 个测试文件、`600` 项通过，定向宠物翻译 Store `4` 项通过；TypeScript、production build、architecture audit、Bundle audit（入口 `449.22 KiB raw / 135.26 KiB gzip`）、Rustfmt 和差异检查通过。Windows Tauri Rust 编译门禁本轮受当前环境缺少 NASM/CMake 的 `aws-lc-sys` 工具链阻断，未把该环境阻断写成编译成功；既有正式 Release 原生验收仍需在可用 Windows 构建环境重新取证。
 
 - 2026-11-20 完成 `origin/3.0.9.12`（`30d2943d9`）向 Windows 分支的集成与真实回归。共享变更包含 Local Agent durable checkpoint/任务状态、AI durable response history、模型选择、字符串会话历史游标、Plugin `local_http` runtime 与压力治理；Windows 端同步补齐 v50 Contact identity 迁移、共享 reparse-safe Connector storage、原子文件提交、共享本机/远端交互 PTY 和统一终端画布。Diagram Studio 打包测试修正 Windows npm CLI 调用后为 `60 passed, 0 failed`，并验证脱离仓库 `node_modules` 的打包插件可真实启动本地后端；0.4.8 已安装启用状态保持，未启动应用卡片。Rust 门禁为 AI runtime `212 passed`、Client storage/migration `227 passed`、Windows Tauri `641 passed, 0 failed, 7 ignored`，Windows `--all-targets`、根 workspace 全量测试及两套 Clippy `-D warnings` 均通过；React/Vitest 在原生复测发现并关闭“清空终端搜索仍保留 xterm 选择”后为 `150` 个文件 / `594 passed`，TypeScript、production build、architecture audit、Bundle audit（入口 `459.74 KiB raw / 138.88 KiB gzip`）、Skill 示例审计、Rustfmt 和差异检查均通过。正式 `--no-bundle` Release 为 `61,842,432` bytes，SHA-256 `50A7FBDDF5190A06940095FDCADE0DDDE90BD4688D2CEC477AA5183D07D36E2A`；现有测试账号真实恢复 Host ready、项目目录、插件安装助手历史、Agent 项目经理职业及 33 个职业 Skill，本机 PowerShell 会话、搜索、搜索清除和清屏/中断/关闭菜单均可达。终端搜索先真实命中 `PowerShell`，清空后匹配选择和上下项状态同步消失；全程未通过 UI 输入终端命令、未发送消息、未修改业务数据。
@@ -593,7 +595,7 @@ Windows 产品版本：`3.0.9`
 
 ### P1：用户能直接感知
 
-- [x] 宠物快捷聊天、快速翻译与快速记事本 Windows 纵向切片。单击宠物浮窗打开主窗口快捷聊天面板，按当前账号列出联系人和项目并可回到对应工作区；双击打开独立翻译窗口，支持简体中文/英文、双语/仅译文、结果复制；翻译历史以 owner-scoped 原子 JSON 保存，支持重新打开和清空；右键唤起主窗口中的快速记事本面板，复用完整记事本的账号隔离、实时同步、编辑、预览、复制、导出与保存。Rust surface command/event、React domain/port/adapter/store/UI 已接入；`npm run typecheck`、`npm test`、`npm run build`、架构审计、Bundle 审计和 `git diff --check` 通过。附件/图片翻译仍属于后续差距，不在本项范围内。
+- [x] 宠物快捷聊天、快速翻译与快速记事本 Windows 纵向切片。单击宠物浮窗打开主窗口快捷聊天面板，按当前账号列出联系人和项目并可回到对应工作区；双击打开独立翻译窗口，支持简体中文/英文、双语/仅译文、结果复制、PNG/JPEG/GIF/WebP 图片与截图粘贴翻译；翻译历史以 owner-scoped 原子 JSON 保存，支持重新打开和清空，账号切换会清理旧账号未提交的图片草稿并拒绝迟到历史写回；右键唤起主窗口中的快速记事本面板，复用完整记事本的账号隔离、实时同步、编辑、预览、复制、导出与保存。Rust surface command/event、React domain/port/adapter/store/UI 已接入；`npm run typecheck`、`npm test`、`npm run build`、架构审计、Bundle 审计和 `git diff --check` 通过。
 
 - [x] Codex/Ponytail Hook 的 Windows 端完整闭环。最终 NSIS 安装包已真实启动 AppContainer runner，写入并激活受信 Bundle，触发 `UserPromptSubmit`，回传上下文，按 `continue=false` 阻断 Prompt，并在 Host 重启后恢复 active Bundle；报告为 `%TEMP%\\chatos-windows-installed-hook-restart.json`。原生窗口逐态视觉走查仍单独保留为未完成项。
 - [ ] `3.0.9.4` 新增的任务审查优先级展示仍需原生窗口逐态核对。Windows 原生任务图 DTO 现同时保留 Host 原始状态和 `reviewing_followup` / `waiting_confirmation` 展示状态；Task Graph、Run Inspector、对话 Timeline 状态胶囊与宠物活动摘要均让新门禁覆盖旧 Run 活动并保持轮询，`needs_review` 的恢复操作继续保留。各入口的原生视觉优先级仍需取证，当前不声称完全一致。

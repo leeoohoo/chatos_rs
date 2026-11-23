@@ -10,6 +10,7 @@ describe("petTranslationStore", () => {
   beforeEach(() => {
     usePetTranslationStore.setState({
       session: null,
+      loadRequestId: 0,
       records: [],
       sourceText: "",
       translatedText: "",
@@ -19,6 +20,9 @@ describe("petTranslationStore", () => {
       isTranslating: false,
       error: null,
       selectedRecordId: null,
+      attachments: [],
+      attachmentError: null,
+      isImportingAttachments: false,
     });
   });
 
@@ -117,5 +121,61 @@ describe("petTranslationStore", () => {
     await usePetTranslationStore.getState().translate(port);
     expect(translate).toHaveBeenCalledWith(expect.objectContaining({ sourceText: "", attachmentIds: ["image-1"] }));
     expect(usePetTranslationStore.getState().attachments).toEqual([]);
+  });
+
+  it("clears and discards a previous account's draft when the session changes", async () => {
+    const discardAttachments = vi.fn(async () => undefined);
+    const port = {
+      list: vi.fn(async () => ({ records: [] })),
+      translate: vi.fn(),
+      clear: vi.fn(async () => ({ records: [] })),
+      pickAttachments: vi.fn(),
+      importClipboard: vi.fn(),
+      discardAttachments,
+      close: vi.fn(async () => undefined),
+    } as unknown as PetTranslationPort;
+    await usePetTranslationStore.getState().load(port, session);
+    usePetTranslationStore.setState({
+      sourceText: "private draft",
+      translatedText: "私有译文",
+      attachments: [{ id: "old-image", name: "old.png", mimeType: "image/png", kind: "image", origin: "pasted_image", byteSize: 4, previewUrl: null }],
+    });
+
+    const nextSession: AuthSession = { user: { ...session.user, id: "owner-2" } };
+    await usePetTranslationStore.getState().load(port, nextSession);
+
+    expect(discardAttachments).toHaveBeenCalledWith(
+      { ownerUserId: "owner-1", conversationId: "pet-translation", draftGeneration: 0 },
+      ["old-image"],
+    );
+    expect(usePetTranslationStore.getState().session?.user.id).toBe("owner-2");
+    expect(usePetTranslationStore.getState().sourceText).toBe("");
+    expect(usePetTranslationStore.getState().translatedText).toBe("");
+    expect(usePetTranslationStore.getState().attachments).toEqual([]);
+  });
+
+  it("does not let a stale history load overwrite a newer account", async () => {
+    let resolveFirst: ((value: { records: [] }) => void) | undefined;
+    const firstList = new Promise<{ records: [] }>((resolve) => { resolveFirst = resolve; });
+    const port = {
+      list: vi.fn()
+        .mockReturnValueOnce(firstList)
+        .mockResolvedValueOnce({ records: [] }),
+      translate: vi.fn(),
+      clear: vi.fn(async () => ({ records: [] })),
+      pickAttachments: vi.fn(),
+      importClipboard: vi.fn(),
+      discardAttachments: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+    } as unknown as PetTranslationPort;
+    const firstLoad = usePetTranslationStore.getState().load(port, session);
+    const nextSession: AuthSession = { user: { ...session.user, id: "owner-2" } };
+    const secondLoad = usePetTranslationStore.getState().load(port, nextSession);
+    resolveFirst?.({ records: [] });
+    await Promise.all([firstLoad, secondLoad]);
+
+    expect(usePetTranslationStore.getState().session?.user.id).toBe("owner-2");
+    expect(usePetTranslationStore.getState().loadRequestId).toBe(2);
+    expect(usePetTranslationStore.getState().isLoading).toBe(false);
   });
 });

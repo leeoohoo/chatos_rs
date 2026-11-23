@@ -14,6 +14,7 @@ import type {
 
 interface PetTranslationState {
   session: AuthSession | null;
+  loadRequestId: number;
   records: PetTranslationRecord[];
   sourceText: string;
   translatedText: string;
@@ -41,6 +42,7 @@ interface PetTranslationState {
 
 export const usePetTranslationStore = create<PetTranslationState>((set, get) => ({
   session: null,
+  loadRequestId: 0,
   records: [],
   sourceText: "",
   translatedText: "",
@@ -59,15 +61,48 @@ export const usePetTranslationStore = create<PetTranslationState>((set, get) => 
   setOutputStyle(outputStyle) { set({ outputStyle }); },
 
   async load(port, session) {
-    set({ session, isLoading: true, error: null });
+    const previous = get();
+    const requestId = previous.loadRequestId + 1;
+    const previousOwnerUserId = previous.session?.user.id ?? null;
+    const nextOwnerUserId = session?.user.id ?? null;
+    const ownerChanged = previousOwnerUserId !== nextOwnerUserId;
+    let attachmentCleanupError: string | null = null;
+    if (ownerChanged && previousOwnerUserId && previous.attachments.length > 0) {
+      try {
+        await port.discardAttachments(
+          scopeFor(previousOwnerUserId),
+          previous.attachments.map(({ id }) => id),
+        );
+      } catch {
+        attachmentCleanupError = "旧账号的图片草稿清理失败，已从当前窗口移除。";
+      }
+    }
+    set({
+      session,
+      loadRequestId: requestId,
+      isLoading: true,
+      error: null,
+      attachmentError: attachmentCleanupError,
+      ...(ownerChanged ? {
+        records: [],
+        sourceText: "",
+        translatedText: "",
+        selectedRecordId: null,
+        attachments: [],
+      } : {}),
+    });
     if (!session) {
-      set({ isLoading: false, error: "请先登录 ChatOS。" });
+      if (get().loadRequestId === requestId) {
+        set({ isLoading: false, error: "请先登录 ChatOS。" });
+      }
       return;
     }
     try {
       const history = await port.list(session.user.id);
+      if (get().loadRequestId !== requestId) return;
       set({ records: history.records, isLoading: false });
     } catch (failure) {
+      if (get().loadRequestId !== requestId) return;
       set({ isLoading: false, error: errorMessage(failure) });
     }
   },
