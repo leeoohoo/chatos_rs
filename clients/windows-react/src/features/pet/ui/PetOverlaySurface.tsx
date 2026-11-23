@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePetPresentation } from "../application/usePetPresentation";
 import type { PetAnimationState } from "../domain/petPresentation";
 import type { PetPresentationPort } from "../ports/PetPresentationPort";
@@ -10,6 +10,7 @@ export function PetOverlaySurface({ port }: { port: PetPresentationPort }) {
   const presentation = usePetPresentation(port);
   const [frame, setFrame] = useState(0);
   const [assetFailed, setAssetFailed] = useState(false);
+  const clickTimer = useRef<number | null>(null);
   const assetUrl = useMemo(() => (
     navigator.userAgent.includes("Windows")
       ? "http://chatos-pet.localhost/fengtuan-atlas"
@@ -24,19 +25,34 @@ export function PetOverlaySurface({ port }: { port: PetPresentationPort }) {
     return () => window.clearInterval(timer);
   }, [animation.duration, animation.frameCount, presentation.animationState]);
 
+  useEffect(() => () => {
+    if (clickTimer.current != null) window.clearTimeout(clickTimer.current);
+  }, []);
+
   const x = `${(frame / (columns - 1)) * 100}%`;
   const y = `${(animation.row / 10) * 100}%`;
   return (
     <main
-      aria-label="ChatOS pet is idle. Double-click to open quick translate."
+      aria-label="ChatOS pet is idle. Click to open quick chat, double-click to open quick translate."
       className="pet-overlay"
       data-tauri-drag-region
       onContextMenu={(event) => {
         event.preventDefault();
         void port.openNotepad();
       }}
-      onDoubleClick={() => void port.openTranslation()}
-      title="双击打开快速翻译；右键打开快速记事本"
+      onClick={() => {
+        if (clickTimer.current != null) window.clearTimeout(clickTimer.current);
+        clickTimer.current = window.setTimeout(() => {
+          clickTimer.current = null;
+          void port.openQuickChat();
+        }, 220);
+      }}
+      onDoubleClick={() => {
+        if (clickTimer.current != null) window.clearTimeout(clickTimer.current);
+        clickTimer.current = null;
+        void port.openTranslation();
+      }}
+      title="点击打开快捷聊天；双击打开快速翻译；右键打开快速记事本"
     >
       {assetFailed ? (
         <div aria-hidden="true" className="pet-overlay__fallback" data-tauri-drag-region>🦊</div>

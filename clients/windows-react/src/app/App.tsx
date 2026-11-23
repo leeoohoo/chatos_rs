@@ -17,9 +17,8 @@ import { TauriPluginApplicationAdapter } from "../features/plugin-applications/a
 import { TauriGeneralSettingsAdapter } from "../features/general-settings/adapters/TauriGeneralSettingsAdapter";
 import { TauriPetPreferencesAdapter } from "../features/pet/adapters/TauriPetPreferencesAdapter";
 import { TauriGlobalUtilityPreferencesAdapter } from "../features/global-utilities/adapters/TauriGlobalUtilityPreferencesAdapter";
-import { PetOverlaySurface } from "../features/pet/ui/PetOverlaySurface";
-import { PetActivitySurface } from "../features/pet/ui/PetActivitySurface";
 import { TauriPetPresentationAdapter } from "../features/pet/adapters/TauriPetPresentationAdapter";
+import type { PetSurfaceRequest } from "../features/pet/ports/PetSurfaceRequestPort";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import { TauriWindowChromeAdapter } from "../platform/window/adapters/TauriWindowChromeAdapter";
 import { WindowControls } from "../platform/window/ui/WindowControls";
@@ -50,6 +49,14 @@ const remoteConnection = new TauriRemoteConnectionAdapter();
 const toolApproval = new TauriToolApprovalAdapter();
 const clipboardHistory = new TauriClipboardHistoryAdapter();
 const quickSearch = new TauriQuickSearchAdapter();
+const PetOverlayRoute = lazy(async () => {
+  const { PetOverlaySurface } = await import("../features/pet/ui/PetOverlaySurface");
+  return { default: () => <PetOverlaySurface port={petPresentation} /> };
+});
+const PetActivityRoute = lazy(async () => {
+  const { PetActivitySurface } = await import("../features/pet/ui/PetActivitySurface");
+  return { default: () => <PetActivitySurface port={petPresentation} /> };
+});
 const PetTranslationRoute = lazy(async () => {
   const [{ PetTranslationSurface }, { TauriPetTranslationAdapter }] = await Promise.all([
     import("../features/pet/ui/PetTranslationSurface"),
@@ -63,10 +70,10 @@ const PetTranslationRoute = lazy(async () => {
 
 export function App() {
   if (new URLSearchParams(window.location.search).get("surface") === "pet-overlay") {
-    return <PetOverlaySurface port={petPresentation} />;
+    return <Suspense fallback={<main className="app-window" />}><PetOverlayRoute /></Suspense>;
   }
   if (new URLSearchParams(window.location.search).get("surface") === "pet-activity") {
-    return <PetActivitySurface port={petPresentation} />;
+    return <Suspense fallback={<main className="app-window" />}><PetActivityRoute /></Suspense>;
   }
   if (new URLSearchParams(window.location.search).get("surface") === "pet-translation") {
     return <Suspense fallback={<main className="app-window" />}><PetTranslationRoute /></Suspense>;
@@ -88,20 +95,22 @@ function ApplicationRoot() {
   const logout = useAuthenticationStore((state) => state.logout);
   const session = useAuthenticationStore((state) => state.session);
   const stopHost = useHostLifecycleStore((state) => state.stop);
-  const [notepadOpen, setNotepadOpen] = useState(false);
+  const [petSurface, setPetSurface] = useState<PetSurfaceRequest | null>(null);
 
   useEffect(() => {
     let active = true;
-    let unlisten: (() => void) | undefined;
-    void petPresentation.subscribeNotepadRequest(() => {
-      if (active) setNotepadOpen(true);
-    }).then((cleanup) => {
-      if (active) unlisten = cleanup;
+    let unlistenNotepad: (() => void) | undefined;
+    void import("../features/pet/adapters/TauriPetSurfaceRequestAdapter")
+      .then(({ TauriPetSurfaceRequestAdapter }) => new TauriPetSurfaceRequestAdapter().subscribe((request) => {
+        if (active) setPetSurface(request);
+      }))
+      .then((cleanup) => {
+      if (active) unlistenNotepad = cleanup;
       else cleanup();
     });
     return () => {
       active = false;
-      unlisten?.();
+      unlistenNotepad?.();
     };
   }, []);
 
@@ -121,7 +130,7 @@ function ApplicationRoot() {
               className="app-titlebar__notepad"
               onClick={(event) => {
                 event.stopPropagation();
-                setNotepadOpen(true);
+                setPetSurface("notepad");
               }}
               title="打开记事本"
               type="button"
@@ -150,10 +159,10 @@ function ApplicationRoot() {
             toolApproval={toolApproval}
             quickSearchNavigation={quickSearch}
             session={session}
-            notepadOpen={notepadOpen}
-            onNotepadOpenChange={setNotepadOpen}
+            petSurface={petSurface}
+            onPetSurfaceChange={setPetSurface}
             onLogout={async () => {
-              setNotepadOpen(false);
+              setPetSurface(null);
               await logout(authentication, () => stopHost(hostLifecycle));
             }}
           />

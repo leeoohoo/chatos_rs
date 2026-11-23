@@ -18,6 +18,7 @@ import type { GeneralSettingsPort } from "../features/general-settings/ports/Gen
 import { usePetPreferencesStore } from "../features/pet/application/petPreferencesStore";
 import type { PetPreferencesPort } from "../features/pet/ports/PetPreferencesPort";
 import type { PetPresentationPort } from "../features/pet/ports/PetPresentationPort";
+import type { PetSurfaceRequest } from "../features/pet/ports/PetSurfaceRequestPort";
 import { startPetPresentationPolling } from "../features/pet/application/petPresentationPolling";
 import { useGlobalUtilityPreferencesStore } from "../features/global-utilities/application/globalUtilityPreferencesStore";
 import type { GlobalUtilityPreferencesPort } from "../features/global-utilities/ports/GlobalUtilityPreferencesPort";
@@ -90,6 +91,11 @@ const NotepadWorkspace = lazy(async () => {
   return {
     default: (props: Props) => <viewModule.NotepadView {...props} port={port} />,
   };
+});
+
+const PetQuickChatWorkspace = lazy(async () => {
+  const module = await import("../features/pet/ui/PetQuickChatSurface");
+  return { default: module.PetQuickChatSurface };
 });
 
 const MediaStudioWorkspace = lazy(async () => {
@@ -329,8 +335,8 @@ interface AppShellProps {
   toolApproval: ToolApprovalPort & ToolApprovalSettingsPort;
   quickSearchNavigation: QuickSearchNavigationPort;
   session: AuthSession;
-  notepadOpen: boolean;
-  onNotepadOpenChange(open: boolean): void;
+  petSurface: PetSurfaceRequest | null;
+  onPetSurfaceChange(surface: PetSurfaceRequest | null): void;
   onLogout(): Promise<void>;
 }
 
@@ -353,8 +359,8 @@ export function AppShell({
   toolApproval,
   quickSearchNavigation,
   session,
-  notepadOpen,
-  onNotepadOpenChange,
+  petSurface,
+  onPetSurfaceChange,
   onLogout,
 }: AppShellProps) {
   const snapshot = useHostLifecycleStore((state) => state.snapshot);
@@ -398,6 +404,7 @@ export function AppShell({
   const settingsSurfaceRef = useRef<HTMLElement | null>(null);
   const settingsReturnFocusRef = useRef<HTMLElement | null>(null);
   const settingsOpenRef = useRef(false);
+
   const text = (key: Parameters<typeof interfaceText>[1]) => interfaceText(interfaceLanguage, key);
   const settingsOpen = activeSurface !== "workspace";
 
@@ -713,7 +720,7 @@ export function AppShell({
               ><span aria-hidden="true">⚙</span>{text("settings")}</button>
               <button
                 onClick={() => {
-                  onNotepadOpenChange(true);
+                  onPetSurfaceChange("notepad");
                   setShowAccountMenu(false);
                 }}
                 role="menuitem"
@@ -957,12 +964,26 @@ export function AppShell({
           </Suspense>
         </section>
       )}
-      {notepadOpen && (
+      {petSurface === "notepad" && (
         <Suspense fallback={<div className="notepad-sheet-backdrop"><div className="workspace-loading"><span className="mini-spinner" />{text("loadingWorkspace")}</div></div>}>
           <NotepadWorkspace
             hostReady={snapshot.ready}
             ownerUserId={session.user.id}
-            onClose={() => onNotepadOpenChange(false)}
+            onClose={() => onPetSurfaceChange(null)}
+          />
+        </Suspense>
+      )}
+      {petSurface === "quick-chat" && (
+        <Suspense fallback={null}>
+          <PetQuickChatWorkspace
+            onClose={() => onPetSurfaceChange(null)}
+            onOpenNotepad={() => onPetSurfaceChange("notepad")}
+            onOpenTranslation={() => { void petPresentation.openTranslation(); }}
+            onSelectResource={(kind, id) => {
+              onPetSurfaceChange(null);
+              selectWorkspace({ kind, id });
+            }}
+            resources={workspaceSnapshot}
           />
         </Suspense>
       )}

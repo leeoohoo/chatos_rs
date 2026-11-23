@@ -1,0 +1,26 @@
+.pet-quick-chat-backdrop { position: fixed; z-index: 120; inset: 46px 0 0; display: grid; place-items: center; padding: 22px; background: rgba(22,22,26,.24); backdrop-filter: blur(8px); }
+.pet-quick-chat { display: grid; width: min(430px,100%); max-height: min(650px,calc(100vh - 88px)); grid-template-rows: auto minmax(0,1fr) auto; overflow: hidden; border: 1px solid rgba(255,255,255,.84); border-radius: 18px; color: var(--text,#1d1d1f); background: rgba(250,250,252,.97); box-shadow: 0 28px 85px rgba(0,0,0,.28),0 0 0 .5px rgba(60,60,67,.14); backdrop-filter: blur(30px) saturate(1.25); }
+.pet-quick-chat__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--separator); padding: 17px 18px 14px; }
+.pet-quick-chat__heading { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.pet-quick-chat__icon { display: grid; width: 34px; height: 34px; flex: none; place-items: center; border-radius: 11px; color: white; background: linear-gradient(145deg,#69b6ff,#0878e8); box-shadow: 0 7px 16px rgba(10,132,255,.22); font-size: 17px; font-weight: 700; }
+.pet-quick-chat h2 { margin: 0 0 3px; font-size: 15px; letter-spacing: -.02em; }
+.pet-quick-chat__heading p { margin: 0; color: var(--secondary); font-size: 10.5px; }
+.pet-quick-chat__close { width: 25px; height: 25px; border: 0; border-radius: 7px; color: var(--secondary); background: rgba(118,118,128,.1); font-size: 18px; line-height: 1; cursor: pointer; }
+.pet-quick-chat__close:hover { background: rgba(118,118,128,.18); }
+.pet-quick-chat__body { min-height: 0; overflow: auto; padding: 14px; }
+.pet-quick-chat__actions { display: grid; gap: 8px; }
+.pet-quick-chat__action { position: relative; display: grid; min-height: 64px; grid-template-columns: 34px minmax(0,1fr) auto; grid-template-rows: auto auto; align-items: center; column-gap: 10px; border: 0; border-radius: 11px; padding: 10px 12px; color: inherit; text-align: left; cursor: pointer; }
+.pet-quick-chat__action > span { display: grid; width: 32px; height: 32px; grid-row: 1 / span 2; place-items: center; border-radius: 9px; color: white; font-size: 13px; font-weight: 700; }
+.pet-quick-chat__action strong { font-size: 11.5px; font-weight: 680; }
+.pet-quick-chat__action small { margin-top: 2px; color: var(--secondary); font-size: 9.5px; }
+.pet-quick-chat__action b { grid-column: 3; grid-row: 1 / span 2; color: var(--tertiary); font-size: 18px; font-weight: 400; }
+.pet-quick-chat__action--translate { background: rgba(10,132,255,.08); }.pet-quick-chat__action--translate > span { background: #0878e8; }
+.pet-quick-chat__action--notepad { background: rgba(255,149,0,.09); }.pet-quick-chat__action--notepad > span { background: #d97706; }
+.pet-quick-chat__action:hover { filter: brightness(.98); }
+.pet-quick-chat__group { margin-top: 17px; }.pet-quick-chat__group h3 { margin: 0 0 7px 2px; color: var(--secondary); font-size: 10px; font-weight: 650; }
+.pet-quick-chat__resources { display: grid; gap: 5px; }.pet-quick-chat__resource { display: grid; min-height: 48px; grid-template-columns: 29px minmax(0,1fr) auto; align-items: center; gap: 9px; border: 1px solid var(--separator); border-radius: 10px; padding: 7px 10px; color: inherit; background: rgba(255,255,255,.55); text-align: left; cursor: pointer; }
+.pet-quick-chat__resource:hover { border-color: rgba(10,132,255,.28); background: rgba(10,132,255,.07); }.pet-quick-chat__resource-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; color: var(--accent); background: rgba(10,132,255,.1); font-size: 13px; }
+.pet-quick-chat__resource-copy { display: grid; min-width: 0; gap: 3px; }.pet-quick-chat__resource-copy strong,.pet-quick-chat__resource-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.pet-quick-chat__resource-copy strong { font-size: 10.5px; font-weight: 620; }.pet-quick-chat__resource-copy small { color: var(--secondary); font-size: 9px; }.pet-quick-chat__chevron { color: var(--tertiary); font-size: 17px; }
+.pet-quick-chat__empty { margin: 25px 12px 12px; color: var(--secondary); font-size: 10px; line-height: 1.55; text-align: center; }
+.pet-quick-chat__footer { border-top: 1px solid var(--separator); padding: 10px 15px; color: var(--tertiary); font-size: 9px; text-align: center; }
+@media (prefers-color-scheme: dark) { .pet-quick-chat { border-color: rgba(255,255,255,.1); background: rgba(30,30,33,.98); }.pet-quick-chat__resource { background: rgba(52,52,56,.62); } }
