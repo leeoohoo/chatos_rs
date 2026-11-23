@@ -15,7 +15,15 @@ export class TauriPetPresentationAdapter implements PetPresentationPort {
     });
   }
 
+  async subscribeNotepadRequest(listener: () => void) {
+    return listen("pet-open-notepad", () => listener());
+  }
+
   async openTranslation() {
     await invoke("open_pet_translation");
+  }
+
+  async openNotepad() {
+    await invoke("open_pet_notepad");
   }
 }

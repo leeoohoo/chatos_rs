@@ -406,6 +406,21 @@ pub(crate) fn pet_asset_protocol(
     assets.protocol_response(request)
 }
 
+#[tauri::command]
+pub(crate) fn open_pet_notepad(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "无法找到 ChatOS 主窗口。".to_owned())?;
+    window
+        .show()
+        .map_err(|_| "无法显示 ChatOS 主窗口。".to_owned())?;
+    window
+        .set_focus()
+        .map_err(|_| "无法聚焦 ChatOS 主窗口。".to_owned())?;
+    app.emit("pet-open-notepad", ())
+        .map_err(|_| "无法打开快速记事本。".to_owned())
+}
+
 pub(crate) fn hide_pet_overlay(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(PET_WINDOW_LABEL) {
         let _ = window.hide();

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Route, Routes } from "react-router";
 import { TauriAuthenticationAdapter } from "../features/authentication/adapters/TauriAuthenticationAdapter";
 import { TauriAskUserAdapter } from "../features/ask-user/adapters/TauriAskUserAdapter";
@@ -89,6 +89,21 @@ function ApplicationRoot() {
   const session = useAuthenticationStore((state) => state.session);
   const stopHost = useHostLifecycleStore((state) => state.stop);
   const [notepadOpen, setNotepadOpen] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void petPresentation.subscribeNotepadRequest(() => {
+      if (active) setNotepadOpen(true);
+    }).then((cleanup) => {
+      if (active) unlisten = cleanup;
+      else cleanup();
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
 
   return (
     <main className="app-window">

@@ -31,8 +31,12 @@ export function PetOverlaySurface({ port }: { port: PetPresentationPort }) {
       aria-label="ChatOS pet is idle. Double-click to open quick translate."
       className="pet-overlay"
       data-tauri-drag-region
+      onContextMenu={(event) => {
+        event.preventDefault();
+        void port.openNotepad();
+      }}
       onDoubleClick={() => void port.openTranslation()}
-      title="双击打开快速翻译"
+      title="双击打开快速翻译；右键打开快速记事本"
     >
       {assetFailed ? (
         <div aria-hidden="true" className="pet-overlay__fallback" data-tauri-drag-region>🦊</div>

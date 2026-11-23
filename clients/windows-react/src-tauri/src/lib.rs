@@ -161,8 +161,8 @@ use notepad::{
     load_notepad, rename_notepad_folder, update_notepad_note,
 };
 use pet::{
-    load_pet_preferences, pet_asset_protocol, refresh_pet_presentation, reset_pet_position,
-    update_pet_preferences, PetAssetStore, PetPreferencesStore,
+    load_pet_preferences, open_pet_notepad, pet_asset_protocol, refresh_pet_presentation,
+    reset_pet_position, update_pet_preferences, PetAssetStore, PetPreferencesStore,
 };
 use pet_translation::{
     clear_pet_translation_history, list_pet_translation_history, open_pet_translation,
@@ -614,6 +614,7 @@ pub fn run() {
             update_pet_preferences,
             reset_pet_position,
             refresh_pet_presentation,
+            open_pet_notepad,
             open_pet_translation,
             list_pet_translation_history,
             clear_pet_translation_history,

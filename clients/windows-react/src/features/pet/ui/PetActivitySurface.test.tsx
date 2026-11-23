@@ -12,7 +12,9 @@ describe("PetActivitySurface", () => {
     const port: PetPresentationPort = {
       refresh: vi.fn(),
       subscribe: vi.fn(async (next) => { listener = next; return () => undefined; }),
+      subscribeNotepadRequest: vi.fn(async () => () => undefined),
       openTranslation: vi.fn(),
+      openNotepad: vi.fn(),
     };
     render(<PetActivitySurface port={port} />);
     await act(async () => undefined);
@@ -32,7 +34,9 @@ describe("PetActivitySurface", () => {
     const port: PetPresentationPort = {
       refresh: vi.fn(),
       subscribe: vi.fn(async (next) => { listener = next; return () => undefined; }),
+      subscribeNotepadRequest: vi.fn(async () => () => undefined),
       openTranslation: vi.fn(),
+      openNotepad: vi.fn(),
     };
     render(<PetActivitySurface port={port} />);
     await act(async () => undefined);
