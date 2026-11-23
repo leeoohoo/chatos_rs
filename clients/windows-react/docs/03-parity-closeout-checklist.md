@@ -10,6 +10,8 @@ Windows 产品版本：`3.0.9`
 
 - 2026-11-24 补齐快速翻译的 macOS 自动目标：Windows 现在支持并默认使用“中英自动”，按 macOS 同一策略将中文为主内容翻译成英文、英文为主内容翻译成简体中文，混合或其他语言默认使用简体中文；协议、历史投影、历史方向标识和翻译提示词均已同步，原有“中文/English”显式目标仍可选择。新增 Store 回归验证默认请求携带 `automatic`；Rust 原生定向编译仍受当前环境缺少 NASM/CMake 的 `aws-lc-sys` 工具链阻断，未把该环境阻断写成通过。
 
+- 2026-11-24 对齐 macOS 最新工作流视频协议：Windows 工作流读取旧清单时现在会把四种 OpenAI 视频尺寸迁移到 MiniMax-H3 默认 `768P`，把旧的 1–120 秒时长收敛到合法的 4–15 秒范围；新建、编辑和运行仍只接受 `768P/2K`、六种比例和 4–15 秒，未知尺寸继续失败关闭。新增原生 Store 回归覆盖 `1024x1792 + 120s` 旧清单迁移以及未知尺寸拒绝；定向工作流测试 `12 passed`，Windows Tauri `--all-targets` 为 `643 passed, 0 failed, 7 ignored`，使用仓库既有 `AWS_LC_SYS_PREBUILT_NASM=1` 构建路径通过。
+
 - 2026-11-24 补齐快速翻译账号切换的草稿生命周期：会话恢复或账号切换时，旧账号未提交的图片附件按原 owner scope 主动丢弃，原文、译文和选中历史也不会带入新账号；历史读取增加 request identity，迟到的旧账号响应不能覆盖当前账号。新增宠物翻译 Store 定向回归覆盖附件清理、草稿清空和 latest-wins；既有图片翻译的 owner/session generation 与附件摘要边界保持不变。
 
 - 2026-11-24 完成宠物快速翻译的图片输入垂直闭环。Windows 复用现有账号作用域的附件保险库、剪贴板导入和图片安全归一化：最多 10 张图片、总暂存大小 20 MB，提交前复验文件摘要，解码后限制 4,096×4,096 与 4,000 万像素，并按模型能力筛选视觉模型；图片归一化为受控 `input_image` data URL 后才进入一次性无工具翻译请求，提交后立即清理暂存本体，历史只保留文件名/MIME 元数据，不保存图片内容。前端支持图片选择、截图粘贴、图片-only 翻译、移除/关闭清理和 owner-scoped 历史恢复；非图片输入会在 UI 与 Rust 边界双重拒绝。React/Vitest `152` 个测试文件、`600` 项通过，定向宠物翻译 Store `4` 项通过；TypeScript、production build、architecture audit、Bundle audit（入口 `449.22 KiB raw / 135.26 KiB gzip`）、Rustfmt 和差异检查通过。Windows Tauri Rust 编译门禁本轮受当前环境缺少 NASM/CMake 的 `aws-lc-sys` 工具链阻断，未把该环境阻断写成编译成功；既有正式 Release 原生验收仍需在可用 Windows 构建环境重新取证。

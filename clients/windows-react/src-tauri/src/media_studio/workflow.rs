@@ -25,6 +25,10 @@ const MAXIMUM_MANIFEST_BYTES: usize = 2 * 1_024 * 1_024;
 const MAXIMUM_IMAGE_BYTES: usize = 20 * 1_024 * 1_024;
 const MAXIMUM_TEXT_LENGTH: usize = 20_000;
 const VIDEO_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+const SUPPORTED_VIDEO_SIZES: [&str; 2] = ["768P", "2K"];
+const SUPPORTED_VIDEO_RATIOS: [&str; 6] = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
+const SUPPORTED_VIDEO_DURATION_RANGE: std::ops::RangeInclusive<u16> = 4..=15;
+const LEGACY_OPENAI_VIDEO_SIZES: [&str; 4] = ["1280x720", "720x1280", "1792x1024", "1024x1792"];
 const MEDIA_WORKFLOW_SYSTEM_PROMPT: &str = r#"你是 AI 创作工作流中的文本节点。完整执行节点要求，输出可直接交给下游文本、图片或视频节点使用的成品，而不是简短建议、过程说明或任务摘要。
 
 准确分析所有提供的图片和当前工作文本，不臆造不可见信息。严格遵循用户指定的语言、格式和篇幅；用户未限制篇幅时，应提供完成任务所需的充分细节。
@@ -168,12 +172,9 @@ pub(crate) fn validate_workflow(workflow: &MediaWorkflow) -> Result<(), String> 
             if video_index.replace(index).is_some() || index + 1 != workflow.nodes.len() {
                 return Err("视频节点只能出现一次并且必须位于流程末尾。".into());
             }
-            if !matches!(node.video_size.as_str(), "768P" | "2K")
-                || !matches!(
-                    node.video_ratio.as_str(),
-                    "16:9" | "9:16" | "1:1" | "4:3" | "3:4" | "21:9"
-                )
-                || !(4..=15).contains(&node.video_seconds)
+            if !SUPPORTED_VIDEO_SIZES.contains(&node.video_size.as_str())
+                || !SUPPORTED_VIDEO_RATIOS.contains(&node.video_ratio.as_str())
+                || !SUPPORTED_VIDEO_DURATION_RANGE.contains(&node.video_seconds)
             {
                 return Err("视频节点尺寸、比例或时长无效。".into());
             }
@@ -451,8 +452,18 @@ impl MediaStudioWorkflowStore {
 
 fn normalize_legacy_workflow_defaults(workflow: &mut MediaWorkflow) {
     for node in &mut workflow.nodes {
-        if node.video_size == "1280x720" {
-            node.video_size = default_video_size();
+        if node.kind == MediaWorkflowNodeKind::Video {
+            if LEGACY_OPENAI_VIDEO_SIZES.contains(&node.video_size.as_str()) {
+                node.video_size = default_video_size();
+            }
+            if (1..=120).contains(&node.video_seconds)
+                && !SUPPORTED_VIDEO_DURATION_RANGE.contains(&node.video_seconds)
+            {
+                node.video_seconds = node.video_seconds.clamp(
+                    *SUPPORTED_VIDEO_DURATION_RANGE.start(),
+                    *SUPPORTED_VIDEO_DURATION_RANGE.end(),
+                );
+            }
         }
     }
 }
@@ -1345,10 +1356,40 @@ mod tests {
 
         let loaded = store.list("alice").unwrap();
         assert_eq!(loaded.len(), 1);
-        assert!(loaded[0]
-            .nodes
-            .iter()
-            .all(|node| node.video_size == "768P" && node.video_seconds == 4));
+        assert_eq!(loaded[0].nodes[0].video_size, "1280x720");
+        assert_eq!(loaded[0].nodes[0].video_seconds, default_video_seconds());
+        assert_eq!(loaded[0].nodes[1].video_size, default_video_size());
+        assert_eq!(loaded[0].nodes[1].video_seconds, default_video_seconds());
+    }
+
+    #[test]
+    fn migrates_legacy_openai_video_sizes_and_durations() {
+        let root = tempdir().unwrap();
+        let store = MediaStudioWorkflowStore::new(root.path().to_path_buf()).unwrap();
+        let mut value = workflow();
+        value.nodes = vec![node(MediaWorkflowNodeKind::Video, "video")];
+        value.nodes[0].video_size = "1024x1792".into();
+        value.nodes[0].video_seconds = 120;
+        let folder = store.owner_directory("alice").join(&value.id);
+        fs::create_dir_all(folder.join("assets")).unwrap();
+        fs::write(
+            folder.join("workflow.json"),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = store.list("alice").unwrap();
+
+        assert_eq!(loaded[0].nodes[0].video_size, "768P");
+        assert_eq!(loaded[0].nodes[0].video_seconds, 15);
+    }
+
+    #[test]
+    fn leaves_unknown_legacy_video_size_invalid() {
+        let mut value = workflow();
+        value.nodes = vec![node(MediaWorkflowNodeKind::Video, "video")];
+        value.nodes[0].video_size = "640x360".into();
+        assert!(validate_workflow(&value).is_err());
     }
 
     #[test]

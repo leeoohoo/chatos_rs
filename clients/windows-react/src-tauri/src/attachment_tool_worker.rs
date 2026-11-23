@@ -73,10 +73,10 @@ use asset_context::{
 pub(crate) use asset_schemas::{
     attachment_read_tool_schema, project_dashboard_tool_schemas, team_asset_tool_schemas,
 };
+pub(crate) use attachment_read::normalize_verified_image;
 #[cfg(test)]
 use attachment_read::{content_output, model_image_output, MAXIMUM_CONTENT_READ_BYTES};
 use attachment_read::{execute_attachment_read, safe_error};
-pub(crate) use attachment_read::normalize_verified_image;
 use capability_broker::execute_capability_broker_tool;
 pub(crate) use planning_schemas::{
     todo_execution_tool_schemas, todo_planning_read_tool_schemas, todo_planning_write_tool_schemas,

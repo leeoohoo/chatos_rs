@@ -147,7 +147,7 @@ pub(super) fn model_image_output(
     Ok(Value::Object(output))
 }
 
-pub(super) fn normalize_verified_image(
+pub(crate) fn normalize_verified_image(
     _declared_media_type: &str,
     bytes: &[u8],
 ) -> Result<(String, Vec<u8>), String> {
