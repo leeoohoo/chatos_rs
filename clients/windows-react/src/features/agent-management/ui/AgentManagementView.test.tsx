@@ -652,11 +652,14 @@ describe("AgentManagementView", () => {
     const port = stubPort({
       listTeams: vi.fn(async () => [team]), loadTeam: vi.fn(async () => detail), loadTeamRuns,
     });
-    const loadRun = vi.fn(async () => ({
+    let loadRunCount = 0;
+    const loadRun = vi.fn(async () => {
+      const status = loadRunCount++ === 0 ? "waiting_confirmation" : "succeeded";
+      return {
       run: {
-        runId: "run-team-1", taskId: "task-1", status: "succeeded", iteration: 2,
-        maxIterations: 32, resultSummary: "已完成团队回复", reportContent: null,
-        errorMessage: null, createdAtUnixMs: 30, updatedAtUnixMs: 40, finishedAtUnixMs: 40,
+        runId: "run-team-1", taskId: "task-1", status, iteration: 2,
+        maxIterations: 32, resultSummary: status === "succeeded" ? "已完成团队回复" : null, reportContent: null,
+        errorMessage: null, createdAtUnixMs: 30, updatedAtUnixMs: 40, finishedAtUnixMs: status === "succeeded" ? 40 : null,
       },
       events: [{
         cursor: 1, eventId: "event-1", eventType: "run_completed",
@@ -668,7 +671,8 @@ describe("AgentManagementView", () => {
       }],
       eventsHasMore: false,
       nextOffset: 1,
-    }));
+      };
+    });
     const runInspectorPort: RunInspectorPort = {
       loadGraph: vi.fn(), loadTask: vi.fn(), loadRun,
       retryTask: vi.fn(), cancelTask: vi.fn(), restartTask: vi.fn(),
@@ -689,6 +693,8 @@ describe("AgentManagementView", () => {
     expect(within(overview).getByText("当前阶段")).toBeVisible();
     expect(within(overview).getAllByText("交付 Alpha")[0]).toBeVisible();
     expect(within(overview).getByText("项目经理简报")).toBeVisible();
+    expect(await within(overview).findByText("等待确认")).toBeVisible();
+    expect(within(overview).getByText(/后续执行等待你的决定/)).toBeVisible();
     fireEvent.click(await screen.findByRole("button", { name: "运行" }));
 
     await waitFor(() => expect(loadTeamRuns).toHaveBeenCalledWith("owner-1", team.id));

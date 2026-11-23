@@ -176,6 +176,7 @@ export function AgentTeamCatalog({
                   ownerUserId={ownerUserId}
                   port={port}
                   profiles={profiles}
+                  runInspectorPort={runInspectorPort}
                   onOpen={setWorkspaceSection}
                 />
               ) : workspaceSection === "conversation" && detail?.team.id === selectedTeamId ? (

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
 import { useAgentTeamRunStore } from "../application/agentTeamRunStore";
 import { useAgentTeamTodoStore } from "../application/agentTeamTodoStore";
 import {
@@ -8,6 +9,7 @@ import {
   type AgentTeamDetail,
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
+import { teamRunDetailStatusLabel, teamRunStatusClass } from "./agentTeamRunPresentation";
 import { todoStatusLabel } from "./AgentTeamTodosView";
 
 export function AgentTeamOverviewView({
@@ -15,18 +17,21 @@ export function AgentTeamOverviewView({
   ownerUserId,
   port,
   profiles,
+  runInspectorPort,
   onOpen,
 }: {
   detail: AgentTeamDetail;
   ownerUserId: string;
   port: AgentManagementPort;
   profiles: AgentProfileSummary[];
+  runInspectorPort?: RunInspectorPort;
   onOpen(section: "conversation" | "todos" | "research" | "assets" | "runs"): void;
 }) {
   const [dashboardSnapshot, setDashboardSnapshot] = useState<AgentProjectDashboardSnapshot | null>(null);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(false);
   const [isLegacyBriefExpanded, setIsLegacyBriefExpanded] = useState(false);
+  const [runDetailStatuses, setRunDetailStatuses] = useState<Record<string, string>>({});
   const snapshot = useAgentTeamRunStore((state) => state.snapshot);
   const runError = useAgentTeamRunStore((state) => state.error);
   const activateRuns = useAgentTeamRunStore((state) => state.activate);
@@ -55,14 +60,22 @@ export function AgentTeamOverviewView({
   const failedRuns = visibleSnapshot?.runs.filter((run) => (
     run.deliveryStatus === "failed" || run.runStatus === "failed"
   )) ?? [];
+  const reviewRuns = (visibleSnapshot?.runs ?? [])
+    .map((run) => ({ run, status: runDetailStatuses[run.runId] ?? run.runStatus }))
+    .filter(({ status }) => ["reviewing_followup", "waiting_confirmation", "needs_review"].includes(status.trim().toLowerCase()))
+    .filter(({ run }) => !failedRuns.some((failed) => failed.runId === run.runId));
+  const attentionRuns = [
+    ...failedRuns.map((run) => ({ run, status: run.runStatus })),
+    ...reviewRuns,
+  ];
   const humanIssues = dashboard?.issues.filter((issue) => issue.owner === "human") ?? [];
-  const attentionCount = failedRuns.length
+  const attentionCount = attentionRuns.length
     + (dashboardSnapshot?.pendingApprovalCount ?? 0)
     + humanIssues.length;
   const currentMilestone = dashboard?.milestones.find((milestone) => milestone.status === "in_progress")
     ?? dashboard?.milestones.find((milestone) => milestone.status === "pending")
     ?? null;
-  const effectiveHealth = failedRuns.length > 0 || blocked.length > 0
+  const effectiveHealth = attentionRuns.length > 0 || blocked.length > 0
     ? dashboard?.health === "blocked" ? "blocked" : "at_risk"
     : dashboard?.health === "completed" && activeTodos.length > 0 ? "at_risk"
       : dashboard?.health ?? "on_track";
@@ -91,8 +104,29 @@ export function AgentTeamOverviewView({
       setDashboardSnapshot(null);
       setDashboardError(null);
     }
+    setRunDetailStatuses({});
     return () => { cancelled = true; resetRuns(); resetTodos(); };
   }, [activateRuns, activateTodos, detail.team.id, ownerUserId, port, resetRuns, resetTodos]);
+
+  useEffect(() => {
+    if (!runInspectorPort || !visibleSnapshot) return undefined;
+    const candidates = visibleSnapshot.runs
+      .filter((run) => runDetailStatuses[run.runId] == null
+        || run.deliveryStatus === "pending"
+        || run.deliveryStatus === "running")
+      .slice(0, 50);
+    if (candidates.length === 0) return undefined;
+    let active = true;
+    void Promise.allSettled(candidates.map(async (run) => {
+      const detailSnapshot = await runInspectorPort.loadRun(ownerUserId, run.runId, 0);
+      return [run.runId, detailSnapshot.run.status] as const;
+    })).then((results) => {
+      if (!active) return;
+      const statuses = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+      if (statuses.length > 0) setRunDetailStatuses((current) => ({ ...current, ...Object.fromEntries(statuses) }));
+    });
+    return () => { active = false; };
+  }, [ownerUserId, runInspectorPort, visibleSnapshot]);
 
   useEffect(() => {
     if (!port.loadTeamRuns || activeCount === 0) return undefined;
@@ -141,7 +175,11 @@ export function AgentTeamOverviewView({
         <section>
           <header><div><h4>需要你处理</h4><p>仅显示必须由你决定或输入的事项</p></div><b>{attentionCount}</b></header>
           {attentionCount === 0 && <div className="agent-team-dashboard-clear">● <span>当前没有需要你处理的事项</span></div>}
-          {failedRuns.slice(0, 3).map((run) => <button className="agent-team-dashboard-attention" key={run.runId} onClick={() => onOpen("runs")} type="button"><span>!</span><div><strong>检查失败的 Agent Run</strong><small>{profileNames.get(run.agentId) ?? "Agent"} · {run.lastError || "运行需要检查"}</small></div><b>›</b></button>)}
+          {attentionRuns.slice(0, 3).map(({ run, status }) => {
+            const normalizedStatus = status.trim().toLowerCase();
+            const reviewGate = ["reviewing_followup", "waiting_confirmation", "needs_review"].includes(normalizedStatus);
+            return <button className={`agent-team-dashboard-attention${reviewGate ? ` is-${teamRunStatusClass(normalizedStatus)}` : ""}`} key={run.runId} onClick={() => onOpen("runs")} type="button"><span>{reviewGate ? "?" : "!"}</span><div><strong>{reviewGate ? teamRunDetailStatusLabel(normalizedStatus, run.runStatus) : "检查失败的 Agent Run"}</strong><small>{profileNames.get(run.agentId) ?? "Agent"} · {run.lastError || (reviewGate ? "后续执行等待你的决定" : "运行需要检查")}</small></div><b>›</b></button>;
+          })}
           {(dashboardSnapshot?.pendingApprovalCount ?? 0) > 0 && <button className="agent-team-dashboard-attention" onClick={() => onOpen("conversation")} type="button"><span>♙</span><div><strong>审批 Agent 提案</strong><small>{dashboardSnapshot?.pendingApprovalCount} 项成员变更等待确认</small></div><b>›</b></button>}
           {humanIssues.slice(0, 3).map((issue) => <button className={`agent-team-dashboard-attention is-${issue.severity}`} key={issue.id} onClick={() => onOpen(issue.relatedTodoId ? "todos" : "conversation")} type="button"><span>!</span><div><strong>{issue.title}</strong><small>{issue.requestedAction}</small></div><b>›</b></button>)}
         </section>

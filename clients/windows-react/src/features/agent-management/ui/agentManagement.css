@@ -279,6 +279,7 @@
 .agent-team-dashboard-attention strong { font-size: 8.5px; }.agent-team-dashboard-attention small { color: var(--secondary); font-size: 7.5px; }
 .agent-team-dashboard-attention > b { color: var(--tertiary); font-size: 12px; }
 .agent-team-dashboard-attention.is-critical { background: rgba(255,59,48,.07); }.agent-team-dashboard-attention.is-critical > span { color: #d83028; background: rgba(255,59,48,.12); }
+.agent-team-dashboard-attention.is-attention { background: rgba(255,149,0,.09); }.agent-team-dashboard-attention.is-attention > span { color: #a65300; background: rgba(255,149,0,.12); }
 .agent-team-dashboard-status { display: flex; height: 7px; overflow: hidden; gap: 2px; border-radius: 999px; background: rgba(120,120,128,.12); }
 .agent-team-dashboard-status i { min-width: 0; background: #30d158; }.agent-team-dashboard-status i:nth-child(2) { background: var(--accent-action); }.agent-team-dashboard-status i:nth-child(3) { background: #ff9500; }.agent-team-dashboard-status i:nth-child(4) { background: rgba(120,120,128,.28); }
 .agent-team-overview__body article > span.is-in_progress { background: var(--accent-action); }.agent-team-overview__body article > span.is-blocked { background: #ff9500; }.agent-team-overview__body article > span.is-pending { background: rgba(120,120,128,.35); }
