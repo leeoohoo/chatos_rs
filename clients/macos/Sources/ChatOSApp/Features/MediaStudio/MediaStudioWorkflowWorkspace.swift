@@ -437,14 +437,21 @@ struct MediaStudioWorkflowWorkspace: View {
     private var videoOptions: some View {
         Group {
             fieldLabel("视频尺寸")
-            TextField("1280x720", text: videoSize)
+            Picker("视频尺寸", selection: videoSize) {
+                ForEach(MediaStudioWorkflowValidator.supportedVideoSizes, id: \.self) { Text($0) }
+            }
+            .labelsHidden()
             fieldLabel("画面比例")
             Picker("比例", selection: videoRatio) {
-                ForEach(["16:9", "9:16", "1:1"], id: \.self) { Text($0) }
+                ForEach(MediaStudioWorkflowValidator.supportedVideoRatios, id: \.self) { Text($0) }
             }
             .labelsHidden()
             fieldLabel("时长")
-            Stepper("\(viewModel.selectedWorkflowNode?.videoSeconds ?? 4) 秒", value: videoSeconds, in: 1...120)
+            Stepper(
+                "\(viewModel.selectedWorkflowNode?.videoSeconds ?? 4) 秒",
+                value: videoSeconds,
+                in: MediaStudioWorkflowValidator.supportedVideoDurationRange
+            )
         }
     }
 
@@ -574,7 +581,10 @@ struct MediaStudioWorkflowWorkspace: View {
 
     private var videoSize: Binding<String> {
         .init(
-            get: { viewModel.selectedWorkflowNode?.videoSize ?? "1280x720" },
+            get: {
+                viewModel.selectedWorkflowNode?.videoSize
+                    ?? MediaStudioWorkflowValidator.supportedVideoSizes[0]
+            },
             set: { value in viewModel.editSelectedNode { $0.videoSize = value } }
         )
     }

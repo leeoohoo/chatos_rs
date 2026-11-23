@@ -153,13 +153,14 @@ actor MediaStudioWorkflowStore {
     }
 
     private func load(folder: URL, owner: String) throws -> MediaStudioWorkflow {
-        let workflow = try JSONDecoder().decode(
+        var workflow = try JSONDecoder().decode(
             MediaStudioWorkflow.self,
             from: AppBoundedFileReader.read(
                 folder.appendingPathComponent("workflow.json"),
                 maximumBytes: Self.maximumManifestBytes
             )
         )
+        MediaStudioWorkflowValidator.migrateLegacyVideoOptions(in: &workflow)
         guard workflow.id.uuidString.caseInsensitiveCompare(folder.lastPathComponent) == .orderedSame else {
             throw MediaStudioWorkflowStoreError.invalidManifest
         }

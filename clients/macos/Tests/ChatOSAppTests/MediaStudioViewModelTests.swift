@@ -29,6 +29,53 @@ final class MediaStudioViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.imageModels.isEmpty)
     }
 
+    func testWorkflowVideoNodesStartWithMiniMaxOptions() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MediaStudioWorkflowDefaultsTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let viewModel = MediaStudioViewModel(
+            service: MediaStudioWorkloadCatalogService(),
+            workflowStore: MediaStudioWorkflowStore(root: root)
+        )
+        viewModel.bindAccount(userID: "alice")
+        viewModel.reloadModels()
+        try await waitUntil { !viewModel.isLoadingModels }
+        viewModel.createWorkflow()
+        try await waitUntil { !viewModel.isSavingWorkflow }
+
+        viewModel.addWorkflowNode(.video)
+
+        XCTAssertEqual(viewModel.selectedWorkflowNode?.videoSize, "768P")
+        XCTAssertEqual(viewModel.selectedWorkflowNode?.videoSeconds, 4)
+        XCTAssertEqual(viewModel.selectedWorkflowNode?.videoRatio, "16:9")
+    }
+
+    func testChangingLegacyNodeToVideoResetsItsOptions() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MediaStudioWorkflowKindTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let viewModel = MediaStudioViewModel(
+            service: MediaStudioWorkloadCatalogService(),
+            workflowStore: MediaStudioWorkflowStore(root: root)
+        )
+        viewModel.bindAccount(userID: "alice")
+        viewModel.reloadModels()
+        try await waitUntil { !viewModel.isLoadingModels }
+        viewModel.createWorkflow()
+        try await waitUntil { !viewModel.isSavingWorkflow }
+        viewModel.editSelectedNode {
+            $0.videoSize = "1280x720"
+            $0.videoSeconds = 120
+            $0.videoRatio = "unsupported"
+        }
+
+        viewModel.changeSelectedWorkflowNodeKind(.video)
+
+        XCTAssertEqual(viewModel.selectedWorkflowNode?.videoSize, "768P")
+        XCTAssertEqual(viewModel.selectedWorkflowNode?.videoSeconds, 4)
+        XCTAssertEqual(viewModel.selectedWorkflowNode?.videoRatio, "16:9")
+    }
+
     func testAccountBindingDefersCatalogHistoryAndStoryActivation() async throws {
         let service = DelayedMediaStudioModelService()
         let viewModel = MediaStudioViewModel(service: service)

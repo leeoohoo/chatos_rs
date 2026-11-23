@@ -46,7 +46,7 @@ public struct MediaStudioWorkflowNode: Codable, Identifiable, Equatable, Sendabl
         prompt: String,
         referenceImages: [MediaStudioWorkflowImageReference] = [],
         imageSize: String = "1024x1024",
-        videoSize: String = "1280x720",
+        videoSize: String = "768P",
         videoRatio: String = "16:9",
         videoSeconds: Int = 4
     ) {
@@ -120,7 +120,28 @@ public enum MediaStudioWorkflowValidator {
     public static let maximumNodeCount = 8
     public static let maximumReferenceCount = 8
     public static let maximumImageBytes = 20 * 1_024 * 1_024
+    public static let supportedVideoSizes = VideoGenerationProfile.miniMaxH3.sizes
+    public static let supportedVideoDurations = VideoGenerationProfile.miniMaxH3.durations
+    public static let supportedVideoRatios = VideoGenerationProfile.miniMaxRatios
+    public static var supportedVideoDurationRange: ClosedRange<Int> {
+        supportedVideoDurations[0]...supportedVideoDurations[supportedVideoDurations.count - 1]
+    }
     private static let maximumTextLength = 20_000
+
+    public static func migrateLegacyVideoOptions(in workflow: inout MediaStudioWorkflow) {
+        for index in workflow.nodes.indices where workflow.nodes[index].kind == .video {
+            if VideoGenerationProfile.openAI.sizes.contains(workflow.nodes[index].videoSize) {
+                workflow.nodes[index].videoSize = supportedVideoSizes[0]
+            }
+            let seconds = workflow.nodes[index].videoSeconds
+            if (1...120).contains(seconds), !supportedVideoDurations.contains(seconds) {
+                workflow.nodes[index].videoSeconds = min(
+                    max(seconds, supportedVideoDurationRange.lowerBound),
+                    supportedVideoDurationRange.upperBound
+                )
+            }
+        }
+    }
 
     public static func validate(_ workflow: MediaStudioWorkflow) throws {
         let name = workflow.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -154,8 +175,9 @@ public enum MediaStudioWorkflowValidator {
                 maximum: node.kind == .video ? 1 : maximumReferenceCount
             )
             if node.kind == .video {
-                guard !node.videoSize.isEmpty, !node.videoRatio.isEmpty,
-                      (1...120).contains(node.videoSeconds) else {
+                guard supportedVideoSizes.contains(node.videoSize),
+                      supportedVideoRatios.contains(node.videoRatio),
+                      supportedVideoDurations.contains(node.videoSeconds) else {
                     throw MediaStudioWorkflowValidationError.invalidVideoOptions
                 }
             }

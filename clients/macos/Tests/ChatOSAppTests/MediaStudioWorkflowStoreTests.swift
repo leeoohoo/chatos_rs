@@ -91,6 +91,28 @@ final class MediaStudioWorkflowStoreTests: XCTestCase {
         XCTAssertEqual(restored, [newer])
     }
 
+    func testLoadingMigratesLegacyVideoOptions() async throws {
+        let root = try temporaryDirectory()
+        let store = MediaStudioWorkflowStore(root: root)
+        var workflow = MediaStudioWorkflow(
+            name: "Legacy Video",
+            nodes: [.init(kind: .video, modelConfigID: "video", prompt: "Animate it")]
+        )
+        try await store.save(workflow, owner: "alice")
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
+        let manifest = try XCTUnwrap(
+            enumerator.compactMap { $0 as? URL }.first { $0.lastPathComponent == "workflow.json" }
+        )
+        workflow.nodes[0].videoSize = "1280x720"
+        workflow.nodes[0].videoSeconds = 120
+        try JSONEncoder().encode(workflow).write(to: manifest, options: .atomic)
+
+        let restored = try await store.list(owner: "alice")
+
+        XCTAssertEqual(restored.first?.nodes.first?.videoSize, "768P")
+        XCTAssertEqual(restored.first?.nodes.first?.videoSeconds, 15)
+    }
+
     func testStaleSaveDoesNotDeleteAnImageBeingAddedToNewerSnapshot() async throws {
         let root = try temporaryDirectory()
         let store = MediaStudioWorkflowStore(root: root.appendingPathComponent("store"))

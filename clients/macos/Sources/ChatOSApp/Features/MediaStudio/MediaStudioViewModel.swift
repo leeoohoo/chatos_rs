@@ -578,8 +578,13 @@ final class MediaStudioViewModel: ObservableObject {
         editSelectedNode {
             $0.kind = kind
             $0.modelConfigID = model.id
-            if kind == .video, $0.referenceImages.count > 1 {
-                $0.referenceImages = Array($0.referenceImages.prefix(1))
+            if kind == .video {
+                $0.videoSize = MediaStudioWorkflowValidator.supportedVideoSizes[0]
+                $0.videoSeconds = MediaStudioWorkflowValidator.supportedVideoDurations[0]
+                $0.videoRatio = MediaStudioWorkflowValidator.supportedVideoRatios[0]
+                if $0.referenceImages.count > 1 {
+                    $0.referenceImages = Array($0.referenceImages.prefix(1))
+                }
             }
         }
     }
