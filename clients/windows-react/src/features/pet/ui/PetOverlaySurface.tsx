@@ -27,7 +27,13 @@ export function PetOverlaySurface({ port }: { port: PetPresentationPort }) {
   const x = `${(frame / (columns - 1)) * 100}%`;
   const y = `${(animation.row / 10) * 100}%`;
   return (
-    <main aria-label="ChatOS pet is idle" className="pet-overlay" data-tauri-drag-region>
+    <main
+      aria-label="ChatOS pet is idle. Double-click to open quick translate."
+      className="pet-overlay"
+      data-tauri-drag-region
+      onDoubleClick={() => void port.openTranslation()}
+      title="双击打开快速翻译"
+    >
       {assetFailed ? (
         <div aria-hidden="true" className="pet-overlay__fallback" data-tauri-drag-region>🦊</div>
       ) : (

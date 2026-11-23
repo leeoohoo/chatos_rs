@@ -1,0 +1,29 @@
+import { z } from "zod";
+
+export const petTranslationTargetSchema = z.enum(["simplifiedChinese", "english"]);
+export const petTranslationOutputStyleSchema = z.enum(["bilingual", "translationOnly"]);
+
+export const petTranslationRecordSchema = z.object({
+  id: z.uuid(),
+  sourceText: z.string().min(1).max(20_000),
+  translatedText: z.string().min(1).max(40_000),
+  target: petTranslationTargetSchema,
+  outputStyle: petTranslationOutputStyleSchema,
+  createdAtUnixMs: z.number().int().nonnegative(),
+}).strict();
+
+export const petTranslationHistorySchema = z.object({
+  records: z.array(petTranslationRecordSchema).max(100),
+}).strict();
+
+export type PetTranslationTarget = z.infer<typeof petTranslationTargetSchema>;
+export type PetTranslationOutputStyle = z.infer<typeof petTranslationOutputStyleSchema>;
+export type PetTranslationRecord = z.infer<typeof petTranslationRecordSchema>;
+export type PetTranslationHistory = z.infer<typeof petTranslationHistorySchema>;
+
+export interface PetTranslationRequest {
+  ownerUserId: string;
+  sourceText: string;
+  target: PetTranslationTarget;
+  outputStyle: PetTranslationOutputStyle;
+}

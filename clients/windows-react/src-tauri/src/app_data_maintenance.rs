@@ -15,6 +15,7 @@ const MAXIMUM_ENTRIES_PER_TEMPORARY_TREE: usize = 20_000;
 const PREFERENCE_PREFIXES: &[&str] =
     &[".general-settings-", ".global-utilities-", ".quick-search-"];
 const PET_PREFIXES: &[&str] = &[".preferences-", ".project-favorites-"];
+const PET_TRANSLATION_PREFIXES: &[&str] = &[".history-"];
 const PROJECT_RUN_PREFIXES: &[&str] = &[".preferences-"];
 const REMOTE_CONNECTION_PREFIXES: &[&str] = &[".credential-index-"];
 const CLIPBOARD_PREFIXES: &[&str] = &[".clipboard-"];
@@ -32,6 +33,10 @@ const CLEANUP_SCOPES: &[CleanupScope] = &[
     CleanupScope {
         components: &["pet"],
         pattern: CleanupNamePattern::Uuid(PET_PREFIXES),
+    },
+    CleanupScope {
+        components: &["pet-translation"],
+        pattern: CleanupNamePattern::Uuid(PET_TRANSLATION_PREFIXES),
     },
     CleanupScope {
         components: &["project-run"],

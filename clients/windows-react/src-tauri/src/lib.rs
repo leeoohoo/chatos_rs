@@ -36,6 +36,7 @@ mod media_studio;
 mod model_selection;
 mod notepad;
 mod pet;
+mod pet_translation;
 mod platform_execution_context;
 mod plugin_application;
 mod plugin_credentials;
@@ -162,6 +163,10 @@ use notepad::{
 use pet::{
     load_pet_preferences, pet_asset_protocol, refresh_pet_presentation, reset_pet_position,
     update_pet_preferences, PetAssetStore, PetPreferencesStore,
+};
+use pet_translation::{
+    clear_pet_translation_history, list_pet_translation_history, open_pet_translation,
+    translate_pet_text, PetTranslationHistoryStore,
 };
 use plugin_application::{
     discard_plugin_application_presentation, handle_plugin_application_bridge_request,
@@ -339,6 +344,7 @@ pub fn run() {
                 .open(data_dir.join("clipboard-history"))
                 .map_err(std::io::Error::other)?;
             app.manage(PetPreferencesStore::new(data_dir.clone()));
+            app.manage(PetTranslationHistoryStore::new(data_dir.clone()));
             app.manage(PluginSettingsManager::new_with_resources(
                 data_dir.clone(),
                 app.state::<MachineResourceGovernor>().inner().clone(),
@@ -608,6 +614,10 @@ pub fn run() {
             update_pet_preferences,
             reset_pet_position,
             refresh_pet_presentation,
+            open_pet_translation,
+            list_pet_translation_history,
+            clear_pet_translation_history,
+            translate_pet_text,
             load_wechat_companion,
             issue_wechat_bind_ticket,
             poll_wechat_bind_ticket,

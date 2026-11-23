@@ -14,4 +14,8 @@ export class TauriPetPresentationAdapter implements PetPresentationPort {
       if (parsed.success) listener(parsed.data);
     });
   }
+
+  async openTranslation() {
+    await invoke("open_pet_translation");
+  }
 }

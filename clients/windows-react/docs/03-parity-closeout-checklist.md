@@ -591,6 +591,8 @@ Windows 产品版本：`3.0.9`
 
 ### P1：用户能直接感知
 
+- [x] 宠物快速翻译首个 Windows 纵向切片。双击宠物浮窗打开独立翻译窗口，复用当前登录账号的可用文字模型，支持简体中文/英文、双语/仅译文、结果复制；翻译历史以 owner-scoped 原子 JSON 保存，支持重新打开和清空。Rust history/model request、React domain/port/adapter/store/UI 已接入；`npm run typecheck`、`npm test`、`npm run build` 和 `git diff --check` 通过。附件/图片翻译仍属于后续差距，不在本项范围内。
+
 - [x] Codex/Ponytail Hook 的 Windows 端完整闭环。最终 NSIS 安装包已真实启动 AppContainer runner，写入并激活受信 Bundle，触发 `UserPromptSubmit`，回传上下文，按 `continue=false` 阻断 Prompt，并在 Host 重启后恢复 active Bundle；报告为 `%TEMP%\\chatos-windows-installed-hook-restart.json`。原生窗口逐态视觉走查仍单独保留为未完成项。
 - [ ] `3.0.9.4` 新增的任务审查优先级展示仍需原生窗口逐态核对。Windows 原生任务图 DTO 现同时保留 Host 原始状态和 `reviewing_followup` / `waiting_confirmation` 展示状态；Task Graph、Run Inspector、对话 Timeline 状态胶囊与宠物活动摘要均让新门禁覆盖旧 Run 活动并保持轮询，`needs_review` 的恢复操作继续保留。各入口的原生视觉优先级仍需取证，当前不声称完全一致。
 - [x] Run Inspector 已补齐 macOS 对应的“插件与工具”页签：Windows 从真实 `tool_batch_requested` / `tool_batch_completed` / Run capability disclosure 事件生成安全摘要，展示已选插件、工具路由、状态和调用次数，不向 React 暴露原始 arguments 或结果内容；React/Rust 定向回归通过。该项不替代任务审查逐态原生视觉取证。

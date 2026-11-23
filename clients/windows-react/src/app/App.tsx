@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Route, Routes } from "react-router";
 import { TauriAuthenticationAdapter } from "../features/authentication/adapters/TauriAuthenticationAdapter";
 import { TauriAskUserAdapter } from "../features/ask-user/adapters/TauriAskUserAdapter";
@@ -50,6 +50,16 @@ const remoteConnection = new TauriRemoteConnectionAdapter();
 const toolApproval = new TauriToolApprovalAdapter();
 const clipboardHistory = new TauriClipboardHistoryAdapter();
 const quickSearch = new TauriQuickSearchAdapter();
+const PetTranslationRoute = lazy(async () => {
+  const [{ PetTranslationSurface }, { TauriPetTranslationAdapter }] = await Promise.all([
+    import("../features/pet/ui/PetTranslationSurface"),
+    import("../features/pet/adapters/TauriPetTranslationAdapter"),
+  ]);
+  const port = new TauriPetTranslationAdapter();
+  return {
+    default: () => <PetTranslationSurface authentication={authentication} port={port} />,
+  };
+});
 
 export function App() {
   if (new URLSearchParams(window.location.search).get("surface") === "pet-overlay") {
@@ -57,6 +67,9 @@ export function App() {
   }
   if (new URLSearchParams(window.location.search).get("surface") === "pet-activity") {
     return <PetActivitySurface port={petPresentation} />;
+  }
+  if (new URLSearchParams(window.location.search).get("surface") === "pet-translation") {
+    return <Suspense fallback={<main className="app-window" />}><PetTranslationRoute /></Suspense>;
   }
   if (new URLSearchParams(window.location.search).get("surface") === "clipboard-history") {
     return <ClipboardHistorySurface port={clipboardHistory} />;
