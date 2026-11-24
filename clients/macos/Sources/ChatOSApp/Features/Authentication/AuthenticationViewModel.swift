@@ -23,6 +23,8 @@ final class AuthenticationViewModel: ObservableObject {
     @Published private(set) var registrationMessage: String?
     @Published private(set) var isSendingRegistrationCode = false
     @Published private(set) var registrationCodeCountdown = 0
+    @Published private(set) var weChatLoginTicket: WeChatDesktopLoginTicket?
+    @Published private(set) var weChatLoginSecondsRemaining = 0
     @Published var mode: Mode = .signIn
     @Published var username = ""
     @Published var password = ""
@@ -87,6 +89,8 @@ final class AuthenticationViewModel: ObservableObject {
 
     private func restoreSession() {
         cancelAuthenticationOperation()
+        weChatLoginTicket = nil
+        weChatLoginSecondsRemaining = 0
         phase = .restoring
         errorMessage = nil
         authenticationGeneration &+= 1
@@ -132,6 +136,8 @@ final class AuthenticationViewModel: ObservableObject {
         let submittedUsername = username
         let submittedPassword = password
         cancelAuthenticationOperation()
+        weChatLoginTicket = nil
+        weChatLoginSecondsRemaining = 0
         authenticationGeneration &+= 1
         let generation = authenticationGeneration
         let service = service
@@ -162,7 +168,84 @@ final class AuthenticationViewModel: ObservableObject {
         }
     }
 
+    func startWeChatLogin() {
+        guard phase != .authenticating else { return }
+        shouldRetrySessionRestore = false
+        cancelAuthenticationOperation()
+        phase = .authenticating
+        errorMessage = nil
+        registrationMessage = nil
+        weChatLoginTicket = nil
+        weChatLoginSecondsRemaining = 0
+        authenticationGeneration &+= 1
+        let generation = authenticationGeneration
+        let service = service
+        let pendingLogout = logoutTask
+        let deviceName = Host.current().localizedName ?? ProcessInfo.processInfo.hostName
+
+        authenticationTask = Task { [weak self] in
+            do {
+                await pendingLogout?.value
+                try Task.checkCancellation()
+                let ticket = try await service.beginWeChatDesktopLogin(deviceName: deviceName)
+                guard !Task.isCancelled,
+                      let self,
+                      authenticationGeneration == generation else { return }
+                weChatLoginTicket = ticket
+                var failures = 0
+                while !Task.isCancelled {
+                    let remaining = max(
+                        0,
+                        ticket.expiresAtUnix - Int64(Date().timeIntervalSince1970)
+                    )
+                    weChatLoginSecondsRemaining = Int(remaining)
+                    guard remaining > 0 else { throw WeChatLoginError.expired }
+                    try await Task.sleep(for: .seconds(failures == 0 ? 2 : min(8, 1 << failures)))
+                    do {
+                        if let session = try await service.pollWeChatDesktopLogin(ticket) {
+                            guard !Task.isCancelled,
+                                  authenticationGeneration == generation else { return }
+                            weChatLoginTicket = nil
+                            weChatLoginSecondsRemaining = 0
+                            errorMessage = nil
+                            phase = .authenticated(session)
+                            return
+                        }
+                        failures = 0
+                        errorMessage = nil
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        failures = min(failures + 1, 3)
+                        errorMessage = "网络暂时不可用，仍在等待手机确认…"
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled,
+                      let self,
+                      authenticationGeneration == generation else { return }
+                weChatLoginTicket = nil
+                weChatLoginSecondsRemaining = 0
+                errorMessage = error.localizedDescription
+                phase = .signedOut
+            }
+            guard let self, authenticationGeneration == generation else { return }
+            authenticationTask = nil
+        }
+    }
+
+    func cancelWeChatLogin() {
+        cancelAuthenticationOperation()
+        weChatLoginTicket = nil
+        weChatLoginSecondsRemaining = 0
+        errorMessage = nil
+        phase = .signedOut
+    }
+
     func showRegistration() {
+        cancelWeChatLogin()
         mode = .register
         password = ""
         confirmPassword = ""
@@ -288,6 +371,8 @@ final class AuthenticationViewModel: ObservableObject {
         password = ""
         confirmPassword = ""
         verificationCode = ""
+        weChatLoginTicket = nil
+        weChatLoginSecondsRemaining = 0
         errorMessage = nil
         phase = .signedOut
         startLogout(after: pendingAuthentication)
@@ -299,6 +384,8 @@ final class AuthenticationViewModel: ObservableObject {
         cancelRegistrationCodeRequest()
         shouldRetrySessionRestore = false
         password = ""
+        weChatLoginTicket = nil
+        weChatLoginSecondsRemaining = 0
         errorMessage = "登录状态已失效，请重新登录。"
         phase = .signedOut
         startLogout(after: pendingAuthentication)
@@ -387,4 +474,10 @@ final class AuthenticationViewModel: ObservableObject {
         ]
         return translations.first(where: { normalized.contains($0.0) })?.1 ?? message
     }
+}
+
+private enum WeChatLoginError: LocalizedError {
+    case expired
+
+    var errorDescription: String? { "登录二维码已过期，请重新生成。" }
 }

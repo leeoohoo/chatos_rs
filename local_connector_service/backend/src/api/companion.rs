@@ -17,7 +17,7 @@ use crate::state::AppState;
 
 use super::{dispatch_companion_relay, load_owned_device, relay_response_to_http, ApiError};
 
-const COMPANION_RELAY_TIMEOUT: Duration = Duration::from_secs(10);
+const COMPANION_RELAY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ResolveCompanionResourceRequest {

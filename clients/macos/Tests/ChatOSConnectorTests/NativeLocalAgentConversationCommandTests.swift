@@ -4,6 +4,15 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentConversationCommandTests: XCTestCase {
+    func testCompanionConversationTextBoundsOversizedMessages() {
+        let oversized = String(repeating: "内容", count: 15_000)
+        let result = NativeLocalConnectorService.conversationText(.string(oversized))
+
+        XCTAssertLessThan(result.count, oversized.count)
+        XCTAssertTrue(result.hasPrefix(String(oversized.prefix(20_000))))
+        XCTAssertTrue(result.hasSuffix("请在桌面端查看完整内容）"))
+    }
+
     func testRequirementSurveyNoticeHasNoInternalIDsOrRawAnswers() {
         let pending = LocalAgentJSONValue.object([
             "type": .string("requirement_survey_status"), "survey_title": .string("明确 MVP 目标"),

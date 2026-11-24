@@ -111,6 +111,7 @@ async fn prune_expired_user_data(pool: &sqlx::PgPool, batch_size: i64) -> Result
         ("registration_email_codes", "email"),
         ("local_connector_auth_tickets", "id"),
         ("wechat_bind_tickets", "id"),
+        ("wechat_desktop_login_tickets", "id"),
         ("client_sessions", "id"),
     ];
     let timestamp_expiry_tables = [("device_proof_nonces", "id"), ("login_throttle", "key")];

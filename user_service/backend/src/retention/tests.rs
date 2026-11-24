@@ -38,7 +38,7 @@ async fn postgres_retention_prunes_expired_ephemeral_user_data() {
     insert_timestamp_expiry_records(&pool, &expired, true).await;
     insert_timestamp_expiry_records(&pool, &live, false).await;
 
-    assert_eq!(prune_expired_user_data(&pool, 10).await.unwrap(), 7);
+    assert_eq!(prune_expired_user_data(&pool, 10).await.unwrap(), 8);
     for (table, column, expired_id, live_id) in record_keys(&expired, &live) {
         let remaining: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT {column} FROM {table} WHERE {column}=ANY($1) ORDER BY {column}"
@@ -124,6 +124,19 @@ async fn insert_unix_expiry_records(pool: &sqlx::PgPool, user_id: &str, id: &str
     .execute(pool)
     .await
     .expect("client session");
+    sqlx::query(
+        "INSERT INTO wechat_desktop_login_tickets(id,ticket_hash,poll_secret_hash,source_hash,app_id,status,user_id,expires_at,updated_at,data) \
+         VALUES($1,$2,$3,$4,'contract','pending',$5,$6,now(),'{}'::jsonb)",
+    )
+    .bind(format!("desktop-login-{id}"))
+    .bind(format!("desktop-login-hash-{id}"))
+    .bind(format!("desktop-login-poll-{id}"))
+    .bind(format!("desktop-login-source-{id}"))
+    .bind(user_id)
+    .bind(expiry)
+    .execute(pool)
+    .await
+    .expect("desktop login ticket");
 }
 
 async fn insert_timestamp_expiry_records(pool: &sqlx::PgPool, id: &str, expired: bool) {
@@ -180,6 +193,12 @@ fn record_keys(expired: &str, live: &str) -> Vec<(&'static str, &'static str, St
             "id",
             format!("session-{expired}"),
             format!("session-{live}"),
+        ),
+        (
+            "wechat_desktop_login_tickets",
+            "id",
+            format!("desktop-login-{expired}"),
+            format!("desktop-login-{live}"),
         ),
         (
             "device_proof_nonces",

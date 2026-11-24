@@ -100,7 +100,12 @@ Page({
     const selected = devices.find((device) => device.id === selectedId)
       ?? devices.find((device) => device.is_online)
       ?? devices[0]
-    if (selected) deviceSelectionStore.set(selected.id, selected)
+    const cached = deviceSelectionStore.snapshot()
+    if (selected) {
+      // Presence can briefly disappear while the desktop connector replaces its WebSocket.
+      if (!selected.is_online && cached?.id === selected.id && cached.is_online) return cached
+      deviceSelectionStore.set(selected.id, selected)
+    }
     return selected
   },
 
@@ -111,8 +116,10 @@ Page({
     if (this.data.loading !== loading || this.data.error) this.setData({ loading, error: '' })
     try {
       const cachedDevice = deviceSelectionStore.snapshot()
-      const device = cachedDevice ?? await this.selectedDevice()
-      const refreshedDevice = cachedDevice ? this.selectedDevice().catch(() => undefined) : undefined
+      const device = cachedDevice?.is_online ? cachedDevice : await this.selectedDevice()
+      const refreshedDevice = cachedDevice?.is_online
+        ? this.selectedDevice().catch(() => undefined)
+        : undefined
       if (!device) {
         this.renderedResources = undefined
         this.setData({ resources: [], device: undefined, loading: false })

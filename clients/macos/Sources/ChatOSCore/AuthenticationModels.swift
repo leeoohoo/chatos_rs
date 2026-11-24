@@ -45,9 +45,25 @@ public struct RegistrationCodeDelivery: Sendable, Equatable {
     }
 }
 
+public struct WeChatDesktopLoginTicket: Sendable, Equatable {
+    public var id: String
+    public var pollSecret: String
+    public var expiresAtUnix: Int64
+    public var codeImageData: Data
+
+    public init(id: String, pollSecret: String, expiresAtUnix: Int64, codeImageData: Data) {
+        self.id = id
+        self.pollSecret = pollSecret
+        self.expiresAtUnix = expiresAtUnix
+        self.codeImageData = codeImageData
+    }
+}
+
 public protocol AuthenticationServicing: Sendable {
     func restoreSession() async throws -> AuthSession?
     func login(username: String, password: String) async throws -> AuthSession
+    func beginWeChatDesktopLogin(deviceName: String) async throws -> WeChatDesktopLoginTicket
+    func pollWeChatDesktopLogin(_ ticket: WeChatDesktopLoginTicket) async throws -> AuthSession?
     func sendRegistrationCode(email: String, inviteCode: String) async throws -> RegistrationCodeDelivery
     func register(
         email: String,
@@ -56,4 +72,20 @@ public protocol AuthenticationServicing: Sendable {
         verificationCode: String
     ) async throws -> AuthSession
     func logout() async
+}
+
+public extension AuthenticationServicing {
+    func beginWeChatDesktopLogin(deviceName _: String) async throws -> WeChatDesktopLoginTicket {
+        throw AuthenticationCapabilityError.unavailable
+    }
+
+    func pollWeChatDesktopLogin(_: WeChatDesktopLoginTicket) async throws -> AuthSession? {
+        throw AuthenticationCapabilityError.unavailable
+    }
+}
+
+private enum AuthenticationCapabilityError: LocalizedError {
+    case unavailable
+
+    var errorDescription: String? { "当前客户端不支持微信扫码登录。" }
 }

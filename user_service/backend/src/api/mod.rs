@@ -167,6 +167,22 @@ pub fn build_public_router(state: AppState) -> Router {
             post(wechat_auth::claim_result),
         )
         .route(
+            "/api/auth/wechat/desktop-login/tickets",
+            post(wechat_auth::issue_desktop_login_ticket),
+        )
+        .route(
+            "/api/auth/wechat/desktop-login/claims",
+            post(wechat_auth::claim_desktop_login_ticket),
+        )
+        .route(
+            "/api/auth/wechat/desktop-login/claims/{id}/confirm",
+            post(wechat_auth::confirm_desktop_login_ticket),
+        )
+        .route(
+            "/api/auth/wechat/desktop-login/tickets/{id}/result",
+            post(wechat_auth::desktop_login_result),
+        )
+        .route(
             "/api/auth/device-proof/verify",
             post(device_proof::verify_forwarded_request),
         )

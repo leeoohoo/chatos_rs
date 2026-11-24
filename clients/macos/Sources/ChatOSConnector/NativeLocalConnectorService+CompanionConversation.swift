@@ -2,6 +2,8 @@ import ChatOSCore
 import Foundation
 
 extension NativeLocalConnectorService {
+    private static let companionMessageMaximumCharacters = 20_000
+
     func companionConversation(
         _ request: CompanionConversationRequest,
         ownerUserID: String
@@ -251,7 +253,10 @@ extension NativeLocalConnectorService {
     }
 
     nonisolated static func conversationText(_ value: LocalAgentJSONValue) -> String {
-        value.conversationDisplayText
+        let text = value.conversationDisplayText
+        guard text.count > companionMessageMaximumCharacters else { return text }
+        return String(text.prefix(companionMessageMaximumCharacters))
+            + "\n\n…（内容过长，已在小程序中截断，请在桌面端查看完整内容）"
     }
 
     nonisolated static func iso8601(_ unixMilliseconds: Int64) -> String {

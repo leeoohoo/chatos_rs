@@ -92,4 +92,38 @@ struct KeychainSecretStoreTests {
         )
         #expect(try migrating.load(account: account) == Data("legacy".utf8))
     }
+
+    @Test("restores a legacy item over an incorrect vault replacement")
+    func restoresLegacyItemOverReplacement() throws {
+        let id = UUID().uuidString
+        let service = "com.chatos.tests.restore-legacy.\(id)"
+        let vaultService = "com.chatos.tests.vault.\(id)"
+        let account = "device-signing-key-v1"
+        let legacyQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        let store = KeychainSecretStore(
+            service: service,
+            vaultService: vaultService,
+            legacyItemPolicy: .all
+        )
+        defer {
+            SecItemDelete(legacyQuery as CFDictionary)
+            SecItemDelete([
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: vaultService,
+            ] as CFDictionary)
+        }
+
+        try store.save(Data("replacement".utf8), account: account)
+        #expect(SecItemAdd(legacyQuery.merging([
+            kSecValueData as String: Data("original".utf8),
+        ]) { _, value in value } as CFDictionary, nil) == errSecSuccess)
+
+        #expect(try store.restoreLegacyItem(account: account) == Data("original".utf8))
+        #expect(try store.load(account: account) == Data("original".utf8))
+        #expect(SecItemCopyMatching(legacyQuery as CFDictionary, nil) == errSecItemNotFound)
+    }
 }

@@ -8,6 +8,32 @@
     <view class="state-title">正在验证绑定请求</view>
   </view>
 
+  <view class="card state-card" wx:elif="{{state === 'desktop_review' || state === 'desktop_confirming'}}">
+    <view class="desktop-login-symbol">⌘</view>
+    <view class="state-title">确认登录桌面客户端</view>
+    <view class="desktop-login-detail">
+      <view class="detail-label">设备</view>
+      <view class="detail-value">{{desktopDeviceName}}</view>
+      <view class="detail-label">ChatOS 账号</view>
+      <view class="detail-value">{{desktopAccountName}}</view>
+    </view>
+    <view class="state-copy">只有在你刚刚亲自在这台电脑上打开二维码时才确认。</view>
+    <view class="error-text error" wx:if="{{error}}">{{error}}</view>
+    <button
+      class="primary-button"
+      loading="{{state === 'desktop_confirming'}}"
+      disabled="{{state === 'desktop_confirming'}}"
+      bindtap="confirmDesktopLogin"
+    >确认登录</button>
+  </view>
+
+  <view class="card state-card" wx:elif="{{state === 'desktop_confirmed'}}">
+    <view class="waiting-symbol">✓</view>
+    <view class="state-title">已确认登录</view>
+    <view class="state-copy">桌面客户端正在完成登录，你可以关闭小程序。</view>
+    <button class="primary-button" bindtap="closeMiniProgram">完成</button>
+  </view>
+
   <view class="card development-card" wx:elif="{{developmentMode && !scene && state !== 'waiting'}}">
     <view class="development-badge">仅开发/体验版</view>
     <view class="state-title">进入服务器测试通道</view>

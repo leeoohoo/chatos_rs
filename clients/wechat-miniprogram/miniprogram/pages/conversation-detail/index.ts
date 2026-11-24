@@ -260,6 +260,8 @@ Page({
   refreshingPrompts: false,
   refreshingApprovals: false,
   reconciling: false,
+  reconcileFailures: 0,
+  nextReconcileAt: 0,
   resolvingApprovalIds: [] as string[],
   pageDisposed: false,
 
@@ -360,7 +362,7 @@ Page({
   },
 
   async reconcile() {
-    if (!this.conversationId || !this.deviceId || this.reconciling) return
+    if (!this.conversationId || !this.deviceId || this.reconciling || Date.now() < this.nextReconcileAt) return
     this.reconciling = true
     try {
       const [history, recoveredConversation] = await Promise.all([
@@ -386,10 +388,16 @@ Page({
         wx.setNavigationBarTitle({ title: recoveredConversation.title || '会话' })
       }
       await Promise.all([this.refreshRuntime(), this.refreshPrompts(), this.refreshApprovals()])
+      this.reconcileFailures = 0
+      this.nextReconcileAt = 0
       if (messagesChanged) this.scrollToBottom()
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 401) {
         wx.reLaunch({ url: '/pages/bind/index' })
+      } else {
+        this.reconcileFailures += 1
+        const delay = Math.min(30_000, LOCAL_RECONCILE_INTERVAL_MS * (2 ** Math.min(this.reconcileFailures, 3)))
+        this.nextReconcileAt = Date.now() + delay
       }
     } finally {
       this.reconciling = false

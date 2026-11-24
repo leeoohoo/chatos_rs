@@ -1,4 +1,9 @@
-import type { BindClaimResponse, BindClaimResult, WeChatLoginResponse } from '../models/api'
+import type {
+  BindClaimResponse,
+  BindClaimResult,
+  DesktopLoginClaim,
+  WeChatLoginResponse,
+} from '../models/api'
 import { sessionStore } from '../stores/session-store'
 import { apiRequest } from './api-client'
 import { deviceIdentityStore } from '../security/device-identity'
@@ -85,6 +90,29 @@ class AuthService {
     })
     persistAuthenticated(result)
     return result
+  }
+
+  async claimDesktopLogin(loginTicket: string): Promise<DesktopLoginClaim> {
+    return apiRequest<DesktopLoginClaim>({
+      surface: 'user',
+      path: '/auth/wechat/desktop-login/claims',
+      method: 'POST',
+      data: {
+        code: await wxLoginCode(),
+        login_ticket: loginTicket,
+      },
+      authenticated: false,
+    })
+  }
+
+  async confirmDesktopLogin(claimId: string, confirmationSecret: string): Promise<void> {
+    await apiRequest({
+      surface: 'user',
+      path: `/auth/wechat/desktop-login/claims/${encodeURIComponent(claimId)}/confirm`,
+      method: 'POST',
+      data: { confirmation_secret: confirmationSecret },
+      authenticated: false,
+    })
   }
 
   async logout(): Promise<void> {

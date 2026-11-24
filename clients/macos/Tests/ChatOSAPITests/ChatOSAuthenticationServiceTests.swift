@@ -4,6 +4,36 @@ import XCTest
 @testable import ChatOSAPI
 
 final class ChatOSAuthenticationServiceTests: XCTestCase {
+    func testWeChatDesktopLoginIssuesCodeThenPersistsAuthenticatedToken() async throws {
+        let transport = QueueTransport(responses: [
+            HTTPResponse(
+                statusCode: 200,
+                headers: [:],
+                body: Data(#"{"ticket_id":"ticket-1","poll_secret":"poll-1","expires_at_unix":4102444800,"qr_code_data_url":"data:image/png;base64,cXI="}"#.utf8)
+            ),
+            HTTPResponse(
+                statusCode: 200,
+                headers: [:],
+                body: Data(#"{"status":"authenticated","token":"wechat-token","user":{"id":"user-1","username":"person@example.com","display_name":"Person","role":"user","principal_type":"human_user"}}"#.utf8)
+            ),
+        ])
+        let store = MemoryCredentialStore()
+        let service = makeService(transport: transport, store: store)
+
+        let ticket = try await service.beginWeChatDesktopLogin(deviceName: "Li's Mac")
+        let session = try await service.pollWeChatDesktopLogin(ticket)
+
+        XCTAssertEqual(ticket.codeImageData, Data("qr".utf8))
+        XCTAssertEqual(session?.user.displayName, "Person")
+        let storedToken = try await store.loadAccessToken()
+        XCTAssertEqual(storedToken, "wechat-token")
+        let requests = await transport.requests()
+        XCTAssertEqual(requests.map(\.url.path), [
+            "/api/user/auth/wechat/desktop-login/tickets",
+            "/api/user/auth/wechat/desktop-login/tickets/ticket-1/result",
+        ])
+    }
+
     func testLoginPersistsTokenAndMapsUser() async throws {
         let transport = QueueTransport(responses: [
             HTTPResponse(

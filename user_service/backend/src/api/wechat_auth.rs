@@ -13,16 +13,22 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::auth::normalize_username;
-use crate::auth::{issue_user_token_with_scopes, CurrentPrincipal};
+use crate::auth::{issue_user_token, issue_user_token_with_scopes, CurrentPrincipal};
+use crate::integrations::ensure_harness_user_public_register_on_login;
 use crate::models::WeChatMiniProgramDevelopmentLoginRequest;
 use crate::models::{
-    AuthUser, ClaimWeChatBindTicketRequest, ClaimWeChatBindTicketResponse, ClientSessionRecord,
-    ClientSessionSummary, ConfirmWeChatBindTicketResponse, IssueWeChatBindTicketResponse,
+    AuthUser, ClaimWeChatBindTicketRequest, ClaimWeChatBindTicketResponse,
+    ClaimWeChatDesktopLoginRequest, ClaimWeChatDesktopLoginResponse, ClientSessionRecord,
+    ClientSessionSummary, ConfirmWeChatBindTicketResponse, ConfirmWeChatDesktopLoginRequest,
+    ConfirmWeChatDesktopLoginResponse, IssueWeChatBindTicketResponse,
+    IssueWeChatDesktopLoginTicketRequest, IssueWeChatDesktopLoginTicketResponse,
     UserExternalIdentityRecord, UserRecord, WeChatBindClaimResultRequest,
     WeChatBindClaimResultResponse, WeChatBindTicketRecord, WeChatBindTicketStatusResponse,
-    WeChatBindingStatusResponse, WeChatMiniProgramLoginRequest, WeChatMiniProgramLoginResponse,
+    WeChatBindingStatusResponse, WeChatDesktopLoginResultRequest, WeChatDesktopLoginResultResponse,
+    WeChatDesktopLoginTicketRecord, WeChatMiniProgramLoginRequest, WeChatMiniProgramLoginResponse,
     CLIENT_TYPE_WECHAT_MINI_PROGRAM, EXTERNAL_IDENTITY_PROVIDER_WECHAT_MINI_PROGRAM,
-    PRINCIPAL_TYPE_HUMAN_USER, WECHAT_BIND_STATUS_CLAIMED, WECHAT_BIND_STATUS_ISSUED,
+    PRINCIPAL_TYPE_HUMAN_USER, WECHAT_BIND_STATUS_CLAIMED, WECHAT_BIND_STATUS_CONFIRMED,
+    WECHAT_BIND_STATUS_ISSUED,
 };
 use crate::state::AppState;
 use crate::store::now_rfc3339;
@@ -36,6 +42,7 @@ use super::{
 
 const WECHAT_COMPANION_SCOPE: &str = "wechat_companion";
 const SECRET_MAX_BYTES: usize = 512;
+const WECHAT_DESKTOP_LOGIN_SCENE_PREFIX: &str = "d_";
 
 pub async fn login(
     State(state): State<AppState>,
@@ -504,6 +511,226 @@ pub async fn claim_result(
         token,
         user: auth_user(&user),
         client_session_id,
+    }))
+}
+
+pub async fn issue_desktop_login_ticket(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(input): Json<IssueWeChatDesktopLoginTicketRequest>,
+) -> ApiResult<IssueWeChatDesktopLoginTicketResponse> {
+    let device_name = validate_desktop_device_name(input.device_name.as_deref())?;
+    let source = crate::login_throttle::request_source(&headers, addr);
+    let scene = format!("{WECHAT_DESKTOP_LOGIN_SCENE_PREFIX}{}", generate_secret(15));
+    let poll_secret = generate_secret(32);
+    let now_unix = Utc::now().timestamp();
+    let expires_at_unix = now_unix + state.config.wechat_mini_program_bind_ticket_ttl_seconds;
+    let now = now_rfc3339();
+    let record = WeChatDesktopLoginTicketRecord {
+        id: Uuid::new_v4().to_string(),
+        ticket_hash: hash_secret(&state, "desktop-login-ticket", scene.as_str())?,
+        poll_secret_hash: hash_secret(&state, "desktop-login-poll", poll_secret.as_str())?,
+        source_hash: hash_secret(&state, "desktop-login-source", source.as_str())?,
+        app_id: configured_app_id(&state)?.to_string(),
+        status: WECHAT_BIND_STATUS_ISSUED.to_string(),
+        user_id: None,
+        external_identity_id: None,
+        device_name,
+        confirmation_secret_hash: None,
+        expires_at_unix,
+        claimed_at: None,
+        confirmed_at: None,
+        consumed_at: None,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    if !state
+        .store
+        .insert_wechat_desktop_login_ticket(&record)
+        .await
+        .map_err(internal_error)?
+    {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(
+                serde_json::json!({ "error": "please wait before generating another login code" }),
+            ),
+        ));
+    }
+    let qr_code = configured_client(&state)?
+        .generate_bind_code(scene.as_str())
+        .await
+        .map_err(map_exchange_error)?;
+    tracing::info!(ticket_id = %record.id, source_hash = %record.source_hash, "issued WeChat desktop login ticket");
+    Ok(Json(IssueWeChatDesktopLoginTicketResponse {
+        ticket_id: record.id,
+        poll_secret,
+        scene,
+        expires_in_seconds: state.config.wechat_mini_program_bind_ticket_ttl_seconds,
+        expires_at_unix,
+        qr_code_data_url: qr_code_data_url(qr_code),
+    }))
+}
+
+pub async fn claim_desktop_login_ticket(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(input): Json<ClaimWeChatDesktopLoginRequest>,
+) -> ApiResult<ClaimWeChatDesktopLoginResponse> {
+    validate_desktop_login_scene(input.login_ticket.as_str())?;
+    let source = wechat_source(&headers, addr);
+    reject_locked(&state, "wechat-desktop-login-claim", source.as_str()).await?;
+    let provider_identity = match exchange_code(&state, input.code.as_str()).await {
+        Ok(identity) => identity,
+        Err(error) => {
+            record_failure(&state, "wechat-desktop-login-claim", source.as_str()).await?;
+            return Err(map_exchange_error(error));
+        }
+    };
+    let (open_id_hash, _) = hash_provider_identity(&state, &provider_identity)?;
+    reject_locked(&state, open_id_hash.as_str(), source.as_str()).await?;
+    let app_id = configured_app_id(&state)?;
+    let identity = state
+        .store
+        .find_active_external_identity_by_subject(
+            EXTERNAL_IDENTITY_PROVIDER_WECHAT_MINI_PROGRAM,
+            app_id,
+            open_id_hash.as_str(),
+        )
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| forbidden("this WeChat account is not bound to a ChatOS account"))?;
+    let user = load_enabled_user(&state, identity.user_id.as_str()).await?;
+    let confirmation_secret = generate_secret(32);
+    let confirmation_secret_hash = hash_secret(
+        &state,
+        "desktop-login-confirmation",
+        confirmation_secret.as_str(),
+    )?;
+    let now_unix = Utc::now().timestamp();
+    let now = now_rfc3339();
+    let ticket = state
+        .store
+        .claim_wechat_desktop_login_ticket(
+            hash_secret(&state, "desktop-login-ticket", input.login_ticket.trim())?.as_str(),
+            app_id,
+            user.id.as_str(),
+            identity.id.as_str(),
+            confirmation_secret_hash.as_str(),
+            now_unix,
+            now.as_str(),
+        )
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| bad_request("desktop login code is invalid, expired, or already claimed"))?;
+    state
+        .login_throttle
+        .record_success(open_id_hash.as_str(), Some(source.as_str()))
+        .await
+        .map_err(internal_error)?;
+    tracing::info!(ticket_id = %ticket.id, user_id = %user.id, "claimed WeChat desktop login ticket");
+    Ok(Json(ClaimWeChatDesktopLoginResponse {
+        status: WECHAT_BIND_STATUS_CLAIMED.to_string(),
+        claim_id: ticket.id,
+        confirmation_secret,
+        device_name: ticket.device_name,
+        account_display_name: user.display_name,
+        expires_at_unix: ticket.expires_at_unix,
+    }))
+}
+
+pub async fn confirm_desktop_login_ticket(
+    State(state): State<AppState>,
+    Path(claim_id): Path<String>,
+    Json(input): Json<ConfirmWeChatDesktopLoginRequest>,
+) -> ApiResult<ConfirmWeChatDesktopLoginResponse> {
+    validate_secret(claim_id.as_str(), "claim_id")?;
+    validate_secret(input.confirmation_secret.as_str(), "confirmation_secret")?;
+    let now_unix = Utc::now().timestamp();
+    let now = now_rfc3339();
+    let ticket = state
+        .store
+        .confirm_wechat_desktop_login_ticket(
+            claim_id.as_str(),
+            hash_secret(
+                &state,
+                "desktop-login-confirmation",
+                input.confirmation_secret.trim(),
+            )?
+            .as_str(),
+            now_unix,
+            now.as_str(),
+        )
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| {
+            conflict("desktop login request is invalid, expired, or already confirmed")
+        })?;
+    tracing::info!(ticket_id = %ticket.id, user_id = ?ticket.user_id, "confirmed WeChat desktop login ticket");
+    Ok(Json(ConfirmWeChatDesktopLoginResponse {
+        status: WECHAT_BIND_STATUS_CONFIRMED.to_string(),
+    }))
+}
+
+pub async fn desktop_login_result(
+    State(state): State<AppState>,
+    Path(ticket_id): Path<String>,
+    Json(input): Json<WeChatDesktopLoginResultRequest>,
+) -> ApiResult<WeChatDesktopLoginResultResponse> {
+    validate_secret(ticket_id.as_str(), "ticket_id")?;
+    validate_secret(input.poll_secret.as_str(), "poll_secret")?;
+    let poll_secret_hash = hash_secret(&state, "desktop-login-poll", input.poll_secret.trim())?;
+    let now_unix = Utc::now().timestamp();
+    let ticket = state
+        .store
+        .find_wechat_desktop_login_ticket(ticket_id.as_str(), poll_secret_hash.as_str(), now_unix)
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| bad_request("desktop login request is invalid or expired"))?;
+    if ticket.status == WECHAT_BIND_STATUS_ISSUED || ticket.status == WECHAT_BIND_STATUS_CLAIMED {
+        return Ok(Json(WeChatDesktopLoginResultResponse::Pending));
+    }
+    if ticket.status != WECHAT_BIND_STATUS_CONFIRMED {
+        return Err(conflict("desktop login request has already been consumed"));
+    }
+    let user_id = ticket
+        .user_id
+        .as_deref()
+        .ok_or_else(|| internal_error("confirmed desktop login request is incomplete"))?;
+    let user = load_enabled_user(&state, user_id).await?;
+    let issued = issue_user_token(&state.config, &user, state.config.user_access_ttl_seconds)
+        .map_err(internal_error)?;
+    let now = now_rfc3339();
+    let consumed = state
+        .store
+        .consume_wechat_desktop_login_ticket(
+            ticket_id.as_str(),
+            poll_secret_hash.as_str(),
+            now_unix,
+            now.as_str(),
+        )
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| conflict("desktop login request has already been consumed"))?;
+    if let Some(identity_id) = consumed.external_identity_id.as_deref() {
+        state
+            .store
+            .touch_external_identity_login(identity_id, now.as_str())
+            .await
+            .map_err(internal_error)?;
+    }
+    state
+        .store
+        .touch_user_last_login(user.id.as_str())
+        .await
+        .map_err(internal_error)?;
+    let _ = ensure_harness_user_public_register_on_login(&state, &user).await;
+    tracing::info!(ticket_id = %ticket_id, user_id = %user.id, "consumed WeChat desktop login ticket");
+    Ok(Json(WeChatDesktopLoginResultResponse::Authenticated {
+        token: issued.token,
+        user: auth_user(&user),
     }))
 }
 

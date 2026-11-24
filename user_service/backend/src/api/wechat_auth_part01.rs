@@ -128,6 +128,42 @@ fn validate_secret(value: &str, field: &str) -> Result<(), (StatusCode, Json<Val
     Ok(())
 }
 
+fn validate_desktop_login_scene(value: &str) -> Result<(), (StatusCode, Json<Value>)> {
+    validate_secret(value, "login_ticket")?;
+    let value = value.trim();
+    if value.len() != 32
+        || !value.starts_with(WECHAT_DESKTOP_LOGIN_SCENE_PREFIX)
+        || !value[WECHAT_DESKTOP_LOGIN_SCENE_PREFIX.len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(bad_request("login_ticket is invalid"));
+    }
+    Ok(())
+}
+
+fn validate_desktop_device_name(
+    value: Option<&str>,
+) -> Result<String, (StatusCode, Json<Value>)> {
+    let value = value.unwrap_or("ChatOS Desktop").trim();
+    if value.is_empty() || value.chars().count() > 80 || value.chars().any(char::is_control) {
+        return Err(bad_request("device_name is invalid"));
+    }
+    Ok(value.to_string())
+}
+
+fn qr_code_data_url(qr_code: Vec<u8>) -> String {
+    format!(
+        "data:{};base64,{}",
+        if qr_code.starts_with(&[0xff, 0xd8, 0xff]) {
+            "image/jpeg"
+        } else {
+            "image/png"
+        },
+        base64::engine::general_purpose::STANDARD.encode(qr_code)
+    )
+}
+
 fn generate_secret(bytes: usize) -> String {
     let mut value = vec![0_u8; bytes];
     rand::fill(value.as_mut_slice());

@@ -737,7 +737,11 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     func accessToken() throws -> String? {
         if hasLoadedAccessToken { return cachedAccessToken }
-        guard let data = try secretStore.load(account: Self.accessTokenAccount) else {
+        // Authenticated activation issues a fresh token; migrating the old one adds a second Keychain prompt.
+        guard let data = try secretStore.load(
+            account: Self.accessTokenAccount,
+            migrateLegacy: false
+        ) else {
             cachedAccessToken = nil
             hasLoadedAccessToken = true
             return nil

@@ -85,6 +85,25 @@ public struct KeychainSecretStore: Sendable {
         }
     }
 
+    /// Restores a pre-vault item even when a replacement was already written to the vault.
+    public func restoreLegacyItem(account: String) throws -> Data? {
+        try Self.cache.withLock {
+            guard legacyItemPolicy.allows(account),
+                  let legacy = try loadLegacy(account: account) else { return nil }
+            guard legacy.count <= Self.maximumEntryBytes else {
+                throw KeychainSecretStoreError(status: errSecDataTooLarge)
+            }
+            var vault = try loadVaultLocked()
+            vault.entries[try vaultKey(account: account)] = legacy
+            try saveVaultLocked(vault)
+            let status = SecItemDelete(legacyQuery(account: account) as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw KeychainSecretStoreError(status: status)
+            }
+            return legacy
+        }
+    }
+
     public func delete(account: String) throws {
         try Self.cache.withLock {
             var vault = try loadVaultLocked()

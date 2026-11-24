@@ -163,7 +163,7 @@ struct NativeConnectorStateStore: Sendable {
 
 struct NativeConnectorSecretStore: Sendable {
     private static let maximumSecretBytes = 64 * 1_024
-    private static let remoteCredentialAccountPrefix = "remote-connection-credentials-v1:"
+    static let deviceSigningKeyAccount = "device-signing-key-v1"
     private let rootURL: URL
     private let keychain: KeychainSecretStore
     private let legacyKeychain: KeychainSecretStore?
@@ -180,9 +180,7 @@ struct NativeConnectorSecretStore: Sendable {
         let vaultService = usesProductionVault
             ? KeychainSecretStore.chatOSVaultService
             : "\(service).vault"
-        let legacyItemPolicy: KeychainLegacyItemPolicy = usesProductionVault
-            ? .accountPrefix(Self.remoteCredentialAccountPrefix)
-            : .all
+        let legacyItemPolicy: KeychainLegacyItemPolicy = .all
         self.keychain = KeychainSecretStore(
             service: service,
             vaultService: vaultService,
@@ -199,6 +197,20 @@ struct NativeConnectorSecretStore: Sendable {
 
     func load(account: String, migrateLegacy: Bool = true) throws -> Data? {
         let url = secretURL(account: account)
+        if migrateLegacy, account == Self.deviceSigningKeyAccount {
+            if let stored = try keychain.restoreLegacyItem(account: account) {
+                try legacyKeychain?.delete(account: account)
+                try deleteLegacyFile(url)
+                return stored
+            }
+            if let legacyKeychain,
+               let stored = try legacyKeychain.restoreLegacyItem(account: account) {
+                try keychain.save(stored, account: account)
+                try legacyKeychain.delete(account: account)
+                try deleteLegacyFile(url)
+                return stored
+            }
+        }
         if let stored = try keychain.load(account: account, migrateLegacy: migrateLegacy) {
             if migrateLegacy {
                 try legacyKeychain?.delete(account: account)
@@ -252,7 +264,7 @@ struct NativeConnectorSecretStore: Sendable {
         }
     }
 
-    private static func keychainService(rootURL: URL) -> String {
+    static func keychainService(rootURL: URL) -> String {
         let digest = SHA256.hash(data: Data(rootURL.standardizedFileURL.path.utf8))
             .prefix(16)
             .map { String(format: "%02x", $0) }
@@ -277,7 +289,7 @@ struct NativeConnectorSecretStore: Sendable {
 }
 
 struct NativeConnectorDeviceIdentity: Sendable {
-    private static let account = "device-signing-key-v1"
+    private static let account = NativeConnectorSecretStore.deviceSigningKeyAccount
     private let privateKey: Curve25519.Signing.PrivateKey
 
     init(secretStore: NativeConnectorSecretStore) throws {

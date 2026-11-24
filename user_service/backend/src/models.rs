@@ -141,6 +141,26 @@ pub struct WeChatBindTicketRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeChatDesktopLoginTicketRecord {
+    pub id: String,
+    pub ticket_hash: String,
+    pub poll_secret_hash: String,
+    pub source_hash: String,
+    pub app_id: String,
+    pub status: String,
+    pub user_id: Option<String>,
+    pub external_identity_id: Option<String>,
+    pub device_name: String,
+    pub confirmation_secret_hash: Option<String>,
+    pub expires_at_unix: i64,
+    pub claimed_at: Option<String>,
+    pub confirmed_at: Option<String>,
+    pub consumed_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientSessionRecord {
     pub id: String,
     pub user_id: String,
@@ -520,6 +540,59 @@ pub struct WeChatBindTicketStatusResponse {
     pub status: String,
     pub expires_at_unix: i64,
     pub claimed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueWeChatDesktopLoginTicketRequest {
+    pub device_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueWeChatDesktopLoginTicketResponse {
+    pub ticket_id: String,
+    pub poll_secret: String,
+    pub scene: String,
+    pub expires_in_seconds: i64,
+    pub expires_at_unix: i64,
+    pub qr_code_data_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaimWeChatDesktopLoginRequest {
+    pub code: String,
+    pub login_ticket: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaimWeChatDesktopLoginResponse {
+    pub status: String,
+    pub claim_id: String,
+    pub confirmation_secret: String,
+    pub device_name: String,
+    pub account_display_name: String,
+    pub expires_at_unix: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfirmWeChatDesktopLoginRequest {
+    pub confirmation_secret: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfirmWeChatDesktopLoginResponse {
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeChatDesktopLoginResultRequest {
+    pub poll_secret: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum WeChatDesktopLoginResultResponse {
+    Pending,
+    Authenticated { token: String, user: AuthUser },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

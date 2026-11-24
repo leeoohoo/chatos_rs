@@ -8,8 +8,8 @@ use sqlx::types::Json;
 
 use crate::models::{
     ClientSessionRecord, UserExternalIdentityRecord, WeChatBindTicketRecord,
-    WECHAT_BIND_STATUS_CLAIMED, WECHAT_BIND_STATUS_CONFIRMED, WECHAT_BIND_STATUS_CONSUMED,
-    WECHAT_BIND_STATUS_EXPIRED, WECHAT_BIND_STATUS_ISSUED,
+    WeChatDesktopLoginTicketRecord, WECHAT_BIND_STATUS_CLAIMED, WECHAT_BIND_STATUS_CONFIRMED,
+    WECHAT_BIND_STATUS_CONSUMED, WECHAT_BIND_STATUS_EXPIRED, WECHAT_BIND_STATUS_ISSUED,
 };
 
 use super::{db_error, json, optional_timestamp, timestamp, AppStore};
@@ -255,6 +255,88 @@ impl AppStore {
     ) -> Result<Option<WeChatBindTicketRecord>, String> {
         decode_optional(sqlx::query_scalar("SELECT data FROM wechat_bind_tickets WHERE claim_id=$1 AND data->>'claim_secret_hash'=$2 AND expires_at>$3")
             .bind(claim_id).bind(claim_secret_hash).bind(now_unix).fetch_optional(&self.pool).await.map_err(db_error)?)
+    }
+
+    pub async fn insert_wechat_desktop_login_ticket(
+        &self,
+        record: &WeChatDesktopLoginTicketRecord,
+    ) -> Result<bool, String> {
+        sqlx::query(
+            "INSERT INTO wechat_desktop_login_tickets (id,ticket_hash,poll_secret_hash,source_hash,app_id,status,user_id,expires_at,updated_at,data) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10 WHERE NOT EXISTS (SELECT 1 FROM wechat_desktop_login_tickets WHERE source_hash=$4 AND updated_at>$9 - interval '3 seconds')",
+        )
+        .bind(&record.id)
+        .bind(&record.ticket_hash)
+        .bind(&record.poll_secret_hash)
+        .bind(&record.source_hash)
+        .bind(&record.app_id)
+        .bind(&record.status)
+        .bind(&record.user_id)
+        .bind(record.expires_at_unix)
+        .bind(timestamp(&record.updated_at)?)
+        .bind(json(record)?)
+        .execute(&self.pool)
+        .await
+        .map(|result| result.rows_affected() == 1)
+        .map_err(db_error)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn claim_wechat_desktop_login_ticket(
+        &self,
+        ticket_hash: &str,
+        app_id: &str,
+        user_id: &str,
+        external_identity_id: &str,
+        confirmation_secret_hash: &str,
+        now_unix: i64,
+        now: &str,
+    ) -> Result<Option<WeChatDesktopLoginTicketRecord>, String> {
+        decode_optional(sqlx::query_scalar(
+            "UPDATE wechat_desktop_login_tickets SET status=$3,user_id=$4,updated_at=$5,data=data || jsonb_build_object('status',$3::text,'user_id',$4::text,'external_identity_id',$6::text,'confirmation_secret_hash',$7::text,'claimed_at',$8::text,'updated_at',$8::text) WHERE ticket_hash=$1 AND app_id=$2 AND status=$9 AND expires_at>$10 RETURNING data",
+        ).bind(ticket_hash).bind(app_id).bind(WECHAT_BIND_STATUS_CLAIMED).bind(user_id)
+            .bind(timestamp(now)?).bind(external_identity_id).bind(confirmation_secret_hash).bind(now)
+            .bind(WECHAT_BIND_STATUS_ISSUED).bind(now_unix)
+            .fetch_optional(&self.pool).await.map_err(db_error)?)
+    }
+
+    pub async fn confirm_wechat_desktop_login_ticket(
+        &self,
+        ticket_id: &str,
+        confirmation_secret_hash: &str,
+        now_unix: i64,
+        now: &str,
+    ) -> Result<Option<WeChatDesktopLoginTicketRecord>, String> {
+        decode_optional(sqlx::query_scalar(
+            "UPDATE wechat_desktop_login_tickets SET status=$3,updated_at=$4,data=data || jsonb_build_object('status',$3::text,'confirmed_at',$5::text,'updated_at',$5::text) WHERE id=$1 AND data->>'confirmation_secret_hash'=$2 AND status=$6 AND expires_at>$7 RETURNING data",
+        ).bind(ticket_id).bind(confirmation_secret_hash).bind(WECHAT_BIND_STATUS_CONFIRMED)
+            .bind(timestamp(now)?).bind(now).bind(WECHAT_BIND_STATUS_CLAIMED).bind(now_unix)
+            .fetch_optional(&self.pool).await.map_err(db_error)?)
+    }
+
+    pub async fn find_wechat_desktop_login_ticket(
+        &self,
+        ticket_id: &str,
+        poll_secret_hash: &str,
+        now_unix: i64,
+    ) -> Result<Option<WeChatDesktopLoginTicketRecord>, String> {
+        decode_optional(sqlx::query_scalar(
+            "SELECT data FROM wechat_desktop_login_tickets WHERE id=$1 AND poll_secret_hash=$2 AND expires_at>$3",
+        ).bind(ticket_id).bind(poll_secret_hash).bind(now_unix)
+            .fetch_optional(&self.pool).await.map_err(db_error)?)
+    }
+
+    pub async fn consume_wechat_desktop_login_ticket(
+        &self,
+        ticket_id: &str,
+        poll_secret_hash: &str,
+        now_unix: i64,
+        now: &str,
+    ) -> Result<Option<WeChatDesktopLoginTicketRecord>, String> {
+        decode_optional(sqlx::query_scalar(
+            "UPDATE wechat_desktop_login_tickets SET status=$3,updated_at=$4,data=data || jsonb_build_object('status',$3::text,'consumed_at',$5::text,'updated_at',$5::text) WHERE id=$1 AND poll_secret_hash=$2 AND status=$6 AND expires_at>$7 RETURNING data",
+        ).bind(ticket_id).bind(poll_secret_hash).bind(WECHAT_BIND_STATUS_CONSUMED)
+            .bind(timestamp(now)?).bind(now).bind(WECHAT_BIND_STATUS_CONFIRMED).bind(now_unix)
+            .fetch_optional(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn insert_client_session(&self, record: &ClientSessionRecord) -> Result<(), String> {

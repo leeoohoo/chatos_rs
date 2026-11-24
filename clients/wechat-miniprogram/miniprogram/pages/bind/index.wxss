@@ -6,6 +6,10 @@
 .state-title { margin-top: 17rpx; font-size: 30rpx; font-weight: 650; }
 .state-copy { margin: 15rpx 0 28rpx; color: #6f6f75; font-size: 24rpx; line-height: 1.6; }
 .waiting-symbol { display: flex; width: 66rpx; height: 66rpx; margin: 0 auto; align-items: center; justify-content: center; border-radius: 50%; background: #eaf8ee; color: #28a745; font-size: 34rpx; }
+.desktop-login-symbol { display: flex; width: 66rpx; height: 66rpx; margin: 0 auto; align-items: center; justify-content: center; border-radius: 18rpx; background: #eaf3ff; color: #007aff; font-size: 30rpx; font-weight: 700; }
+.desktop-login-detail { margin: 25rpx 0 18rpx; padding: 4rpx 22rpx; border-radius: 16rpx; background: #f7f7f9; text-align: left; }
+.detail-label { margin-top: 18rpx; color: #8e8e93; font-size: 20rpx; }
+.detail-value { margin: 5rpx 0 18rpx; color: #1c1c1e; font-size: 26rpx; font-weight: 600; word-break: break-all; }
 .spinner { box-sizing: border-box; width: 52rpx; height: 52rpx; margin: 0 auto; border: 5rpx solid #d9eaff; border-top-color: #0a84ff; border-radius: 50%; animation: spin .9s linear infinite; }
 .error { margin: 18rpx 0; font-size: 23rpx; line-height: 1.5; }
 .transient-state { margin-top: -8rpx; color: #8e8e93; font-size: 22rpx; line-height: 1.5; }

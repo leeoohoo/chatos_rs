@@ -4,7 +4,15 @@ import { isTestEnvironment } from '../../config/runtime'
 import { beginTabSwitch, cancelTabSwitch } from '../../services/tab-navigation'
 import { sessionStore } from '../../stores/session-store'
 
-type BindState = 'ready' | 'claiming' | 'development_login' | 'waiting' | 'failed'
+type BindState =
+  | 'ready'
+  | 'claiming'
+  | 'development_login'
+  | 'waiting'
+  | 'desktop_review'
+  | 'desktop_confirming'
+  | 'desktop_confirmed'
+  | 'failed'
 
 function openDevices(): void {
   beginTabSwitch()
@@ -22,6 +30,8 @@ Page({
     developmentMode: false,
     developmentUsername: 'admin',
     developmentPassword: '',
+    desktopDeviceName: '',
+    desktopAccountName: '',
   },
 
   pollTimer: undefined as ReturnType<typeof setTimeout> | undefined,
@@ -30,16 +40,64 @@ Page({
   expiresAt: 0,
   claimId: '',
   claimSecret: '',
+  desktopConfirmationSecret: '',
 
   onLoad(query: Record<string, string | undefined>) {
+    const app = getApp<IAppOption>()
+    const scene = decodeURIComponent(query.scene ?? app.globalData.launchScene ?? '').trim()
+    this.setData({ scene, developmentMode: isTestEnvironment() })
+    if (scene.startsWith('d_')) {
+      void this.startDesktopLoginClaim()
+      return
+    }
     if (sessionStore.hasToken()) {
       openDevices()
       return
     }
-    const app = getApp<IAppOption>()
-    const scene = decodeURIComponent(query.scene ?? app.globalData.launchScene ?? '').trim()
-    this.setData({ scene, developmentMode: isTestEnvironment() })
     if (scene) void this.startClaim()
+  },
+
+  async startDesktopLoginClaim() {
+    if (!this.data.scene || this.data.state === 'claiming') return
+    this.setData({ state: 'claiming', error: '' })
+    try {
+      const claim = await authService.claimDesktopLogin(this.data.scene)
+      this.claimId = claim.claim_id
+      this.desktopConfirmationSecret = claim.confirmation_secret
+      this.expiresAt = claim.expires_at_unix
+      this.setData({
+        state: 'desktop_review',
+        desktopDeviceName: claim.device_name,
+        desktopAccountName: claim.account_display_name,
+      })
+    } catch (error) {
+      const message = error instanceof ApiError && error.statusCode === 403
+        ? '这个微信尚未绑定 ChatOS 账号，请先在已登录的桌面端完成微信绑定'
+        : error instanceof Error ? error.message : '扫码登录请求无效'
+      this.setData({ state: 'failed', error: message })
+    }
+  },
+
+  async confirmDesktopLogin() {
+    if (!this.claimId || !this.desktopConfirmationSecret || this.data.state !== 'desktop_review') return
+    if (Date.now() / 1000 >= this.expiresAt) {
+      this.setData({ state: 'failed', error: '登录请求已过期，请回到桌面重新生成二维码' })
+      return
+    }
+    this.setData({ state: 'desktop_confirming', error: '' })
+    try {
+      await authService.confirmDesktopLogin(this.claimId, this.desktopConfirmationSecret)
+      this.setData({ state: 'desktop_confirmed' })
+    } catch (error) {
+      this.setData({
+        state: 'desktop_review',
+        error: error instanceof Error ? error.message : '确认登录失败',
+      })
+    }
+  },
+
+  closeMiniProgram() {
+    wx.exitMiniProgram()
   },
 
   onDevelopmentUsernameInput(event: WechatMiniprogram.Input) {

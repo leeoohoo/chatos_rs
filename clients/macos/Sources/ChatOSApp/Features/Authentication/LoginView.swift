@@ -82,44 +82,93 @@ struct LoginView: View {
 
     private var loginForm: some View {
         VStack(alignment: .leading, spacing: 26) {
-            formHeader(
-                model.localized("登录", english: "Sign In"),
-                subtitle: model.localized(
-                    "使用 ChatOS 平台账号继续",
-                    english: "Continue with your ChatOS account"
+            if let ticket = authentication.weChatLoginTicket {
+                formHeader(
+                    model.localized("微信扫码登录", english: "Sign in with WeChat"),
+                    subtitle: model.localized(
+                        "使用已绑定 ChatOS 的微信确认",
+                        english: "Confirm with the WeChat account linked to ChatOS"
+                    )
                 )
-            )
-
-            VStack(alignment: .leading, spacing: 18) {
-                fieldLabel(model.localized("账号", english: "Account"))
-                TextField("name@example.com", text: $authentication.username)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($focusedField, equals: .username)
-                    .onSubmit { focusedField = .password }
-
-                fieldLabel(model.localized("密码", english: "Password"))
-                SecureField(
-                    model.localized("密码", english: "Password"),
-                    text: $authentication.password
+                AppAsyncDataImage(
+                    data: ticket.codeImageData,
+                    identity: "wechat-desktop-login|\(ticket.id)",
+                    maximumBytes: 2 * 1_024 * 1_024,
+                    maximumSourcePixelCount: 4_000_000,
+                    maximumDisplayPixelSize: 512
+                ) { image in
+                    image.resizable().interpolation(.none).scaledToFit()
+                } placeholder: {
+                    ProgressView()
+                }
+                .frame(width: 220, height: 220)
+                .padding(10)
+                .frame(maxWidth: .infinity)
+                .background(.white, in: RoundedRectangle(cornerRadius: 18))
+                Text(model.localized(
+                    "微信扫描后，在手机上核对设备和账号并确认。二维码还剩 \(authentication.weChatLoginSecondsRemaining) 秒。",
+                    english: "Scan with WeChat, verify the device and account, then confirm. Expires in \(authentication.weChatLoginSecondsRemaining) seconds."
+                ))
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                statusMessages
+                Button(model.localized("返回账号密码登录", english: "Use password instead")) {
+                    authentication.cancelWeChatLogin()
+                }
+                .buttonStyle(.bordered)
+                .frame(maxWidth: .infinity)
+            } else {
+                formHeader(
+                    model.localized("登录", english: "Sign In"),
+                    subtitle: model.localized(
+                        "使用 ChatOS 平台账号继续",
+                        english: "Continue with your ChatOS account"
+                    )
                 )
-                    .textFieldStyle(.roundedBorder)
-                    .focused($focusedField, equals: .password)
-                    .onSubmit(authentication.login)
+
+                VStack(alignment: .leading, spacing: 18) {
+                    fieldLabel(model.localized("账号", english: "Account"))
+                    TextField("name@example.com", text: $authentication.username)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($focusedField, equals: .username)
+                        .onSubmit { focusedField = .password }
+
+                    fieldLabel(model.localized("密码", english: "Password"))
+                    SecureField(
+                        model.localized("密码", english: "Password"),
+                        text: $authentication.password
+                    )
+                        .textFieldStyle(.roundedBorder)
+                        .focused($focusedField, equals: .password)
+                        .onSubmit(authentication.login)
+                }
+
+                statusMessages
+
+                primaryButton(
+                    title: model.localized("登录", english: "Sign In"),
+                    action: authentication.login,
+                    disabled: !authentication.canLogin
+                )
+
+                Button(action: authentication.startWeChatLogin) {
+                    Label(
+                        model.localized("微信扫码登录", english: "Sign in with WeChat"),
+                        systemImage: "qrcode.viewfinder"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(authentication.phase == .authenticating)
+
+                modeSwitch(
+                    prompt: model.localized("还没有账号？", english: "New to ChatOS?"),
+                    title: model.localized("创建账号", english: "Create Account"),
+                    action: authentication.showRegistration
+                )
             }
-
-            statusMessages
-
-            primaryButton(
-                title: model.localized("登录", english: "Sign In"),
-                action: authentication.login,
-                disabled: !authentication.canLogin
-            )
-
-            modeSwitch(
-                prompt: model.localized("还没有账号？", english: "New to ChatOS?"),
-                title: model.localized("创建账号", english: "Create Account"),
-                action: authentication.showRegistration
-            )
         }
         .frame(width: 410)
         .padding(70)

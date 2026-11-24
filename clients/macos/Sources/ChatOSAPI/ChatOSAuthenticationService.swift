@@ -49,6 +49,49 @@ public actor ChatOSAuthenticationService: AuthenticationServicing {
         return AuthSession(user: response.user.domainModel)
     }
 
+    public func beginWeChatDesktopLogin(deviceName: String) async throws -> WeChatDesktopLoginTicket {
+        let body = try encoder.encode(WeChatDesktopLoginTicketRequestDTO(deviceName: deviceName))
+        let response: WeChatDesktopLoginTicketResponseDTO = try await client.request(
+            "/auth/wechat/desktop-login/tickets",
+            method: "POST",
+            body: body,
+            service: .userService
+        )
+        guard let comma = response.qrCodeDataURL.firstIndex(of: ","),
+              response.qrCodeDataURL[..<comma].contains(";base64"),
+              let imageData = Data(base64Encoded: String(
+                response.qrCodeDataURL[response.qrCodeDataURL.index(after: comma)...]
+              )),
+              !imageData.isEmpty else {
+            throw ChatOSAPIError.decoding("服务器未返回有效的小程序码")
+        }
+        return WeChatDesktopLoginTicket(
+            id: response.ticketID,
+            pollSecret: response.pollSecret,
+            expiresAtUnix: response.expiresAtUnix,
+            codeImageData: imageData
+        )
+    }
+
+    public func pollWeChatDesktopLogin(
+        _ ticket: WeChatDesktopLoginTicket
+    ) async throws -> AuthSession? {
+        let body = try encoder.encode(WeChatDesktopLoginResultRequestDTO(
+            pollSecret: ticket.pollSecret
+        ))
+        let response: WeChatDesktopLoginResultResponseDTO = try await client.request(
+            "/auth/wechat/desktop-login/tickets/\(ticket.id.pathEncoded)/result",
+            method: "POST",
+            body: body,
+            service: .userService
+        )
+        guard response.status == "authenticated",
+              let token = response.token,
+              let user = response.user else { return nil }
+        try await client.setAccessToken(token)
+        return AuthSession(user: user.domainModel)
+    }
+
     public func sendRegistrationCode(
         email: String,
         inviteCode: String
@@ -110,6 +153,42 @@ public actor ChatOSAuthenticationService: AuthenticationServicing {
 private struct LoginRequestDTO: Encodable {
     var username: String
     var password: String
+}
+
+private struct WeChatDesktopLoginTicketRequestDTO: Encodable {
+    var deviceName: String
+
+    enum CodingKeys: String, CodingKey {
+        case deviceName = "device_name"
+    }
+}
+
+private struct WeChatDesktopLoginTicketResponseDTO: Decodable, Sendable {
+    var ticketID: String
+    var pollSecret: String
+    var expiresAtUnix: Int64
+    var qrCodeDataURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case ticketID = "ticket_id"
+        case pollSecret = "poll_secret"
+        case expiresAtUnix = "expires_at_unix"
+        case qrCodeDataURL = "qr_code_data_url"
+    }
+}
+
+private struct WeChatDesktopLoginResultRequestDTO: Encodable {
+    var pollSecret: String
+
+    enum CodingKeys: String, CodingKey {
+        case pollSecret = "poll_secret"
+    }
+}
+
+private struct WeChatDesktopLoginResultResponseDTO: Decodable, Sendable {
+    var status: String
+    var token: String?
+    var user: AuthUserDTO?
 }
 
 private struct SendRegistrationCodeRequestDTO: Encodable {
@@ -194,5 +273,11 @@ private extension String {
     var trimmedNonEmpty: String? {
         let value = trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
+    }
+}
+
+private extension String {
+    var pathEncoded: String {
+        addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? self
     }
 }

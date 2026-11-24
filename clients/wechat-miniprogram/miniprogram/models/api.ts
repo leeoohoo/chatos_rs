@@ -31,6 +31,15 @@ export type BindClaimResult =
       client_session_id: string
     }
 
+export type DesktopLoginClaim = {
+  status: 'claimed'
+  claim_id: string
+  confirmation_secret: string
+  device_name: string
+  account_display_name: string
+  expires_at_unix: number
+}
+
 export type DeviceSummary = {
   id: string
   display_name: string

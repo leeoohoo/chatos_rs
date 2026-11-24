@@ -1,6 +1,7 @@
 @testable import ChatOSConnector
 import ChatOSCore
 import Foundation
+import Security
 import Testing
 
 @Suite("Native Connector Secret Store")
@@ -60,6 +61,31 @@ struct NativeConnectorSecretStoreTests {
         #expect(FileManager.default.fileExists(atPath: legacyURL.path))
     }
 
+    @Test("non-migrating reads do not open legacy Keychain items")
+    func leavesLegacyKeychainItemForDeferredMigration() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("connector-secret-deferred-keychain-\(UUID().uuidString)", isDirectory: true)
+        let account = "gateway-access-token-v1"
+        let legacyQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: NativeConnectorSecretStore.keychainService(rootURL: root),
+            kSecAttrAccount as String: account,
+        ]
+        let store = NativeConnectorSecretStore(rootURL: root)
+        defer {
+            try? store.delete(account: account)
+            SecItemDelete(legacyQuery as CFDictionary)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        #expect(SecItemAdd(legacyQuery.merging([
+            kSecValueData as String: Data("legacy".utf8),
+        ]) { _, value in value } as CFDictionary, nil) == errSecSuccess)
+
+        #expect(try store.load(account: account, migrateLegacy: false) == nil)
+        #expect(SecItemCopyMatching(legacyQuery as CFDictionary, nil) == errSecSuccess)
+    }
+
     @Test("migrates the previous Keychain service and deletes the old item")
     func migratesLegacyKeychainItem() throws {
         let id = UUID().uuidString
@@ -80,5 +106,33 @@ struct NativeConnectorSecretStoreTests {
 
         #expect(try store.load(account: "account") == Data("legacy-keychain".utf8))
         #expect(try legacy.load(account: "account") == nil)
+    }
+
+    @Test("restores the original device key after a vault migration generated a replacement")
+    func restoresOriginalDeviceKey() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("connector-device-key-\(UUID().uuidString)", isDirectory: true)
+        let service = NativeConnectorSecretStore.keychainService(rootURL: root)
+        let account = NativeConnectorSecretStore.deviceSigningKeyAccount
+        let legacyQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        let store = NativeConnectorSecretStore(rootURL: root)
+        defer {
+            try? store.delete(account: account)
+            SecItemDelete(legacyQuery as CFDictionary)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        try store.save(Data("replacement".utf8), account: account)
+        #expect(SecItemAdd(legacyQuery.merging([
+            kSecValueData as String: Data("original".utf8),
+        ]) { _, value in value } as CFDictionary, nil) == errSecSuccess)
+
+        #expect(try store.load(account: account) == Data("original".utf8))
+        #expect(try store.load(account: account) == Data("original".utf8))
+        #expect(SecItemCopyMatching(legacyQuery as CFDictionary, nil) == errSecItemNotFound)
     }
 }
