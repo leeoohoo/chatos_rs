@@ -333,6 +333,96 @@ async fn requirement_plan_is_sent_each_step_outside_truncated_memory_for_main_an
 }
 
 #[tokio::test]
+async fn task_acceptance_contract_is_reasserted_once_after_provider_compaction() {
+    let planner = ControlPlaneLocalAiStepPlanner::task_execution(
+        OwnerCheckingModelResolver,
+        OwnerCheckingCapabilityResolver,
+    );
+    let contract_input = json!({
+        "prompt": "verify",
+        "acceptance_report_version": 1,
+        "acceptance_criteria": ["Saved", "Verified"],
+        "expected_outputs": ["Result"],
+        "source_user_message": "Save and verify it",
+        "tool_options": {
+            "requires_execution": false,
+            "enabled_builtin_kinds": [],
+            "plugin_hints": []
+        }
+    });
+    let compacted_prefix = json!({"type":"compaction", "encrypted_content":"compact-v1"});
+    let mut task_claim = claim(
+        json!({
+            "response": {
+                "request_input_items": [
+                    compacted_prefix.clone()
+                ],
+                "response_output_items": []
+            }
+        }),
+        None,
+    );
+    task_claim.run.profile_key = TASK_EXECUTION_PROFILE_KEY.to_string();
+    task_claim.run.owner_entity_type = "task".to_string();
+    task_claim.run.input = contract_input.clone();
+
+    let prepared = planner
+        .prepare_ai_step(&task_claim)
+        .await
+        .expect("prepare compacted Task step");
+    let reasserted = prepared
+        .request
+        .current_input_items
+        .iter()
+        .filter(|item| {
+            item["content"]
+                .as_str()
+                .and_then(|content| serde_json::from_str::<Value>(content).ok())
+                .is_some_and(|content| content["type"] == "task_acceptance_contract")
+        })
+        .count();
+    assert_eq!(reasserted, 1);
+    assert_eq!(prepared.request.current_input_items.len(), 2);
+    assert_eq!(prepared.request.current_input_items[0], compacted_prefix);
+
+    let contract = task_acceptance_contract_item(&contract_input, TASK_EXECUTION_PROFILE_KEY)
+        .expect("frozen contract");
+    task_claim.run.checkpoint = json!({
+        "response": {
+            "request_input_items": [
+                compacted_prefix.clone(),
+                contract.clone()
+            ],
+            "response_output_items": []
+        }
+    });
+    let prepared = planner
+        .prepare_ai_step(&task_claim)
+        .await
+        .expect("prepare already reasserted Task step");
+    let retained = prepared
+        .request
+        .current_input_items
+        .iter()
+        .filter(|item| {
+            item["content"]
+                .as_str()
+                .and_then(|content| serde_json::from_str::<Value>(content).ok())
+                .is_some_and(|content| content["type"] == "task_acceptance_contract")
+        })
+        .count();
+    assert_eq!(
+        retained, 1,
+        "the contract must not grow on every continuation"
+    );
+    assert_eq!(
+        prepared.request.current_input_items,
+        vec![compacted_prefix, contract],
+        "the immutable cache prefix must remain byte-for-byte unchanged"
+    );
+}
+
+#[tokio::test]
 async fn task_execution_keeps_the_bound_workspace_root_authoritative() {
     let planner = ControlPlaneLocalAiStepPlanner::task_execution(
         OwnerCheckingModelResolver,

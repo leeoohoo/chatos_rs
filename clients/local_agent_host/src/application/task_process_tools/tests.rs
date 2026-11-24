@@ -253,7 +253,19 @@ async fn incomplete_outcome_report_can_be_corrected_through_the_real_scheduler()
         if count == 5 {
             assert_eq!(result.invocation.status, LocalAgentToolStatus::Failed);
             assert!(result.invocation.error.unwrap().contains("all 6 criteria"));
-            assert_eq!(result.invocation.result.unwrap()["retryable"], true);
+            let repair = result.invocation.result.unwrap();
+            assert_eq!(repair["retryable"], true);
+            assert_eq!(
+                repair["task_acceptance_contract"]["acceptance_criteria"],
+                json!([
+                    "target",
+                    "services",
+                    "read only",
+                    "redaction",
+                    "no mutation",
+                    "evidence"
+                ])
+            );
         } else {
             assert_eq!(result.invocation.status, LocalAgentToolStatus::Succeeded);
             assert_eq!(result.invocation.result.unwrap()["result_status"], "failed");

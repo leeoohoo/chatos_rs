@@ -58,7 +58,9 @@ public struct AskUserPromptFormState: Sendable, Equatable {
         in choice: AskUserChoice
     ) {
         if !choice.allowsMultiple {
-            selection = [value]
+            selection = selection.contains(value) && choice.minimumSelectionCount == 0
+                ? []
+                : [value]
         } else if selection.contains(value) {
             selection.remove(value)
         } else if selection.count < choice.maximumSelectionCount {

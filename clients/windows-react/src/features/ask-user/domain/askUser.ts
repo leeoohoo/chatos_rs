@@ -88,7 +88,12 @@ export function toggleAskUserSelection(
   choice: AskUserChoice,
   value: string,
 ): AskUserFormState {
-  if (!choice.allowsMultiple) return { ...form, selection: new Set([value]) };
+  if (!choice.allowsMultiple) {
+    const selection = form.selection.has(value) && choice.minimumSelectionCount === 0
+      ? new Set<string>()
+      : new Set([value]);
+    return { ...form, selection };
+  }
   const selection = new Set(form.selection);
   if (selection.has(value)) selection.delete(value);
   else if (selection.size < choice.maximumSelectionCount) selection.add(value);

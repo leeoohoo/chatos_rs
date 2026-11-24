@@ -7,7 +7,7 @@ use chatos_local_agent_protocol::{
     ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CommitToolCommand,
     CreateRunCommand, HostCommand, HostRequestEnvelope, HostResult, ListEventsCommand,
     LocalAgentEventPayloadMode, LocalAgentRunStatus, LocalAgentStepOutcome, LocalAgentToolCall,
-    ResumeRunCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalAgentToolOutcome, ResumeRunCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -128,6 +128,12 @@ async fn ask_user_tool_waits_and_resumes_with_the_original_tool_call() {
         .execute_tool(&tool.invocation)
         .await
         .expect("execute Ask User");
+    let LocalAgentToolOutcome::Succeeded { output } = &outcome else {
+        panic!("expected Ask User prompt")
+    };
+    assert_eq!(output["prompt"]["payload"]["fields"][0]["key"], "note");
+    assert_eq!(output["prompt"]["payload"]["fields"][0]["required"], false);
+    assert_eq!(output["prompt"]["payload"]["fields"][0]["multiline"], true);
     let committed = runtime
         .try_handle(request(
             "commit-ask-tool",

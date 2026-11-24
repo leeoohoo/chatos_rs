@@ -279,7 +279,9 @@ struct PetAskUserInlineView: View {
 
     private func toggle(_ value: String, in choice: AskUserChoice) {
         if !choice.allowsMultiple {
-            selection = [value]
+            selection = selection.contains(value) && choice.minimumSelectionCount == 0
+                ? []
+                : [value]
         } else if selection.contains(value) {
             selection.remove(value)
         } else if selection.count < choice.maximumSelectionCount {

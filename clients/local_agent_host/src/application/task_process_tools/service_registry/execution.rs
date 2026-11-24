@@ -98,9 +98,10 @@ impl LocalToolExecutor for LocalTaskProcessToolExecutor {
                     match serde_json::from_value(invocation.arguments.clone()) {
                         Ok(args) => args,
                         Err(error) => {
-                            return Ok(rejected_outcome_report(format!(
-                                "invalid Task outcome input: {error}"
-                            )))
+                            return Ok(rejected_outcome_report(
+                                format!("invalid Task outcome input: {error}"),
+                                &run.input,
+                            ))
                         }
                     };
                 // A successful Plugin call is neither necessary (an authorized fallback
@@ -110,13 +111,16 @@ impl LocalToolExecutor for LocalTaskProcessToolExecutor {
                 if let Err(error) =
                     validate_task_acceptance_report(&run.input, &invocation.arguments)
                 {
-                    return Ok(rejected_outcome_report(error));
+                    return Ok(rejected_outcome_report(error, &run.input));
                 }
                 let reason = args.reason.trim();
                 if reason.is_empty() || reason.chars().count() > OUTCOME_REASON_MAX_CHARS {
-                    return Ok(rejected_outcome_report(format!(
-                        "Task outcome reason must be 1..={OUTCOME_REASON_MAX_CHARS} characters"
-                    )));
+                    return Ok(rejected_outcome_report(
+                        format!(
+                            "Task outcome reason must be 1..={OUTCOME_REASON_MAX_CHARS} characters"
+                        ),
+                        &run.input,
+                    ));
                 }
                 let result_status = match args.result_status {
                     ReportedResultStatus::Succeeded => "succeeded",
@@ -146,7 +150,7 @@ impl LocalToolExecutor for LocalTaskProcessToolExecutor {
     }
 }
 
-fn rejected_outcome_report(error: String) -> LocalAgentToolOutcome {
+fn rejected_outcome_report(error: String, input: &Value) -> LocalAgentToolOutcome {
     // No result has been accepted and no external action has been dispatched.
     // Return a known tool failure so the model can repair its report. Err remains
     // reserved for execution/storage failures whose effect cannot be confirmed.
@@ -156,7 +160,17 @@ fn rejected_outcome_report(error: String) -> LocalAgentToolOutcome {
             "phase": "task_outcome_validation",
             "reported": false,
             "retryable": true,
-            "guidance": "Correct the report against the frozen task_acceptance_contract, covering every criterion exactly once, and call task_run_process_report_outcome again. Preserve actual failed or unverified findings; do not rerun remote commands merely to fix report structure."
+            "task_acceptance_contract": {
+                "acceptance_report_version": input.get("acceptance_report_version"),
+                "acceptance_criteria": input.get("acceptance_criteria"),
+                "expected_outputs": input.get("expected_outputs"),
+                "final_response_max_chars": input.get("final_response_max_chars"),
+                "source_user_message": input.get("source_user_message"),
+                "requirements": input.get("requirements"),
+                "requirement_refs": input.get("requirement_refs"),
+                "unassigned_requirement_refs": input.get("unassigned_requirement_refs")
+            },
+            "guidance": "Correct the report against the returned Host-owned task_acceptance_contract, covering every criterion exactly once, and call task_run_process_report_outcome again. Preserve actual failed or unverified findings; do not rerun remote commands merely to fix report structure."
         }),
     }
 }

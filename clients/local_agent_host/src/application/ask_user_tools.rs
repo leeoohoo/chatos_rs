@@ -64,7 +64,10 @@ impl LocalAskUserToolExecutor {
             ),
             ASK_USER_CHOICES_TOOL => (
                 "choice",
-                json!({"choice": normalize_choice(&invocation.arguments, false)?}),
+                json!({
+                    "fields": [default_note_field()],
+                    "choice": normalize_choice(&invocation.arguments, false)?
+                }),
             ),
             ASK_USER_MIXED_FORM_TOOL => {
                 let fields = normalize_fields(invocation.arguments.get("fields"), false)?;
@@ -127,6 +130,19 @@ fn validate_task_run(run: &LocalAgentRunRecord, owner_user_id: &str) -> Result<(
         return Err("Ask User can only be called by the active Task".to_string());
     }
     Ok(())
+}
+
+fn default_note_field() -> Value {
+    json!({
+        "key": "note",
+        "label": "备注（可选）",
+        "description": "可以补充选择之外的说明，也可以留空。",
+        "placeholder": "补充说明（可选）",
+        "default_value": "",
+        "required": false,
+        "multiline": true,
+        "secret": false
+    })
 }
 
 fn normalize_fields(value: Option<&Value>, required: bool) -> Result<Vec<Value>, String> {
@@ -329,7 +345,7 @@ pub fn ask_user_model_tools() -> Vec<Value> {
         ),
         ask_user_tool(
             ASK_USER_CHOICES_TOOL,
-            "Ask the user to choose one or more options and wait for their submission.",
+            "Ask the user to choose one or more options and wait for their submission. The form automatically includes an optional note field for extra context or a no-selection explanation.",
             choice_schema(),
         ),
         ask_user_tool(

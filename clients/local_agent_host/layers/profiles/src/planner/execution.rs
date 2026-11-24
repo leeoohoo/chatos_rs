@@ -99,33 +99,16 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 "[Model image capability] This Run's configured model explicitly does not support images. Image parts are not sent to this model. For image-dependent work, explain this specific limitation and ask for an image-capable model or an authorized OCR alternative. Do not claim to have seen an image or create a Task merely to bypass this limitation.".into()
             )));
         }
-        if self.profile_key == TASK_EXECUTION_PROFILE_KEY
-            && claim
-                .run
-                .input
-                .get("acceptance_report_version")
-                .and_then(Value::as_u64)
-                == Some(1)
-        {
-            // Program-owned frozen data is available even after history truncation.
-            capabilities.prefixed_input_items.push(message_item(
-                "user",
-                Value::String(
-                    json!({
-                        "type":"task_acceptance_contract",
-                        "acceptance_report_version":1,
-                        "expected_outputs":claim.run.input.get("expected_outputs"),
-                        "acceptance_criteria":claim.run.input.get("acceptance_criteria"),
-                        "final_response_max_chars":claim.run.input.get("final_response_max_chars"),
-                        "source_user_message":claim.run.input.get("source_user_message"),
-                        "requirements":claim.run.input.get("requirements"),
-                        "requirement_refs":claim.run.input.get("requirement_refs"),
-                        "unassigned_requirement_refs":claim.run.input.get("unassigned_requirement_refs"),
-                        "guidance":"Implement and verify only the bound requirement_refs. Compare each interpreted requirement with its exact source_quote before writing. If they materially conflict, stop mutation and report a contract_conflict naming the requirement_id; do not silently choose one. Unassigned requirements are explicitly outside this Task."
-                    })
-                    .to_string(),
-                ),
-            ));
+        if let Some(contract) = task_acceptance_contract_item(&claim.run.input, &self.profile_key) {
+            // Responses history normally retains the original prefix. Provider compaction
+            // replaces that history, so restore the exact Host-owned contract once after the
+            // latest compaction instead of relying on a lossy summary.
+            reassert_after_latest_compaction(
+                &mut current_input_items,
+                &contract,
+                "task_acceptance_contract",
+            );
+            capabilities.prefixed_input_items.push(contract);
         }
         if self.profile_key == TASK_EXECUTION_PROFILE_KEY {
             capabilities.prefixed_input_items.push(message_item(
@@ -394,4 +377,55 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 .unwrap_or_default(),
         })
     }
+}
+
+fn task_acceptance_contract_item(input: &Value, profile_key: &str) -> Option<Value> {
+    (profile_key == TASK_EXECUTION_PROFILE_KEY
+        && input
+            .get("acceptance_report_version")
+            .and_then(Value::as_u64)
+            == Some(1))
+    .then(|| {
+        message_item(
+            "user",
+            Value::String(
+                json!({
+                    "type":"task_acceptance_contract",
+                    "acceptance_report_version":1,
+                    "expected_outputs":input.get("expected_outputs"),
+                    "acceptance_criteria":input.get("acceptance_criteria"),
+                    "final_response_max_chars":input.get("final_response_max_chars"),
+                    "source_user_message":input.get("source_user_message"),
+                    "requirements":input.get("requirements"),
+                    "requirement_refs":input.get("requirement_refs"),
+                    "unassigned_requirement_refs":input.get("unassigned_requirement_refs"),
+                    "guidance":"Implement and verify only the bound requirement_refs. Compare each interpreted requirement with its exact source_quote before writing. If they materially conflict, stop mutation and report a contract_conflict naming the requirement_id; do not silently choose one. Unassigned requirements are explicitly outside this Task."
+                })
+                .to_string(),
+            ),
+        )
+    })
+}
+
+fn reassert_after_latest_compaction(items: &mut Vec<Value>, contract: &Value, contract_type: &str) {
+    let Some(compaction_index) = items
+        .iter()
+        .rposition(|item| item.get("type").and_then(Value::as_str) == Some("compaction"))
+    else {
+        return;
+    };
+    if items[compaction_index + 1..]
+        .iter()
+        .any(|item| message_has_json_type(item, contract_type))
+    {
+        return;
+    }
+    items.push(contract.clone());
+}
+
+fn message_has_json_type(item: &Value, expected: &str) -> bool {
+    item.get("content")
+        .and_then(Value::as_str)
+        .and_then(|content| serde_json::from_str::<Value>(content).ok())
+        .is_some_and(|content| content.get("type").and_then(Value::as_str) == Some(expected))
 }

@@ -36,6 +36,23 @@ describe("Ask User domain", () => {
     expect(askUserSubmission(single, form).selection).toBe("two");
   });
 
+  it("allows an optional single choice to be cleared for a note-only answer", () => {
+    const prompt = sampleAskUserPrompt();
+    const choice = {
+      ...prompt.choice!,
+      allowsMultiple: false,
+      minimumSelectionCount: 0,
+    };
+    let form = createAskUserForm({ ...prompt, choice });
+    form = toggleAskUserSelection(form, choice, "one");
+    form = toggleAskUserSelection(form, choice, "one");
+    expect([...form.selection]).toEqual([]);
+    expect(isAskUserFormValid({ ...prompt, choice }, form)).toBe(false);
+    form = { ...form, values: { ...form.values, name: "note-only" } };
+    expect(isAskUserFormValid({ ...prompt, choice }, form)).toBe(true);
+    expect(askUserSubmission({ ...prompt, choice }, form).selection).toBe("");
+  });
+
   it("clears secret values as soon as a prompt resolves", () => {
     const prompt = sampleAskUserPrompt();
     const form = createAskUserForm(prompt);

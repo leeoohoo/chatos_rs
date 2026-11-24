@@ -80,6 +80,18 @@ struct AskUserPromptFormStateTests {
     }
 
     @Test
+    func optionalSingleChoiceCanBeClearedForANoteOnlyAnswer() {
+        let selection = choice(allowsMultiple: false, minimum: 0)
+        var state = AskUserPromptFormState(prompt: prompt(choice: selection))
+
+        state.toggleSelection("a", in: selection)
+        state.toggleSelection("a", in: selection)
+
+        #expect(state.selection.isEmpty)
+        #expect(state.isValid(for: prompt(choice: selection)))
+    }
+
+    @Test
     func submissionKeepsFieldValuesAndOrdersChoicesByPromptOptions() {
         let prompt = prompt(
             fields: [AskUserField(key: "name", label: "Name")],
