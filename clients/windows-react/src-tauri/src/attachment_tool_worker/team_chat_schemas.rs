@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent_professions::PROFESSION_KEYS;
 
 pub(crate) fn team_chat_read_tool_schemas() -> Vec<Value> {
     vec![
@@ -85,19 +86,7 @@ pub(crate) fn team_chat_write_tool_schemas() -> Vec<Value> {
                     "responsibility": {"type": "string", "maxLength": 8000},
                     "role_prompt": {"type": "string", "minLength": 1, "maxLength": 32000},
                     "thinking_level": {"type": "string", "enum": ["auto", "none", "minimal", "low", "medium", "high", "xhigh", "max"]},
-                    "profession_key": {"type": "string", "enum": [
-                        "project_manager", "product_manager", "technical_manager",
-                        "solution_architect", "security_engineer", "qa_engineer",
-                        "software_engineer", "fullstack_engineer", "frontend_engineer",
-                        "backend_engineer", "mobile_engineer", "desktop_engineer",
-                        "game_engineer", "embedded_iot_engineer", "database_engineer",
-                        "devops_engineer", "data_engineer", "data_analyst",
-                        "machine_learning_engineer", "research_specialist", "product_designer",
-                        "ui_designer", "ux_designer", "game_designer", "technical_writer",
-                        "business_analyst", "implementation_consultant", "erp_consultant",
-                        "wms_consultant", "domain_expert", "operations_specialist",
-                        "growth_marketing_specialist", "general_member"
-                    ]},
+                    "profession_key": {"type": "string", "enum": PROFESSION_KEYS},
                     "rationale": {"type": "string", "maxLength": 4000}
                 },
                 "required": ["name", "role", "role_prompt", "profession_key"],

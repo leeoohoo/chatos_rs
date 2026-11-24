@@ -136,7 +136,10 @@ async fn accept_record_sync(
     axum::extract::Path(thread_id): axum::extract::Path<String>,
     axum::Json(request): axum::Json<Value>,
 ) -> axum::Json<Value> {
-    assert!(state.thread_upserts.load(Ordering::SeqCst) > 0);
+    assert_eq!(request["thread"]["tenant_id"], "user-1");
+    assert_eq!(request["thread"]["subject_id"], "agent:agent-1");
+    assert_eq!(request["thread"]["thread_type"], "conversation");
+    state.thread_upserts.fetch_add(1, Ordering::SeqCst);
     state.record_syncs.fetch_add(1, Ordering::SeqCst);
     assert_eq!(request["tenant_id"], "user-1");
     assert_eq!(request["source_id"], "chatos");

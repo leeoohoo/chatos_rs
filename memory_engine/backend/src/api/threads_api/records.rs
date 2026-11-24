@@ -8,6 +8,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use serde::Deserialize;
 use serde_json::json;
 
 use super::error::internal_error;
@@ -23,28 +24,79 @@ use crate::models::{
 use crate::repositories::records;
 use crate::state::AppState;
 
+#[derive(Deserialize)]
+pub(crate) struct BatchSyncApiRequest {
+    #[serde(flatten)]
+    batch: BatchSyncRecordsRequest,
+    #[serde(default)]
+    thread: Option<memory_engine_sdk::SdkUpsertThreadRequest>,
+}
+
 pub async fn batch_sync_records(
     State(state): State<Arc<AppState>>,
     auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
-    Json(req): Json<BatchSyncRecordsRequest>,
+    Json(req): Json<BatchSyncApiRequest>,
 ) -> Result<Json<BatchSyncRecordsResponse>, (axum::http::StatusCode, String)> {
+    let BatchSyncApiRequest { batch: req, thread } = req;
     auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
-    runtime_context::verify(
-        &state,
-        req.runtime_context_assertion.as_str(),
-        req.tenant_id.as_str(),
-        req.source_id.as_str(),
+    if thread
+        .as_ref()
+        .is_some_and(|thread| thread.tenant_id != req.tenant_id)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "batch thread identity does not match record scope".to_string(),
+        ));
+    }
+    if let Some(thread) = thread.as_ref() {
+        runtime_context::verify_for_thread_upsert(
+            &state,
+            req.runtime_context_assertion.as_str(),
+            req.tenant_id.as_str(),
+            req.source_id.as_str(),
+            thread_id.as_str(),
+            req.project_partition_key.as_str(),
+            "record_ingest",
+            thread.subject_id.as_str(),
+        )
+        .await?;
+    } else {
+        runtime_context::verify(
+            &state,
+            req.runtime_context_assertion.as_str(),
+            req.tenant_id.as_str(),
+            req.source_id.as_str(),
+            thread_id.as_str(),
+            req.project_partition_key.as_str(),
+            "record_ingest",
+        )
+        .await?;
+    }
+    let thread = thread.map(|thread| crate::models::UpsertThreadRequest {
+        tenant_id: thread.tenant_id,
+        source_id: req.source_id.clone(),
+        subject_id: thread.subject_id,
+        thread_type: thread.thread_type,
+        external_thread_id: thread.external_thread_id,
+        title: thread.title,
+        labels: thread.labels,
+        metadata: thread.metadata,
+        status: thread.status,
+        created_at: thread.created_at,
+        updated_at: thread.updated_at,
+        archived_at: thread.archived_at,
+    });
+    let upserted_count = records::batch_sync_records_with_thread(
+        &state.config,
+        &state.pool,
         thread_id.as_str(),
-        req.project_partition_key.as_str(),
-        "record_ingest",
+        &req,
+        thread,
     )
-    .await?;
-    let upserted_count =
-        records::batch_sync_records(&state.config, &state.pool, thread_id.as_str(), &req)
-            .await
-            .map_err(internal_error)?;
+    .await
+    .map_err(internal_error)?;
     Ok(Json(BatchSyncRecordsResponse {
         thread_id,
         received_count: req.records.len(),
@@ -185,4 +237,40 @@ pub async fn get_turn_process_records(
     .map_err(internal_error)?;
 
     Ok(Json(TurnProcessRecordsResponse { turn_id, items }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BatchSyncApiRequest;
+
+    #[test]
+    fn direct_batch_injects_source_outside_the_embedded_thread() {
+        let request: BatchSyncApiRequest = serde_json::from_value(serde_json::json!({
+            "tenant_id": "tenant-1",
+            "source_id": "source-1",
+            "project_partition_key": "__none__",
+            "runtime_context_assertion": "assertion",
+            "thread": {
+                "tenant_id": "tenant-1",
+                "subject_id": "agent:agent-1",
+                "thread_type": "conversation",
+                "external_thread_id": "thread-1",
+                "title": null,
+                "labels": ["memory-schema:v2", "agent:agent-1"],
+                "metadata": null,
+                "status": "active",
+                "created_at": null,
+                "updated_at": null,
+                "archived_at": null
+            },
+            "records": []
+        }))
+        .expect("direct batch request");
+
+        assert_eq!(request.batch.source_id, "source-1");
+        assert_eq!(
+            request.thread.map(|thread| thread.subject_id),
+            Some("agent:agent-1".to_string())
+        );
+    }
 }

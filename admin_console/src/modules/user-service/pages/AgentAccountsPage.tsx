@@ -11,7 +11,6 @@ import {
   Form,
   Input,
   Modal,
-  Select,
   Space,
   Switch,
   Table,
@@ -29,8 +28,8 @@ import type {
   CreateAgentAccountPayload,
   ResetAgentPasswordPayload,
   UpdateAgentAccountPayload,
-  UserOptionRecord,
 } from '../types';
+import { UserOptionSelect } from './UserOptionSelect';
 
 type AgentFormValues = {
   username: string;
@@ -54,25 +53,22 @@ export function AgentAccountsPage() {
   const [form] = Form.useForm<AgentFormValues>();
   const [resetPasswordForm] = Form.useForm<ResetPasswordValues>();
 
-  const usersQuery = useQuery({
-    queryKey: ['user-service', 'user-options'],
-    queryFn: () => api.listUserOptions(),
-    enabled: currentUser.role === 'super_admin' && drawerOpen,
-  });
   const agentsQuery = useQuery({
     queryKey: ['user-service', 'agent-accounts'],
     queryFn: () => api.listAgentAccounts(),
   });
 
   const isSuperAdmin = currentUser.role === 'super_admin';
-  const availableUsers = new Map<string, UserOptionRecord>([
-    [currentUser.id, currentUser],
-    ...(usersQuery.data || []).map((item): [string, UserOptionRecord] => [item.id, item]),
-  ]);
-  const userOptions = [...availableUsers.values()].map((item) => ({
-    label: `${item.display_name || item.username} (${item.username})`,
-    value: item.id,
-  }));
+  const ownerUserSeeds = editingAgent
+    ? [
+        currentUser,
+        {
+          id: editingAgent.owner_user_id,
+          username: editingAgent.owner_username,
+          display_name: editingAgent.owner_display_name,
+        },
+      ]
+    : [currentUser];
 
   const createAgentMutation = useMutation({
     mutationFn: (payload: CreateAgentAccountPayload) => api.createAgentAccount(payload),
@@ -336,10 +332,9 @@ export function AgentAccountsPage() {
             label="归属用户"
             rules={[{ required: true, message: '请选择归属用户' }]}
           >
-            <Select
+            <UserOptionSelect
               disabled={!isSuperAdmin}
-              options={userOptions}
-              loading={usersQuery.isLoading}
+              seedOptions={ownerUserSeeds}
               placeholder="选择真实用户"
             />
           </Form.Item>

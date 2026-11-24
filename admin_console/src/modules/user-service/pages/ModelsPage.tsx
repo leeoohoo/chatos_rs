@@ -39,6 +39,7 @@ import {
   type ProviderFormValues,
   userLabel,
 } from './models/modelPageUtils';
+import { UserOptionSelect } from './UserOptionSelect';
 
 const ModelProviderDrawer = lazy(() => import('./models/ModelProviderDrawer').then((module) => ({ default: module.ModelProviderDrawer })));
 
@@ -69,17 +70,10 @@ export function ModelsPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<UserModelProviderRecord | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string | undefined>(currentUser.id);
-  const [userOptionsRequested, setUserOptionsRequested] = useState(false);
   const [modelTaskDrafts, setModelTaskDrafts] = useState<
     Record<string, ModelTaskPreferencesDraft>
   >({});
   const [form] = Form.useForm<ProviderFormValues>();
-
-  const usersQuery = useQuery({
-    queryKey: ['user-service', 'user-options'],
-    queryFn: () => api.listUserOptions(),
-    enabled: currentUser.role === 'super_admin' && userOptionsRequested,
-  });
 
   const isSuperAdmin = currentUser.role === 'super_admin';
 
@@ -196,35 +190,42 @@ export function ModelsPage() {
     onError: showError,
   });
 
-  const userOptions = useMemo(
-    () => {
-      const users = new Map<string, UserOptionRecord>([
-        [currentUser.id, currentUser],
-        ...(usersQuery.data || []).map((item): [string, UserOptionRecord] => [item.id, item]),
-      ]);
-      return [...users.values()].map((item) => ({
-        label: `${item.display_name || item.username} (${item.username})`,
-        value: item.id,
-      }));
-    },
-    [currentUser, usersQuery.data],
-  );
-
   const currentProviders = providersQuery.data || [];
   const currentConfigs = modelConfigsQuery.data || [];
+  const ownerUserIds = useMemo(
+    () =>
+      [
+        ...new Set([
+          ...(selectedUserId ? [selectedUserId] : []),
+          ...currentProviders.map((item) => item.owner_user_id),
+          ...currentConfigs.map((item) => item.owner_user_id),
+        ]),
+      ].sort(),
+    [currentConfigs, currentProviders, selectedUserId],
+  );
+  const ownerUsersQuery = useQuery({
+    queryKey: ['user-service', 'user-options', 'resolve', ownerUserIds],
+    queryFn: () => api.resolveUserOptions(ownerUserIds),
+    enabled: isSuperAdmin && ownerUserIds.length > 0,
+  });
+  const ownerUsers = useMemo(() => {
+    const users = new Map<string, UserOptionRecord>([[currentUser.id, currentUser]]);
+    for (const item of ownerUsersQuery.data || []) users.set(item.id, item);
+    return [...users.values()];
+  }, [currentUser, ownerUsersQuery.data]);
   const memoryEligibleConfigs = selectedUserId
     ? currentConfigs.filter((item) => item.owner_user_id === selectedUserId && item.model_name.trim())
     : [];
   const providerColumns = useMemo(
     () =>
       buildProviderColumns({
-        users: usersQuery.data,
+        users: ownerUsers,
         onRefresh: (record) => refreshProviderMutation.mutate(record),
         onEdit: openEditDrawer,
         onDelete: (id) => deleteProviderMutation.mutate(id),
         deleteLoading: deleteProviderMutation.isPending,
       }),
-    [deleteProviderMutation, refreshProviderMutation, usersQuery.data],
+    [deleteProviderMutation, ownerUsers, refreshProviderMutation],
   );
   function showWarnings(warnings?: string[]) {
     if (!warnings || warnings.length === 0) {
@@ -345,16 +346,11 @@ export function ModelsPage() {
         </Space>
         <Space wrap>
           {isSuperAdmin ? (
-            <Select
+            <UserOptionSelect
               value={selectedUserId || ALL_USERS_SCOPE}
-              options={[{ label: 'All users', value: ALL_USERS_SCOPE }, ...userOptions]}
+              fixedOptions={[{ label: 'All users', value: ALL_USERS_SCOPE }]}
+              seedOptions={ownerUsers}
               onChange={(value) => setSelectedUserId(value === ALL_USERS_SCOPE ? undefined : value)}
-              onOpenChange={(open) => {
-                if (open) {
-                  setUserOptionsRequested(true);
-                }
-              }}
-              loading={usersQuery.isLoading}
               style={{ width: 280 }}
               placeholder="Select owner user"
             />
@@ -485,7 +481,7 @@ export function ModelsPage() {
                   extra={
                     <Space size="middle" wrap>
                       {isSuperAdmin && !selectedUserId ? (
-                        <Tag>{userLabel(usersQuery.data, model.owner_user_id)}</Tag>
+                        <Tag>{userLabel(ownerUsers, model.owner_user_id)}</Tag>
                       ) : null}
                       {!model.enabled ? <Tag color="warning">模型已停用</Tag> : null}
                       <ModelCapabilityTags record={model} showEnabled={false} />
@@ -589,7 +585,7 @@ export function ModelsPage() {
         open={drawerOpen}
         editingProvider={editingProvider}
         isSuperAdmin={isSuperAdmin}
-        userOptions={userOptions}
+        userOptionSeeds={ownerUsers}
         form={form}
         saveLoading={createProviderMutation.isPending || updateProviderMutation.isPending}
         onClose={closeDrawer}

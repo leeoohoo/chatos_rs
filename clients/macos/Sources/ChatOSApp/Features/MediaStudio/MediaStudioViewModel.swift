@@ -352,15 +352,6 @@ final class MediaStudioViewModel: ObservableObject {
             && !videoPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var videoProfile: VideoGenerationProfile {
-        VideoGenerationProfile(modelName: selectedVideoModel?.modelName ?? "")
-    }
-
-    private func normalizeVideoOptions() {
-        if !videoProfile.sizes.contains(videoSize) { videoSize = videoProfile.sizes[0] }
-        if !videoProfile.durations.contains(videoSeconds) { videoSeconds = videoProfile.durations[0] }
-    }
-
     func loadIfNeeded() {
         guard ownerID != nil else { return }
         loadHistoryIfNeeded()

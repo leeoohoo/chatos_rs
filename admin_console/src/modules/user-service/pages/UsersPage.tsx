@@ -65,13 +65,15 @@ export function UsersPage() {
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
   const [form] = Form.useForm<UserFormValues>();
   const [harnessForm] = Form.useForm<HarnessProvisionFormValues>();
   const [inviteForm] = Form.useForm<InviteCodeFormValues>();
 
   const usersQuery = useQuery({
-    queryKey: ['user-service', 'users', page, pageSize],
-    queryFn: () => api.listUsersPage(pageSize, (page - 1) * pageSize),
+    queryKey: ['user-service', 'users', page, pageSize, search],
+    queryFn: () => api.listUsers(pageSize, (page - 1) * pageSize, search),
     placeholderData: (previousData) => previousData,
   });
 
@@ -482,6 +484,23 @@ export function UsersPage() {
           </Typography.Text>
         </Space>
         <Space>
+          <Input.Search
+            value={searchInput}
+            allowClear
+            placeholder="搜索用户名或显示名"
+            style={{ width: 240 }}
+            onChange={(event) => {
+              setSearchInput(event.target.value);
+              if (!event.target.value) {
+                setSearch('');
+                setPage(1);
+              }
+            }}
+            onSearch={(value) => {
+              setSearch(value.trim());
+              setPage(1);
+            }}
+          />
           <Button
             icon={<ReloadOutlined />}
             onClick={() => usersQuery.refetch()}

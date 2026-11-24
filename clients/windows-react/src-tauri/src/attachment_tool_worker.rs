@@ -499,6 +499,10 @@ mod tests {
         assert_eq!(schemas[4]["name"], "chat_send_message");
         assert_eq!(schemas[5]["name"], "chat_heartbeat_complete");
         assert_eq!(schemas[6]["name"], "agent_cycle_complete");
+        assert_eq!(
+            schemas[1]["parameters"]["properties"]["profession_key"]["enum"],
+            serde_json::json!(crate::agent_professions::PROFESSION_KEYS)
+        );
         let encoded = schemas[4].to_string();
         assert!(encoded.contains("document_refs"));
         assert!(encoded.contains("mention_agent_refs"));

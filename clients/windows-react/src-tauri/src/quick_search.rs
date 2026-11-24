@@ -6,12 +6,19 @@ use std::{
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    sync::{
+        atomic::{AtomicU64, Ordering as AtomicOrdering},
+        Arc, Mutex,
+    },
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
+
+mod file_search;
+
+use file_search::{search_files, SearchCancellation};
 
 use crate::{
     app_data_transaction::{ensure_owned_directory, replace_owned_file},
@@ -34,13 +41,13 @@ const MAXIMUM_TOTAL_RESULTS: usize = 50;
 const MAXIMUM_APPLICATION_RECORDS: usize = 4_096;
 const MAXIMUM_SEARCH_DIRECTORIES: usize = 10_000;
 const FILE_SEARCH_TIMEOUT: Duration = Duration::from_secs(3);
-const FILE_SEARCH_CANDIDATE_LIMIT: usize = 256;
 
 #[derive(Clone)]
 pub(crate) struct QuickSearchManager {
     data_directory: PathBuf,
     usage_path: PathBuf,
     inner: Arc<Mutex<QuickSearchRuntime>>,
+    search_generation: Arc<AtomicU64>,
 }
 
 #[derive(Default)]
@@ -62,15 +69,6 @@ struct ApplicationRecord {
     title: String,
     subtitle: Option<String>,
     path: PathBuf,
-}
-
-#[derive(Clone, Debug)]
-struct FileRecord {
-    title: String,
-    subtitle: String,
-    path: PathBuf,
-    is_directory: bool,
-    modified_at: SystemTime,
 }
 
 #[derive(Clone, Debug)]
@@ -217,6 +215,7 @@ struct QueryContext {
     owner_user_id: String,
     usage: BTreeMap<String, UsageRecord>,
     applications: Option<Vec<ApplicationRecord>>,
+    cancellation: SearchCancellation,
 }
 
 impl QuickSearchManager {
@@ -228,6 +227,7 @@ impl QuickSearchManager {
         Self {
             data_directory,
             usage_path,
+            search_generation: Arc::new(AtomicU64::new(0)),
             inner: Arc::new(Mutex::new(QuickSearchRuntime {
                 usage,
                 ..QuickSearchRuntime::default()
@@ -237,6 +237,7 @@ impl QuickSearchManager {
 
     pub(crate) fn begin(&self, owner_user_id: &str) -> Result<Uuid, String> {
         validate_owner(owner_user_id)?;
+        self.search_generation.fetch_add(1, AtomicOrdering::AcqRel);
         let mut inner = self.inner.lock().map_err(|_| search_error())?;
         let id = Uuid::new_v4();
         inner.presentation = Some(QuickSearchPresentation {
@@ -270,10 +271,15 @@ impl QuickSearchManager {
             presentation.latest_request_id = request_id;
             presentation.owner_user_id.clone()
         };
+        let expected = self
+            .search_generation
+            .fetch_add(1, AtomicOrdering::AcqRel)
+            .wrapping_add(1);
         Ok(QueryContext {
             owner_user_id,
             usage: inner.usage.clone(),
             applications: inner.applications.clone(),
+            cancellation: SearchCancellation::new(Arc::clone(&self.search_generation), expected),
         })
     }
 
@@ -369,6 +375,7 @@ impl QuickSearchManager {
     }
 
     pub(crate) fn discard(&self) -> Result<(), String> {
+        self.search_generation.fetch_add(1, AtomicOrdering::AcqRel);
         let mut inner = self.inner.lock().map_err(|_| search_error())?;
         inner.presentation = None;
         Ok(())
@@ -416,6 +423,7 @@ pub(crate) async fn query_quick_search(
     let search_owner_user_id = owner_user_id.clone();
     let query = input.query;
     let include_files = input.include_files;
+    let cancellation = context.cancellation;
     let _permit = resources
         .acquire(
             MachineResourceKind::CodeReadWorker,
@@ -432,6 +440,7 @@ pub(crate) async fn query_quick_search(
             context.applications,
             &context.usage,
             english,
+            &cancellation,
         )
     })
     .await
@@ -629,6 +638,7 @@ fn build_results(
     cached_applications: Option<Vec<ApplicationRecord>>,
     usage: &BTreeMap<String, UsageRecord>,
     english: bool,
+    cancellation: &SearchCancellation,
 ) -> (SearchBuild, Option<Vec<ApplicationRecord>>) {
     let trimmed = raw_query.trim();
     let scope = scope_for(trimmed);
@@ -714,7 +724,7 @@ fn build_results(
         && query.chars().count() >= 2
         && matches!(scope, SearchScope::All | SearchScope::Files)
     {
-        let file_result = search_files(&query, FILE_SEARCH_TIMEOUT);
+        let file_result = search_files(&query, FILE_SEARCH_TIMEOUT, cancellation);
         file_search_timed_out = file_result.timed_out;
         source_issue |= file_result.source_issue;
         for file in file_result.records {
@@ -1144,123 +1154,6 @@ fn application_subtitle(path: &Path) -> String {
         .to_owned()
 }
 
-struct FileSearchResult {
-    records: Vec<FileRecord>,
-    timed_out: bool,
-    source_issue: bool,
-}
-
-fn search_files(query: &str, timeout: Duration) -> FileSearchResult {
-    let started = Instant::now();
-    let deadline = started + timeout;
-    let mut source_issue = false;
-    let mut timed_out = false;
-    let mut candidates = Vec::new();
-    let Some(home) = dirs::home_dir() else {
-        return FileSearchResult {
-            records: Vec::new(),
-            timed_out: false,
-            source_issue: true,
-        };
-    };
-    let mut directories = VecDeque::from([(home.clone(), 0usize)]);
-    while let Some((directory, depth)) = directories.pop_front() {
-        if Instant::now() >= deadline {
-            timed_out = true;
-            break;
-        }
-        let entries = match fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(_) => {
-                source_issue = true;
-                continue;
-            }
-        };
-        for entry in entries {
-            if Instant::now() >= deadline {
-                timed_out = true;
-                break;
-            }
-            let Ok(entry) = entry else {
-                source_issue = true;
-                continue;
-            };
-            let path = entry.path();
-            let Ok(metadata) = fs::symlink_metadata(&path) else {
-                source_issue = true;
-                continue;
-            };
-            if metadata.file_type().is_symlink()
-                || is_reparse_point(&metadata)
-                || is_hidden_or_system(&path, &metadata)
-            {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
-            if should_skip_directory(&name) && metadata.is_dir() {
-                continue;
-            }
-            if normalize(&name).contains(&normalize(query)) {
-                candidates.push(FileRecord {
-                    title: name,
-                    subtitle: safe_parent_label(&path, &home),
-                    path: path.clone(),
-                    is_directory: metadata.is_dir(),
-                    modified_at: metadata.modified().unwrap_or(UNIX_EPOCH),
-                });
-                if candidates.len() >= FILE_SEARCH_CANDIDATE_LIMIT {
-                    break;
-                }
-            }
-            if metadata.is_dir() && depth < 12 {
-                if directories.len() < MAXIMUM_SEARCH_DIRECTORIES {
-                    directories.push_back((path, depth + 1));
-                } else {
-                    source_issue = true;
-                }
-            }
-        }
-        if candidates.len() >= FILE_SEARCH_CANDIDATE_LIMIT {
-            break;
-        }
-    }
-    candidates.sort_by(|left, right| {
-        right
-            .modified_at
-            .cmp(&left.modified_at)
-            .then_with(|| normalize(&left.title).cmp(&normalize(&right.title)))
-    });
-    candidates.truncate(MAXIMUM_TOTAL_RESULTS);
-    FileSearchResult {
-        records: candidates,
-        timed_out,
-        source_issue,
-    }
-}
-
-fn should_skip_directory(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "appdata" | "node_modules" | "target" | ".git" | ".cache" | ".cargo" | ".rustup"
-    )
-}
-
-fn safe_parent_label(path: &Path, home: &Path) -> String {
-    let parent = path.parent().unwrap_or(home);
-    let relative = parent.strip_prefix(home).unwrap_or(parent);
-    let components = relative
-        .components()
-        .filter_map(|component| component.as_os_str().to_str())
-        .filter(|component| !component.is_empty())
-        .take(3)
-        .collect::<Vec<_>>();
-    if components.is_empty() {
-        "Home".into()
-    } else {
-        components.join(" › ")
-    }
-}
-
 #[cfg(target_os = "windows")]
 fn is_reparse_point(metadata: &fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
@@ -1270,19 +1163,6 @@ fn is_reparse_point(metadata: &fs::Metadata) -> bool {
 #[cfg(not(target_os = "windows"))]
 fn is_reparse_point(_: &fs::Metadata) -> bool {
     false
-}
-
-#[cfg(target_os = "windows")]
-fn is_hidden_or_system(_: &Path, metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    metadata.file_attributes() & (0x2 | 0x4) != 0
-}
-
-#[cfg(not(target_os = "windows"))]
-fn is_hidden_or_system(path: &Path, _: &fs::Metadata) -> bool {
-    path.file_name()
-        .and_then(|value| value.to_str())
-        .is_some_and(|value| value.starts_with('.'))
 }
 
 fn load_usage(path: &Path) -> Result<BTreeMap<String, UsageRecord>, String> {
@@ -1439,64 +1319,5 @@ mod tests {
         assert_eq!(records.len(), MAXIMUM_USAGE_RECORDS);
         assert!(!records.contains_key("result-000"));
         assert!(records.contains_key("result-519"));
-    }
-
-    #[test]
-    fn file_search_is_bounded_and_does_not_follow_symlinks() {
-        let directory = tempfile::tempdir().unwrap();
-        fs::write(directory.path().join("quarterly-report.txt"), b"report").unwrap();
-        let nested = directory.path().join("Documents");
-        fs::create_dir(&nested).unwrap();
-        fs::write(nested.join("report-notes.md"), b"notes").unwrap();
-        let result =
-            search_files_from_root_for_test(directory.path(), "report", Duration::from_secs(1));
-        assert_eq!(result.records.len(), 2);
-        assert!(result
-            .records
-            .iter()
-            .all(|record| !record.path.to_string_lossy().is_empty()));
-    }
-
-    fn search_files_from_root_for_test(
-        root: &Path,
-        query: &str,
-        timeout: Duration,
-    ) -> FileSearchResult {
-        let deadline = Instant::now() + timeout;
-        let mut records = Vec::new();
-        let mut directories = VecDeque::from([(root.to_path_buf(), 0usize)]);
-        let mut timed_out = false;
-        while let Some((directory, depth)) = directories.pop_front() {
-            for entry in fs::read_dir(directory).unwrap().flatten() {
-                if Instant::now() >= deadline {
-                    timed_out = true;
-                    break;
-                }
-                let path = entry.path();
-                let metadata = fs::symlink_metadata(&path).unwrap();
-                if metadata.file_type().is_symlink() {
-                    continue;
-                }
-                let title = entry.file_name().to_string_lossy().to_string();
-                if normalize(&title).contains(&normalize(query)) {
-                    records.push(FileRecord {
-                        title,
-                        subtitle: safe_parent_label(&path, root),
-                        path: path.clone(),
-                        is_directory: metadata.is_dir(),
-                        modified_at: metadata.modified().unwrap_or(UNIX_EPOCH),
-                    });
-                }
-                if metadata.is_dir() && depth < 12 && directories.len() < MAXIMUM_SEARCH_DIRECTORIES
-                {
-                    directories.push_back((path, depth + 1));
-                }
-            }
-        }
-        FileSearchResult {
-            records,
-            timed_out,
-            source_issue: false,
-        }
     }
 }

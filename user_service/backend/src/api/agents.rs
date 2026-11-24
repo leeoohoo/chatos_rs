@@ -4,7 +4,9 @@
 use axum::extract::{Path, State};
 use axum::{Extension, Json};
 
-use crate::auth::{hash_password, normalize_display_name, normalize_username, CurrentPrincipal};
+use crate::auth::{
+    hash_password_async, normalize_display_name, normalize_username, CurrentPrincipal,
+};
 use crate::models::{
     AgentAccountListItem, AgentAccountRecord, CreateAgentAccountRequest, ResetAgentPasswordRequest,
     UpdateAgentAccountRequest,
@@ -82,7 +84,9 @@ pub async fn create_agent_account(
         id: uuid::Uuid::new_v4().to_string(),
         username: username.clone(),
         display_name: normalize_display_name(input.display_name.as_deref(), &username),
-        password_hash: hash_password(input.password.as_str()).map_err(bad_request)?,
+        password_hash: hash_password_async(&state.password_worker, input.password.as_str())
+            .await
+            .map_err(bad_request)?,
         owner_user_id: owner.id,
         enabled: input.enabled.unwrap_or(true),
         created_at: now.clone(),
@@ -166,7 +170,9 @@ pub async fn reset_agent_password(
     };
     ensure_agent_manager(&principal, agent.owner_user_id.as_str())?;
 
-    agent.password_hash = hash_password(input.password.as_str()).map_err(bad_request)?;
+    agent.password_hash = hash_password_async(&state.password_worker, input.password.as_str())
+        .await
+        .map_err(bad_request)?;
     agent.updated_at = now_rfc3339();
     state
         .store

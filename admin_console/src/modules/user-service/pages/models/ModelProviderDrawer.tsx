@@ -4,22 +4,18 @@
 import { Button, Drawer, Form, Input, Select, Space, Switch } from 'antd';
 import type { FormInstance } from 'antd';
 
-import type { UserModelProviderRecord } from '../../types';
+import type { UserModelProviderRecord, UserOptionRecord } from '../../types';
+import { UserOptionSelect } from '../UserOptionSelect';
 import {
   PROMPT_VENDOR_OPTIONS,
   type ProviderFormValues,
 } from './modelPageUtils';
 
-type UserOption = {
-  label: string;
-  value: string;
-};
-
 type ModelProviderDrawerProps = {
   open: boolean;
   editingProvider: UserModelProviderRecord | null;
   isSuperAdmin: boolean;
-  userOptions: UserOption[];
+  userOptionSeeds: UserOptionRecord[];
   form: FormInstance<ProviderFormValues>;
   saveLoading: boolean;
   onClose: () => void;
@@ -30,7 +26,7 @@ export function ModelProviderDrawer({
   open,
   editingProvider,
   isSuperAdmin,
-  userOptions,
+  userOptionSeeds,
   form,
   saveLoading,
   onClose,
@@ -71,7 +67,7 @@ export function ModelProviderDrawer({
             label="Owner User"
             rules={[{ required: true, message: 'Please choose an owner user' }]}
           >
-            <Select options={userOptions} />
+            <UserOptionSelect seedOptions={userOptionSeeds} placeholder="Select owner user" />
           </Form.Item>
         ) : null}
         <Form.Item

@@ -444,6 +444,26 @@ pub(crate) async fn upsert_canonical_memory_thread(
     project_aggregation_id: Option<&str>,
     thread_kind: &str,
 ) -> Result<(), String> {
+    let request = canonical_memory_thread_request(
+        tenant_id,
+        thread_id,
+        agent_id,
+        agent_name,
+        project_aggregation_id,
+        thread_kind,
+    );
+    client.upsert_thread(thread_id, &request).await?;
+    Ok(())
+}
+
+pub(crate) fn canonical_memory_thread_request(
+    tenant_id: &str,
+    thread_id: &str,
+    agent_id: &str,
+    agent_name: Option<&str>,
+    project_aggregation_id: Option<&str>,
+    thread_kind: &str,
+) -> SdkUpsertThreadRequest {
     let agent_subject = format!("agent:{agent_id}");
     let mut labels = vec![
         "memory-schema:v2".to_string(),
@@ -453,30 +473,24 @@ pub(crate) async fn upsert_canonical_memory_thread(
     if let Some(project_id) = project_aggregation_id {
         labels.push(format!("project:{project_id}"));
     }
-    client
-        .upsert_thread(
-            thread_id,
-            &SdkUpsertThreadRequest {
-                tenant_id: tenant_id.to_string(),
-                subject_id: agent_subject,
-                thread_type: "conversation".to_string(),
-                external_thread_id: Some(thread_id.to_string()),
-                title: None,
-                labels: Some(labels),
-                metadata: Some(serde_json::json!({
-                    "agent_id": agent_id,
-                    "agent_name": agent_name,
-                    "project_aggregation_id": project_aggregation_id,
-                    "thread_kind": thread_kind,
-                })),
-                status: Some("active".to_string()),
-                created_at: None,
-                updated_at: None,
-                archived_at: None,
-            },
-        )
-        .await?;
-    Ok(())
+    SdkUpsertThreadRequest {
+        tenant_id: tenant_id.to_string(),
+        subject_id: agent_subject,
+        thread_type: "conversation".to_string(),
+        external_thread_id: Some(thread_id.to_string()),
+        title: None,
+        labels: Some(labels),
+        metadata: Some(serde_json::json!({
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "project_aggregation_id": project_aggregation_id,
+            "thread_kind": thread_kind,
+        })),
+        status: Some("active".to_string()),
+        created_at: None,
+        updated_at: None,
+        archived_at: None,
+    }
 }
 
 fn metadata_string(metadata: Option<&Value>, key: &str) -> Option<String> {

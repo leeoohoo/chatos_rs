@@ -209,6 +209,25 @@ pub(crate) fn thread_identity_scope_requests(
     Ok(scopes)
 }
 
+pub(crate) fn validate_thread_project_partition(
+    thread: &EngineThread,
+    project_partition_key: &str,
+) -> Result<(), String> {
+    let project_subject = thread_identity_scope_requests(thread)?
+        .into_iter()
+        .find(|(_, request)| request.memory_type == "project_summary")
+        .map(|(_, request)| request.subject_id);
+    if project_subject
+        .as_deref()
+        .is_some_and(|project| project != project_partition_key)
+    {
+        return Err(
+            "memory-schema:v2 thread project identity does not match verified partition".into(),
+        );
+    }
+    Ok(())
+}
+
 fn identity_labels(labels: &[String], prefix: &str) -> Vec<String> {
     let mut values = labels
         .iter()
@@ -532,7 +551,8 @@ fn normalized(value: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod identity_tests {
     use super::{
-        is_canonical_agent_subject_id, thread_identity_scope_requests, AGENT_STABLE_MEMORY_PROFILE,
+        is_canonical_agent_subject_id, thread_identity_scope_requests,
+        validate_thread_project_partition, AGENT_STABLE_MEMORY_PROFILE,
     };
     use crate::models::EngineThread;
 
@@ -599,6 +619,20 @@ mod identity_tests {
             vec!["memory-schema:v2", "agent:a-1"],
         ))
         .is_err());
+    }
+
+    #[test]
+    fn v2_thread_project_identity_must_match_the_verified_partition() {
+        let project_thread = thread(
+            "agent:a-1",
+            vec!["memory-schema:v2", "agent:a-1", "project:p-1"],
+        );
+        assert!(validate_thread_project_partition(&project_thread, "project:p-1").is_ok());
+        assert!(validate_thread_project_partition(&project_thread, "project:p-2").is_err());
+        assert!(validate_thread_project_partition(&project_thread, "__none__").is_err());
+
+        let stable_agent_thread = thread("agent:a-1", vec!["memory-schema:v2", "agent:a-1"]);
+        assert!(validate_thread_project_partition(&stable_agent_thread, "project:p-1").is_ok());
     }
 
     #[test]

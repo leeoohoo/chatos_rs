@@ -50,6 +50,11 @@ export interface UserOptionRecord {
   display_name: string;
 }
 
+export interface UserOptionPageResponse {
+  items: UserOptionRecord[];
+  total: number;
+}
+
 export interface InviteCodeRecord {
   id: string;
   label?: string | null;

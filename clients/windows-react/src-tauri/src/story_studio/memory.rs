@@ -144,6 +144,7 @@ impl StoryMemoryAdapter {
                     tenant_id: owner_user_id.to_owned(),
                     project_partition_key: assertion.project_partition_key,
                     runtime_context_assertion: assertion.runtime_context_assertion,
+                    thread: None,
                     records,
                 },
             )

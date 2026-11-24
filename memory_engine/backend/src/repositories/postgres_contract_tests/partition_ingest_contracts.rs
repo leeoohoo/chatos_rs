@@ -336,3 +336,266 @@ async fn partition_ingest_rolls_back_record_and_thread_projection_on_partition_f
     .expect("count rolled back record");
     assert_eq!(stored_records, 0);
 }
+
+#[tokio::test]
+async fn partition_ingest_atomically_creates_thread_and_rejects_identity_changes() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let thread_id = format!("thread-{suffix}");
+    let record_id = format!("record-{suffix}");
+    let subject = format!("agent:{suffix}");
+    let request = crate::models::BatchSyncRecordsRequest {
+        tenant_id: tenant.clone(),
+        source_id: source.clone(),
+        project_partition_key: "__none__".to_string(),
+        runtime_context_assertion: "repository-test".to_string(),
+        records: vec![record(&record_id, None, false)],
+    };
+    let thread_request = |subject_id: &str| UpsertThreadRequest {
+        tenant_id: tenant.clone(),
+        source_id: source.clone(),
+        subject_id: subject_id.to_string(),
+        thread_type: "conversation".to_string(),
+        external_thread_id: Some(thread_id.clone()),
+        title: None,
+        labels: Some(vec!["memory-schema:v2".to_string(), subject_id.to_string()]),
+        metadata: None,
+        status: Some("active".to_string()),
+        created_at: None,
+        updated_at: None,
+        archived_at: None,
+    };
+
+    let mut invalid_request = request.clone();
+    invalid_request.records[0].created_at = "not-a-timestamp".to_string();
+    crate::repositories::records::batch_sync_records_with_thread(
+        &test_config("unused".to_string()),
+        &pool,
+        &thread_id,
+        &invalid_request,
+        Some(thread_request(&subject)),
+    )
+    .await
+    .expect_err("record failure must roll back the new thread");
+    let rolled_back_thread: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count rolled back thread");
+    assert_eq!(rolled_back_thread, 0);
+
+    let inserted = crate::repositories::records::batch_sync_records_with_thread(
+        &test_config("unused".to_string()),
+        &pool,
+        &thread_id,
+        &request,
+        Some(thread_request(&subject)),
+    )
+    .await
+    .expect("create thread and record in one ingest");
+    assert_eq!(inserted, 1);
+
+    let mut archived_thread = thread_request(&subject);
+    archived_thread.status = Some("archived".to_string());
+    crate::repositories::threads::upsert_thread(&pool, &thread_id, archived_thread)
+        .await
+        .expect("archive established thread");
+    let mut archived_ingest = request.clone();
+    archived_ingest.records[0].id = format!("archived-{record_id}");
+    crate::repositories::records::batch_sync_records_with_thread(
+        &test_config("unused".to_string()),
+        &pool,
+        &thread_id,
+        &archived_ingest,
+        Some(thread_request(&subject)),
+    )
+    .await
+    .expect("record ingest may not reactivate archived thread");
+    let stored_status: String = sqlx::query_scalar(
+        "SELECT status FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load preserved thread status");
+    assert_eq!(stored_status, "archived");
+
+    let mut changed_request = request.clone();
+    changed_request.records[0].id = format!("changed-{record_id}");
+    let changed_subject = format!("agent:changed-{suffix}");
+    let error = crate::repositories::records::batch_sync_records_with_thread(
+        &test_config("unused".to_string()),
+        &pool,
+        &thread_id,
+        &changed_request,
+        Some(thread_request(&changed_subject)),
+    )
+    .await
+    .expect_err("established thread identity must be immutable");
+    assert!(error.contains("thread identity is immutable"));
+    let changed_record_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&changed_request.records[0].id)
+    .fetch_one(&pool)
+    .await
+    .expect("count rejected identity-change record");
+    assert_eq!(changed_record_count, 0);
+}
+
+#[tokio::test]
+async fn partition_ingest_rejects_a_thread_project_outside_the_verified_partition() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let thread_id = format!("thread-{suffix}");
+    let record_id = format!("record-{suffix}");
+    let subject = format!("agent:{suffix}");
+    let request = crate::models::BatchSyncRecordsRequest {
+        tenant_id: tenant.clone(),
+        source_id: source.clone(),
+        project_partition_key: "project:a".to_string(),
+        runtime_context_assertion: "repository-test".to_string(),
+        records: vec![record(&record_id, Some("a"), false)],
+    };
+    let error = crate::repositories::records::batch_sync_records_with_thread(
+        &test_config("unused".to_string()),
+        &pool,
+        &thread_id,
+        &request,
+        Some(UpsertThreadRequest {
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            subject_id: subject.clone(),
+            thread_type: "conversation".to_string(),
+            external_thread_id: Some(thread_id.clone()),
+            title: None,
+            labels: Some(vec![
+                "memory-schema:v2".to_string(),
+                subject,
+                "project:b".to_string(),
+            ]),
+            metadata: None,
+            status: Some("active".to_string()),
+            created_at: None,
+            updated_at: None,
+            archived_at: None,
+        }),
+    )
+    .await
+    .expect_err("thread project must be bound to the verified record partition");
+    assert!(error.contains("does not match verified partition"));
+
+    let stored_threads: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count rejected thread");
+    let stored_records: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&record_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count rejected record");
+    assert_eq!((stored_threads, stored_records), (0, 0));
+}
+
+#[tokio::test]
+async fn partition_ingest_serializes_competing_first_thread_identities() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let thread_id = format!("thread-{suffix}");
+    let ingest = |subject: String, record_id: String| {
+        let pool = pool.clone();
+        let tenant = tenant.clone();
+        let source = source.clone();
+        let thread_id = thread_id.clone();
+        tokio::spawn(async move {
+            let request = crate::models::BatchSyncRecordsRequest {
+                tenant_id: tenant.clone(),
+                source_id: source.clone(),
+                project_partition_key: "__none__".to_string(),
+                runtime_context_assertion: "repository-test".to_string(),
+                records: vec![record(&record_id, None, false)],
+            };
+            crate::repositories::records::batch_sync_records_with_thread(
+                &test_config("unused".to_string()),
+                &pool,
+                &thread_id,
+                &request,
+                Some(UpsertThreadRequest {
+                    tenant_id: tenant,
+                    source_id: source,
+                    subject_id: subject.clone(),
+                    thread_type: "conversation".to_string(),
+                    external_thread_id: Some(thread_id.clone()),
+                    title: None,
+                    labels: Some(vec!["memory-schema:v2".to_string(), subject]),
+                    metadata: None,
+                    status: Some("active".to_string()),
+                    created_at: None,
+                    updated_at: None,
+                    archived_at: None,
+                }),
+            )
+            .await
+        })
+    };
+    let first = ingest(
+        format!("agent:first-{suffix}"),
+        format!("record-first-{suffix}"),
+    );
+    let second = ingest(
+        format!("agent:second-{suffix}"),
+        format!("record-second-{suffix}"),
+    );
+    let outcomes = [
+        first.await.expect("first ingest task"),
+        second.await.expect("second ingest task"),
+    ];
+    assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .filter(|error| error.contains("thread identity is immutable"))
+            .count(),
+        1,
+    );
+    let stored_records: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count records after competing first ingests");
+    assert_eq!(stored_records, 1);
+}

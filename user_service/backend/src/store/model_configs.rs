@@ -133,11 +133,14 @@ impl AppStore {
             (id,owner_user_id,source_provider_id,enabled,task_enabled,updated_at,created_at,data)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO UPDATE SET
             owner_user_id=EXCLUDED.owner_user_id,source_provider_id=EXCLUDED.source_provider_id,
-            enabled=EXCLUDED.enabled,task_enabled=EXCLUDED.task_enabled,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data"#)
+            enabled=EXCLUDED.enabled,task_enabled=EXCLUDED.task_enabled,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data
+            WHERE user_model_configs.owner_user_id=EXCLUDED.owner_user_id"#)
             .bind(&stored.id).bind(&stored.owner_user_id).bind(&stored.source_provider_id)
             .bind(stored.enabled).bind(stored.task_enabled).bind(timestamp(&stored.updated_at)?)
             .bind(timestamp(&stored.created_at)?).bind(json(&stored)?)
-            .execute(&self.pool).await.map_err(|err| err.to_string())?;
+            .execute(&self.pool).await.map_err(|err| err.to_string())
+            .and_then(|result| (result.rows_affected() == 1).then_some(()).ok_or_else(||
+                "model config id already belongs to another user".to_string()))?;
         Self::decrypt_user_model_config(stored)
     }
 
@@ -221,10 +224,13 @@ impl AppStore {
         let stored = Self::encrypt_user_model_provider(provider.clone())?;
         sqlx::query(r#"INSERT INTO user_model_providers (id,owner_user_id,updated_at,created_at,data)
             VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO UPDATE SET owner_user_id=EXCLUDED.owner_user_id,
-            updated_at=EXCLUDED.updated_at,data=EXCLUDED.data"#)
+            updated_at=EXCLUDED.updated_at,data=EXCLUDED.data
+            WHERE user_model_providers.owner_user_id=EXCLUDED.owner_user_id"#)
             .bind(&stored.id).bind(&stored.owner_user_id).bind(timestamp(&stored.updated_at)?)
             .bind(timestamp(&stored.created_at)?).bind(json(&stored)?)
-            .execute(&self.pool).await.map_err(|err| err.to_string())?;
+            .execute(&self.pool).await.map_err(|err| err.to_string())
+            .and_then(|result| (result.rows_affected() == 1).then_some(()).ok_or_else(||
+                "model provider id already belongs to another user".to_string()))?;
         Self::decrypt_user_model_provider(stored)
     }
 

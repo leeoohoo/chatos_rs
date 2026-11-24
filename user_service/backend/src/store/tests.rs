@@ -2,14 +2,20 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    ensure_empty_database_bootstrap_allowed, now_rfc3339, AppStore,
-    RegistrationEmailCodeReservationError, RegistrationTransactionError, SuperAdminBootstrapConfig,
+    ensure_empty_database_bootstrap_allowed, now_rfc3339, user_queries::escape_like_pattern,
+    AppStore, RegistrationEmailCodeReservationError, RegistrationTransactionError,
+    SuperAdminBootstrapConfig,
 };
 use crate::models::{InviteCodeRecord, UserRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER};
 
 const BOOTSTRAP_USERNAME: &str = "bootstrap-admin";
 const BOOTSTRAP_PASSWORD: &str = "local-bootstrap-password";
 const BOOTSTRAP_DISPLAY_NAME: &str = "Bootstrap Admin";
+
+#[test]
+fn user_search_escapes_like_wildcards() {
+    assert_eq!(escape_like_pattern(r"a%b_c\d"), r"a\%b\_c\\d");
+}
 
 fn bootstrap_config(
     allow_empty_database_admin_creation: bool,

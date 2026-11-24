@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::num::NonZeroUsize;
+use std::sync::Arc;
+
 use axum::extract::FromRequestParts;
 use axum::http::{request::Parts, HeaderMap, StatusCode};
 use axum::Json;
@@ -171,6 +174,49 @@ pub fn hash_password(password: &str) -> Result<String, String> {
         .map_err(|err| err.to_string())
 }
 
+#[derive(Clone)]
+pub(crate) struct PasswordWorker {
+    limit: Arc<tokio::sync::Semaphore>,
+}
+
+impl PasswordWorker {
+    pub(crate) fn new(configured_concurrency: Option<NonZeroUsize>) -> Result<Self, String> {
+        let concurrency = match configured_concurrency {
+            Some(value) => value,
+            None => std::thread::available_parallelism()
+                .map_err(|error| format!("detect password worker parallelism failed: {error}"))?,
+        };
+        Ok(Self {
+            limit: Arc::new(tokio::sync::Semaphore::new(concurrency.get())),
+        })
+    }
+
+    async fn run<T, F>(&self, work: F) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
+        let permit = Arc::clone(&self.limit)
+            .acquire_owned()
+            .await
+            .map_err(|_| "password worker is unavailable".to_string())?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            work()
+        })
+        .await
+        .map_err(|error| format!("password worker failed: {error}"))
+    }
+}
+
+pub(crate) async fn hash_password_async(
+    worker: &PasswordWorker,
+    password: &str,
+) -> Result<String, String> {
+    let password = password.to_owned();
+    worker.run(move || hash_password(password.as_str())).await?
+}
+
 pub fn validate_new_password(password: &str) -> Result<(), String> {
     if password.trim().is_empty() {
         return Err("password is required".to_string());
@@ -200,6 +246,18 @@ pub fn verify_password(password: &str, password_hash: &str) -> bool {
     Argon2::default()
         .verify_password(password.as_bytes(), &parsed_hash)
         .is_ok()
+}
+
+pub(crate) async fn verify_password_async(
+    worker: &PasswordWorker,
+    password: &str,
+    password_hash: &str,
+) -> Result<bool, String> {
+    let password = password.to_owned();
+    let password_hash = password_hash.to_owned();
+    worker
+        .run(move || verify_password(password.as_str(), password_hash.as_str()))
+        .await
 }
 
 pub fn credential_version_matches(token_version: Option<i64>, current_version: i64) -> bool {
@@ -360,6 +418,7 @@ pub fn unauthorized(message: &str) -> (StatusCode, Json<serde_json::Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Condvar, Mutex};
 
     #[test]
     fn new_password_policy_rejects_short_long_blank_and_common_values() {
@@ -387,6 +446,81 @@ mod tests {
         let hash = hash_password(password).expect("hash compliant password");
         assert!(verify_password(password, &hash));
         assert!(!verify_password("different password value", &hash));
+    }
+
+    #[tokio::test]
+    async fn async_password_verification_uses_the_same_hash_format() {
+        let password = "correct horse battery staple";
+        let worker = PasswordWorker::new(None).expect("password worker");
+        let hash = hash_password_async(&worker, password)
+            .await
+            .expect("hash compliant password off the async runtime");
+        assert!(verify_password_async(&worker, password, &hash)
+            .await
+            .expect("verify password off the async runtime"));
+    }
+
+    #[test]
+    fn password_worker_uses_effective_parallelism_unless_configured() {
+        let detected = std::thread::available_parallelism().expect("effective parallelism");
+        let automatic = PasswordWorker::new(None).expect("automatic password worker");
+        assert_eq!(automatic.limit.available_permits(), detected.get());
+
+        let configured = NonZeroUsize::new(3).expect("non-zero test concurrency");
+        let overridden = PasswordWorker::new(Some(configured)).expect("configured password worker");
+        assert_eq!(overridden.limit.available_permits(), configured.get());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelled_request_keeps_its_password_worker_permit_until_work_finishes() {
+        let concurrency = NonZeroUsize::new(1).expect("test concurrency");
+        let worker = PasswordWorker::new(Some(concurrency)).expect("password worker");
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let first_release = Arc::clone(&release);
+        let (first_started_tx, first_started_rx) = tokio::sync::oneshot::channel();
+        let first_worker = worker.clone();
+        let first = tokio::spawn(async move {
+            first_worker
+                .run(move || {
+                    let _ = first_started_tx.send(());
+                    let (lock, changed) = &*first_release;
+                    let mut released = lock.lock().expect("release gate");
+                    while !*released {
+                        released = changed.wait(released).expect("release password work");
+                    }
+                })
+                .await
+        });
+        first_started_rx.await.expect("first password work started");
+        first.abort();
+        let _ = first.await;
+
+        let (second_started_tx, mut second_started_rx) = tokio::sync::oneshot::channel();
+        let second_worker = worker.clone();
+        let second = tokio::spawn(async move {
+            second_worker
+                .run(move || {
+                    let _ = second_started_tx.send(());
+                })
+                .await
+        });
+        let stayed_queued =
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut second_started_rx)
+                .await
+                .is_err();
+
+        let (lock, changed) = &*release;
+        *lock.lock().expect("release gate") = true;
+        changed.notify_one();
+        assert!(stayed_queued);
+        tokio::time::timeout(std::time::Duration::from_secs(1), second_started_rx)
+            .await
+            .expect("second password work unblocked")
+            .expect("second password work started");
+        second
+            .await
+            .expect("second password task")
+            .expect("second password work");
     }
 
     #[test]

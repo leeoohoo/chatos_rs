@@ -99,7 +99,7 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 "[Model image capability] This Run's configured model explicitly does not support images. Image parts are not sent to this model. For image-dependent work, explain this specific limitation and ask for an image-capable model or an authorized OCR alternative. Do not claim to have seen an image or create a Task merely to bypass this limitation.".into()
             )));
         }
-        if let Some(contract) = task_acceptance_contract_item(&claim.run.input, &self.profile_key) {
+        if let Some(contract) = task_acceptance_contract_item(&claim.run.input, self.profile_key) {
             // Responses history normally retains the original prefix. Provider compaction
             // replaces that history, so restore the exact Host-owned contract once after the
             // latest compaction instead of relying on a lossy summary.

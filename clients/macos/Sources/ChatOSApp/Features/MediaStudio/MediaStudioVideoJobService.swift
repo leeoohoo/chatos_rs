@@ -127,45 +127,34 @@ actor MediaStudioVideoJobService {
             let store = self.store
             let localJobID = execution.snapshot.id
             let request = execution.request
+            let persistProgress: @Sendable (VideoGenerationProgress) async -> Void = { value in
+                do {
+                    try await store.recordProgress(
+                        id: localJobID,
+                        owner: owner,
+                        sessionEpoch: sessionEpoch,
+                        progress: value
+                    )
+                    await progress(value)
+                } catch {
+                    await gate.fail(error)
+                    withUnsafeCurrentTask { $0?.cancel() }
+                }
+            }
             let result: VideoGenerationResult
             do {
                 switch execution.mode {
                 case .create:
-                    result = try await service.generateVideo(request) { value in
-                        do {
-                            try await store.recordProgress(
-                                id: localJobID,
-                                owner: owner,
-                                sessionEpoch: sessionEpoch,
-                                progress: value
-                            )
-                            await progress(value)
-                        } catch {
-                            await gate.fail(error)
-                            withUnsafeCurrentTask { $0?.cancel() }
-                        }
-                    }
+                    result = try await service.generateVideo(request, progress: persistProgress)
                 case let .resume(providerJobID):
                     guard let resumable = service as? any ResumableVideoGenerationServicing else {
                         throw MediaStudioVideoJobServiceError.resumeUnavailable
                     }
                     result = try await resumable.resumeVideo(
                         request,
-                        jobID: providerJobID
-                    ) { value in
-                        do {
-                            try await store.recordProgress(
-                                id: localJobID,
-                                owner: owner,
-                                sessionEpoch: sessionEpoch,
-                                progress: value
-                            )
-                            await progress(value)
-                        } catch {
-                            await gate.fail(error)
-                            withUnsafeCurrentTask { $0?.cancel() }
-                        }
-                    }
+                        jobID: providerJobID,
+                        progress: persistProgress
+                    )
                 case .needsReview:
                     throw MediaStudioVideoJobServiceError.unresolvedSubmission
                 }

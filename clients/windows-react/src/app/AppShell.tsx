@@ -34,6 +34,7 @@ import type { WorkspaceIndexPort } from "../features/workspace-index/ports/Works
 import type { QuickSearchNavigationPort } from "../features/quick-search/ports/QuickSearchPort";
 import { WorkspaceSidebar } from "../features/workspace-index/ui/WorkspaceSidebar";
 import { interfaceText } from "../shared/interfaceLocale";
+import { PetRequestedSurface } from "./PetRequestedSurface";
 import { getFocusableModalElements } from "./settingsAccessibility";
 
 const LocalTerminalWorkspace = lazy(async () => {
@@ -79,23 +80,6 @@ const RequirementSurveyWorkspace = lazy(async () => {
       <viewModule.RequirementSurveyCenterView {...props} port={port} />
     ),
   };
-});
-
-const NotepadWorkspace = lazy(async () => {
-  const [adapterModule, viewModule] = await Promise.all([
-    import("../features/notepad/adapters/TauriNotepadAdapter"),
-    import("../features/notepad/ui/NotepadView"),
-  ]);
-  const port = new adapterModule.TauriNotepadAdapter();
-  type Props = Omit<ComponentProps<typeof viewModule.NotepadView>, "port">;
-  return {
-    default: (props: Props) => <viewModule.NotepadView {...props} port={port} />,
-  };
-});
-
-const PetQuickChatWorkspace = lazy(async () => {
-  const module = await import("../features/pet/ui/PetQuickChatSurface");
-  return { default: module.PetQuickChatSurface };
 });
 
 const MediaStudioWorkspace = lazy(async () => {
@@ -964,29 +948,16 @@ export function AppShell({
           </Suspense>
         </section>
       )}
-      {petSurface === "notepad" && (
-        <Suspense fallback={<div className="notepad-sheet-backdrop"><div className="workspace-loading"><span className="mini-spinner" />{text("loadingWorkspace")}</div></div>}>
-          <NotepadWorkspace
-            hostReady={snapshot.ready}
-            ownerUserId={session.user.id}
-            onClose={() => onPetSurfaceChange(null)}
-          />
-        </Suspense>
-      )}
-      {petSurface === "quick-chat" && (
-        <Suspense fallback={null}>
-          <PetQuickChatWorkspace
-            onClose={() => onPetSurfaceChange(null)}
-            onOpenNotepad={() => onPetSurfaceChange("notepad")}
-            onOpenTranslation={() => { void petPresentation.openTranslation(); }}
-            onSelectResource={(kind, id) => {
-              onPetSurfaceChange(null);
-              selectWorkspace({ kind, id });
-            }}
-            resources={workspaceSnapshot}
-          />
-        </Suspense>
-      )}
+      <PetRequestedSurface
+        hostReady={snapshot.ready}
+        loadingLabel={text("loadingWorkspace")}
+        onChange={onPetSurfaceChange}
+        onOpenTranslation={() => { void petPresentation.openTranslation(); }}
+        onSelectResource={(kind, id) => selectWorkspace({ kind, id })}
+        ownerUserId={session.user.id}
+        resources={workspaceSnapshot}
+        surface={petSurface}
+      />
       <GlobalToolApprovalOverlay
         hostReady={snapshot.ready}
         ownerUserId={session.user.id}

@@ -6,15 +6,16 @@ use axum::{Extension, Json};
 use serde::Deserialize;
 
 use crate::auth::{
-    hash_password, normalize_display_name, normalize_username, verify_password, CurrentPrincipal,
+    hash_password_async, normalize_display_name, normalize_username, verify_password_async,
+    CurrentPrincipal,
 };
 use crate::integrations::{
     provision_harness_user_public_register, provision_harness_user_public_register_result,
 };
 use crate::models::{
     ChangePasswordRequest, CreateUserRequest, ProvisionHarnessUserRequest,
-    ResetUserPasswordRequest, UpdateUserRequest, UserOptionRecord, UserRecord,
-    UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER,
+    ResetUserPasswordRequest, UpdateUserRequest, UserOptionPageResponse, UserOptionRecord,
+    UserRecord, UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER,
 };
 use crate::state::AppState;
 use crate::store::now_rfc3339;
@@ -24,56 +25,31 @@ use super::{
     ApiResult, ApiStatusResult,
 };
 
+const DEFAULT_USER_PAGE_LIMIT: i64 = 20;
+const MAX_USER_PAGE_LIMIT: i64 = 100;
+
 #[derive(Debug, Default, Deserialize)]
-pub struct UserListPageQuery {
+pub struct UserListQuery {
+    query: Option<String>,
     limit: Option<i64>,
     offset: Option<u64>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-pub struct UserOptionsQuery {
-    ids: Option<String>,
+#[derive(Debug, Deserialize)]
+pub struct UserOptionsResolveRequest {
+    ids: Vec<String>,
 }
 
 pub async fn list_users(
     State(state): State<AppState>,
     Extension(principal): Extension<CurrentPrincipal>,
-) -> ApiResult<Vec<UserSummaryRecord>> {
-    if principal.is_super_admin() {
-        return state
-            .store
-            .list_users_summary()
-            .await
-            .map(Json)
-            .map_err(internal_error);
-    }
-
-    let Some(user_id) = principal.user_id.as_deref() else {
-        return Err(not_found("current user not found"));
-    };
-    let Some(summary) = state
-        .store
-        .get_user_summary(user_id)
-        .await
-        .map_err(internal_error)?
-    else {
-        return Err(not_found("user not found"));
-    };
-    Ok(Json(vec![summary]))
-}
-
-pub async fn list_users_page(
-    State(state): State<AppState>,
-    Extension(principal): Extension<CurrentPrincipal>,
-    Query(query): Query<UserListPageQuery>,
+    Query(query): Query<UserListQuery>,
 ) -> ApiResult<UserSummaryPageResponse> {
+    let (search, limit, offset) = validated_user_list_query(query).map_err(bad_request)?;
     if principal.is_super_admin() {
         return state
             .store
-            .list_users_summary_page(
-                query.limit.unwrap_or(20).clamp(1, 100),
-                query.offset.unwrap_or(0),
-            )
+            .list_users_summary_page(search.as_deref(), limit, offset)
             .await
             .map(Json)
             .map_err(internal_error);
@@ -90,29 +66,28 @@ pub async fn list_users_page(
     else {
         return Err(not_found("user not found"));
     };
+    let matches = search
+        .as_deref()
+        .is_none_or(|search| user_matches_search(&summary.username, &summary.display_name, search));
     Ok(Json(UserSummaryPageResponse {
-        items: vec![summary],
-        total: 1,
+        items: (matches && offset == 0)
+            .then_some(summary)
+            .into_iter()
+            .collect(),
+        total: if matches { 1 } else { 0 },
     }))
 }
 
 pub async fn list_user_options(
     State(state): State<AppState>,
     Extension(principal): Extension<CurrentPrincipal>,
-    Query(query): Query<UserOptionsQuery>,
-) -> ApiResult<Vec<UserOptionRecord>> {
+    Query(query): Query<UserListQuery>,
+) -> ApiResult<UserOptionPageResponse> {
+    let (search, limit, offset) = validated_user_list_query(query).map_err(bad_request)?;
     if principal.is_super_admin() {
-        let requested_ids = query.ids.as_deref().map(|ids| {
-            ids.split(',')
-                .map(str::trim)
-                .filter(|id| !id.is_empty())
-                .take(200)
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>()
-        });
         return state
             .store
-            .list_user_options(requested_ids.as_deref())
+            .list_user_options_page(search.as_deref(), limit, offset)
             .await
             .map(Json)
             .map_err(internal_error);
@@ -122,11 +97,77 @@ pub async fn list_user_options(
         return Err(not_found("current user not found"));
     };
     let username = principal.username.unwrap_or_default();
-    Ok(Json(vec![UserOptionRecord {
+    let option = UserOptionRecord {
         id: user_id,
         display_name: principal.display_name.unwrap_or_else(|| username.clone()),
         username,
-    }]))
+    };
+    let matches = search
+        .as_deref()
+        .is_none_or(|search| user_matches_search(&option.username, &option.display_name, search));
+    Ok(Json(UserOptionPageResponse {
+        items: (matches && offset == 0)
+            .then_some(option)
+            .into_iter()
+            .collect(),
+        total: if matches { 1 } else { 0 },
+    }))
+}
+
+pub async fn resolve_user_options(
+    State(state): State<AppState>,
+    Extension(principal): Extension<CurrentPrincipal>,
+    Json(input): Json<UserOptionsResolveRequest>,
+) -> ApiResult<Vec<UserOptionRecord>> {
+    let requested_ids = input
+        .ids
+        .into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .collect::<Vec<_>>();
+    if principal.is_super_admin() {
+        return state
+            .store
+            .resolve_user_options(&requested_ids)
+            .await
+            .map(Json)
+            .map_err(internal_error);
+    }
+
+    let Some(user_id) = principal.user_id else {
+        return Err(not_found("current user not found"));
+    };
+    if !requested_ids.iter().any(|id| id == &user_id) {
+        return Ok(Json(Vec::new()));
+    }
+    state
+        .store
+        .resolve_user_options(&[user_id])
+        .await
+        .map(Json)
+        .map_err(internal_error)
+}
+
+fn validated_user_list_query(query: UserListQuery) -> Result<(Option<String>, i64, u64), String> {
+    let limit = query.limit.unwrap_or(DEFAULT_USER_PAGE_LIMIT);
+    if !(1..=MAX_USER_PAGE_LIMIT).contains(&limit) {
+        return Err(format!("limit must be between 1 and {MAX_USER_PAGE_LIMIT}"));
+    }
+    let offset = query.offset.unwrap_or(0);
+    i64::try_from(offset).map_err(|_| "offset is too large".to_string())?;
+    Ok((
+        query
+            .query
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        limit,
+        offset,
+    ))
+}
+
+fn user_matches_search(username: &str, display_name: &str, search: &str) -> bool {
+    let search = search.to_lowercase();
+    username.to_lowercase().starts_with(&search) || display_name.to_lowercase().starts_with(&search)
 }
 
 pub async fn create_user(
@@ -153,7 +194,9 @@ pub async fn create_user(
         id: uuid::Uuid::new_v4().to_string(),
         username: username.clone(),
         display_name: normalize_display_name(input.display_name.as_deref(), &username),
-        password_hash: hash_password(input.password.as_str()).map_err(bad_request)?,
+        password_hash: hash_password_async(&state.password_worker, input.password.as_str())
+            .await
+            .map_err(bad_request)?,
         credential_version: 0,
         role: role.to_string(),
         enabled: input.enabled.unwrap_or(true),
@@ -250,7 +293,9 @@ pub async fn provision_harness_user(
         return Err(bad_request("cannot provision disabled user"));
     }
 
-    user.password_hash = hash_password(input.password.as_str()).map_err(bad_request)?;
+    user.password_hash = hash_password_async(&state.password_worker, input.password.as_str())
+        .await
+        .map_err(bad_request)?;
     user.credential_version = user
         .credential_version
         .checked_add(1)
@@ -292,10 +337,24 @@ pub async fn change_password(
     else {
         return Err(not_found("user not found"));
     };
-    if !verify_password(input.current_password.as_str(), user.password_hash.as_str()) {
+    if !verify_password_async(
+        &state.password_worker,
+        input.current_password.as_str(),
+        user.password_hash.as_str(),
+    )
+    .await
+    .map_err(internal_error)?
+    {
         return Err(unauthorized("current password is incorrect"));
     }
-    if verify_password(input.new_password.as_str(), user.password_hash.as_str()) {
+    if verify_password_async(
+        &state.password_worker,
+        input.new_password.as_str(),
+        user.password_hash.as_str(),
+    )
+    .await
+    .map_err(internal_error)?
+    {
         return Err(bad_request(
             "new password must differ from the current password",
         ));
@@ -339,7 +398,9 @@ async fn update_user_credentials(
     user: &mut UserRecord,
     password: &str,
 ) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
-    user.password_hash = hash_password(password).map_err(bad_request)?;
+    user.password_hash = hash_password_async(&state.password_worker, password)
+        .await
+        .map_err(bad_request)?;
     user.credential_version = user
         .credential_version
         .checked_add(1)
@@ -442,5 +503,42 @@ fn normalize_role(
         USER_ROLE_SUPER_ADMIN => Ok(USER_ROLE_SUPER_ADMIN),
         USER_ROLE_USER => Ok(USER_ROLE_USER),
         _ => Err(bad_request("role must be super_admin or user")),
+    }
+}
+
+#[cfg(test)]
+mod list_query_tests {
+    use super::{user_matches_search, validated_user_list_query, UserListQuery};
+
+    #[test]
+    fn list_query_uses_existing_pagination_bounds() {
+        let (search, limit, offset) = validated_user_list_query(UserListQuery::default())
+            .expect("default pagination must be valid");
+        assert_eq!(search, None);
+        assert_eq!(limit, 20);
+        assert_eq!(offset, 0);
+
+        assert!(validated_user_list_query(UserListQuery {
+            limit: Some(0),
+            ..UserListQuery::default()
+        })
+        .is_err());
+        assert!(validated_user_list_query(UserListQuery {
+            limit: Some(101),
+            ..UserListQuery::default()
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn list_query_trims_search_and_matches_prefix_case_insensitively() {
+        let (search, _, _) = validated_user_list_query(UserListQuery {
+            query: Some("  ALi  ".to_string()),
+            ..UserListQuery::default()
+        })
+        .expect("search query must be valid");
+        assert_eq!(search.as_deref(), Some("ALi"));
+        assert!(user_matches_search("alice", "Alice Zhang", "ALi"));
+        assert!(!user_matches_search("malice", "Malice", "ALi"));
     }
 }

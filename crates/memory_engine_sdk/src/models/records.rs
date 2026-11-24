@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::default_pending;
+use super::{default_pending, SdkUpsertThreadRequest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineRecord {
@@ -45,6 +45,8 @@ pub struct SdkBatchSyncRecordsRequest {
     pub tenant_id: String,
     pub project_partition_key: String,
     pub runtime_context_assertion: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<SdkUpsertThreadRequest>,
     pub records: Vec<UpsertRecordInput>,
 }
 
@@ -148,7 +150,7 @@ pub struct TurnProcessRecordsResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::EngineRecord;
+    use super::{EngineRecord, SdkBatchSyncRecordsRequest};
 
     #[test]
     fn engine_record_defaults_summary_status_to_pending() {
@@ -170,5 +172,37 @@ mod tests {
         .expect("record");
 
         assert_eq!(record.summary_status, "pending");
+    }
+
+    #[test]
+    fn batch_sync_accepts_an_embedded_thread_without_a_source_id() {
+        let request: SdkBatchSyncRecordsRequest = serde_json::from_value(serde_json::json!({
+            "tenant_id": "tenant-1",
+            "project_partition_key": "__none__",
+            "runtime_context_assertion": "assertion",
+            "thread": {
+                "tenant_id": "tenant-1",
+                "subject_id": "agent:agent-1",
+                "thread_type": "conversation",
+                "external_thread_id": "thread-1",
+                "title": null,
+                "labels": ["memory-schema:v2", "agent:agent-1"],
+                "metadata": null,
+                "status": "active",
+                "created_at": null,
+                "updated_at": null,
+                "archived_at": null
+            },
+            "records": []
+        }))
+        .expect("batch request with thread identity");
+
+        assert_eq!(
+            request
+                .thread
+                .as_ref()
+                .map(|thread| thread.subject_id.as_str()),
+            Some("agent:agent-1")
+        );
     }
 }

@@ -3,6 +3,9 @@
 
 use super::*;
 
+#[path = "tests/user_service_password_worker.rs"]
+mod user_service_password_worker;
+
 #[test]
 fn structured_secret_uses_json_schema_and_retains_secret_sensitivity() {
     let definitions = builtin_definitions();
@@ -961,56 +964,6 @@ fn catalog_exposes_user_service_runtime_routes_via_env_projection() {
         assert_eq!(definition.nullable, expect_nullable);
         assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
     }
-}
-
-#[test]
-fn catalog_exposes_user_service_smtp_controls_via_nullable_env_projection() {
-    let definitions = builtin_definitions();
-    for (key, env_alias) in [
-        (USER_SERVICE_SMTP_HOST_CONFIG_KEY, "USER_SERVICE_SMTP_HOST"),
-        (
-            USER_SERVICE_SMTP_USERNAME_CONFIG_KEY,
-            "USER_SERVICE_SMTP_USERNAME",
-        ),
-        (
-            USER_SERVICE_SMTP_PASSWORD_CONFIG_KEY,
-            "USER_SERVICE_SMTP_PASSWORD",
-        ),
-        (
-            USER_SERVICE_EMAIL_FROM_CONFIG_KEY,
-            "USER_SERVICE_EMAIL_FROM",
-        ),
-    ] {
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.key == key)
-            .unwrap_or_else(|| panic!("missing definition for {key}"));
-        assert_eq!(definition.scope, "service");
-        assert_eq!(definition.service_name.as_deref(), Some("user-service"));
-        assert_eq!(definition.reload_mode, "restart_required");
-        assert!(definition.nullable, "{key} should remain optional");
-        assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
-    }
-
-    let smtp_port = definitions
-        .iter()
-        .find(|definition| definition.key == USER_SERVICE_SMTP_PORT_CONFIG_KEY)
-        .expect("smtp port definition");
-    assert!(!smtp_port.nullable);
-    assert_eq!(smtp_port.default_value, json!(587));
-
-    let email_from_name = definitions
-        .iter()
-        .find(|definition| definition.key == USER_SERVICE_EMAIL_FROM_NAME_CONFIG_KEY)
-        .expect("email from name definition");
-    assert!(!email_from_name.nullable);
-    assert_eq!(email_from_name.default_value, json!("Chat OS"));
-
-    let smtp_password = definitions
-        .iter()
-        .find(|definition| definition.key == USER_SERVICE_SMTP_PASSWORD_CONFIG_KEY)
-        .expect("smtp password definition");
-    assert_eq!(smtp_password.sensitivity, "secret");
 }
 
 #[test]

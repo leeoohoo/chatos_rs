@@ -78,8 +78,11 @@ fn protected_api(state: AppState) -> Router<AppState> {
             "/api/users",
             get(users::list_users).post(users::create_user),
         )
-        .route("/api/users/page", get(users::list_users_page))
         .route("/api/users/options", get(users::list_user_options))
+        .route(
+            "/api/users/options/resolve",
+            post(users::resolve_user_options),
+        )
         .route("/api/users/{id}", patch(users::update_user))
         .route(
             "/api/users/{id}/reset-password",
@@ -462,6 +465,7 @@ mod tests {
             jwt_issuer: "user_service".to_string(),
             user_service_audience: "user_service".to_string(),
             user_access_ttl_seconds: 3600,
+            password_worker_concurrency: None,
             super_admin_username: "admin".to_string(),
             super_admin_password: "password".to_string(),
             super_admin_display_name: "Admin".to_string(),
@@ -573,8 +577,8 @@ mod tests {
             (reqwest::Method::GET, "/api/health"),
             (reqwest::Method::POST, "/api/auth/login"),
             (reqwest::Method::GET, "/api/users"),
-            (reqwest::Method::GET, "/api/users/page"),
             (reqwest::Method::GET, "/api/users/options"),
+            (reqwest::Method::POST, "/api/users/options/resolve"),
             (
                 reqwest::Method::GET,
                 "/api/internal/task-runner/model-configs",

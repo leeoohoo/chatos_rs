@@ -57,7 +57,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const userServiceApi = {
   listUserOptions: (userIds: string[]) =>
-    request<UserOptionRecord[]>(
-      `/api/users/options?ids=${encodeURIComponent(userIds.join(','))}`,
-    ),
+    request<UserOptionRecord[]>('/api/users/options/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ ids: userIds }),
+    }),
 };

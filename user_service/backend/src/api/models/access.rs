@@ -7,7 +7,18 @@ use crate::auth::CurrentPrincipal;
 use crate::models::{UserModelConfigRecord, UserModelProviderRecord};
 use crate::state::AppState;
 
-use super::super::{bad_request, forbidden, internal_error, not_found};
+use super::super::{bad_request, conflict, forbidden, internal_error, not_found};
+
+pub(super) fn ensure_create_id_owner(
+    owner_user_id: &str,
+    existing_owner_user_id: Option<&str>,
+) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
+    if existing_owner_user_id.is_some_and(|existing| existing != owner_user_id) {
+        Err(conflict("record id already belongs to another user"))
+    } else {
+        Ok(())
+    }
+}
 
 pub(super) fn resolve_target_user_id(
     principal: &CurrentPrincipal,
@@ -77,7 +88,7 @@ pub(super) async fn ensure_owner_user_exists(
 mod tests {
     use axum::http::StatusCode;
 
-    use super::{ensure_provider_access, resolve_target_user_id};
+    use super::{ensure_create_id_owner, ensure_provider_access, resolve_target_user_id};
     use crate::auth::CurrentPrincipal;
     use crate::models::UserModelProviderRecord;
 
@@ -132,6 +143,15 @@ mod tests {
             Some("user-1".to_string()),
         );
         assert!(ensure_provider_access(&current, &provider("user-1")).is_ok());
+    }
+
+    #[test]
+    fn create_id_cannot_reuse_another_users_record() {
+        assert!(ensure_create_id_owner("user-1", None).is_ok());
+        assert!(ensure_create_id_owner("user-1", Some("user-1")).is_ok());
+        let error = ensure_create_id_owner("user-1", Some("user-2"))
+            .expect_err("cross-user record id must be rejected");
+        assert_eq!(error.0, StatusCode::CONFLICT);
     }
 
     #[test]

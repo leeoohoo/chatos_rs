@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::net::{IpAddr, SocketAddr};
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use chatos_service_runtime::{
@@ -20,6 +21,7 @@ pub struct AppConfig {
     pub jwt_issuer: String,
     pub user_service_audience: String,
     pub user_access_ttl_seconds: i64,
+    pub password_worker_concurrency: Option<NonZeroUsize>,
     pub super_admin_username: String,
     pub super_admin_password: String,
     pub super_admin_display_name: String,
@@ -96,6 +98,15 @@ impl AppConfig {
             user_access_ttl_seconds: require_config_center_i64(
                 "USER_SERVICE_USER_ACCESS_TTL_SECONDS",
             )?,
+            password_worker_concurrency: optional_config_center_usize(
+                "USER_SERVICE_PASSWORD_WORKER_CONCURRENCY",
+            )?
+            .map(|value| {
+                NonZeroUsize::new(value).ok_or_else(|| {
+                    "USER_SERVICE_PASSWORD_WORKER_CONCURRENCY must be greater than zero".to_string()
+                })
+            })
+            .transpose()?,
             super_admin_username: require_config_center_text("USER_SERVICE_SUPER_ADMIN_USERNAME")?,
             super_admin_password: require_config_center_secret(
                 "USER_SERVICE_SUPER_ADMIN_PASSWORD",
@@ -336,6 +347,12 @@ fn require_config_center_u64(key: &str) -> Result<u64, String> {
     require_config_center_text(key)?
         .parse()
         .map_err(|err| format!("invalid {key}: {err}"))
+}
+
+fn optional_config_center_usize(key: &str) -> Result<Option<usize>, String> {
+    optional_config_center_text(key)
+        .map(|value| value.parse().map_err(|err| format!("invalid {key}: {err}")))
+        .transpose()
 }
 
 fn require_config_center_f64(key: &str) -> Result<f64, String> {

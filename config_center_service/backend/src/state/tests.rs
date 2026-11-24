@@ -6,6 +6,9 @@ use super::support::*;
 
 use super::*;
 
+#[path = "tests/user_service_password_worker.rs"]
+mod user_service_password_worker;
+
 #[test]
 fn retired_configuration_keys_are_removed_without_matching_active_policy() {
     for key in [
@@ -1094,28 +1097,6 @@ fn user_service_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys
         .contains(&USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&USER_SERVICE_LOGIN_LOCKOUT_SECONDS_CONFIG_KEY.to_string()));
-}
-
-#[test]
-fn explicit_local_admin_bootstrap_override_precedes_user_service_startup() {
-    let mut values = BTreeMap::from([(
-        USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY.to_string(),
-        json!(false),
-    )]);
-
-    assert!(apply_user_admin_bootstrap_override(
-        &mut values,
-        Some(&json!(true)),
-    ));
-    assert_eq!(
-        values.get(USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY),
-        Some(&json!(true))
-    );
-    assert!(!apply_user_admin_bootstrap_override(
-        &mut values,
-        Some(&json!(true)),
-    ));
-    assert!(!apply_user_admin_bootstrap_override(&mut values, None));
 }
 
 #[test]

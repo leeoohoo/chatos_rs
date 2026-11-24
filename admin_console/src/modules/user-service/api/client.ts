@@ -25,6 +25,7 @@ import type {
   UserModelProviderRecord,
   UserModelSettingsRecord,
   UserOptionRecord,
+  UserOptionPageResponse,
   UserSummaryRecord,
   UserSummaryPageResponse,
   InviteCodeRecord,
@@ -76,10 +77,21 @@ export const api = {
   health: () => request<HealthResponse>('/api/health'),
   currentUser: () => request<CurrentUserResponse>('/api/auth/me'),
   getSystemConfig: () => request<SystemConfigResponse>('/api/system/config'),
-  listUsers: () => request<UserSummaryRecord[]>('/api/users'),
-  listUserOptions: () => request<UserOptionRecord[]>('/api/users/options'),
-  listUsersPage: (limit: number, offset: number) =>
-    request<UserSummaryPageResponse>(`/api/users/page?limit=${limit}&offset=${offset}`),
+  listUserOptions: (limit: number, offset: number, query?: string) => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (query) params.set('query', query);
+    return request<UserOptionPageResponse>(`/api/users/options?${params}`);
+  },
+  resolveUserOptions: (ids: string[]) =>
+    request<UserOptionRecord[]>('/api/users/options/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
+  listUsers: (limit: number, offset: number, query?: string) => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (query) params.set('query', query);
+    return request<UserSummaryPageResponse>(`/api/users?${params}`);
+  },
   listInviteCodes: () => request<InviteCodeRecord[]>('/api/invite-codes'),
   createInviteCode: (payload: CreateInviteCodePayload) =>
     request<CreateInviteCodeResponse>('/api/invite-codes', {

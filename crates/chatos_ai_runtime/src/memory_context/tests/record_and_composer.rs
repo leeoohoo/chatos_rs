@@ -69,7 +69,7 @@ fn memory_record_writer_resolves_multi_user_tenant_from_record_metadata() {
 }
 
 #[tokio::test]
-async fn memory_record_writer_creates_each_thread_before_syncing_records() {
+async fn memory_record_writer_includes_thread_identity_in_each_record_batch() {
     use axum::{routing::put, Router};
 
     let state = MemoryWriteServerState::default();
@@ -83,10 +83,6 @@ async fn memory_record_writer_creates_each_thread_before_syncing_records() {
             axum::serve(
                 listener,
                 Router::new()
-                    .route(
-                        "/api/memory-engine/v1/threads/{thread_id}",
-                        put(accept_thread_upsert),
-                    )
                     .route(
                         "/api/memory-engine/v1/threads/{thread_id}/records/batch-sync",
                         put(accept_record_sync),
@@ -133,23 +129,7 @@ async fn memory_record_writer_creates_each_thread_before_syncing_records() {
         .await
         .expect("explicit thread kind matches the established message mode");
 
-    assert_eq!(state.thread_upserts.load(Ordering::SeqCst), 1);
-    assert_eq!(state.record_syncs.load(Ordering::SeqCst), 2);
-    let identity_change = writer
-        .save_record(
-            SaveRecordInput::user_message("conversation-1", "wrong Agent")
-                .with_message_id("message-3")
-                .with_metadata(json!({
-                    "tenant_id": "user-1",
-                    "agent_id": "agent-2",
-                    "thread_kind": "agent_conversation"
-                })),
-        )
-        .await;
-    assert_eq!(
-        identity_change.expect_err("thread identity change must fail"),
-        "memory thread identity changed after it was established"
-    );
+    assert_eq!(state.thread_upserts.load(Ordering::SeqCst), 2);
     assert_eq!(state.record_syncs.load(Ordering::SeqCst), 2);
     server.abort();
 }

@@ -126,9 +126,11 @@ Change the default password and JWT secret before production use.
 - `GET /api/invite-codes`
 - `POST /api/invite-codes`
 - `POST /api/invite-codes/:id/revoke`
-- `GET /api/users`
+- `GET /api/users?query=&limit=&offset=`
 - `POST /api/users`
 - `PATCH /api/users/:id`
+- `GET /api/users/options?query=&limit=&offset=`
+- `POST /api/users/options/resolve`
 - `GET /api/model-configs`
 - `POST /api/model-configs`
 - `PATCH /api/model-configs/:id`

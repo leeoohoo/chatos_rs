@@ -9,6 +9,7 @@ use crate::config::AppConfig;
 use crate::db::Db;
 use crate::models::{
     BatchSyncRecordsRequest, EngineRecord, UpsertRecordInput, UpsertSubjectRequest,
+    UpsertThreadRequest,
 };
 use crate::repositories::postgres::{decode, json, timestamp};
 use crate::repositories::{subject_memory_scopes, subjects, threads};
@@ -45,21 +46,34 @@ impl CompactTurnKey {
     }
 }
 
+#[cfg(test)]
 pub async fn batch_sync_records(
     config: &AppConfig,
     db: &Db,
     thread_id: &str,
     req: &BatchSyncRecordsRequest,
 ) -> Result<usize, String> {
-    threads::begin_record_sync(
-        db,
-        &req.tenant_id,
-        &req.source_id,
-        thread_id,
-        config.record_sync_lease_timeout_secs,
-    )
-    .await?;
-    let result = batch_sync_records_inner(db, thread_id, req).await;
+    batch_sync_records_with_thread(config, db, thread_id, req, None).await
+}
+
+pub async fn batch_sync_records_with_thread(
+    config: &AppConfig,
+    db: &Db,
+    thread_id: &str,
+    req: &BatchSyncRecordsRequest,
+    thread: Option<UpsertThreadRequest>,
+) -> Result<usize, String> {
+    if thread.is_none() {
+        threads::begin_record_sync(
+            db,
+            &req.tenant_id,
+            &req.source_id,
+            thread_id,
+            config.record_sync_lease_timeout_secs,
+        )
+        .await?;
+    }
+    let result = batch_sync_records_inner(config, db, thread_id, req, thread).await;
     let finish = threads::finish_record_sync(db, &req.tenant_id, &req.source_id, thread_id).await;
     match (result, finish) {
         (Ok(value), Ok(())) => Ok(value),
@@ -69,12 +83,37 @@ pub async fn batch_sync_records(
 }
 
 async fn batch_sync_records_inner(
+    config: &AppConfig,
     db: &Db,
     thread_id: &str,
     req: &BatchSyncRecordsRequest,
+    thread: Option<UpsertThreadRequest>,
 ) -> Result<usize, String> {
     let project_partition_key = batch_project_partition(req)?;
     let mut tx = db.begin().await.map_err(|e| e.to_string())?;
+    let ensured_thread = if let Some(thread) = thread {
+        if thread.tenant_id != req.tenant_id || thread.source_id != req.source_id {
+            return Err("batch thread identity does not match record scope".to_string());
+        }
+        let thread =
+            threads::ensure_thread_for_record_ingest_in_transaction(&mut tx, thread_id, thread)
+                .await?;
+        subject_memory_scopes::validate_thread_project_partition(
+            &thread,
+            project_partition_key.as_str(),
+        )?;
+        threads::begin_record_sync_in_transaction(
+            &mut tx,
+            &req.tenant_id,
+            &req.source_id,
+            thread_id,
+            config.record_sync_lease_timeout_secs,
+        )
+        .await?;
+        Some(thread)
+    } else {
+        None
+    };
     crate::repositories::thread_partitions::lock_or_create(
         &mut tx,
         &req.tenant_id,
@@ -152,6 +191,9 @@ async fn batch_sync_records_inner(
         .await?;
     }
     tx.commit().await.map_err(|e| e.to_string())?;
+    if let Some(thread) = ensured_thread.as_ref() {
+        subject_memory_scopes::ensure_thread_identity_scopes(db, thread).await?;
+    }
     for (project_subject_id, project_name) in project_identities {
         subject_memory_scopes::ensure_project_identity_scope(
             db,

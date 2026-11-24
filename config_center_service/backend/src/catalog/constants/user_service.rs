@@ -24,6 +24,8 @@ pub const USER_SERVICE_JWT_ISSUER_CONFIG_KEY: &str = "user_service.auth.jwt_issu
 pub const USER_SERVICE_USER_AUDIENCE_CONFIG_KEY: &str = "user_service.auth.user_audience";
 pub const USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY: &str =
     "user_service.auth.user_access_ttl_seconds";
+pub const USER_SERVICE_PASSWORD_WORKER_CONCURRENCY_CONFIG_KEY: &str =
+    "user_service.auth.password_worker_concurrency";
 pub const USER_SERVICE_RETENTION_INTERVAL_SECONDS_CONFIG_KEY: &str =
     "user_service.retention.interval_seconds";
 pub const USER_SERVICE_RETENTION_BATCH_SIZE_CONFIG_KEY: &str = "user_service.retention.batch_size";
@@ -87,6 +89,7 @@ pub const USER_SERVICE_RUNTIME_CONFIG_KEYS: &[&str] = &[
     USER_SERVICE_JWT_ISSUER_CONFIG_KEY,
     USER_SERVICE_USER_AUDIENCE_CONFIG_KEY,
     USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY,
+    USER_SERVICE_PASSWORD_WORKER_CONCURRENCY_CONFIG_KEY,
     USER_SERVICE_RETENTION_INTERVAL_SECONDS_CONFIG_KEY,
     USER_SERVICE_RETENTION_BATCH_SIZE_CONFIG_KEY,
     USER_SERVICE_REGISTER_CODE_TTL_SECONDS_CONFIG_KEY,

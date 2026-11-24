@@ -3,7 +3,9 @@
 
 use uuid::Uuid;
 
-use super::{verify_and_consume, ExpectedRuntimeContextScope};
+use super::{
+    verify_and_consume, verify_and_consume_for_thread_upsert, ExpectedRuntimeContextScope,
+};
 use crate::config::test_app_config as test_config;
 use crate::models::UpsertThreadRequest;
 
@@ -237,4 +239,60 @@ async fn runtime_context_assertion_is_scope_bound_fail_closed_and_single_use() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn runtime_context_assertion_allows_only_its_agent_to_create_a_missing_thread() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let thread_id = format!("missing-thread-{suffix}");
+    let subject = format!("agent:{suffix}");
+    let partition = "__none__";
+    let config = test_config("unused".to_string());
+    let expected = || ExpectedRuntimeContextScope {
+        tenant_id: tenant.as_str(),
+        source_id: source.as_str(),
+        thread_id: thread_id.as_str(),
+        project_partition_key: partition,
+        operation: "record_ingest",
+    };
+
+    let mismatched = issue(
+        &tenant,
+        &source,
+        &subject,
+        &thread_id,
+        partition,
+        &["record_ingest"],
+        KEY_ID,
+    );
+    let error = verify_and_consume_for_thread_upsert(
+        &pool,
+        &config,
+        &mismatched,
+        expected(),
+        "agent:other",
+    )
+    .await
+    .expect_err("signed agent must match the requested thread identity");
+    assert!(error.contains("requested thread identity"));
+
+    let valid = issue(
+        &tenant,
+        &source,
+        &subject,
+        &thread_id,
+        partition,
+        &["record_ingest"],
+        KEY_ID,
+    );
+    let claims =
+        verify_and_consume_for_thread_upsert(&pool, &config, &valid, expected(), subject.as_str())
+            .await
+            .expect("matching signed agent may establish the missing thread");
+    assert_eq!(claims.canonical_agent_subject_id, subject);
 }

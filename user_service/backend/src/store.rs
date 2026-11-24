@@ -15,19 +15,21 @@ use crate::auth::{hash_password, normalize_display_name, normalize_username};
 use crate::config::AppConfig;
 use crate::models::{
     AgentAccountListItem, AgentAccountRecord, HarnessProvisioningRecord, InviteCodePublicRecord,
-    InviteCodeRecord, LocalConnectorAuthTicketRecord, UserOptionRecord, UserRecord,
-    UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
+    InviteCodeRecord, LocalConnectorAuthTicketRecord, UserRecord, UserSummaryPageResponse,
+    UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
 };
 use chatos_service_runtime::is_production_environment;
 
 mod model_configs;
 mod registration_email_codes;
+mod user_queries;
 pub(crate) mod wechat_auth;
 
 pub use registration_email_codes::{
     RegistrationEmailCodeReservation, RegistrationEmailCodeReservationError,
     RegistrationTransactionError,
 };
+use user_queries::escape_like_pattern;
 
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations/postgres");
 
@@ -119,74 +121,63 @@ impl AppStore {
         .await
     }
 
-    pub async fn list_users_summary(&self) -> Result<Vec<UserSummaryRecord>, String> {
-        let users = fetch_all(
-            sqlx::query_scalar(
-                "SELECT data FROM users ORDER BY updated_at DESC, created_at DESC, id",
-            ),
-            &self.pool,
-        )
-        .await?;
-        self.user_summaries_from_records(users).await
-    }
-
-    pub async fn list_user_options(
-        &self,
-        user_ids: Option<&[String]>,
-    ) -> Result<Vec<UserOptionRecord>, String> {
-        if user_ids.is_some_and(|ids| ids.is_empty()) {
-            return Ok(Vec::new());
-        }
-        let users: Vec<UserRecord> = match user_ids {
-            Some(ids) => {
-                fetch_all(
-                    sqlx::query_scalar(
-                        "SELECT data FROM users WHERE id = ANY($1) ORDER BY username, id",
-                    )
-                    .bind(ids),
-                    &self.pool,
-                )
-                .await?
-            }
-            None => {
-                fetch_all(
-                    sqlx::query_scalar("SELECT data FROM users ORDER BY username, id"),
-                    &self.pool,
-                )
-                .await?
-            }
-        };
-        Ok(users
-            .into_iter()
-            .map(|user| UserOptionRecord {
-                id: user.id,
-                username: user.username,
-                display_name: user.display_name,
-            })
-            .collect())
-    }
-
     pub async fn list_users_summary_page(
         &self,
+        search: Option<&str>,
         limit: i64,
         offset: u64,
     ) -> Result<UserSummaryPageResponse, String> {
-        let (users, total) = tokio::try_join!(
-            fetch_all(
-                sqlx::query_scalar(
-                    "SELECT data FROM users ORDER BY updated_at DESC, created_at DESC, id LIMIT $1 OFFSET $2",
-                )
-                .bind(limit.max(1))
-                .bind(i64::try_from(offset).unwrap_or(i64::MAX)),
-                &self.pool,
-            ),
-            async {
-                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM users")
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(db_error)
+        let offset =
+            i64::try_from(offset).map_err(|_| "user page offset is too large".to_string())?;
+        let search_pattern = search.map(|value| format!("{}%", escape_like_pattern(value)));
+        let (users, total) = match search_pattern.as_deref() {
+            Some(pattern) => {
+                tokio::try_join!(
+                    fetch_all(
+                        sqlx::query_scalar(
+                            r#"SELECT data FROM users
+                               WHERE lower(username) LIKE lower($1) ESCAPE '\'
+                                  OR lower(display_name) LIKE lower($1) ESCAPE '\'
+                               ORDER BY updated_at DESC, created_at DESC, id
+                               LIMIT $2 OFFSET $3"#,
+                        )
+                        .bind(pattern)
+                        .bind(limit)
+                        .bind(offset),
+                        &self.pool,
+                    ),
+                    async {
+                        sqlx::query_scalar::<_, i64>(
+                            r#"SELECT count(*) FROM users
+                               WHERE lower(username) LIKE lower($1) ESCAPE '\'
+                                  OR lower(display_name) LIKE lower($1) ESCAPE '\'"#,
+                        )
+                        .bind(pattern)
+                        .fetch_one(&self.pool)
+                        .await
+                        .map_err(db_error)
+                    },
+                )?
             }
-        )?;
+            None => {
+                tokio::try_join!(
+                    fetch_all(
+                        sqlx::query_scalar(
+                            "SELECT data FROM users ORDER BY updated_at DESC, created_at DESC, id LIMIT $1 OFFSET $2",
+                        )
+                        .bind(limit)
+                        .bind(offset),
+                        &self.pool,
+                    ),
+                    async {
+                        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM users")
+                            .fetch_one(&self.pool)
+                            .await
+                            .map_err(db_error)
+                    },
+                )?
+            }
+        };
         Ok(UserSummaryPageResponse {
             items: self.user_summaries_from_records(users).await?,
             total: u64::try_from(total).map_err(|err| err.to_string())?,
@@ -412,7 +403,7 @@ impl AppStore {
             .map(|agent| agent.owner_user_id.clone())
             .collect::<Vec<_>>();
         let owners = self
-            .list_user_options(Some(&owner_ids))
+            .resolve_user_options(&owner_ids)
             .await?
             .into_iter()
             .map(|owner| (owner.id.clone(), owner))

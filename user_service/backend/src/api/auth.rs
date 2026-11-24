@@ -11,8 +11,8 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::auth::{
-    decode_user_service_token_for_refresh, encode_user_token, hash_password,
-    normalize_display_name, normalize_username, renew_user_service_token, verify_password,
+    decode_user_service_token_for_refresh, encode_user_token, hash_password_async,
+    normalize_display_name, normalize_username, renew_user_service_token, verify_password_async,
     CurrentPrincipal,
 };
 use crate::email::send_registration_code;
@@ -83,7 +83,8 @@ pub async fn refresh(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> ApiResult<RefreshTokenResponse> {
-    let token = crate::auth::bearer_token_from_headers(&headers).map_err(|err| unauthorized(&err))?;
+    let token =
+        crate::auth::bearer_token_from_headers(&headers).map_err(|err| unauthorized(&err))?;
     let claims = decode_user_service_token_for_refresh(token.as_str(), &state.config)
         .map_err(|_| unauthorized("invalid refresh credential"))?;
     let now = Utc::now().timestamp();
@@ -144,9 +145,16 @@ pub(super) async fn authenticate_password_user(
         .find_user_by_username(username)
         .await
         .map_err(internal_error)?;
-    let valid = user
-        .as_ref()
-        .is_some_and(|user| user.enabled && verify_password(password, user.password_hash.as_str()));
+    let valid = match user.as_ref() {
+        Some(user) if user.enabled => verify_password_async(
+            &state.password_worker,
+            password,
+            user.password_hash.as_str(),
+        )
+        .await
+        .map_err(internal_error)?,
+        _ => false,
+    };
     if !valid {
         state
             .login_throttle
@@ -278,7 +286,9 @@ pub async fn register(
         id: uuid::Uuid::new_v4().to_string(),
         username: email.clone(),
         display_name: normalize_display_name(input.display_name.as_deref(), &email),
-        password_hash: hash_password(input.password.as_str()).map_err(bad_request)?,
+        password_hash: hash_password_async(&state.password_worker, input.password.as_str())
+            .await
+            .map_err(bad_request)?,
         credential_version: 0,
         role: USER_ROLE_USER.to_string(),
         enabled: true,

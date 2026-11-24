@@ -12,7 +12,9 @@ use crate::state::AppState;
 use crate::store::now_rfc3339;
 
 use super::super::{bad_request, internal_error, not_found, ApiResult, ApiStatusResult};
-use super::access::{ensure_model_access, ensure_owner_user_exists, resolve_target_user_id};
+use super::access::{
+    ensure_create_id_owner, ensure_model_access, ensure_owner_user_exists, resolve_target_user_id,
+};
 use super::contracts::{ModelConfigGetQuery, UserScopeQuery};
 use super::model_values::model_config_public_value;
 use super::normalization::{
@@ -90,6 +92,10 @@ pub(in crate::api) async fn create_model_config(
         .find_user_model_config_by_id(id.as_str())
         .await
         .map_err(internal_error)?;
+    ensure_create_id_owner(
+        owner_user_id.as_str(),
+        existing.as_ref().map(|item| item.owner_user_id.as_str()),
+    )?;
     let record = UserModelConfigRecord {
         id,
         owner_user_id: owner_user_id.clone(),

@@ -31,6 +31,33 @@ pub async fn verify(
     .map_err(|message| (StatusCode::FORBIDDEN, message))
 }
 
+pub async fn verify_for_thread_upsert(
+    state: &AppState,
+    token: &str,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    project_partition_key: &str,
+    operation: &str,
+    thread_subject_id: &str,
+) -> Result<memory_engine_sdk::RuntimeContextAssertionClaims, (StatusCode, String)> {
+    runtime_context_assertion::verify_and_consume_for_thread_upsert(
+        &state.pool,
+        &state.config,
+        token,
+        ExpectedRuntimeContextScope {
+            tenant_id,
+            source_id,
+            thread_id,
+            project_partition_key,
+            operation,
+        },
+        thread_subject_id,
+    )
+    .await
+    .map_err(|message| (StatusCode::FORBIDDEN, message))
+}
+
 pub fn partition_from_project_subject(
     project_subject_id: Option<&str>,
 ) -> Result<String, (StatusCode, String)> {

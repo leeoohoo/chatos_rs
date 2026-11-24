@@ -32,16 +32,54 @@ pub async fn batch_sync_records(
     Json(req): Json<SdkBatchSyncRecordsRequest>,
 ) -> Result<Json<BatchSyncRecordsResponse>, (StatusCode, String)> {
     auth.require_tenant(req.tenant_id.as_str())?;
-    crate::api::runtime_context::verify(
-        &state,
-        req.runtime_context_assertion.as_str(),
-        req.tenant_id.as_str(),
-        auth.source_id(),
-        thread_id.as_str(),
-        req.project_partition_key.as_str(),
-        "record_ingest",
-    )
-    .await?;
+    if req
+        .thread
+        .as_ref()
+        .is_some_and(|thread| thread.tenant_id != req.tenant_id)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "batch thread tenant does not match record tenant".to_string(),
+        ));
+    }
+    if let Some(thread) = req.thread.as_ref() {
+        crate::api::runtime_context::verify_for_thread_upsert(
+            &state,
+            req.runtime_context_assertion.as_str(),
+            req.tenant_id.as_str(),
+            auth.source_id(),
+            thread_id.as_str(),
+            req.project_partition_key.as_str(),
+            "record_ingest",
+            thread.subject_id.as_str(),
+        )
+        .await?;
+    } else {
+        crate::api::runtime_context::verify(
+            &state,
+            req.runtime_context_assertion.as_str(),
+            req.tenant_id.as_str(),
+            auth.source_id(),
+            thread_id.as_str(),
+            req.project_partition_key.as_str(),
+            "record_ingest",
+        )
+        .await?;
+    }
+    let thread = req.thread.map(|thread| crate::models::UpsertThreadRequest {
+        tenant_id: thread.tenant_id,
+        source_id: auth.source_id().to_string(),
+        subject_id: thread.subject_id,
+        thread_type: thread.thread_type,
+        external_thread_id: thread.external_thread_id,
+        title: thread.title,
+        labels: thread.labels,
+        metadata: thread.metadata,
+        status: thread.status,
+        created_at: thread.created_at,
+        updated_at: thread.updated_at,
+        archived_at: thread.archived_at,
+    });
     let direct = BatchSyncRecordsRequest {
         tenant_id: req.tenant_id,
         source_id: auth.source_id().to_string(),
@@ -65,10 +103,15 @@ pub async fn batch_sync_records(
             })
             .collect(),
     };
-    let upserted_count =
-        records::batch_sync_records(&state.config, &state.pool, thread_id.as_str(), &direct)
-            .await
-            .map_err(internal_error)?;
+    let upserted_count = records::batch_sync_records_with_thread(
+        &state.config,
+        &state.pool,
+        thread_id.as_str(),
+        &direct,
+        thread,
+    )
+    .await
+    .map_err(internal_error)?;
     Ok(Json(BatchSyncRecordsResponse {
         thread_id,
         received_count: direct.records.len(),

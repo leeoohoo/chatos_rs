@@ -5,6 +5,7 @@ use super::super::tests::{accept_thread_upsert, test_assertion_issuer, MemoryWri
 use super::*;
 use axum::{extract::State, routing::put, Json, Router};
 use serde_json::{json, Value};
+use tokio::sync::Mutex;
 
 async fn capture_batch(
     State(batches): State<Arc<Mutex<Vec<Value>>>>,
@@ -58,6 +59,8 @@ async fn writer() -> (
 
 fn verify_batch(batch: &Value, partition: &str) {
     assert_eq!(batch["project_partition_key"], partition);
+    assert_eq!(batch["thread"]["subject_id"], "agent:agent-1");
+    assert_eq!(batch["thread"]["tenant_id"], "user-1");
     memory_engine_sdk::verify_runtime_context_assertion(
         batch["runtime_context_assertion"].as_str().unwrap(),
         "runtime-context-test-secret",

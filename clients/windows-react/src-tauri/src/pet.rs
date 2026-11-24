@@ -22,6 +22,9 @@ use tauri::{
     WebviewWindowBuilder, WindowEvent,
 };
 
+pub(crate) mod surface_commands;
+pub(crate) use surface_commands::hide_pet_overlay;
+
 pub(crate) const PET_WINDOW_LABEL: &str = "pet-overlay";
 const PET_ACTIVITY_WINDOW_LABEL: &str = "pet-activity-overlay";
 const FILE_VERSION: u32 = 1;
@@ -404,45 +407,6 @@ pub(crate) fn pet_asset_protocol(
     request: http::Request<Vec<u8>>,
 ) -> http::Response<Vec<u8>> {
     assets.protocol_response(request)
-}
-
-#[tauri::command]
-pub(crate) fn open_pet_notepad(app: AppHandle) -> Result<(), String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "无法找到 ChatOS 主窗口。".to_owned())?;
-    window
-        .show()
-        .map_err(|_| "无法显示 ChatOS 主窗口。".to_owned())?;
-    window
-        .set_focus()
-        .map_err(|_| "无法聚焦 ChatOS 主窗口。".to_owned())?;
-    app.emit("pet-open-surface", "notepad")
-        .map_err(|_| "无法打开快速记事本。".to_owned())
-}
-
-#[tauri::command]
-pub(crate) fn open_pet_quick_chat(app: AppHandle) -> Result<(), String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "无法找到 ChatOS 主窗口。".to_owned())?;
-    window
-        .show()
-        .map_err(|_| "无法显示 ChatOS 主窗口。".to_owned())?;
-    window
-        .set_focus()
-        .map_err(|_| "无法聚焦 ChatOS 主窗口。".to_owned())?;
-    app.emit("pet-open-surface", "quick-chat")
-        .map_err(|_| "无法打开快捷聊天。".to_owned())
-}
-
-pub(crate) fn hide_pet_overlay(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window(PET_WINDOW_LABEL) {
-        let _ = window.hide();
-    }
-    if let Some(window) = app.get_webview_window(PET_ACTIVITY_WINDOW_LABEL) {
-        let _ = window.hide();
-    }
 }
 
 fn reconcile_window(app: &AppHandle, state: &PetPreferencesFile) -> Result<(), String> {

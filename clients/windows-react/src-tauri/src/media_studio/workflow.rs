@@ -15,6 +15,14 @@ use std::{
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
+#[path = "workflow/video_options.rs"]
+mod video_options;
+
+use video_options::{
+    default_video_ratio, default_video_seconds, default_video_size,
+    normalize_legacy_workflow_defaults, validate_video_options, VIDEO_POLL_INTERVAL,
+};
+
 use crate::{
     app_data_transaction::{ensure_owned_directory, replace_owned_file},
     authentication::{AuthenticationManager, GatewayModelConfig},
@@ -24,11 +32,6 @@ use crate::{
 const MAXIMUM_MANIFEST_BYTES: usize = 2 * 1_024 * 1_024;
 const MAXIMUM_IMAGE_BYTES: usize = 20 * 1_024 * 1_024;
 const MAXIMUM_TEXT_LENGTH: usize = 20_000;
-const VIDEO_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
-const SUPPORTED_VIDEO_SIZES: [&str; 2] = ["768P", "2K"];
-const SUPPORTED_VIDEO_RATIOS: [&str; 6] = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
-const SUPPORTED_VIDEO_DURATION_RANGE: std::ops::RangeInclusive<u16> = 4..=15;
-const LEGACY_OPENAI_VIDEO_SIZES: [&str; 4] = ["1280x720", "720x1280", "1792x1024", "1024x1792"];
 const MEDIA_WORKFLOW_SYSTEM_PROMPT: &str = r#"你是 AI 创作工作流中的文本节点。完整执行节点要求，输出可直接交给下游文本、图片或视频节点使用的成品，而不是简短建议、过程说明或任务摘要。
 
 准确分析所有提供的图片和当前工作文本，不臆造不可见信息。严格遵循用户指定的语言、格式和篇幅；用户未限制篇幅时，应提供完成任务所需的充分细节。
@@ -129,18 +132,6 @@ fn default_image_size() -> String {
     "1024x1024".into()
 }
 
-fn default_video_size() -> String {
-    "768P".into()
-}
-
-fn default_video_ratio() -> String {
-    "16:9".into()
-}
-
-fn default_video_seconds() -> u16 {
-    4
-}
-
 pub(crate) fn validate_workflow(workflow: &MediaWorkflow) -> Result<(), String> {
     if Uuid::parse_str(&workflow.id).is_err() {
         return Err("工作流标识无效。".into());
@@ -172,10 +163,7 @@ pub(crate) fn validate_workflow(workflow: &MediaWorkflow) -> Result<(), String> 
             if video_index.replace(index).is_some() || index + 1 != workflow.nodes.len() {
                 return Err("视频节点只能出现一次并且必须位于流程末尾。".into());
             }
-            if !SUPPORTED_VIDEO_SIZES.contains(&node.video_size.as_str())
-                || !SUPPORTED_VIDEO_RATIOS.contains(&node.video_ratio.as_str())
-                || !SUPPORTED_VIDEO_DURATION_RANGE.contains(&node.video_seconds)
-            {
+            if !validate_video_options(&node.video_size, &node.video_ratio, node.video_seconds) {
                 return Err("视频节点尺寸、比例或时长无效。".into());
             }
             1
@@ -447,24 +435,6 @@ impl MediaStudioWorkflowStore {
             return Err("工作流不存在。".into());
         }
         Ok(directory)
-    }
-}
-
-fn normalize_legacy_workflow_defaults(workflow: &mut MediaWorkflow) {
-    for node in &mut workflow.nodes {
-        if node.kind == MediaWorkflowNodeKind::Video {
-            if LEGACY_OPENAI_VIDEO_SIZES.contains(&node.video_size.as_str()) {
-                node.video_size = default_video_size();
-            }
-            if (1..=120).contains(&node.video_seconds)
-                && !SUPPORTED_VIDEO_DURATION_RANGE.contains(&node.video_seconds)
-            {
-                node.video_seconds = node.video_seconds.clamp(
-                    *SUPPORTED_VIDEO_DURATION_RANGE.start(),
-                    *SUPPORTED_VIDEO_DURATION_RANGE.end(),
-                );
-            }
-        }
     }
 }
 
@@ -1231,30 +1201,6 @@ mod tests {
         assert!(validate_workflow(&value).is_ok());
         value.nodes.swap(0, 1);
         assert!(validate_workflow(&value).is_err());
-    }
-
-    #[test]
-    fn validates_minimax_h3_workflow_video_options() {
-        let mut value = workflow();
-        value.nodes = vec![node(MediaWorkflowNodeKind::Video, "video")];
-        assert!(validate_workflow(&value).is_ok());
-
-        value.nodes[0].video_size = "1280x720".into();
-        assert_eq!(
-            validate_workflow(&value).unwrap_err(),
-            "视频节点尺寸、比例或时长无效。"
-        );
-        value.nodes[0].video_size = default_video_size();
-        value.nodes[0].video_ratio = "2:1".into();
-        assert!(validate_workflow(&value).is_err());
-        value.nodes[0].video_ratio = default_video_ratio();
-        value.nodes[0].video_seconds = 16;
-        assert!(validate_workflow(&value).is_err());
-    }
-
-    #[test]
-    fn keeps_workflow_video_poll_interval_on_the_shared_runtime_contract() {
-        assert_eq!(VIDEO_POLL_INTERVAL, std::time::Duration::from_secs(10));
     }
 
     #[test]

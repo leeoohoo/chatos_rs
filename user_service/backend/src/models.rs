@@ -65,6 +65,12 @@ pub struct UserOptionRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserOptionPageResponse {
+    pub items: Vec<UserOptionRecord>,
+    pub total: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistrationEmailCodeRecord {
     pub email: String,
     pub code_hash: String,

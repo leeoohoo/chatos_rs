@@ -21,6 +21,27 @@ pub async fn verify_and_consume(
     token: &str,
     expected: ExpectedRuntimeContextScope<'_>,
 ) -> Result<memory_engine_sdk::RuntimeContextAssertionClaims, String> {
+    verify_and_consume_with_thread_subject(db, config, token, expected, None).await
+}
+
+pub async fn verify_and_consume_for_thread_upsert(
+    db: &Db,
+    config: &AppConfig,
+    token: &str,
+    expected: ExpectedRuntimeContextScope<'_>,
+    thread_subject_id: &str,
+) -> Result<memory_engine_sdk::RuntimeContextAssertionClaims, String> {
+    verify_and_consume_with_thread_subject(db, config, token, expected, Some(thread_subject_id))
+        .await
+}
+
+async fn verify_and_consume_with_thread_subject(
+    db: &Db,
+    config: &AppConfig,
+    token: &str,
+    expected: ExpectedRuntimeContextScope<'_>,
+    requested_thread_subject_id: Option<&str>,
+) -> Result<memory_engine_sdk::RuntimeContextAssertionClaims, String> {
     let token = token.trim();
     if token.is_empty() {
         return Err("runtime_context_assertion is required".to_string());
@@ -43,7 +64,14 @@ pub async fn verify_and_consume(
             operation: expected.operation,
         },
     )?;
-    let thread_subject_id = sqlx::query_scalar::<_, String>(
+    if requested_thread_subject_id
+        .is_some_and(|subject_id| subject_id != claims.canonical_agent_subject_id)
+    {
+        return Err(
+            "runtime context assertion agent does not match requested thread identity".into(),
+        );
+    }
+    let stored_thread_subject_id = sqlx::query_scalar::<_, String>(
         "SELECT subject_id FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3 \
          AND recall_eligible",
     )
@@ -52,10 +80,17 @@ pub async fn verify_and_consume(
     .bind(expected.thread_id)
     .fetch_optional(db)
     .await
-    .map_err(|error| error.to_string())?
-    .ok_or_else(|| "runtime context assertion thread does not exist".to_string())?;
-    if thread_subject_id != claims.canonical_agent_subject_id {
-        return Err("runtime context assertion agent does not match thread identity".to_string());
+    .map_err(|error| error.to_string())?;
+    match stored_thread_subject_id {
+        Some(subject_id) if subject_id != claims.canonical_agent_subject_id => {
+            return Err(
+                "runtime context assertion agent does not match thread identity".to_string(),
+            )
+        }
+        None if requested_thread_subject_id.is_none() => {
+            return Err("runtime context assertion thread does not exist".to_string())
+        }
+        _ => {}
     }
     consume_replay_guard(db, &key_id, &claims, expected).await?;
     Ok(claims)

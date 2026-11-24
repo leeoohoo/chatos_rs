@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use sqlx::types::Json;
+use sqlx::{Executor, Postgres};
 
 use crate::db::Db;
 use crate::models::{
@@ -15,10 +16,63 @@ pub async fn upsert_thread(
     thread_id: &str,
     req: UpsertThreadRequest,
 ) -> Result<EngineThread, String> {
-    let existing = load_thread(db, &req.tenant_id, &req.source_id, thread_id).await?;
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let thread = upsert_thread_in_transaction(&mut tx, thread_id, req).await?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+    subject_memory_scopes::ensure_thread_identity_scopes(db, &thread).await?;
+    Ok(thread)
+}
+
+pub(crate) async fn upsert_thread_in_transaction(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    thread_id: &str,
+    req: UpsertThreadRequest,
+) -> Result<EngineThread, String> {
+    upsert_thread_in_transaction_mode(tx, thread_id, req, false).await
+}
+
+pub(crate) async fn ensure_thread_for_record_ingest_in_transaction(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    thread_id: &str,
+    req: UpsertThreadRequest,
+) -> Result<EngineThread, String> {
+    upsert_thread_in_transaction_mode(tx, thread_id, req, true).await
+}
+
+async fn upsert_thread_in_transaction_mode(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    thread_id: &str,
+    req: UpsertThreadRequest,
+    preserve_existing_lifecycle: bool,
+) -> Result<EngineThread, String> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended(\
+         concat_ws(chr(31),$1,$2,$3),0))",
+    )
+    .bind(req.tenant_id.as_str())
+    .bind(req.source_id.as_str())
+    .bind(thread_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    let existing = load_thread_in_transaction(
+        tx,
+        req.tenant_id.as_str(),
+        req.source_id.as_str(),
+        thread_id,
+    )
+    .await?;
     let now = now_rfc3339();
     let updated_at = req.updated_at.unwrap_or_else(|| now.clone());
-    let status = req.status.unwrap_or_else(|| "active".to_string());
+    let status = if preserve_existing_lifecycle {
+        existing
+            .as_ref()
+            .map(|item| item.status.clone())
+            .or(req.status)
+            .unwrap_or_else(|| "active".to_string())
+    } else {
+        req.status.unwrap_or_else(|| "active".to_string())
+    };
     let thread = EngineThread {
         id: thread_id.to_string(),
         tenant_id: req.tenant_id,
@@ -36,9 +90,15 @@ pub async fn upsert_thread(
             .or(req.created_at)
             .unwrap_or_else(|| now.clone()),
         updated_at: updated_at.clone(),
-        archived_at: req
-            .archived_at
-            .or_else(|| (status == "archived").then(|| updated_at.clone())),
+        archived_at: if preserve_existing_lifecycle {
+            existing
+                .as_ref()
+                .and_then(|item| item.archived_at.clone())
+                .or(req.archived_at)
+        } else {
+            req.archived_at
+                .or_else(|| (status == "archived").then(|| updated_at.clone()))
+        },
     };
     let identity_scopes = subject_memory_scopes::thread_identity_scope_requests(&thread)?;
     if let Some(existing) = existing.as_ref() {
@@ -54,6 +114,16 @@ pub async fn upsert_thread(
                     .collect::<Vec<_>>()
         {
             return Err("memory-schema:v2 thread identity is immutable".to_string());
+        }
+        if preserve_existing_lifecycle
+            && existing.subject_id == thread.subject_id
+            && existing.thread_type == thread.thread_type
+            && existing.external_thread_id == thread.external_thread_id
+            && existing.title == thread.title
+            && existing.labels == thread.labels
+            && existing.metadata == thread.metadata
+        {
+            return Ok(existing.clone());
         }
     }
     let result = sqlx::query(
@@ -78,13 +148,12 @@ pub async fn upsert_thread(
     .bind(timestamp(&thread.updated_at)?)
     .bind(optional_timestamp(thread.archived_at.as_deref())?)
     .bind(json(&thread)?)
-    .execute(db)
+    .execute(&mut **tx)
     .await
     .map_err(|error| error.to_string())?;
     if result.rows_affected() == 0 {
         return Err("retired thread identity cannot be reused".to_string());
     }
-    subject_memory_scopes::ensure_thread_identity_scopes(db, &thread).await?;
     Ok(thread)
 }
 
@@ -228,6 +297,36 @@ pub async fn begin_record_sync(
     thread_id: &str,
     lease_timeout_secs: i64,
 ) -> Result<(), String> {
+    begin_record_sync_with_executor(db, tenant_id, source_id, thread_id, lease_timeout_secs).await
+}
+
+pub(crate) async fn begin_record_sync_in_transaction(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    lease_timeout_secs: i64,
+) -> Result<(), String> {
+    begin_record_sync_with_executor(
+        &mut **tx,
+        tenant_id,
+        source_id,
+        thread_id,
+        lease_timeout_secs,
+    )
+    .await
+}
+
+async fn begin_record_sync_with_executor<'e, E>(
+    executor: E,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    lease_timeout_secs: i64,
+) -> Result<(), String>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let now = now_rfc3339();
     let expires = now_plus_seconds_rfc3339(lease_timeout_secs.max(30));
     let result = sqlx::query(
@@ -242,7 +341,7 @@ pub async fn begin_record_sync(
     .bind(timestamp(&expires)?)
     .bind(timestamp(&now)?)
     .bind(&now)
-    .execute(db)
+    .execute(executor)
     .await
     .map_err(|error| error.to_string())?;
     if result.rows_affected() == 0 {
@@ -269,8 +368,8 @@ pub async fn finish_record_sync(
     Ok(())
 }
 
-async fn load_thread(
-    db: &Db,
+async fn load_thread_in_transaction(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
@@ -282,7 +381,7 @@ async fn load_thread(
     .bind(tenant_id)
     .bind(source_id)
     .bind(thread_id)
-    .fetch_optional(db)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(|error| error.to_string())?
     .map(decode)

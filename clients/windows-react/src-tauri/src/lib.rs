@@ -161,10 +161,10 @@ use notepad::{
     delete_notepad_note, export_notepad_markdown, get_notepad_note, import_notepad_image,
     load_notepad, rename_notepad_folder, update_notepad_note,
 };
+use pet::surface_commands::{open_pet_notepad, open_pet_quick_chat};
 use pet::{
-    load_pet_preferences, open_pet_notepad, open_pet_quick_chat, pet_asset_protocol,
-    refresh_pet_presentation, reset_pet_position, update_pet_preferences, PetAssetStore,
-    PetPreferencesStore,
+    load_pet_preferences, pet_asset_protocol, refresh_pet_presentation, reset_pet_position,
+    update_pet_preferences, PetAssetStore, PetPreferencesStore,
 };
 use pet_translation::{
     clear_pet_translation_history, list_pet_translation_history, open_pet_translation,

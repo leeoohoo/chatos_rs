@@ -71,9 +71,11 @@ pub use status::{
     mark_claimed_records_summarized, mark_records_summarized, restore_record_pending,
 };
 #[cfg(test)]
+pub use writes::batch_sync_records;
+#[cfg(test)]
 pub(crate) use writes::upsert_record_row;
 #[allow(unused_imports)]
-pub use writes::{batch_sync_records, delete_record_by_id, delete_records_by_thread};
+pub use writes::{batch_sync_records_with_thread, delete_record_by_id, delete_records_by_thread};
 
 #[cfg(test)]
 mod tests {

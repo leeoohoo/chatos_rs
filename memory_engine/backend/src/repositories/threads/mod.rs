@@ -74,6 +74,9 @@ fn parse_cursor_time(field: &str, value: &str) -> Result<DateTime<Utc>, String> 
 pub use queries::{get_thread, get_thread_by_id, list_threads, list_threads_by_label};
 #[allow(unused_imports)]
 pub use writes::{begin_record_sync, delete_thread, finish_record_sync, upsert_thread};
+pub(crate) use writes::{
+    begin_record_sync_in_transaction, ensure_thread_for_record_ingest_in_transaction,
+};
 
 #[cfg(test)]
 mod tests {

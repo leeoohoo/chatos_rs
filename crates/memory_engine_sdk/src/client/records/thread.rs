@@ -31,6 +31,7 @@ impl MemoryEngineClient {
                     source_id: &'a str,
                     project_partition_key: &'a str,
                     runtime_context_assertion: &'a str,
+                    thread: &'a Option<crate::models::SdkUpsertThreadRequest>,
                     records: &'a [crate::models::UpsertRecordInput],
                 }
                 let direct = DirectBatchRequest {
@@ -38,6 +39,7 @@ impl MemoryEngineClient {
                     source_id,
                     project_partition_key: req.project_partition_key.as_str(),
                     runtime_context_assertion: req.runtime_context_assertion.as_str(),
+                    thread: &req.thread,
                     records: req.records.as_slice(),
                 };
                 self.send_json(

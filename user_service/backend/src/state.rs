@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use crate::auth::PasswordWorker;
 use crate::config::AppConfig;
 use crate::db::connect_database;
 use crate::login_throttle::LoginThrottle;
@@ -13,12 +14,14 @@ pub struct AppState {
     pub config: AppConfig,
     pub store: AppStore,
     pub login_throttle: LoginThrottle,
+    pub(crate) password_worker: PasswordWorker,
     pub retention: UserDataRetention,
     pub wechat_mini_program: Option<WeChatMiniProgramClient>,
 }
 
 impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self, String> {
+        let password_worker = PasswordWorker::new(config.password_worker_concurrency)?;
         let db = connect_database(&config).await?;
         let login_throttle = LoginThrottle::new(db.clone());
         let retention = UserDataRetention::new(
@@ -34,6 +37,7 @@ impl AppState {
             config,
             store,
             login_throttle,
+            password_worker,
             retention,
             wechat_mini_program,
         })
@@ -43,6 +47,7 @@ impl AppState {
     pub(crate) async fn new_without_external_dependencies(
         config: AppConfig,
     ) -> Result<Self, String> {
+        let password_worker = PasswordWorker::new(config.password_worker_concurrency)?;
         let db = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy(&config.database_url)
             .map_err(|err| format!("create lazy user service PostgreSQL pool failed: {err}"))?;
@@ -57,6 +62,7 @@ impl AppState {
             config,
             store: AppStore::new(db),
             login_throttle,
+            password_worker,
             retention,
             wechat_mini_program,
         })
