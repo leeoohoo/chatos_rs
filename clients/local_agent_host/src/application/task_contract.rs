@@ -19,6 +19,7 @@ pub(super) struct TaskContractView<'a> {
     pub(super) requires_execution: bool,
     pub(super) enabled_builtin_kinds: &'a [String],
     pub(super) plugin_hints: &'a [TaskPluginHint],
+    pub(super) owned_paths: &'a [String],
     pub(super) verification_contract: Option<&'a TaskVerificationContract>,
 }
 
@@ -42,6 +43,15 @@ pub(super) async fn validate_task_contracts(
     let current_message = current_message_id
         .as_deref()
         .zip(source_user_message(parent));
+    let confirmed_plan_markdown = parent
+        .input
+        .get("requirement_plan")
+        .filter(|plan| {
+            plan.get("confirmed_at_unix_ms")
+                .is_some_and(|confirmed| !confirmed.is_null())
+        })
+        .and_then(|plan| plan.get("markdown"))
+        .and_then(Value::as_str);
     let mut source_messages = Vec::new();
     if let Some(conversation) = executor
         .runtime
@@ -79,8 +89,13 @@ pub(super) async fn validate_task_contracts(
                 "requirement {id} source_quote must be an exact excerpt of an authoritative user message"
             ));
         }
-        requirement.source_message_id =
-            resolve_source_message_id(id, quote, current_message_id.as_deref(), &source_messages)?;
+        requirement.source_message_id = resolve_source_message_id(
+            id,
+            quote,
+            current_message_id.as_deref(),
+            confirmed_plan_markdown,
+            &source_messages,
+        )?;
         let interpreted = requirement.interpreted_requirement.trim();
         if interpreted.chars().count() < 4
             || matches!(
@@ -171,6 +186,7 @@ fn resolve_source_message_id(
     requirement_id: &str,
     quote: &str,
     current_message_id: Option<&str>,
+    confirmed_plan_markdown: Option<&str>,
     source_messages: &[(String, String)],
 ) -> Result<String, String> {
     if let Some(message_id) = current_message_id.filter(|message_id| {
@@ -179,6 +195,13 @@ fn resolve_source_message_id(
             .any(|(id, message)| id == *message_id && message.contains(quote))
     }) {
         return Ok(message_id.to_string());
+    }
+    if confirmed_plan_markdown.is_some_and(|markdown| markdown.contains(quote)) {
+        return current_message_id.map(str::to_string).ok_or_else(|| {
+            format!(
+                "requirement {requirement_id} cannot bind its confirmed-plan source without a current user message"
+            )
+        });
     }
     let mut matches = source_messages
         .iter()
@@ -210,13 +233,16 @@ fn task_can_change(task: &TaskContractView<'_>, explicit_plugin: Option<(&str, &
         && (task.enabled_builtin_kinds.iter().any(|kind| {
             matches!(
                 kind.as_str(),
-                "CodeMaintainerWrite" | "RemoteConnectionController" | "RequirementSurveyWrite"
+                "CodeMaintainerWrite"
+                    | "RemoteConnectionController"
+                    | "RequirementSurveyWrite"
+                    | "Notepad"
             )
         }) || explicit_plugin.is_some_and(|(plugin_key, component_key)| {
             task.plugin_hints
                 .iter()
                 .any(|hint| hint.plugin_key == plugin_key && hint.component_key == component_key)
-        }))
+        }) || (!task.plugin_hints.is_empty() && task.owned_paths.is_empty()))
 }
 
 fn validate_verification_contract(task: &TaskContractView<'_>) -> Result<(), String> {
@@ -297,19 +323,27 @@ mod source_binding_tests {
         ];
 
         assert_eq!(
-            resolve_source_message_id("R1", "continue", Some("current"), &messages).unwrap(),
+            resolve_source_message_id("R1", "continue", Some("current"), None, &messages).unwrap(),
             "current"
         );
         assert_eq!(
-            resolve_source_message_id("R1", "inspect the project", Some("current"), &messages)
-                .unwrap(),
+            resolve_source_message_id(
+                "R1",
+                "inspect the project",
+                Some("current"),
+                None,
+                &messages,
+            )
+            .unwrap(),
             "older-1"
         );
-        assert!(resolve_source_message_id("R1", "work", None, &messages)
-            .unwrap_err()
-            .contains("multiple"));
         assert!(
-            resolve_source_message_id("R1", "missing", Some("current"), &messages)
+            resolve_source_message_id("R1", "work", None, None, &messages)
+                .unwrap_err()
+                .contains("multiple")
+        );
+        assert!(
+            resolve_source_message_id("R1", "missing", Some("current"), None, &messages)
                 .unwrap_err()
                 .contains("not an exact excerpt")
         );
@@ -323,7 +357,7 @@ mod source_binding_tests {
         ];
 
         assert_eq!(
-            resolve_source_message_id("R1", "download this video", None, &messages).unwrap(),
+            resolve_source_message_id("R1", "download this video", None, None, &messages).unwrap(),
             "latest"
         );
     }

@@ -1114,6 +1114,31 @@ async fn safe_task_failure_is_claimed_for_program_owned_main_chat_recovery() {
         .await
         .unwrap();
     complete_main_chat_run(&storage, &turn).await;
+    let checkpoint = json!({"response": {
+        "request_input_items": [{"type":"message","role":"user","content":"start"}],
+        "response_output_items": [{
+            "type":"function_call", "call_id":"call-wait",
+            "name":"wait_for_task_completion", "arguments":"{}"
+        }]
+    }});
+    sqlx::query("UPDATE local_agent_runs SET checkpoint_json = ? WHERE run_id = ?")
+        .bind(checkpoint.to_string())
+        .bind(&turn.run_id)
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO local_agent_tool_invocations(\
+         invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, side_effecting, \
+         status, result_json, error_text, version, created_at_unix_ms, updated_at_unix_ms) \
+         VALUES('invocation-wait', ?, 'batch-wait', 'call-wait', \
+         'wait_for_task_completion', '{}', 0, 'succeeded', ?, NULL, 3, 2200, 2300)",
+    )
+    .bind(&turn.run_id)
+    .bind(r#"{"status":"failed","task_id":"auto-recovery-task"}"#)
+    .execute(&storage.pool)
+    .await
+    .unwrap();
     storage
         .create_task_graph(
             &command("create-auto-recovery-graph"),
@@ -1151,8 +1176,22 @@ async fn safe_task_failure_is_claimed_for_program_owned_main_chat_recovery() {
     );
     assert_eq!(
         source.continuation_input.as_ref().unwrap()["type"],
-        "task_graph_recovery"
+        "tool_results"
     );
+    let continuation = source.continuation_input.as_ref().unwrap();
+    assert_eq!(continuation["invocations"][0]["call_id"], "call-wait");
+    assert_eq!(continuation["invocations"][0]["result"]["status"], "failed");
+    assert_eq!(continuation["guidance"][0]["role"], "system");
+    assert!(continuation["guidance"][0]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("task_graph_recovery")));
+    let invocation_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM local_agent_tool_invocations WHERE run_id = ?")
+            .bind(&turn.run_id)
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
+    assert_eq!(invocation_count, 1, "recovery must not rerun the wait tool");
     let conversation = storage
         .get_conversation("user-1", &turn.conversation_id)
         .await

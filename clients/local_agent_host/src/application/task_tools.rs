@@ -309,6 +309,7 @@ impl LocalTaskToolExecutor {
                         requires_execution: args.requires_execution,
                         enabled_builtin_kinds: &args.enabled_builtin_kinds,
                         plugin_hints: &args.plugin_hints,
+                        owned_paths: &args.owned_paths,
                         verification_contract: args.verification_contract.as_ref(),
                     }],
                 )
@@ -420,6 +421,7 @@ impl LocalTaskToolExecutor {
                         requires_execution: task.requires_execution,
                         enabled_builtin_kinds: &task.enabled_builtin_kinds,
                         plugin_hints: &task.plugin_hints,
+                        owned_paths: &task.owned_paths,
                         verification_contract: task.verification_contract.as_ref(),
                     })
                     .collect::<Vec<_>>();

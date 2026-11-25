@@ -38,6 +38,36 @@ fn retry_guidance_and_attachments_remain_durable() {
 }
 
 #[test]
+fn recovered_tool_results_keep_program_guidance_after_outputs() {
+    let checkpoint = json!({"response": {
+        "request_input_items": [{"role":"user", "content":"start"}],
+        "response_output_items": [{
+            "type":"function_call", "name":"wait_for_task_completion",
+            "call_id":"call-wait", "arguments":"{}"
+        }]
+    }});
+    let continuation = json!({
+        "type":"tool_results",
+        "invocations":[{
+            "call_id":"call-wait", "tool_name":"wait_for_task_completion",
+            "status":"succeeded", "result":{"status":"failed"}, "error":null
+        }],
+        "guidance":[{
+            "role":"system", "message":"{\"type\":\"task_graph_recovery\"}",
+            "attachments":[]
+        }]
+    });
+    let (items, reason) = durable_step_input(&claim(checkpoint, Some(continuation)), "message")
+        .expect("recovered tool continuation");
+
+    assert_eq!(reason, "tool_results_with_guidance");
+    assert_eq!(items[2]["type"], "function_call_output");
+    assert_eq!(items[2]["call_id"], "call-wait");
+    assert_eq!(items[3]["role"], "system");
+    assert_eq!(items[3]["content"], "{\"type\":\"task_graph_recovery\"}");
+}
+
+#[test]
 fn ask_user_resume_becomes_function_call_output_instead_of_a_new_user_message() {
     let checkpoint = json!({
         "response": {

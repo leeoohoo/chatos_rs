@@ -205,7 +205,9 @@ async fn ask_user_tool_waits_and_resumes_with_the_original_tool_call() {
         HostResult::Run { run }
             if run.status == LocalAgentRunStatus::ContinuationReady
                 && run.continuation_input.as_ref().is_some_and(|value|
-                    value["reason"] == "ask_user_submitted")
+                    value["type"] == "tool_results"
+                        && value["invocations"][0]["call_id"] == "ask-call-1"
+                        && value["invocations"][0]["result"]["selection"] == "local")
     ));
 }
 

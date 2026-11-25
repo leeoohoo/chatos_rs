@@ -203,13 +203,19 @@ async fn schedule_graph_recovery(
         "guidance": "This failed Task Graph has been returned to Main Chat for autonomous recovery. Decide from current evidence, not a fixed retry count. If the contract is unchanged and a concrete different safe correction exists, call retry_task with that correction. If method, capability, scope, ownership, or dependency design must change, create a replacement Task or graph using supersedes_task_ids. Never retry needs_review, cancelled work, or an operation with unknown side effects. Ask the user only when recovery truly requires credentials, permission, a product decision, an external human action, or no new safe path remains."
     });
     source_run.input["task_graph_recovery"] = recovery.clone();
+    let continuation = crate::run_continuation::for_resume(
+        connection,
+        &source_run,
+        &recovery,
+    )
+    .await?;
     let updated = sqlx::query(
         "UPDATE local_agent_runs SET input_json = ?, status = 'continuation_ready', \
          version = version + 1, continuation_input_json = ?, \
          updated_at_unix_ms = ? WHERE run_id = ? AND status = 'succeeded' AND version = ?",
     )
     .bind(serde_json::to_string(&source_run.input)?)
-    .bind(serde_json::to_string(&recovery)?)
+    .bind(serde_json::to_string(&continuation)?)
     .bind(now_unix_ms)
     .bind(&source_run_id)
     .bind(source_run.version as i64)

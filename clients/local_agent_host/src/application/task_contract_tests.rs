@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::tests::{invocation, runtime_with_parent};
+use super::tests::{invocation, runtime_with_parent, runtime_with_parent_requirement_plan};
 use super::*;
 
 #[tokio::test]
@@ -100,7 +100,7 @@ async fn every_change_requirement_needs_an_implementation_owner() {
 }
 
 #[tokio::test]
-async fn terminal_or_plugin_selection_alone_is_not_project_write_authority() {
+async fn terminal_or_project_scoped_plugin_is_not_project_write_authority() {
     let base = json!({
         "requirements": [{
             "requirement_id":"R1",
@@ -162,10 +162,96 @@ async fn terminal_or_plugin_selection_alone_is_not_project_write_authority() {
         .await
         .unwrap();
     let executor = LocalTaskToolExecutor::new(runtime, "user-1").unwrap();
+    let mut plugin_call = invocation(plugin_only.clone());
+    plugin_call.tool_name = CREATE_TASK_TOOL.into();
+    assert!(matches!(
+        executor.execute_tool(&plugin_call).await.unwrap(),
+        LocalAgentToolOutcome::Succeeded { .. }
+    ));
+
+    plugin_only["owned_paths"] = json!(["src"]);
+    let runtime = runtime_with_parent().await;
+    runtime
+        .try_handle(envelope(
+            "publish-project-plugin-catalog".into(),
+            HostCommand::PutCapabilityPolicySnapshot(
+                chatos_local_agent_protocol::PutCapabilityPolicySnapshotCommand {
+                    snapshot: chatos_local_agent_protocol::LocalCapabilityPolicySnapshot {
+                        owner_user_id: "user-1".into(),
+                        profile_key: "task_policy_internal".into(),
+                        capability_policy_revision: "policy-1".into(),
+                        instructions: Some(
+                            json!({"plugin_release_snapshots": [{
+                                "plugin_key":"example-plugin", "component_key":"example-component",
+                                "plugin_id":"example-plugin-id", "release_id":"example-release",
+                                "version":"1.0.0", "artifact_sha256":"a".repeat(64)
+                            }]})
+                            .to_string(),
+                        ),
+                        prefixed_input_items: Vec::new(),
+                        tools: Vec::new(),
+                    },
+                },
+            ),
+        ))
+        .await
+        .unwrap();
+    let executor = LocalTaskToolExecutor::new(runtime, "user-1").unwrap();
     let mut plugin_call = invocation(plugin_only);
     plugin_call.tool_name = CREATE_TASK_TOOL.into();
     let error = preparation_error(executor.execute_tool(&plugin_call).await.unwrap());
     assert!(error.contains("write capability"), "{error}");
+}
+
+#[tokio::test]
+async fn notepad_execution_owns_a_change_requirement() {
+    let executor = LocalTaskToolExecutor::new(runtime_with_parent().await, "user-1").unwrap();
+    let mut call = invocation(json!({
+        "requirements": [{
+            "requirement_id":"R1", "source_quote":"plan this",
+            "interpreted_requirement":"Persist the requested note", "requires_change":true
+        }],
+        "title":"Write note", "objective":"Persist the requested note",
+        "expected_outputs":["[R1] Saved note"],
+        "acceptance_criteria":["[R1] Note can be read back"],
+        "requires_execution":true, "enabled_builtin_kinds":["Notepad"],
+        "notepad_user_request_quote":"plan this"
+    }));
+    call.tool_name = CREATE_TASK_TOOL.into();
+    assert!(matches!(
+        executor.execute_tool(&call).await.unwrap(),
+        LocalAgentToolOutcome::Succeeded { .. }
+    ));
+}
+
+#[tokio::test]
+async fn confirmed_requirement_plan_is_an_authoritative_quote_source() {
+    for confirmed_at in [Some(42), None] {
+        let runtime = runtime_with_parent_requirement_plan(Some(json!({
+            "plan_id":"plan-1", "revision":1,
+            "markdown":"## Approved plan\nImplement the frozen workflow.",
+            "confirmed_at_unix_ms":confirmed_at
+        })))
+        .await;
+        let executor = LocalTaskToolExecutor::new(runtime, "user-1").unwrap();
+        let mut call = invocation(json!({
+            "requirements": [{
+                "requirement_id":"R1", "source_quote":"Implement the frozen workflow.",
+                "interpreted_requirement":"Implement the frozen workflow", "requires_change":true
+            }],
+            "title":"Implement", "objective":"Implement the frozen workflow",
+            "expected_outputs":["[R1] Updated workflow"],
+            "acceptance_criteria":["[R1] Frozen workflow is implemented"],
+            "requires_execution":true, "enabled_builtin_kinds":["CodeMaintainerWrite"]
+        }));
+        call.tool_name = CREATE_TASK_TOOL.into();
+        let outcome = executor.execute_tool(&call).await.unwrap();
+        if confirmed_at.is_some() {
+            assert!(matches!(outcome, LocalAgentToolOutcome::Succeeded { .. }));
+        } else {
+            assert!(preparation_error(outcome).contains("exact excerpt"));
+        }
+    }
 }
 
 #[tokio::test]

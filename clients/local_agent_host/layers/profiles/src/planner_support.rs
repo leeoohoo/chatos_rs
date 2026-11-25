@@ -406,7 +406,17 @@ fn append_guidance_items(
         if text.is_none() && attachments.is_empty() {
             return Err("guidance requires a message or attachments".to_string());
         }
-        history.push(local_user_item(text, &attachments)?);
+        if item.get("role").and_then(Value::as_str) == Some("system") {
+            if !attachments.is_empty() {
+                return Err("system guidance cannot contain attachments".to_string());
+            }
+            history.push(message_item(
+                "system",
+                Value::String(text.unwrap_or_default().to_string()),
+            ));
+        } else {
+            history.push(local_user_item(text, &attachments)?);
+        }
     }
     Ok(!guidance.is_empty())
 }

@@ -367,6 +367,27 @@ fn zero_token_empty_responses_are_limited_to_one_retry() {
 }
 
 #[test]
+fn incomplete_sse_stream_is_named_and_limited_to_two_retries() {
+    let error = "incomplete Responses SSE stream: ended after 29 valid event(s) without response.completed, response.incomplete, or response.failed";
+    assert_eq!(transient_retry_kind_label(error), "上游流式响应未完整结束");
+    assert_eq!(effective_transient_retry_limit(error, 5), 2);
+    assert!(matches!(
+        classify_transient_retry(error, 1, 5),
+        Some(TransientRetryAction::Retry {
+            next_retry_count: 2,
+            ..
+        })
+    ));
+    match classify_transient_retry(error, 2, 5) {
+        Some(TransientRetryAction::Exhausted { error_message }) => {
+            assert!(error_message.contains("上游流式响应未完整结束"));
+            assert!(error_message.contains("已收到合法 SSE 事件，但上游未发送终止事件"));
+        }
+        _ => panic!("third incomplete stream should exhaust retries"),
+    }
+}
+
+#[test]
 fn explicit_gateway_timeout_keeps_configured_retry_limit() {
     let error = "status 504: gateway timeout";
     assert!(!is_ai_request_timeout_error(error));

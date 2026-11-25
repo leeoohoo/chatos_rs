@@ -15,10 +15,10 @@ pub(super) async fn for_resume(
     run: &LocalAgentRunRecord,
     requested: &Value,
 ) -> Result<Value, ClientStorageError> {
-    // Interactive tools intentionally keep their completed invocation while waiting for
-    // a human answer; their resume payload is translated into that call's output by the
-    // profile. It is not a lost ordinary tool continuation.
-    if run.status == LocalAgentRunStatus::WaitingUser {
+    let ask_user_resume = run.status == LocalAgentRunStatus::WaitingUser
+        && requested.get("reason").and_then(Value::as_str) == Some("ask_user_submitted")
+        && requested.pointer("/input/source").and_then(Value::as_str) == Some("ask_user");
+    if run.status == LocalAgentRunStatus::WaitingUser && !ask_user_resume {
         return Ok(requested.clone());
     }
     let tool_results = match run.continuation_input.as_ref() {
@@ -27,10 +27,64 @@ pub(super) async fn for_resume(
         }
         _ => reconstruct_tool_results(connection, run).await?,
     };
-    let Some(tool_results) = tool_results else {
+    let Some(mut tool_results) = tool_results else {
         return Ok(requested.clone());
     };
+    if ask_user_resume {
+        apply_ask_user_answer(&mut tool_results, requested)?;
+        return Ok(tool_results);
+    }
     merge_resume_guidance(tool_results, requested)
+}
+
+fn apply_ask_user_answer(
+    tool_results: &mut Value,
+    requested: &Value,
+) -> Result<(), ClientStorageError> {
+    let input = requested.get("input").ok_or_else(|| {
+        ClientStorageError::InvalidState("Ask User resume requires input".to_string())
+    })?;
+    let call_id = input
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ClientStorageError::InvalidState("Ask User resume requires tool_call_id".to_string())
+        })?;
+    let invocations = tool_results
+        .get_mut("invocations")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| {
+            ClientStorageError::InvalidState(
+                "tool results continuation requires invocations".to_string(),
+            )
+        })?;
+    let invocation = invocations
+        .iter_mut()
+        .find(|invocation| invocation.get("call_id").and_then(Value::as_str) == Some(call_id))
+        .ok_or_else(|| {
+            ClientStorageError::InvalidState(format!(
+                "Ask User resume call is absent from the latest tool batch: {call_id}"
+            ))
+        })?;
+    let tool_name = invocation
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !tool_name.starts_with("ask_user_") {
+        return Err(ClientStorageError::InvalidState(format!(
+            "Ask User resume call does not target an Ask User tool: {call_id}"
+        )));
+    }
+    invocation["status"] = Value::String("succeeded".to_string());
+    invocation["result"] = json!({
+        "status": "ok",
+        "values": input.get("values").cloned().unwrap_or_else(|| json!({})),
+        "selection": input.get("selection").cloned().unwrap_or(Value::Null)
+    });
+    invocation["error"] = Value::Null;
+    Ok(())
 }
 
 async fn reconstruct_tool_results(
@@ -138,6 +192,11 @@ fn merge_resume_guidance(
             .cloned()
             .unwrap_or_default(),
         Some("resume") => resume_guidance(requested).into_iter().collect(),
+        Some("task_graph_recovery") => vec![json!({
+            "message": requested.to_string(),
+            "attachments": [],
+            "role": "system"
+        })],
         _ => return Ok(requested.clone()),
     };
     if pending.is_empty() {
@@ -243,6 +302,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn graph_recovery_without_function_calls_keeps_its_original_payload() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        let mut run = historical_run();
+        run.status = LocalAgentRunStatus::Succeeded;
+        run.checkpoint = json!({"response":{"response_output_items":[]}});
+        let requested = json!({"type":"task_graph_recovery", "graph_id":"graph-1"});
+        let mut connection = storage.pool.acquire().await.expect("connection");
+
+        assert_eq!(
+            for_resume(&mut connection, &run, &requested)
+                .await
+                .expect("unchanged recovery"),
+            requested
+        );
+    }
+
+    #[tokio::test]
     async fn missing_historical_continuation_is_rebuilt_without_reexecuting_tool() {
         let storage = SqliteClientStorage::connect_memory()
             .await
@@ -309,21 +387,78 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn waiting_user_resume_remains_owned_by_interactive_tool_protocol() {
+    async fn waiting_user_resume_restores_the_whole_batch_and_replaces_ask_user_output() {
         let storage = SqliteClientStorage::connect_memory()
             .await
             .expect("storage");
         let mut run = historical_run();
         run.status = LocalAgentRunStatus::WaitingUser;
+        run.checkpoint = json!({"response":{"response_output_items":[
+            {"type":"function_call","call_id":"call-stage","name":"stage_edit_batch","arguments":"{}"},
+            {"type":"function_call","call_id":"call-ask","name":"ask_user_prompt_choices","arguments":"{}"}
+        ]}});
+        storage
+            .create_run(
+                &IdempotentCommand {
+                    command_id: "create-waiting-user-run".into(),
+                    request_fingerprint: "create-waiting-user-run".into(),
+                    persist_receipt: true,
+                },
+                &run,
+                "event-created",
+            )
+            .await
+            .expect("create run");
+        for (invocation_id, call_id, tool_name, result) in [
+            (
+                "invocation-stage",
+                "call-stage",
+                "stage_edit_batch",
+                json!({"changed":true}),
+            ),
+            (
+                "invocation-ask",
+                "call-ask",
+                "ask_user_prompt_choices",
+                json!({"prompt":{"title":"Choose"}}),
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO local_agent_tool_invocations(\
+                 invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
+                 side_effecting, status, result_json, error_text, version, claim_token, \
+                 claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms) \
+                 VALUES(?, ?, 'batch-mixed', ?, ?, '{}', 1, 'succeeded', ?, NULL, 3, NULL, NULL, 1500, 1600)",
+            )
+            .bind(invocation_id)
+            .bind(&run.run_id)
+            .bind(call_id)
+            .bind(tool_name)
+            .bind(result.to_string())
+            .execute(&storage.pool)
+            .await
+            .expect("insert completed invocation");
+        }
         let requested = json!({
             "type":"resume",
             "reason":"ask_user_submitted",
-            "input":{"source":"ask_user", "values":{"choice":"yes"}}
+            "input":{
+                "source":"ask_user",
+                "tool_call_id":"call-ask",
+                "values":{"note":""},
+                "selection":"yes"
+            }
         });
         let mut connection = storage.pool.acquire().await.expect("connection");
         let result = for_resume(&mut connection, &run, &requested)
             .await
-            .expect("preserve interactive resume");
-        assert_eq!(result, requested);
+            .expect("rebuild interactive resume");
+        assert_eq!(result["type"], "tool_results");
+        assert_eq!(result["invocations"].as_array().map(Vec::len), Some(2));
+        assert_eq!(result["invocations"][0]["call_id"], "call-stage");
+        assert_eq!(result["invocations"][0]["result"]["changed"], true);
+        assert_eq!(result["invocations"][1]["call_id"], "call-ask");
+        assert_eq!(result["invocations"][1]["result"]["selection"], "yes");
+        assert_eq!(result["invocations"][1]["result"]["status"], "ok");
     }
 }

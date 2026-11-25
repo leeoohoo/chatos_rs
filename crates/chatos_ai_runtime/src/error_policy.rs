@@ -218,6 +218,11 @@ pub fn is_transient_transport_or_parse_error(err: &str) -> bool {
 pub fn transient_retry_kind_label(err: &str) -> &'static str {
     if is_ai_request_timeout_error(err) {
         "模型响应连续无数据超时"
+    } else if err
+        .to_lowercase()
+        .contains("incomplete responses sse stream")
+    {
+        "上游流式响应未完整结束"
     } else if is_upstream_auth_unavailable_error(err) {
         "上游认证资源暂不可用"
     } else if is_upstream_connection_interrupted_error(err) {
@@ -326,7 +331,9 @@ pub fn exhausted_transient_retry_message(
 
 fn sanitized_response_parse_failure_detail(err: &str) -> &'static str {
     let message = err.to_lowercase();
-    if message.contains("timed out") || message.contains("timeout") {
+    if message.contains("incomplete responses sse stream") {
+        "已收到合法 SSE 事件，但上游未发送终止事件"
+    } else if message.contains("timed out") || message.contains("timeout") {
         "最后一次失败为上游响应读取超时"
     } else if message.contains("malformed sse event") {
         "最后一次响应包含无法解析的数据"
@@ -369,6 +376,8 @@ pub fn effective_transient_retry_limit(err: &str, configured_limit: usize) -> us
         || message.contains("upstream terminated with incomplete empty response")
     {
         configured_limit.min(1)
+    } else if message.contains("incomplete responses sse stream") {
+        configured_limit.min(2)
     } else {
         configured_limit
     }

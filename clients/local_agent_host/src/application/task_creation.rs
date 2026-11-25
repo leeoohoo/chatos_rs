@@ -222,7 +222,7 @@ pub(in crate::application) struct CreateTaskItem {
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default)]
-    owned_paths: Vec<String>,
+    pub(in crate::application) owned_paths: Vec<String>,
     #[serde(default)]
     notification_milestone: bool,
     #[serde(default)]

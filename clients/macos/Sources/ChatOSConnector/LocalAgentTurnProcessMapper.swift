@@ -53,7 +53,9 @@ enum LocalAgentTurnProcessMapper {
               let index = indexes[callID], nodes.indices.contains(index) else { return }
         let rawStatus = payload["status"]?.string ?? "failed"
         nodes[index].status = status(rawStatus)
-        nodes[index].detail = rawStatus == "succeeded" ? "本地工具执行完成" : "本地工具执行未完成"
+        nodes[index].detail = rawStatus == "succeeded"
+            ? "本地工具执行完成"
+            : safeDetail(payload["error"]?.string) ?? "本地工具执行未完成"
     }
 
     private static func node(_ event: LocalAgentEventRecord) -> TurnProcessNode? {

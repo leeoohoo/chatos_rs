@@ -7,17 +7,50 @@ use chatos_local_agent_protocol::{
 };
 
 pub(super) async fn runtime_with_parent() -> Arc<LocalAgentRuntime> {
+    runtime_with_parent_requirement_plan(None).await
+}
+
+pub(super) async fn runtime_with_parent_requirement_plan(
+    requirement_plan: Option<Value>,
+) -> Arc<LocalAgentRuntime> {
     let storage = Arc::new(
         SqliteClientStorage::connect_memory()
             .await
             .expect("storage"),
     );
     let runtime = Arc::new(LocalAgentRuntime::new(storage));
-    initialize_parent(runtime).await
+    initialize_parent(runtime, requirement_plan).await
 }
 
-async fn initialize_parent(runtime: Arc<LocalAgentRuntime>) -> Arc<LocalAgentRuntime> {
+async fn initialize_parent(
+    runtime: Arc<LocalAgentRuntime>,
+    requirement_plan: Option<Value>,
+) -> Arc<LocalAgentRuntime> {
     runtime.initialize("user-1").await.expect("initialize");
+    let mut input = json!({
+        "agent_id": "jiguli",
+        "agent_name": "叽咕狸",
+        "conversation_id": "conversation-1",
+        "turn_id": "turn-1",
+        "message_id": "message-1",
+        "message": "plan this",
+        "runtime_settings": {
+            "remote_connection_id": "connection-1",
+            "reasoning_enabled": false
+        },
+        "attachments": [{
+            "attachment_id": "attachment-1",
+            "display_name": "brief.txt",
+            "media_type": "text/plain",
+            "byte_size": 12,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "authorized_local_ref": "local-attachment:brief-1",
+            "metadata": {}
+        }]
+    });
+    if let Some(plan) = requirement_plan {
+        input["requirement_plan"] = plan;
+    }
     runtime
         .try_handle(envelope(
             "create-parent".to_string(),
@@ -30,27 +63,7 @@ async fn initialize_parent(runtime: Arc<LocalAgentRuntime>) -> Arc<LocalAgentRun
                 model_config_ref: "model-1".to_string(),
                 model_config_revision: "revision-1".to_string(),
                 capability_policy_revision: "policy-1".to_string(),
-                input: json!({
-                    "agent_id": "jiguli",
-                    "agent_name": "叽咕狸",
-                    "conversation_id": "conversation-1",
-                    "turn_id": "turn-1",
-                    "message_id": "message-1",
-                    "message": "plan this",
-                    "runtime_settings": {
-                        "remote_connection_id": "connection-1",
-                        "reasoning_enabled": false
-                    },
-                    "attachments": [{
-                        "attachment_id": "attachment-1",
-                        "display_name": "brief.txt",
-                        "media_type": "text/plain",
-                        "byte_size": 12,
-                        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                        "authorized_local_ref": "local-attachment:brief-1",
-                        "metadata": {}
-                    }]
-                }),
+                input,
                 max_iterations: 8,
             }),
         ))
@@ -570,7 +583,7 @@ async fn dispatch_error_after_committed_graph_remains_unknown_not_preparation_fa
             }
         }),
     ));
-    let runtime = initialize_parent(runtime).await;
+    let runtime = initialize_parent(runtime, None).await;
     let executor = LocalTaskToolExecutor::new(runtime.clone(), "user-1").unwrap();
     // The first clock read creates the graph; the next begins Task Run dispatch.
     remaining.store(2, Ordering::SeqCst);
