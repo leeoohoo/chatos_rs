@@ -40,7 +40,6 @@ final class WindowFullscreenCoordinator: ObservableObject {
             contentMinSize: window.contentMinSize,
             contentMaxSize: window.contentMaxSize
         )
-        window.contentMinSize = .zero
         window.contentMaxSize = frame.size
         window.setFrame(frame, display: true, animate: true)
         isFullScreen = true

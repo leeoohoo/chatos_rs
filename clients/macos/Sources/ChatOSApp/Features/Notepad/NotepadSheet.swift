@@ -38,14 +38,7 @@ struct NotepadSheet: View {
                     .frame(minWidth: 720)
             }
         }
-        .frame(
-            minWidth: fullScreen.isFullScreen ? 0 : 1_120,
-            idealWidth: fullScreen.isFullScreen ? nil : 1_300,
-            maxWidth: fullScreen.isFullScreen ? .infinity : nil,
-            minHeight: fullScreen.isFullScreen ? 0 : 720,
-            idealHeight: fullScreen.isFullScreen ? nil : 840,
-            maxHeight: fullScreen.isFullScreen ? .infinity : nil
-        )
+        .frame(minWidth: 1_120, idealWidth: 1_300, minHeight: 720, idealHeight: 840)
         .background(Color(nsColor: .windowBackgroundColor))
         .background(WindowFullscreenReader(coordinator: fullScreen))
         .environment(\.locale, model.interfaceLocale)

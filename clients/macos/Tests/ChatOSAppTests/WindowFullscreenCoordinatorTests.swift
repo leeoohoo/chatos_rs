@@ -23,7 +23,7 @@ final class WindowFullscreenCoordinatorTests: XCTestCase {
 
         XCTAssertTrue(coordinator.isFullScreen)
         XCTAssertEqual(window.frame, targetFrame)
-        XCTAssertEqual(window.contentMinSize, .zero)
+        XCTAssertEqual(window.contentMinSize, NSSize(width: 520, height: 360))
         XCTAssertEqual(window.contentMaxSize, targetFrame.size)
 
         coordinator.exitFullScreen()
