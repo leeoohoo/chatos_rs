@@ -10,6 +10,7 @@ struct NotepadSheet: View {
     @State private var prompt: NotepadPrompt?
     @State private var promptText = ""
     @State private var deleteTarget: NotepadDeleteTarget?
+    @StateObject private var fullScreen = WindowFullscreenCoordinator()
     private let eventHub: NativeLocalAgentEventHub?
     private let ownerUserID: String?
     let onClose: () -> Void
@@ -37,8 +38,16 @@ struct NotepadSheet: View {
                     .frame(minWidth: 720)
             }
         }
-        .frame(minWidth: 1_120, idealWidth: 1_300, minHeight: 720, idealHeight: 840)
+        .frame(
+            minWidth: fullScreen.isFullScreen ? 0 : 1_120,
+            idealWidth: fullScreen.isFullScreen ? nil : 1_300,
+            maxWidth: fullScreen.isFullScreen ? .infinity : nil,
+            minHeight: fullScreen.isFullScreen ? 0 : 720,
+            idealHeight: fullScreen.isFullScreen ? nil : 840,
+            maxHeight: fullScreen.isFullScreen ? .infinity : nil
+        )
         .background(Color(nsColor: .windowBackgroundColor))
+        .background(WindowFullscreenReader(coordinator: fullScreen))
         .environment(\.locale, model.interfaceLocale)
         .task {
             viewModel.interfaceLanguage = model.interfaceLanguage
@@ -113,6 +122,15 @@ struct NotepadSheet: View {
                 ProgressView().controlSize(.small)
             }
             Spacer()
+            Button(
+                fullScreen.isFullScreen ? "退出全屏" : "全屏",
+                systemImage: fullScreen.isFullScreen
+                    ? "arrow.down.right.and.arrow.up.left"
+                    : "arrow.up.left.and.arrow.down.right"
+            ) {
+                fullScreen.toggle()
+            }
+            .keyboardShortcut("f", modifiers: [.control, .command])
             Button("刷新", systemImage: "arrow.clockwise") {
                 Task { await viewModel.refresh() }
             }
@@ -436,6 +454,7 @@ struct NotepadSheet: View {
     private func close() {
         Task {
             if viewModel.isDirty, !(await viewModel.save()) { return }
+            fullScreen.exitFullScreen()
             onClose()
         }
     }

@@ -7,6 +7,7 @@ struct PetFileWorkbenchView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var store: PetFileWorkbenchStore
     @ObservedObject var defaultHandlerPrompt: PetDefaultFileHandlerPromptController
+    @StateObject private var fullScreen = WindowFullscreenCoordinator()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,12 +40,22 @@ struct PetFileWorkbenchView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .background(WindowFullscreenReader(coordinator: fullScreen))
+        .clipShape(RoundedRectangle(cornerRadius: fullScreen.isFullScreen ? 0 : 16))
         .overlay {
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: fullScreen.isFullScreen ? 0 : 16)
                 .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
         }
-        .shadow(color: .black.opacity(0.3), radius: 22, y: 12)
+        .shadow(
+            color: .black.opacity(fullScreen.isFullScreen ? 0 : 0.3),
+            radius: fullScreen.isFullScreen ? 0 : 22,
+            y: fullScreen.isFullScreen ? 0 : 12
+        )
+        .onChange(of: store.isPresented) { _, isPresented in
+            if !isPresented {
+                fullScreen.exitFullScreen()
+            }
+        }
         .alert(
             closeAlertTitle,
             isPresented: closeAlertPresented,
@@ -136,6 +147,19 @@ struct PetFileWorkbenchView: View {
                     .foregroundStyle(.orange)
             }
             Spacer()
+            Button {
+                fullScreen.toggle()
+            } label: {
+                Image(systemName: fullScreen.isFullScreen
+                    ? "arrow.down.right.and.arrow.up.left"
+                    : "arrow.up.left.and.arrow.down.right")
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("f", modifiers: [.control, .command])
+            .help(fullScreen.isFullScreen
+                ? model.localized("退出全屏", english: "Exit Full Screen")
+                : model.localized("全屏", english: "Full Screen"))
             Button {
                 store.requestDismiss()
             } label: {
