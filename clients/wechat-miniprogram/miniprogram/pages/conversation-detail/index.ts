@@ -257,6 +257,7 @@ Page({
   postSendTimers: [] as Array<ReturnType<typeof setTimeout>>,
   keyboardListener: undefined as ((result: { height: number }) => void) | undefined,
   interventionTimer: undefined as ReturnType<typeof setInterval> | undefined,
+  refreshingRuntime: false,
   refreshingPrompts: false,
   refreshingApprovals: false,
   reconciling: false,
@@ -387,10 +388,12 @@ Page({
       if (recoveredConversation) {
         wx.setNavigationBarTitle({ title: recoveredConversation.title || '会话' })
       }
-      await Promise.all([this.refreshRuntime(), this.refreshPrompts(), this.refreshApprovals()])
       this.reconcileFailures = 0
       this.nextReconcileAt = 0
       if (messagesChanged) this.scrollToBottom()
+      void this.refreshRuntime(true)
+      void this.refreshPrompts(true)
+      void this.refreshApprovals()
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 401) {
         wx.reLaunch({ url: '/pages/bind/index' })
@@ -404,11 +407,23 @@ Page({
     }
   },
 
-  async refreshRuntime() {
-    const context = await conversationService.runtimeContext(this.deviceId, this.conversationId)
-    const turnId = context?.turn_id ?? context?.conversation_turn_id ?? ''
-    const activeTurnId = context?.active_in_runtime === true ? turnId : ''
-    if (activeTurnId !== this.data.activeTurnId) this.setData({ activeTurnId })
+  async refreshRuntime(quiet = false) {
+    if (this.refreshingRuntime) return
+    this.refreshingRuntime = true
+    try {
+      const context = await conversationService.runtimeContext(this.deviceId, this.conversationId)
+      const turnId = context?.turn_id ?? context?.conversation_turn_id ?? ''
+      const activeTurnId = context?.active_in_runtime === true ? turnId : ''
+      if (activeTurnId !== this.data.activeTurnId) this.setData({ activeTurnId })
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 401) {
+        wx.reLaunch({ url: '/pages/bind/index' })
+      } else if (!quiet) {
+        throw error
+      }
+    } finally {
+      this.refreshingRuntime = false
+    }
   },
 
   async refreshPrompts(quiet = false) {
