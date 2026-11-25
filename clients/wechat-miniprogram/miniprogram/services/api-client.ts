@@ -45,7 +45,7 @@ export async function apiRequest<T>(options: {
       url: `${apiOrigin()}${target}`,
       method,
       data,
-      timeout: 15_000,
+      timeout: options.surface === 'local' ? 35_000 : 15_000,
       header: {
         ...(typeof options.data === 'object' && !(options.data instanceof ArrayBuffer)
           ? { 'Content-Type': 'application/json' }
@@ -72,7 +72,10 @@ export async function apiRequest<T>(options: {
         reject(new ApiError(message, status, typeof body?.code === 'string' ? body.code : undefined))
       },
       fail(error) {
-        reject(new ApiError(error.errMsg || '网络连接失败', 0))
+        const message = error.errMsg.includes('timeout')
+          ? '连接电脑超时，请确认电脑在线后重试'
+          : error.errMsg || '网络连接失败'
+        reject(new ApiError(message, 0))
       },
     })
   })
