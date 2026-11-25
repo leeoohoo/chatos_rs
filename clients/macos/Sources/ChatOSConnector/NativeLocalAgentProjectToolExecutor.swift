@@ -24,6 +24,8 @@ struct NativeLocalAgentTaskExecutionContext: Sendable {
     let workspaceScopeID: String
     let toolAuthorization: NativeLocalAgentTaskToolAuthorization
     let remoteConnectionID: String?
+    let sourceProjectRootURL: URL?
+    let usesIsolatedWorkspace: Bool
 
     init(
         conversationID: String,
@@ -33,7 +35,9 @@ struct NativeLocalAgentTaskExecutionContext: Sendable {
         executionRootURL: URL,
         workspaceScopeID: String,
         toolAuthorization: NativeLocalAgentTaskToolAuthorization,
-        remoteConnectionID: String? = nil
+        remoteConnectionID: String? = nil,
+        sourceProjectRootURL: URL? = nil,
+        usesIsolatedWorkspace: Bool = false
     ) {
         self.conversationID = conversationID
         self.projectID = projectID
@@ -43,6 +47,8 @@ struct NativeLocalAgentTaskExecutionContext: Sendable {
         self.workspaceScopeID = workspaceScopeID
         self.toolAuthorization = toolAuthorization
         self.remoteConnectionID = remoteConnectionID
+        self.sourceProjectRootURL = sourceProjectRootURL
+        self.usesIsolatedWorkspace = usesIsolatedWorkspace
     }
 
     func requireProject() throws -> NativeResolvedProjectPath {
@@ -91,6 +97,17 @@ struct NativeLocalAgentTaskToolAuthorization: Sendable {
 
     var capabilityBrokerEnabled: Bool {
         !pluginSelectionIDs.isEmpty || !brokerBuiltinCapabilities.isEmpty || !externalMCPConfigIDs.isEmpty
+    }
+
+    var allowsProjectWrite: Bool {
+        requiresExecution && enabledBuiltinKinds.contains("CodeMaintainerWrite")
+    }
+
+    var requiresIsolatedProjectWorkspace: Bool {
+        requiresExecution
+            && !allowsProjectWrite
+            && (enabledBuiltinKinds.contains("TerminalController")
+                || !pluginSelectionIDs.isEmpty)
     }
 
     var brokerBuiltinCapabilities: Set<LocalAgentTodoBuiltinCapability> {
@@ -415,6 +432,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
     private let codeReadWorker: any CodeReadWorkerExecuting
     private let pluginTools: NativeLocalAgentPluginToolExecutor
     private let remoteConnections: NativeMCPRemoteConnectionController?
+    private let executionWorkspaces: NativeLocalAgentExecutionWorkspaceStore
 
     init(
         host: any LocalAgentHostClientServicing,
@@ -423,12 +441,14 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         remoteConnectionProvider: (any NativeRemoteConnectionRuntimeProviding)? = nil,
         writeStore: NativeMCPCodeWriteStore = .init(),
         terminalStore: NativeLocalAgentTerminalStore = .init(),
-        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
+        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared,
+        executionWorkspaces: NativeLocalAgentExecutionWorkspaceStore = .init()
     ) {
         contextResolver = .init(host: host, projects: projects, connector: connector)
         self.writeStore = writeStore
         self.terminalStore = terminalStore
         self.codeReadWorker = codeReadWorker
+        self.executionWorkspaces = executionWorkspaces
         pluginTools = .init(connector: connector, host: host)
         remoteConnections = remoteConnectionProvider.map {
             NativeMCPRemoteConnectionController(provider: $0)
@@ -446,8 +466,12 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         }
         let context: NativeLocalAgentTaskExecutionContext
         do {
-            context = try await contextResolver.resolve(
+            let resolved = try await contextResolver.resolve(
                 ownerUserID: ownerUserID,
+                runID: invocation.runID
+            )
+            context = try await executionWorkspaces.bind(
+                context: resolved,
                 runID: invocation.runID
             )
         } catch let error as NativeLocalAgentPlatformToolError {
@@ -570,12 +594,14 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
     func reset() async {
         await terminalStore.cancelAll()
         await pluginTools.reset()
+        await executionWorkspaces.reset()
     }
 
     func release(runID: String) async {
         _ = await terminalStore.cancel(ownerRunID: runID)
         _ = await writeStore.discard(runID: runID)
         await pluginTools.release(runID: runID)
+        await executionWorkspaces.release(runID: runID)
     }
 
     private func executeTerminal(
@@ -612,14 +638,21 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         )
         let timeout = Self.number(arguments["timeout_ms"]).map(Int.init)
             ?? Self.number(arguments["timeout"]).map { Int($0 * 1_000) }
-        return try await terminalStore.execute(
+        let result = try await terminalStore.execute(
             command: command,
             cwd: cwd,
             projectRoot: root,
             background: Self.bool(arguments["background"]) ?? false,
             timeoutMilliseconds: timeout,
-            ownerRunID: invocation.runID
+            ownerRunID: invocation.runID,
+            readOnlySourceRoot: context.usesIsolatedWorkspace
+                ? context.sourceProjectRootURL
+                : nil
         )
+        if context.usesIsolatedWorkspace {
+            try await executionWorkspaces.verifySourceUnchanged(runID: invocation.runID)
+        }
+        return result
     }
 
     private static func string(_ value: NativeJSONValue?) -> String? {

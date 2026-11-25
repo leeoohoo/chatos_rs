@@ -11,6 +11,12 @@ pub(super) fn append_instruction(
     let mut input: serde_json::Value = serde_json::from_str(input_json)
         .map_err(|error| ClientStorageError::InvalidState(error.to_string()))?;
     if let Some(instruction) = retry_instruction {
+        let instruction = instruction.trim();
+        if instruction.is_empty() {
+            return Err(ClientStorageError::InvalidState(
+                "task retry instruction cannot be empty".to_string(),
+            ));
+        }
         let object = input.as_object_mut().ok_or_else(|| {
             ClientStorageError::InvalidState("task input must be a JSON object".to_string())
         })?;
@@ -23,6 +29,14 @@ pub(super) fn append_instruction(
                     "task retry_instructions must be an array".to_string(),
                 )
             })?;
+        if instructions
+            .iter()
+            .any(|value| value.as_str().map(str::trim) == Some(instruction))
+        {
+            return Err(ClientStorageError::Conflict(
+                "task retry instruction was already attempted".to_string(),
+            ));
+        }
         instructions.push(serde_json::Value::String(instruction.to_string()));
     }
     let encoded = serde_json::to_string(&input)
@@ -52,5 +66,15 @@ mod tests {
             value["retry_instructions"],
             serde_json::json!(["first", "second"])
         );
+    }
+
+    #[test]
+    fn rejects_an_identical_retry_instruction() {
+        let error = append_instruction(
+            r#"{"objective":"ship","retry_instructions":["try the safe fallback"]}"#,
+            Some(" try the safe fallback "),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("already attempted"));
     }
 }

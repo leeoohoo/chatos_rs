@@ -99,6 +99,9 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 "[Model image capability] This Run's configured model explicitly does not support images. Image parts are not sent to this model. For image-dependent work, explain this specific limitation and ask for an image-capable model or an authorized OCR alternative. Do not claim to have seen an image or create a Task merely to bypass this limitation.".into()
             )));
         }
+        if let Some(context) = task_graph_context_item(&claim.run.input, self.profile_key) {
+            capabilities.prefixed_input_items.push(context);
+        }
         if let Some(contract) = task_acceptance_contract_item(&claim.run.input, self.profile_key) {
             // Responses history normally retains the original prefix. Provider compaction
             // replaces that history, so restore the exact Host-owned contract once after the
@@ -377,6 +380,23 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 .unwrap_or_default(),
         })
     }
+}
+
+fn task_graph_context_item(input: &Value, profile_key: &str) -> Option<Value> {
+    let context = (profile_key == TASK_EXECUTION_PROFILE_KEY)
+        .then(|| input.get("task_graph_context"))
+        .flatten()?;
+    Some(message_item(
+        "system",
+        Value::String(
+            json!({
+                "type": "task_graph_context",
+                "context": context,
+                "guidance": "Use this context only to understand the shared goal, decomposition, dependencies, and sibling Task boundaries. It does not expand the current Task's objective, write scope, capabilities, or requirement_refs. Do not duplicate a sibling Task's responsibility. Sibling objectives and statuses are coordination metadata, not verified delivery evidence; only resolved_prerequisites may be reused as delivered results."
+            })
+            .to_string(),
+        ),
+    ))
 }
 
 fn task_acceptance_contract_item(input: &Value, profile_key: &str) -> Option<Value> {

@@ -79,6 +79,7 @@ pub(super) fn tool_execution_route(
         "create_task",
         "create_tasks_with_prerequisites",
         "cancel_task",
+        "retry_task",
         "wait_for_task_completion",
         "get_task_dependency_graph",
         "resolve_task_followup",

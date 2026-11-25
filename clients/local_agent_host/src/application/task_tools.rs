@@ -497,6 +497,87 @@ impl LocalTaskToolExecutor {
                     &auto_started_runs,
                 )
             }
+            RETRY_TASK_TOOL => {
+                let args: RetryTaskArgs = serde_json::from_value(invocation.arguments.clone())
+                    .map_err(|error| format!("invalid retry_task input: {error}"))?;
+                let correction = args.correction.trim();
+                if correction.is_empty() {
+                    return Err("retry_task correction cannot be empty".to_string());
+                }
+                let recovery = parent.input.get("task_graph_recovery").ok_or(
+                    "retry_task is available only in the current program-owned task_graph_recovery",
+                )?;
+                let candidate = recovery
+                    .get("tasks")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .find(|task| task.get("task_id").and_then(Value::as_str) == Some(&args.task_id))
+                    .ok_or("retry_task target is outside the current task_graph_recovery")?;
+                if candidate.get("retry_allowed").and_then(Value::as_bool) != Some(true) {
+                    return Err("retry_task target is not safe to retry automatically".to_string());
+                }
+                if candidate.get("version").and_then(Value::as_u64) != Some(args.expected_version) {
+                    return Err(
+                        "retry_task expected_version does not match the current recovery context"
+                            .to_string(),
+                    );
+                }
+                let task = self
+                    .runtime
+                    .get_task_for_conversation(
+                        &parent.owner_user_id,
+                        conversation_id,
+                        &args.task_id,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| format!("task not found: {}", args.task_id))?;
+                if task.version != args.expected_version {
+                    return Err(format!("task version changed: {}", args.task_id));
+                }
+                if task
+                    .input
+                    .get("retry_instructions")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .any(|instruction| instruction.as_str().map(str::trim) == Some(correction))
+                {
+                    return Err("retry_task correction was already attempted".to_string());
+                }
+                let command = chatos_local_agent_protocol::RetryTaskCommand {
+                    owner_user_id: parent.owner_user_id.clone(),
+                    task_id: args.task_id.clone(),
+                    expected_version: args.expected_version,
+                    retry_instruction: Some(correction.to_string()),
+                };
+                command.validate()?;
+                *side_effects_started = true;
+                let graph = match self
+                    .runtime
+                    .try_handle(envelope(
+                        format!("task-tool-retry-{}", invocation.invocation_id),
+                        HostCommand::RetryTask(command),
+                    ))
+                    .await
+                    .map_err(|error| error.to_string())?
+                {
+                    chatos_local_agent_protocol::HostResult::TaskGraph { graph } => graph,
+                    result => return Err(format!("unexpected Task Graph response: {result:?}")),
+                };
+                let started_runs = self
+                    .runtime
+                    .start_ready_task_runs_for_graph(&parent.owner_user_id, &graph.graph_id)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                json!({
+                    "retried": true,
+                    "task_id": args.task_id,
+                    "graph_id": graph.graph_id,
+                    "started_run_ids": started_runs.iter().map(|run| &run.run_id).collect::<Vec<_>>(),
+                })
+            }
             CANCEL_TASK_TOOL => {
                 let args: CancelTaskArgs = serde_json::from_value(invocation.arguments.clone())
                     .map_err(|error| format!("invalid cancel_task input: {error}"))?;
@@ -627,6 +708,14 @@ impl TaskListStatus {
 #[serde(deny_unknown_fields)]
 struct TaskIdArgs {
     task_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetryTaskArgs {
+    task_id: String,
+    expected_version: u64,
+    correction: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -13,7 +13,7 @@ use super::{
 };
 use chatos_local_agent_protocol::{
     resolve_local_task_graph_notification_policy, LocalAgentRunRecord, LocalAgentRunStatus,
-    LocalTaskGraphNotificationPolicy, LocalTaskGraphStatus,
+    LocalTaskGraph, LocalTaskGraphNotificationPolicy, LocalTaskGraphStatus, LocalTaskStatus,
 };
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};

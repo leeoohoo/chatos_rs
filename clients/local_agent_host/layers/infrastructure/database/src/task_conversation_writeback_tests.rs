@@ -1046,6 +1046,312 @@ async fn create_callback_conversation(
     turn
 }
 
+async fn complete_main_chat_run(
+    storage: &SqliteClientStorage,
+    turn: &StartConversationTurnCommand,
+) {
+    let claim = storage
+        .claim_next_run(
+            &command(&format!("claim-{}", turn.run_id)),
+            "user-1",
+            "worker-main",
+            &format!("token-{}", turn.run_id),
+            2_100,
+            12_100,
+            &format!("claim-event-{}", turn.run_id),
+        )
+        .await
+        .unwrap()
+        .expect("claim Main Chat");
+    storage
+        .apply_transition(
+            &command(&format!("finish-{}", turn.run_id)),
+            &RunTransition {
+                run_id: turn.run_id.clone(),
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                expected_status: LocalAgentRunStatus::ModelRunning,
+                next_status: LocalAgentRunStatus::Succeeded,
+                next_model_attempt: 1,
+                next_attempt_at_unix_ms: None,
+                pending_tool_batch: None,
+                tool_batch: None,
+                checkpoint: Some(json!({
+                    "response": {
+                        "request_input_items": [{"type":"message","role":"user","content":"start"}],
+                        "response_output_items": [{"type":"message","role":"assistant","content":"Tasks started"}]
+                    }
+                })),
+                clear_continuation_input: true,
+                terminal_outcome: Some(json!({"content":"Tasks started"})),
+                event_id: format!("finish-event-{}", turn.run_id),
+                event_type: "run_succeeded".into(),
+                event_payload: json!({"status":"succeeded"}),
+                occurred_at_unix_ms: 2_200,
+            },
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn safe_task_failure_is_claimed_for_program_owned_main_chat_recovery() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    let turn = create_callback_conversation(&storage, "auto-recovery", "Complete the work").await;
+    // create_callback_conversation closes its source Run for callback-only tests; restore a
+    // real completed Main Chat state for this recovery scenario.
+    sqlx::query(
+        "UPDATE local_agent_runs SET status = 'queued', version = 1, terminal_outcome_json = NULL \
+         WHERE run_id = ?",
+    )
+    .bind(&turn.run_id)
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE local_conversation_turns SET status = 'running' WHERE turn_id = ?")
+        .bind(&turn.turn_id)
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+    complete_main_chat_run(&storage, &turn).await;
+    storage
+        .create_task_graph(
+            &command("create-auto-recovery-graph"),
+            &CreateTaskGraphCommand {
+                graph_id: "graph-auto-recovery".into(),
+                owner_user_id: "user-1".into(),
+                source_entity_type: "conversation_turn".into(),
+                source_entity_id: turn.turn_id.clone(),
+                tasks: vec![summary_task("auto-recovery-task", "Recoverable work")],
+                dependencies: vec![],
+            },
+            4_000,
+        )
+        .await
+        .unwrap();
+
+    finish_task_run_with_outcome(
+        &storage,
+        "auto-recovery-task-run",
+        LocalAgentRunStatus::Failed,
+        5_000,
+        json!({"reason":"The first safe method did not produce the required output"}),
+    )
+    .await;
+
+    let source = storage.get_run(&turn.run_id).await.unwrap().unwrap();
+    assert_eq!(source.status, LocalAgentRunStatus::ContinuationReady);
+    assert_eq!(
+        source.input["task_graph_recovery"]["graph_id"],
+        "graph-auto-recovery"
+    );
+    assert_eq!(
+        source.input["task_graph_recovery"]["tasks"][0]["retry_allowed"],
+        true
+    );
+    assert_eq!(
+        source.continuation_input.as_ref().unwrap()["type"],
+        "task_graph_recovery"
+    );
+    let conversation = storage
+        .get_conversation("user-1", &turn.conversation_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        conversation.turns[0].status,
+        LocalConversationTurnStatus::Succeeded
+    );
+    let claim = storage
+        .claim_next_run(
+            &command("claim-auto-recovery"),
+            "user-1",
+            "worker-main",
+            "token-auto-recovery",
+            5_100,
+            15_100,
+            "claim-auto-recovery-event",
+        )
+        .await
+        .unwrap()
+        .expect("claim Main Chat recovery");
+    assert_eq!(claim.run.run_id, turn.run_id);
+    assert_eq!(claim.run.status, LocalAgentRunStatus::ModelRunning);
+    assert_eq!(
+        storage
+            .get_conversation("user-1", &turn.conversation_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .turns[0]
+            .status,
+        LocalConversationTurnStatus::Running
+    );
+    let events = storage.list_events(0, 100, None).await.unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type == "task_graph_recovery_scheduled")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn new_user_turn_supersedes_unclaimed_task_graph_recovery() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    let source =
+        create_callback_conversation(&storage, "recovery-priority", "Complete the work").await;
+    sqlx::query(
+        "UPDATE local_agent_runs SET status = 'queued', version = 1, terminal_outcome_json = NULL \
+         WHERE run_id = ?",
+    )
+    .bind(&source.run_id)
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE local_conversation_turns SET status = 'running' WHERE turn_id = ?")
+        .bind(&source.turn_id)
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+    complete_main_chat_run(&storage, &source).await;
+    storage
+        .create_task_graph(
+            &command("create-recovery-priority-graph"),
+            &CreateTaskGraphCommand {
+                graph_id: "graph-recovery-priority".into(),
+                owner_user_id: "user-1".into(),
+                source_entity_type: "conversation_turn".into(),
+                source_entity_id: source.turn_id.clone(),
+                tasks: vec![summary_task("recovery-priority-task", "Recoverable work")],
+                dependencies: vec![],
+            },
+            4_000,
+        )
+        .await
+        .unwrap();
+    finish_task_run_with_outcome(
+        &storage,
+        "recovery-priority-task-run",
+        LocalAgentRunStatus::Failed,
+        5_000,
+        json!({"reason":"Try a different safe method"}),
+    )
+    .await;
+
+    let conversation = storage
+        .get_conversation("user-1", &source.conversation_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let next = StartConversationTurnCommand {
+        owner_user_id: "user-1".into(),
+        conversation_id: source.conversation_id.clone(),
+        expected_conversation_version: conversation.conversation.version,
+        conversation_if_missing: None,
+        turn_id: "turn-recovery-priority-next".into(),
+        message_id: "message-recovery-priority-next".into(),
+        run_id: "conversation-run-recovery-priority-next".into(),
+        message: "Use this newer instruction".into(),
+        message_metadata: json!({}),
+        attachments: Vec::new(),
+        model_config_ref: "model-1".into(),
+        model_config_revision: "revision-1".into(),
+        capability_policy_revision: "policy-1".into(),
+        max_iterations: 8,
+    };
+    storage
+        .start_conversation_turn(
+            &command("start-recovery-priority-next"),
+            &next,
+            &conversation_run(&next),
+            "start-recovery-priority-next-event",
+            5_100,
+        )
+        .await
+        .expect("new user Turn takes priority");
+
+    let old_run = storage.get_run(&source.run_id).await.unwrap().unwrap();
+    assert_eq!(old_run.status, LocalAgentRunStatus::Succeeded);
+    assert!(old_run.continuation_input.is_none());
+    assert!(storage
+        .list_events(0, 100, None)
+        .await
+        .unwrap()
+        .iter()
+        .any(|event| event.run_id == source.run_id
+            && event.event_type == "task_graph_recovery_superseded"));
+    let claim = storage
+        .claim_next_run(
+            &command("claim-recovery-priority-next"),
+            "user-1",
+            "worker-main",
+            "token-recovery-priority-next",
+            5_200,
+            15_200,
+            "claim-recovery-priority-next-event",
+        )
+        .await
+        .unwrap()
+        .expect("claim newer user Turn");
+    assert_eq!(claim.run.run_id, next.run_id);
+}
+
+#[tokio::test]
+async fn needs_review_task_never_auto_reopens_main_chat() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    let turn = create_callback_conversation(&storage, "review-recovery", "Complete the work").await;
+    sqlx::query(
+        "UPDATE local_agent_runs SET status = 'queued', version = 1, terminal_outcome_json = NULL \
+         WHERE run_id = ?",
+    )
+    .bind(&turn.run_id)
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE local_conversation_turns SET status = 'running' WHERE turn_id = ?")
+        .bind(&turn.turn_id)
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+    complete_main_chat_run(&storage, &turn).await;
+    storage
+        .create_task_graph(
+            &command("create-review-recovery-graph"),
+            &CreateTaskGraphCommand {
+                graph_id: "graph-review-recovery".into(),
+                owner_user_id: "user-1".into(),
+                source_entity_type: "conversation_turn".into(),
+                source_entity_id: turn.turn_id.clone(),
+                tasks: vec![summary_task("review-recovery-task", "Ambiguous write")],
+                dependencies: vec![],
+            },
+            4_000,
+        )
+        .await
+        .unwrap();
+
+    finish_task_run_with_outcome(
+        &storage,
+        "review-recovery-task-run",
+        LocalAgentRunStatus::NeedsReview,
+        5_000,
+        json!({"reason":"The write may have completed before the worker disconnected"}),
+    )
+    .await;
+
+    let source = storage.get_run(&turn.run_id).await.unwrap().unwrap();
+    assert_eq!(source.status, LocalAgentRunStatus::Succeeded);
+    assert!(source.input.get("task_graph_recovery").is_none());
+    assert!(storage
+        .list_events(0, 100, None)
+        .await
+        .unwrap()
+        .iter()
+        .all(|event| event.event_type != "task_graph_recovery_scheduled"));
+}
+
 fn summary_task(task_id: &str, title: &str) -> LocalTaskSpec {
     LocalTaskSpec {
         task_id: task_id.to_string(),

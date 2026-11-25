@@ -55,6 +55,41 @@ fn pending_followup_review_hides_conflicting_task_mutations() {
     );
 }
 
+#[test]
+fn retry_task_keeps_the_main_chat_tool_prefix_stable_but_is_hidden_during_review() {
+    let tools = vec![json!({"name": "list_tasks"}), json!({"name": "retry_task"})];
+    assert_eq!(
+        main_chat_scoped_tools(tools.clone(), &json!({}))
+            .iter()
+            .filter_map(tool_name)
+            .collect::<Vec<_>>(),
+        vec!["list_tasks", "retry_task"]
+    );
+    assert_eq!(
+        main_chat_scoped_tools(
+            tools.clone(),
+            &json!({"task_graph_recovery":{"graph_id":"graph-1"}}),
+        )
+        .iter()
+        .filter_map(tool_name)
+        .collect::<Vec<_>>(),
+        vec!["list_tasks", "retry_task"]
+    );
+    assert_eq!(
+        main_chat_scoped_tools(
+            tools,
+            &json!({
+                "task_graph_recovery":{"graph_id":"graph-1"},
+                "task_followup_review":{"pending":true}
+            }),
+        )
+        .iter()
+        .filter_map(tool_name)
+        .collect::<Vec<_>>(),
+        vec!["list_tasks"]
+    );
+}
+
 #[async_trait]
 impl LocalModelRuntimeResolver for OwnerCheckingModelResolver {
     async fn resolve_model_runtime(
@@ -461,6 +496,65 @@ async fn task_execution_keeps_the_bound_workspace_root_authoritative() {
 
     assert!(instructions.contains("path `.` is the authoritative root"));
     assert!(instructions.contains("Never replace that root with a child directory"));
+}
+
+#[tokio::test]
+async fn task_graph_context_is_system_owned_and_kept_after_the_cache_stable_prefix() {
+    let planner = ControlPlaneLocalAiStepPlanner::task_execution(
+        OwnerCheckingModelResolver,
+        OwnerCheckingCapabilityResolver,
+    );
+    let mut task_claim = claim(Value::Null, None);
+    task_claim.run.profile_key = TASK_EXECUTION_PROFILE_KEY.to_string();
+    task_claim.run.owner_entity_type = "task".to_string();
+    task_claim.run.owner_entity_id = "task-b".to_string();
+    task_claim.run.input = json!({
+        "prompt": "Implement task-b",
+        "task_graph_context": {
+            "graph_id": "graph-1",
+            "graph_goal": "Ship the feature",
+            "tasks": [
+                {"task_id":"task-a","status":"running","current_task":false},
+                {"task_id":"task-b","status":"ready","current_task":true}
+            ]
+        },
+        "tool_options": {
+            "requires_execution": false,
+            "enabled_builtin_kinds": [],
+            "plugin_hints": []
+        }
+    });
+
+    let prepared = planner.prepare_ai_step(&task_claim).await.unwrap();
+    let parsed = prepared
+        .request
+        .prefixed_input_items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            item["content"]
+                .as_str()
+                .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                .map(|content| (index, item, content))
+        })
+        .collect::<Vec<_>>();
+    let clock_index = parsed
+        .iter()
+        .find(|(_, _, content)| content["type"] == "runtime_clock_context")
+        .map(|(index, _, _)| *index)
+        .unwrap();
+    let (context_index, context_item, context) = parsed
+        .iter()
+        .find(|(_, _, content)| content["type"] == "task_graph_context")
+        .unwrap();
+
+    assert!(clock_index < *context_index);
+    assert_eq!(context_item["role"], "system");
+    assert_eq!(context["context"]["graph_id"], "graph-1");
+    let guidance = context["guidance"].as_str().unwrap();
+    assert!(guidance.contains("does not expand the current Task's objective"));
+    assert!(guidance.contains("not verified delivery evidence"));
+    assert!(guidance.contains("only resolved_prerequisites"));
 }
 
 #[tokio::test]

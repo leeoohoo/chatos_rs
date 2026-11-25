@@ -135,13 +135,25 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 .await
                 .db()?;
             let candidate = sqlx::query(
-                "SELECT run_id, status FROM local_agent_runs \
+                "SELECT run_id, status, \
+                   json_extract(input_json, '$.task_graph_recovery.type') AS recovery_type \
+                 FROM local_agent_runs \
                  WHERE owner_user_id = ? AND iteration < max_iterations AND (\
                     status IN ('queued', 'model_ready', 'continuation_ready') OR \
                     (status = 'retry_scheduled' AND next_attempt_at_unix_ms <= ?)\
                  ) AND NOT EXISTS (SELECT 1 FROM local_task_followup_reviews f \
                    WHERE local_agent_runs.owner_entity_type = 'task' \
                      AND f.task_id = local_agent_runs.owner_entity_id AND f.state IN ('pending','held')) \
+                 AND (json_extract(input_json, '$.task_graph_recovery.type') IS NULL OR EXISTS (\
+                   SELECT 1 FROM local_conversation_turns recovery_turn \
+                   WHERE recovery_turn.run_id = local_agent_runs.run_id \
+                     AND recovery_turn.status = 'succeeded' \
+                     AND NOT EXISTS (SELECT 1 FROM local_conversation_turns newer_turn \
+                       WHERE newer_turn.conversation_id = recovery_turn.conversation_id \
+                         AND (newer_turn.created_at_unix_ms > recovery_turn.created_at_unix_ms \
+                           OR (newer_turn.created_at_unix_ms = recovery_turn.created_at_unix_ms \
+                             AND newer_turn.rowid > recovery_turn.rowid)))\
+                 )) \
                  ORDER BY created_at_unix_ms, run_id LIMIT 1",
             )
             .bind(owner_user_id)
@@ -154,10 +166,46 @@ impl LocalAgentRunStore for SqliteClientStorage {
             };
             let run_id: String = candidate.try_get("run_id").db()?;
             let candidate_status: String = candidate.try_get("status").db()?;
+            let recovery_type: Option<String> = candidate.try_get("recovery_type").db()?;
+            if recovery_type.as_deref() == Some("task_graph_recovery") {
+                let reopened = sqlx::query(
+                    "UPDATE local_conversation_turns SET status = 'running', updated_at_unix_ms = ? \
+                     WHERE run_id = ? AND status = 'succeeded' \
+                       AND NOT EXISTS (SELECT 1 FROM local_conversation_turns newer_turn \
+                         WHERE newer_turn.conversation_id = local_conversation_turns.conversation_id \
+                           AND (newer_turn.created_at_unix_ms > local_conversation_turns.created_at_unix_ms \
+                             OR (newer_turn.created_at_unix_ms = local_conversation_turns.created_at_unix_ms \
+                               AND newer_turn.rowid > local_conversation_turns.rowid)))",
+                )
+                .bind(now_unix_ms)
+                .bind(&run_id)
+                .execute(&mut *connection)
+                .await
+                .db()?;
+                if reopened.rows_affected() != 1 {
+                    return Err(ClientStorageError::Conflict(format!(
+                        "Task Graph recovery changed while claiming: {run_id}"
+                    )));
+                }
+                sqlx::query(
+                    "UPDATE local_conversations SET version = version + 1, updated_at_unix_ms = ? \
+                     WHERE conversation_id = (SELECT conversation_id \
+                       FROM local_conversation_turns WHERE run_id = ?)",
+                )
+                .bind(now_unix_ms)
+                .bind(&run_id)
+                .execute(&mut *connection)
+                .await
+                .db()?;
+            }
             let updated = sqlx::query(
                 "UPDATE local_agent_runs SET status = 'model_running', iteration = iteration + 1, \
                  version = version + 1, claim_token = ?, claim_until_unix_ms = ?, \
-                 next_attempt_at_unix_ms = NULL, updated_at_unix_ms = ? WHERE run_id = ?",
+                 next_attempt_at_unix_ms = NULL, \
+                 terminal_outcome_json = CASE \
+                   WHEN json_extract(input_json, '$.task_graph_recovery.type') = 'task_graph_recovery' \
+                   THEN NULL ELSE terminal_outcome_json END, \
+                 updated_at_unix_ms = ? WHERE run_id = ?",
             )
             .bind(claim_token)
             .bind(claim_until_unix_ms)

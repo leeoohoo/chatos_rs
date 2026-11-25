@@ -205,6 +205,22 @@ extension NativeLocalAgentPlatformToolCatalog {
       required: ["task_id", "reason"]
     ),
     taskTool(
+      name: retryTaskToolName,
+      description:
+        "Retry one failed or blocked Task only during the current program-owned task_graph_recovery, with a concrete different safe correction.",
+      properties: [
+        "task_id": .object(["type": .string("string"), "minLength": .number(1)]),
+        "expected_version": .object([
+          "type": .string("integer"), "minimum": .number(1),
+        ]),
+        "correction": .object([
+          "type": .string("string"), "minLength": .number(1),
+          "maxLength": .number(8_000),
+        ]),
+      ],
+      required: ["task_id", "expected_version", "correction"]
+    ),
+    taskTool(
       name: waitForTaskCompletionToolName,
       description:
         "Use exactly once after tasks have been created or adjusted. This is a background handoff signal, not polling; the final result is written back to this conversation."

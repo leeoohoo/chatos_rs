@@ -65,7 +65,12 @@ pub(super) fn main_chat_scoped_tools(mut tools: Vec<Value>, input: &Value) -> Ve
         tools.retain(|tool| {
             !matches!(
                 tool_name(tool),
-                Some("create_task" | "create_tasks_with_prerequisites" | "cancel_task")
+                Some(
+                    "create_task"
+                        | "create_tasks_with_prerequisites"
+                        | "cancel_task"
+                        | "retry_task"
+                )
             )
         });
     }
@@ -298,6 +303,10 @@ pub(super) fn durable_step_input(
         }
         Some(value) if value.get("type").and_then(Value::as_str) == Some("guidance") => {
             "user_guidance".to_string()
+        }
+        Some(value) if value.get("type").and_then(Value::as_str) == Some("task_graph_recovery") => {
+            history.push(message_item("system", Value::String(value.to_string())));
+            "task_graph_recovery".to_string()
         }
         Some(_) => return Err("unsupported durable continuation payload".to_string()),
         None if claim.run.model_attempt > 1 => "model_retry".to_string(),

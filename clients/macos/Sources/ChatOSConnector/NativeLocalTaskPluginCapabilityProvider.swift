@@ -60,7 +60,24 @@ extension NativeLocalConnectorService {
             guard projectContext.projectID != nil else {
                 throw NativePluginRuntimeError.invalidRequest("任务 Plugin 项目上下文无效")
             }
-            resolvedProject = try resolveProjectPath(projectRoot)
+            let source = try resolveProjectPath(projectRoot)
+            if source.absoluteURL.standardizedFileURL.resolvingSymlinksInPath()
+                == executionRootURL.standardizedFileURL.resolvingSymlinksInPath() {
+                resolvedProject = source
+            } else {
+                var workspace = source.workspace
+                workspace.id = workspaceScopeID
+                workspace.absoluteRoot = executionRootURL.path
+                workspace.fingerprint = NativePluginManifestLoader.sha256(
+                    workspaceScopeID + "\n" + executionRootURL.path
+                )
+                resolvedProject = .init(
+                    workspace: workspace,
+                    relativePath: ".",
+                    absoluteURL: executionRootURL,
+                    logicalPrefix: nil
+                )
+            }
         } else {
             guard projectContext.projectID == nil else {
                 throw NativePluginRuntimeError.invalidRequest("任务 Plugin 缺少项目根目录")

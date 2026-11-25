@@ -61,6 +61,7 @@ async fn task_input_with_prerequisites(
     task_id: &str,
     input_json: &str,
 ) -> Result<String, ClientStorageError> {
+    let graph_context = task_graph_context(connection, graph_id, task_id).await?;
     let rows = sqlx::query(
         "WITH dependencies(prerequisite_task_id) AS (\
            SELECT prerequisite_task_id FROM local_task_dependencies \
@@ -215,10 +216,105 @@ async fn task_input_with_prerequisites(
         ClientStorageError::InvalidState("Task input must be a JSON object".to_string())
     })?;
     object.insert("prompt".to_string(), Value::String(prompt));
+    if let Some(graph_context) = graph_context {
+        object.insert("task_graph_context".to_string(), graph_context);
+    }
     if has_prerequisites {
         object.insert("resolved_prerequisites".to_string(), Value::Array(contexts));
     }
     serde_json::to_string(&input).map_err(Into::into)
+}
+
+async fn task_graph_context(
+    connection: &mut SqliteConnection,
+    graph_id: &str,
+    current_task_id: &str,
+) -> Result<Option<Value>, ClientStorageError> {
+    let task_rows = sqlx::query(
+        "SELECT task_id, title, status, input_json FROM local_tasks \
+         WHERE graph_id = ? ORDER BY created_at_unix_ms, task_id",
+    )
+    .bind(graph_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    if task_rows.len() < 2 {
+        return Ok(None);
+    }
+    let dependency_rows = sqlx::query(
+        "SELECT task_id, prerequisite_task_id FROM local_task_dependencies WHERE graph_id = ? \
+         UNION SELECT external.task_id, external.prerequisite_task_id \
+         FROM local_task_external_dependencies external \
+         JOIN local_tasks task ON task.task_id = external.task_id \
+         WHERE task.graph_id = ? ORDER BY task_id, prerequisite_task_id",
+    )
+    .bind(graph_id)
+    .bind(graph_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    let mut graph_goal = Value::Null;
+    let mut decomposition_rationale = Value::Null;
+    let mut requirements = Vec::new();
+    let mut requirement_ids = Vec::new();
+    let mut tasks = Vec::with_capacity(task_rows.len());
+    for row in task_rows {
+        let task_id: String = row.try_get("task_id").db()?;
+        let title: String = row.try_get("title").db()?;
+        let input_json: String = row.try_get("input_json").db()?;
+        let task_input: Value = serde_json::from_str(&input_json)?;
+        if graph_goal.is_null() {
+            graph_goal = task_input.get("graph_goal").cloned().unwrap_or(Value::Null);
+        }
+        if decomposition_rationale.is_null() {
+            decomposition_rationale = task_input
+                .get("decomposition_rationale")
+                .cloned()
+                .unwrap_or(Value::Null);
+        }
+        if let Some(task_requirements) = task_input.get("requirements").and_then(Value::as_array) {
+            for requirement in task_requirements {
+                let requirement_id = requirement
+                    .get("requirement_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let duplicate = requirement_id.as_ref().is_some_and(|id| {
+                    requirement_ids.iter().any(|existing| existing == id)
+                }) || (requirement_id.is_none() && requirements.contains(requirement));
+                if !duplicate {
+                    if let Some(requirement_id) = requirement_id {
+                        requirement_ids.push(requirement_id);
+                    }
+                    requirements.push(requirement.clone());
+                }
+            }
+        }
+        let prerequisite_task_ids = dependency_rows
+            .iter()
+            .filter_map(|dependency| {
+                let dependent: String = dependency.try_get("task_id").ok()?;
+                (dependent == task_id)
+                    .then(|| dependency.try_get::<String, _>("prerequisite_task_id").ok())
+                    .flatten()
+            })
+            .collect::<Vec<_>>();
+        tasks.push(json!({
+            "task_id": task_id,
+            "title": title,
+            "objective": task_input.get("objective"),
+            "requirement_refs": task_input.get("requirement_refs"),
+            "status": row.try_get::<String, _>("status").db()?,
+            "prerequisite_task_ids": prerequisite_task_ids,
+            "current_task": task_id == current_task_id,
+        }));
+    }
+    Ok(Some(json!({
+        "graph_id": graph_id,
+        "graph_goal": graph_goal,
+        "decomposition_rationale": decomposition_rationale,
+        "requirements": requirements,
+        "tasks": tasks,
+    })))
 }
 
 fn task_write_boundary(object: &serde_json::Map<String, Value>, english: bool) -> Option<String> {

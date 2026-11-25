@@ -13,16 +13,25 @@ actor NativeLocalAgentTerminalStore {
         projectRoot: URL,
         background: Bool,
         timeoutMilliseconds: Int? = nil,
-        ownerRunID: String
+        ownerRunID: String,
+        readOnlySourceRoot: URL? = nil
     ) async throws -> NativeJSONValue {
-        let result = try await terminal.execute(
-            command: command,
-            cwd: cwd,
-            projectRoot: projectRoot,
-            background: background,
-            timeoutMilliseconds: timeoutMilliseconds,
-            ownerRunID: ownerRunID
-        )
+        let result: NativeJSONValue
+        do {
+            result = try await terminal.execute(
+                command: command,
+                cwd: cwd,
+                projectRoot: projectRoot,
+                background: background,
+                timeoutMilliseconds: timeoutMilliseconds,
+                ownerRunID: ownerRunID,
+                readOnlySourceRoot: readOnlySourceRoot
+            )
+        } catch let error as NativeMCPTerminalError where error.isKnownPreEffectFailure {
+            throw NativeLocalAgentPlatformToolError.projectToolRejected(
+                error.errorDescription ?? "终端命令在执行前被安全策略拒绝。"
+            )
+        }
         guard case let .object(values) = result,
               case .string? = values["terminal_id"] else {
             throw NativeLocalAgentPlatformToolError.projectToolFailed

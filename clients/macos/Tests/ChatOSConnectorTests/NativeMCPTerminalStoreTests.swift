@@ -4,6 +4,53 @@ import Testing
 
 struct NativeMCPTerminalStoreTests {
     @Test
+    func taskShellEnvironmentDropsInheritedGitLocationOverrides() {
+        let sanitized = NativeMCPTerminalStore.sanitizedEnvironment([
+            "PATH": "/usr/bin:/bin",
+            "LANG": "en_US.UTF-8",
+            "GIT_DIR": "/real/repository/.git",
+            "GIT_WORK_TREE": "/candidate",
+            "GIT_INDEX_FILE": "/real/repository/.git/index",
+            "GIT_COMMON_DIR": "/real/repository/.git",
+            "GIT_OBJECT_DIRECTORY": "/real/repository/.git/objects",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/alternate/objects",
+        ])
+
+        #expect(sanitized == [
+            "PATH": "/usr/bin:/bin",
+            "LANG": "en_US.UTF-8",
+        ])
+    }
+
+    @Test
+    func readOnlyTaskShellCanWriteItsLeaseButNotTheSourceProject() async throws {
+        let fixture = try TerminalFixture()
+        defer { fixture.dispose() }
+        let source = fixture.root.appendingPathComponent("source", isDirectory: true)
+        let isolated = fixture.root.appendingPathComponent("isolated", isDirectory: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: isolated, withIntermediateDirectories: true)
+        let sourceMarker = source.appendingPathComponent("blocked.txt")
+        let isolatedMarker = isolated.appendingPathComponent("allowed.txt")
+        let store = NativeMCPTerminalStore()
+
+        let result = try await store.execute(
+            command: "printf allowed > \(shellQuote(isolatedMarker.path)); printf blocked > \(shellQuote(sourceMarker.path))",
+            cwd: isolated,
+            projectRoot: isolated,
+            background: false,
+            readOnlySourceRoot: source
+        )
+
+        let isolatedWasWritten = FileManager.default.fileExists(atPath: isolatedMarker.path)
+        let sourceWasWritten = FileManager.default.fileExists(atPath: sourceMarker.path)
+        let succeeded = try result.bool("success")
+        #expect(isolatedWasWritten == true)
+        #expect(sourceWasWritten == false)
+        #expect(succeeded == false)
+    }
+
+    @Test
     func backgroundProcessCanBePolledAndWaited() async throws {
         let fixture = try TerminalFixture()
         defer { fixture.dispose() }
@@ -403,3 +450,7 @@ private extension NativeJSONValue {
 }
 
 private enum TerminalTestError: Error { case invalidShape }
+
+private func shellQuote(_ value: String) -> String {
+    "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+}

@@ -8,6 +8,7 @@ pub const GET_TASK_TOOL: &str = "get_task";
 pub const CREATE_TASK_TOOL: &str = "create_task";
 pub const CREATE_TASKS_TOOL: &str = "create_tasks_with_prerequisites";
 pub const CANCEL_TASK_TOOL: &str = "cancel_task";
+pub const RETRY_TASK_TOOL: &str = "retry_task";
 pub const WAIT_FOR_TASK_COMPLETION_TOOL: &str = "wait_for_task_completion";
 pub const GET_TASK_DEPENDENCY_GRAPH_TOOL: &str = "get_task_dependency_graph";
 pub const RESOLVE_TASK_FOLLOWUP_TOOL: &str = "resolve_task_followup";
@@ -30,12 +31,13 @@ const TASK_SELECTABLE_BUILTIN_KIND_VALUES: [&str; 7] = [
     "RequirementSurveyWrite",
     "Notepad",
 ];
-pub const TASK_TOOL_NAMES: [&str; 8] = [
+pub const TASK_TOOL_NAMES: [&str; 9] = [
     LIST_TASKS_TOOL,
     GET_TASK_TOOL,
     CREATE_TASK_TOOL,
     CREATE_TASKS_TOOL,
     CANCEL_TASK_TOOL,
+    RETRY_TASK_TOOL,
     WAIT_FOR_TASK_COMPLETION_TOOL,
     GET_TASK_DEPENDENCY_GRAPH_TOOL,
     RESOLVE_TASK_FOLLOWUP_TOOL,
@@ -46,10 +48,11 @@ pub const TASK_READ_ONLY_TOOLS: [&str; 4] = [
     WAIT_FOR_TASK_COMPLETION_TOOL,
     GET_TASK_DEPENDENCY_GRAPH_TOOL,
 ];
-pub const TASK_APPROVAL_EXEMPT_TOOLS: [&str; 4] = [
+pub const TASK_APPROVAL_EXEMPT_TOOLS: [&str; 5] = [
     CREATE_TASK_TOOL,
     CREATE_TASKS_TOOL,
     CANCEL_TASK_TOOL,
+    RETRY_TASK_TOOL,
     RESOLVE_TASK_FOLLOWUP_TOOL,
 ];
 
@@ -189,6 +192,21 @@ pub fn task_model_tools() -> Vec<Value> {
                     }
                 },
                 "required": ["task_id", "reason"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": RETRY_TASK_TOOL,
+            "description": "Retry one failed or blocked Task only during the current program-owned task_graph_recovery. Use it only when the Task contract is unchanged and current evidence identifies a concrete different safe correction. The Host rejects Tasks outside the current recovery context, stale versions, needs_review work, empty corrections, and repeated corrections. Use a replacement Task graph instead when method, capability, scope, ownership, or dependencies must change.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "minLength": 1},
+                    "expected_version": {"type": "integer", "minimum": 1},
+                    "correction": {"type": "string", "minLength": 1, "maxLength": 8000}
+                },
+                "required": ["task_id", "expected_version", "correction"],
                 "additionalProperties": false
             }
         }),

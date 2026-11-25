@@ -43,7 +43,7 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
               case let .object(delivery)? = properties["delivery"] else { return XCTFail("missing image schema") }
         XCTAssertEqual(delivery["default"], .string("model"))
         XCTAssertEqual(delivery["enum"], .array([.string("model"), .string("content")]))
-        XCTAssertEqual(NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames.count, 8)
+        XCTAssertEqual(NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames.count, 9)
         XCTAssertFalse(NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames.contains("local_attachment_read"))
         let snapshot = try NativeLocalConnectorService.mainChatTaskSkillSnapshot()
         XCTAssertTrue(snapshot.instructions.contains("screenshot interpretation"))
@@ -403,7 +403,7 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
         })
         XCTAssertEqual(surveyBinding.activationPolicy, .onDemand)
         XCTAssertEqual(Set(surveyBinding.toolNames), Set(["requirement_survey_create", "requirement_plan_save"]))
-        XCTAssertEqual(NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames.count, 8)
+        XCTAssertEqual(NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames.count, 9)
         XCTAssertEqual(NativeLocalAgentPlatformToolCatalog.capabilityTools.filter { tool in
             guard case let .object(value) = tool else { return false }
             return value["name"] == .string("requirement_survey_create")

@@ -195,8 +195,8 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             $0.providerID == ProductToolProviderID.localAgentChat
         }.flatMap(\.toolNames)
 
-        XCTAssertEqual(providerTools.count, 93)
-        XCTAssertEqual(Set(providerTools).count, 93)
+        XCTAssertEqual(providerTools.count, 94)
+        XCTAssertEqual(Set(providerTools).count, 94)
         // The two agent_skill_* names are intentionally shared by Main Chat and the
         // Task Execution capability broker; provider identity selects their source.
         for toolName in [
@@ -224,10 +224,11 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         )
     }
 
-    func testMainChatTaskBindingCoversAllEightHostTools() {
+    func testMainChatTaskBindingCoversAllNineHostTools() {
         let expected = Set([
             "list_tasks", "get_task", "create_task",
             "create_tasks_with_prerequisites", "cancel_task",
+            "retry_task",
             "wait_for_task_completion", "get_task_dependency_graph",
             "resolve_task_followup",
         ])

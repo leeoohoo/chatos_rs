@@ -1134,6 +1134,20 @@ async fn dependent_task_receives_only_user_visible_prerequisite_results() {
     context_graph.tasks[0].input["acceptance_report_version"] = json!(1);
     context_graph.tasks[0].input["acceptance_criteria"] = json!(["Model defined"]);
     context_graph.tasks[0].input["final_response_max_chars"] = json!(100);
+    context_graph.tasks[0].input["graph_goal"] = json!("Ship identity support");
+    context_graph.tasks[0].input["decomposition_rationale"] =
+        json!("Separate the data model from integration");
+    context_graph.tasks[0].input["requirements"] =
+        json!([{"requirement_id":"R1","source_quote":"support identity"}]);
+    context_graph.tasks[0].input["requirement_refs"] = json!(["R1"]);
+    context_graph.tasks[1].input["graph_goal"] = json!("Ship identity support");
+    context_graph.tasks[1].input["decomposition_rationale"] =
+        json!("Separate the data model from integration");
+    context_graph.tasks[1].input["requirements"] = json!([
+        {"requirement_id":"R1","source_quote":"support identity"},
+        {"requirement_id":"R2","source_quote":"wire the UI"}
+    ]);
+    context_graph.tasks[1].input["requirement_refs"] = json!(["R2"]);
     context_graph.tasks[1].input["owned_paths"] =
         json!(["apps/web/src/features/identity", "apps/web/tests/identity"]);
     storage
@@ -1186,6 +1200,19 @@ async fn dependent_task_receives_only_user_visible_prerequisite_results() {
         dependent.input["resolved_prerequisites"][0]["run_id"],
         "run-prerequisite"
     );
+    let graph_context = &dependent.input["task_graph_context"];
+    assert_eq!(graph_context["graph_goal"], "Ship identity support");
+    assert_eq!(
+        graph_context["decomposition_rationale"],
+        "Separate the data model from integration"
+    );
+    assert_eq!(
+        graph_context["requirements"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(graph_context["tasks"][0]["status"], "succeeded");
+    assert_eq!(graph_context["tasks"][1]["current_task"], true);
+    assert_eq!(graph_context["tasks"][1]["requirement_refs"], json!(["R2"]));
 }
 
 #[tokio::test]
@@ -1270,7 +1297,7 @@ async fn existing_task_ids_preserve_cross_graph_dependency_execution_and_context
 }
 
 #[tokio::test]
-async fn root_task_input_is_not_rewritten_without_prerequisites() {
+async fn root_task_receives_graph_context_without_rewriting_its_prompt() {
     let storage = SqliteClientStorage::connect_memory()
         .await
         .expect("storage");
@@ -1285,13 +1312,18 @@ async fn root_task_input_is_not_rewritten_without_prerequisites() {
         .expect("start root")
         .expect("root run");
 
+    assert_eq!(root.input["prompt"], "Task Objective:\nComplete task-a");
+    assert!(root.input.get("resolved_prerequisites").is_none());
+    let context = &root.input["task_graph_context"];
+    assert_eq!(context["graph_id"], "graph-lifecycle");
+    assert_eq!(context["tasks"].as_array().map(Vec::len), Some(4));
+    assert_eq!(context["tasks"][0]["current_task"], true);
+    assert_eq!(context["tasks"][0]["status"], "ready");
+    assert_eq!(context["tasks"][1]["current_task"], false);
+    assert_eq!(context["tasks"][1]["status"], "pending");
     assert_eq!(
-        root.input,
-        json!({
-            "task": "task-a",
-            "objective": "Complete task-a",
-            "prompt": "Task Objective:\nComplete task-a"
-        })
+        context["tasks"][1]["prerequisite_task_ids"],
+        json!(["task-a"])
     );
 }
 

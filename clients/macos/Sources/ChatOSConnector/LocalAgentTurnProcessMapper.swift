@@ -101,6 +101,18 @@ enum LocalAgentTurnProcessMapper {
             status(payload["status"]?.string ?? "succeeded"),
             .task
         )
+        case "task_graph_recovery_scheduled": (
+            "任务受阻，主会话正在自动协调",
+            nil,
+            .streaming,
+            .task
+        )
+        case "task_graph_recovery_superseded": (
+            "已按你的新消息停止旧的自动协调",
+            nil,
+            .completed,
+            .task
+        )
         case "run_succeeded": ("执行完成", nil, .completed, .update)
         case "run_failed": (
             "执行失败",

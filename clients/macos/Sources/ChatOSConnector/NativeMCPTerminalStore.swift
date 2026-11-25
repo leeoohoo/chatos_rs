@@ -36,17 +36,28 @@ actor NativeMCPTerminalStore {
         projectRoot: URL,
         background: Bool,
         timeoutMilliseconds: Int? = nil,
-        ownerRunID: String? = nil
+        ownerRunID: String? = nil,
+        readOnlySourceRoot: URL? = nil
     ) async throws -> NativeJSONValue {
         let id = UUID().uuidString
         let process = Process()
         let input = Pipe()
         let output = Pipe()
         let error = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", command]
+        if let readOnlySourceRoot {
+            let launch = try Self.readOnlySandboxLaunch(
+                command: command,
+                sourceRoot: readOnlySourceRoot,
+                executionRoot: projectRoot
+            )
+            process.executableURL = launch.executableURL
+            process.arguments = launch.arguments
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-lc", command]
+        }
         process.currentDirectoryURL = cwd
-        process.environment = ProcessInfo.processInfo.environment
+        process.environment = Self.sanitizedEnvironment(ProcessInfo.processInfo.environment)
         process.standardInput = input
         process.standardOutput = output
         process.standardError = error
@@ -172,6 +183,46 @@ actor NativeMCPTerminalStore {
             "error": timeoutDescription.map(NativeJSONValue.string) ?? .null,
             "exit_code": completed.exitCode.map { .number(Double($0)) } ?? .null,
         ])
+    }
+
+    static func sanitizedEnvironment(_ environment: [String: String]) -> [String: String] {
+        let gitLocationKeys: Set<String> = [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_COMMON_DIR",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        ]
+        return environment.filter { !gitLocationKeys.contains($0.key) }
+    }
+
+    private static func readOnlySandboxLaunch(
+        command: String,
+        sourceRoot: URL,
+        executionRoot: URL
+    ) throws -> (executableURL: URL, arguments: [String]) {
+        let executable = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            throw NativeMCPTerminalError.invalidArguments("当前 macOS 无法提供只读项目隔离")
+        }
+        let source = NativePluginSandboxProfile.canonicalPath(sourceRoot.path)
+        let execution = NativePluginSandboxProfile.canonicalPath(executionRoot.path)
+        guard source != "/", source != execution else {
+            throw NativeMCPTerminalError.invalidArguments("只读项目隔离目录无效")
+        }
+        let escaped = source
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let profile = """
+        (version 1)
+        (allow default)
+        (deny file-write* (subpath "\(escaped)"))
+        """
+        return (
+            executable,
+            ["-p", profile, "/bin/zsh", "-lc", command]
+        )
     }
 
     func call(

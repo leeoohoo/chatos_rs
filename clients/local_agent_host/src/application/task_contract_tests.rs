@@ -100,6 +100,75 @@ async fn every_change_requirement_needs_an_implementation_owner() {
 }
 
 #[tokio::test]
+async fn terminal_or_plugin_selection_alone_is_not_project_write_authority() {
+    let base = json!({
+        "requirements": [{
+            "requirement_id":"R1",
+            "source_quote":"plan this",
+            "interpreted_requirement":"Modify the project implementation",
+            "requires_change":true
+        }],
+        "title":"Modify",
+        "objective":"Modify the project implementation",
+        "expected_outputs":["[R1] Updated implementation"],
+        "acceptance_criteria":["[R1] Requested behavior is implemented"],
+        "requires_execution":true,
+        "enabled_builtin_kinds":["TerminalController"]
+    });
+    let executor = LocalTaskToolExecutor::new(runtime_with_parent().await, "user-1").unwrap();
+    let mut terminal_call = invocation(base.clone());
+    terminal_call.tool_name = CREATE_TASK_TOOL.into();
+    assert!(
+        preparation_error(executor.execute_tool(&terminal_call).await.unwrap())
+            .contains("write capability")
+    );
+
+    let mut plugin_only = base;
+    plugin_only["enabled_builtin_kinds"] = json!([]);
+    plugin_only["plugin_hints"] = json!([{
+        "plugin_key":"example-plugin",
+        "component_key":"example-component",
+        "reason":"Use the selected project tool"
+    }]);
+    let runtime = runtime_with_parent().await;
+    runtime
+        .try_handle(envelope(
+            "publish-plugin-catalog".into(),
+            HostCommand::PutCapabilityPolicySnapshot(
+                chatos_local_agent_protocol::PutCapabilityPolicySnapshotCommand {
+                    snapshot: chatos_local_agent_protocol::LocalCapabilityPolicySnapshot {
+                        owner_user_id: "user-1".into(),
+                        profile_key: "task_policy_internal".into(),
+                        capability_policy_revision: "policy-1".into(),
+                        instructions: Some(
+                            json!({
+                                "plugin_release_snapshots": [{
+                                    "plugin_key":"example-plugin",
+                                    "component_key":"example-component",
+                                    "plugin_id":"example-plugin-id",
+                                    "release_id":"example-release",
+                                    "version":"1.0.0",
+                                    "artifact_sha256":"a".repeat(64)
+                                }]
+                            })
+                            .to_string(),
+                        ),
+                        prefixed_input_items: Vec::new(),
+                        tools: Vec::new(),
+                    },
+                },
+            ),
+        ))
+        .await
+        .unwrap();
+    let executor = LocalTaskToolExecutor::new(runtime, "user-1").unwrap();
+    let mut plugin_call = invocation(plugin_only);
+    plugin_call.tool_name = CREATE_TASK_TOOL.into();
+    let error = preparation_error(executor.execute_tool(&plugin_call).await.unwrap());
+    assert!(error.contains("write capability"), "{error}");
+}
+
+#[tokio::test]
 async fn verification_contract_requires_a_valid_executable_check_graph() {
     let base = json!({
         "requirements":[{"requirement_id":"R1","source_quote":"plan this","interpreted_requirement":"Run the project-defined checks for the frozen artifact","requires_change":false}],

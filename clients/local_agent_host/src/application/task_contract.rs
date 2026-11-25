@@ -99,6 +99,24 @@ pub(super) async fn validate_task_contracts(
 
     let mut referenced = HashSet::new();
     let mut change_owners = HashSet::new();
+    let explicit_plugin = (parent
+        .input
+        .pointer("/explicit_capability_selection/kind")
+        .and_then(Value::as_str)
+        == Some("plugin"))
+    .then(|| {
+        Some((
+            parent
+                .input
+                .pointer("/explicit_capability_selection/plugin_key")
+                .and_then(Value::as_str)?,
+            parent
+                .input
+                .pointer("/explicit_capability_selection/component_key")
+                .and_then(Value::as_str)?,
+        ))
+    })
+    .flatten();
     for task in tasks {
         if task.requirement_refs.is_empty() {
             return Err("every Task must reference at least one requirement_id".to_string());
@@ -115,7 +133,7 @@ pub(super) async fn validate_task_contracts(
                 ));
             }
             referenced.insert(reference.to_string());
-            if task_can_change(task) {
+            if task_can_change(task, explicit_plugin) {
                 change_owners.insert(reference.to_string());
             }
         }
@@ -187,18 +205,18 @@ fn conversation_message_text(content: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn task_can_change(task: &TaskContractView<'_>) -> bool {
+fn task_can_change(task: &TaskContractView<'_>, explicit_plugin: Option<(&str, &str)>) -> bool {
     task.requires_execution
-        && (!task.plugin_hints.is_empty()
-            || task.enabled_builtin_kinds.iter().any(|kind| {
-                matches!(
-                    kind.as_str(),
-                    "CodeMaintainerWrite"
-                        | "TerminalController"
-                        | "RemoteConnectionController"
-                        | "RequirementSurveyWrite"
-                )
-            }))
+        && (task.enabled_builtin_kinds.iter().any(|kind| {
+            matches!(
+                kind.as_str(),
+                "CodeMaintainerWrite" | "RemoteConnectionController" | "RequirementSurveyWrite"
+            )
+        }) || explicit_plugin.is_some_and(|(plugin_key, component_key)| {
+            task.plugin_hints
+                .iter()
+                .any(|hint| hint.plugin_key == plugin_key && hint.component_key == component_key)
+        }))
 }
 
 fn validate_verification_contract(task: &TaskContractView<'_>) -> Result<(), String> {

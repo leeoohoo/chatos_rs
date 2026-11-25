@@ -18,6 +18,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
   public static let createTaskToolName = "create_task"
   public static let createTasksToolName = "create_tasks_with_prerequisites"
   public static let cancelTaskToolName = "cancel_task"
+  public static let retryTaskToolName = "retry_task"
   public static let waitForTaskCompletionToolName = "wait_for_task_completion"
   public static let getTaskDependencyGraphToolName = "get_task_dependency_graph"
   public static let resolveTaskFollowupToolName = "resolve_task_followup"
@@ -27,6 +28,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
     createTaskToolName,
     createTasksToolName,
     cancelTaskToolName,
+    retryTaskToolName,
     waitForTaskCompletionToolName,
     getTaskDependencyGraphToolName,
     resolveTaskFollowupToolName,
