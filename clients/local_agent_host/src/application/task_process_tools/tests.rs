@@ -19,6 +19,12 @@ fn definitions_preserve_tool_names_and_expose_structured_acceptance() {
         tools[2]["parameters"]["properties"]["final_response"]["maxLength"],
         32000
     );
+    assert!(
+        tools[2]["parameters"]["properties"]["result_status"]["description"]
+            .as_str()
+            .expect("result_status description")
+            .contains("does not terminate the Run")
+    );
     assert_eq!(
         tools[2]["parameters"]["properties"]["verification_report"]["properties"]["checks"]
             ["maxItems"],

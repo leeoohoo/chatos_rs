@@ -372,7 +372,7 @@ fn create_task_item_schema() -> Value {
                 "minItems": 1,
                 "items": {"type": "string", "minLength": 1, "maxLength": 128},
                 "uniqueItems": true,
-                "description": "Requirement ids owned or verified by this Task. A change requirement must also be referenced by an execution Task with write capability."
+                "description": "Requirement ids this Task contributes diagnosis evidence, implementation, or verification to. Binding a requirement does not change this Task's objective or capabilities. A change requirement must also be referenced by at least one execution Task with write capability."
             },
             "final_response_max_chars": {"type":"integer", "minimum":1, "maximum":32000, "description":"Optional explicit maximum for the entire final user-facing response, counted in Unicode scalar values including whitespace, punctuation and Markdown. Set this when the user requires a bounded textual delivery; not a file-content limit."},
             "description": {"type": "string"},

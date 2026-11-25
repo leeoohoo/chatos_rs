@@ -399,7 +399,7 @@ fn task_acceptance_contract_item(input: &Value, profile_key: &str) -> Option<Val
                     "requirements":input.get("requirements"),
                     "requirement_refs":input.get("requirement_refs"),
                     "unassigned_requirement_refs":input.get("unassigned_requirement_refs"),
-                    "guidance":"Implement and verify only the bound requirement_refs. Compare each interpreted requirement with its exact source_quote before writing. If they materially conflict, stop mutation and report a contract_conflict naming the requirement_id; do not silently choose one. Unassigned requirements are explicitly outside this Task."
+                    "guidance":"Complete only the current Task's objective, expected_outputs, and acceptance_criteria for the bound requirement_refs. requirement_refs trace this phase to graph-level requirements; binding one does not require this Task to implement or verify the whole requirement, and requires_change describes the overall requirement rather than per-Task write authority. A read-only diagnosis or verification Task may share a change requirement with a write-capable fix Task; that phase split is not a contract_conflict and must not trigger Ask User about whether the already-requested fix is wanted. Before any mutation authorized by the current Task, compare each interpreted requirement with its exact source_quote. If the source materially conflicts with the current Task contract for a reason other than normal phase decomposition, stop mutation and report a contract_conflict naming the requirement_id; do not silently choose one. Unassigned requirements are explicitly outside this Task."
                 })
                 .to_string(),
             ),

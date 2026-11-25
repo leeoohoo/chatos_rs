@@ -1197,6 +1197,13 @@ fn task_model_definitions_are_host_owned_and_closed() {
             ["uniqueItems"],
         true
     );
+    let requirement_refs_description = tools[3]["parameters"]["properties"]["tasks"]["items"]
+        ["properties"]["requirement_refs"]["description"]
+        .as_str()
+        .expect("requirement_refs description");
+    assert!(requirement_refs_description.contains("diagnosis evidence"));
+    assert!(requirement_refs_description.contains("does not change this Task's objective"));
+    assert!(requirement_refs_description.contains("execution Task with write capability"));
     assert!(tools[3]["description"]
         .as_str()
         .expect("create graph description")

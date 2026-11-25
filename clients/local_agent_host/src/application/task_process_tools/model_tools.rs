@@ -60,7 +60,7 @@ pub fn task_process_model_tools() -> Vec<Value> {
                     "result_status": {
                         "type": "string",
                         "enum": ["succeeded", "failed", "blocked"],
-                        "description": "Task result and dependency gate. succeeded means downstream prerequisites are satisfied; failed means the requested result did not meet its contract; blocked means an external prerequisite or decision is still missing and is terminal only after every other acceptance check passes."
+                        "description": "Task result and dependency gate. succeeded means downstream prerequisites are satisfied; failed means the requested result did not meet its contract, but under acceptance-report v1 it does not terminate the Run while failed or unverified checks remain actionable; blocked means an external prerequisite or decision is still missing and is terminal only after every other acceptance check passes."
                     },
                     "final_response": {"type": "string", "minLength": 1, "maxLength": 32000, "description": "Exact user-facing final delivery, including all Markdown and whitespace; obey the frozen final_response_max_chars if present."},
                     "acceptance_checks": {

@@ -320,6 +320,11 @@ async fn requirement_plan_is_sent_each_step_outside_truncated_memory_for_main_an
                     .as_str()
                     .unwrap()
                     .contains("exact source_quote"));
+                let guidance = contract["guidance"].as_str().unwrap();
+                assert!(guidance.contains("current Task's objective"));
+                assert!(guidance.contains("does not require this Task to implement"));
+                assert!(guidance.contains("not a contract_conflict"));
+                assert!(guidance.contains("must not trigger Ask User"));
             }
             assert!(prepared
                 .request

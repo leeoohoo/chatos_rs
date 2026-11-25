@@ -12,7 +12,7 @@ Combine operations from the same phase into one clear update. Progress records s
 When all work and verification end, report exactly one final outcome:
 
 - `succeeded` only when the requested result and required verification are complete.
-- `failed` when execution has ended without the required result.
+- `failed` when the result does not meet its contract and no safe in-scope correction remains. Under acceptance-report v1, actionable failed or unverified checks keep the same Run active; the Host owns the eventual terminal execution failure.
 - `blocked` when a concrete external dependency, permission, or necessary input prevents completion.
 
 The outcome report is the final tool call before the user-facing answer. Give a short evidence-based reason.

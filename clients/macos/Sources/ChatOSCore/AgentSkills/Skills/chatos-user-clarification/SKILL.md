@@ -17,4 +17,6 @@ Choose the smallest matching form:
 
 Do not ask again when the answer is already present. Do not replace a clear user request with a lower-scope interpretation merely because a required fact is missing; ask for that fact. A form does not grant permission beyond the user's request.
 
+Do not ask the user to choose between a graph-level change requirement and the current read-only diagnosis or verification phase. The current Task contract defines the next action, and the write-capable phase owns the already-requested fix.
+
 Read [references/forms-secrets-and-recovery.md](references/forms-secrets-and-recovery.md) when collecting credentials or other sensitive values, confirming a high-impact action, or recovering from authentication, connection, or permission failures.
