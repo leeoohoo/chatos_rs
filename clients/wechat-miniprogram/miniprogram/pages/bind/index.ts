@@ -28,7 +28,7 @@ Page({
     state: 'ready' as BindState,
     error: '',
     developmentMode: false,
-    developmentUsername: 'admin',
+    developmentUsername: '',
     developmentPassword: '',
     desktopDeviceName: '',
     desktopAccountName: '',

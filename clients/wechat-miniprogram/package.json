@@ -1,6 +1,6 @@
 {
   "name": "@chatos/wechat-companion",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "ChatOS Companion native WeChat Mini Program",
   "scripts": {
