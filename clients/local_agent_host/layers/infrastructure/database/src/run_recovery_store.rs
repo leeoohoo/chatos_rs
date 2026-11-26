@@ -403,13 +403,16 @@ pub(super) async fn recover_expired_claims(
             .await?;
         }
     }
-    // Hosts before the execution/result split copied the model-authored outcome
-    // directly into local_tasks.status. Repair only rows with a normally completed
-    // latest Run and an explicit internal failed/blocked report. The Task execution
-    // becomes succeeded, while propagate_blocked keeps downstream Tasks gated by
-    // that internal result and the callback is rewritten with the two axes separated.
-    let legacy_model_status_rows = sqlx::query(
-        "SELECT task.task_id, task.graph_id, run.run_id FROM local_tasks task \
+    // Older recovery code could overwrite a terminal result gate with the Run's
+    // successful execution status. Restore the accepted Task outcome so graph
+    // recovery can replan failed or externally blocked work.
+    let stale_result_status_rows = sqlx::query(
+        "SELECT task.task_id, task.graph_id, run.run_id, COALESCE(\
+           json_extract(invocation.result_json, '$.result_status'), \
+           json_extract(invocation.result_json, '$.status'), \
+           json_extract(invocation.arguments_json, '$.result_status'), \
+           json_extract(invocation.arguments_json, '$.status')) AS result_status \
+         FROM local_tasks task \
          JOIN local_task_graphs graph ON graph.graph_id = task.graph_id \
          JOIN local_agent_runs run ON run.run_id = (\
            SELECT candidate.run_id FROM local_agent_runs candidate \
@@ -418,10 +421,13 @@ pub(super) async fn recover_expired_claims(
              AND candidate.owner_entity_id = task.task_id \
            ORDER BY candidate.updated_at_unix_ms DESC, candidate.created_at_unix_ms DESC, \
              candidate.rowid DESC LIMIT 1) \
-         JOIN local_agent_tool_invocations invocation ON invocation.run_id = run.run_id \
-           AND invocation.tool_name = 'task_run_process_report_outcome' \
-           AND invocation.status = 'succeeded' \
-         WHERE graph.owner_user_id = ? AND task.status IN ('failed','blocked') \
+         JOIN local_agent_tool_invocations invocation ON invocation.rowid = (\
+           SELECT candidate.rowid FROM local_agent_tool_invocations candidate \
+           WHERE candidate.run_id = run.run_id \
+             AND candidate.tool_name = 'task_run_process_report_outcome' \
+             AND candidate.status = 'succeeded' \
+           ORDER BY candidate.updated_at_unix_ms DESC, candidate.rowid DESC LIMIT 1) \
+         WHERE graph.owner_user_id = ? AND task.status = 'succeeded' \
            AND task.active_run_id IS NULL AND run.status = 'succeeded' \
            AND COALESCE(\
              json_extract(invocation.result_json, '$.result_status'), \
@@ -434,15 +440,17 @@ pub(super) async fn recover_expired_claims(
     .fetch_all(&mut *connection)
     .await
     .db()?;
-    for row in &legacy_model_status_rows {
+    for row in &stale_result_status_rows {
         let task_id: String = row.try_get("task_id").db()?;
         let graph_id: String = row.try_get("graph_id").db()?;
         let run_id: String = row.try_get("run_id").db()?;
+        let result_status: String = row.try_get("result_status").db()?;
         let updated = sqlx::query(
-            "UPDATE local_tasks SET status = 'succeeded', version = version + 1, \
-             updated_at_unix_ms = ? WHERE task_id = ? AND status IN ('failed','blocked') \
+            "UPDATE local_tasks SET status = ?, version = version + 1, \
+             updated_at_unix_ms = ? WHERE task_id = ? AND status = 'succeeded' \
              AND active_run_id IS NULL",
         )
+        .bind(&result_status)
         .bind(now_unix_ms)
         .bind(&task_id)
         .execute(&mut *connection)
@@ -487,5 +495,5 @@ pub(super) async fn recover_expired_claims(
         + stranded_task_runs.len()
         + stranded_conversation_runs.len()
         + missing_reasons.len()
-        + legacy_model_status_rows.len()) as u64)
+        + stale_result_status_rows.len()) as u64)
 }

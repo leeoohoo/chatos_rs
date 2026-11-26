@@ -147,7 +147,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
                  AND (json_extract(input_json, '$.task_graph_recovery.type') IS NULL OR EXISTS (\
                    SELECT 1 FROM local_conversation_turns recovery_turn \
                    WHERE recovery_turn.run_id = local_agent_runs.run_id \
-                     AND recovery_turn.status = 'succeeded' \
+                     AND recovery_turn.status IN ('succeeded','failed') \
                      AND NOT EXISTS (SELECT 1 FROM local_conversation_turns newer_turn \
                        WHERE newer_turn.conversation_id = recovery_turn.conversation_id \
                          AND (newer_turn.created_at_unix_ms > recovery_turn.created_at_unix_ms \
@@ -170,7 +170,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
             if recovery_type.as_deref() == Some("task_graph_recovery") {
                 let reopened = sqlx::query(
                     "UPDATE local_conversation_turns SET status = 'running', updated_at_unix_ms = ? \
-                     WHERE run_id = ? AND status = 'succeeded' \
+                     WHERE run_id = ? AND status IN ('succeeded','failed') \
                        AND NOT EXISTS (SELECT 1 FROM local_conversation_turns newer_turn \
                          WHERE newer_turn.conversation_id = local_conversation_turns.conversation_id \
                            AND (newer_turn.created_at_unix_ms > local_conversation_turns.created_at_unix_ms \

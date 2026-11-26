@@ -1529,6 +1529,24 @@ async fn blocked_internal_result_blocks_task_and_dependents_after_run_finishes()
         .expect("task reconciliation event");
     assert_eq!(reconciliation.payload["status"], "blocked");
     assert_eq!(reconciliation.payload["result_status"], "blocked");
+
+    // A previous recovery implementation incorrectly collapsed the accepted
+    // blocked result back into the successful Run status. Startup recovery must
+    // repair that persisted contradiction in the direction of the Task outcome.
+    sqlx::query("UPDATE local_tasks SET status = 'succeeded' WHERE task_id = 'task-a'")
+        .execute(&storage.pool)
+        .await
+        .expect("simulate stale execution-status repair");
+    storage
+        .recover_expired_claims("user-1", 2_004)
+        .await
+        .expect("repair stale result status");
+    let repaired = storage
+        .get_task_graph("user-1", "graph-lifecycle")
+        .await
+        .expect("get repaired graph")
+        .expect("repaired graph");
+    assert_eq!(repaired.tasks[0].status, LocalTaskStatus::Blocked);
 }
 
 #[tokio::test]

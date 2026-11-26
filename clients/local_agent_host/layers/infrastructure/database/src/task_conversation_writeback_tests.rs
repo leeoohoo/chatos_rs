@@ -1095,7 +1095,7 @@ async fn complete_main_chat_run(
 }
 
 #[tokio::test]
-async fn safe_task_failure_is_claimed_for_program_owned_main_chat_recovery() {
+async fn new_task_result_reopens_a_failed_main_chat_for_program_owned_recovery() {
     let storage = SqliteClientStorage::connect_memory().await.unwrap();
     let turn = create_callback_conversation(&storage, "auto-recovery", "Complete the work").await;
     // create_callback_conversation closes its source Run for callback-only tests; restore a
@@ -1154,6 +1154,20 @@ async fn safe_task_failure_is_claimed_for_program_owned_main_chat_recovery() {
         )
         .await
         .unwrap();
+    sqlx::query(
+        "UPDATE local_agent_runs SET status = 'failed', version = version + 1, \
+         terminal_outcome_json = ? WHERE run_id = ?",
+    )
+    .bind(r#"{"error":"Previous recovery request failed"}"#)
+    .bind(&turn.run_id)
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE local_conversation_turns SET status = 'failed' WHERE turn_id = ?")
+        .bind(&turn.turn_id)
+        .execute(&storage.pool)
+        .await
+        .unwrap();
 
     finish_task_run_with_outcome(
         &storage,
@@ -1199,7 +1213,7 @@ async fn safe_task_failure_is_claimed_for_program_owned_main_chat_recovery() {
         .unwrap();
     assert_eq!(
         conversation.turns[0].status,
-        LocalConversationTurnStatus::Succeeded
+        LocalConversationTurnStatus::Failed
     );
     let claim = storage
         .claim_next_run(
@@ -1278,6 +1292,11 @@ async fn new_user_turn_supersedes_unclaimed_task_graph_recovery() {
         json!({"reason":"Try a different safe method"}),
     )
     .await;
+    sqlx::query("UPDATE local_conversation_turns SET status = 'failed' WHERE turn_id = ?")
+        .bind(&source.turn_id)
+        .execute(&storage.pool)
+        .await
+        .unwrap();
 
     let conversation = storage
         .get_conversation("user-1", &source.conversation_id)
@@ -1312,7 +1331,7 @@ async fn new_user_turn_supersedes_unclaimed_task_graph_recovery() {
         .expect("new user Turn takes priority");
 
     let old_run = storage.get_run(&source.run_id).await.unwrap().unwrap();
-    assert_eq!(old_run.status, LocalAgentRunStatus::Succeeded);
+    assert_eq!(old_run.status, LocalAgentRunStatus::Failed);
     assert!(old_run.continuation_input.is_none());
     assert!(storage
         .list_events(0, 100, None)

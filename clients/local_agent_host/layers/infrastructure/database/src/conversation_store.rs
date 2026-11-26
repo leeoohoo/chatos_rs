@@ -385,19 +385,24 @@ impl LocalConversationStore for SqliteClientStorage {
                  JOIN local_conversation_turns old_turn ON old_turn.run_id = run.run_id \
                  WHERE run.status = 'continuation_ready' \
                    AND json_extract(run.input_json, '$.task_graph_recovery.type') = 'task_graph_recovery' \
-                   AND old_turn.conversation_id = ? AND old_turn.status = 'succeeded'",
+                   AND old_turn.conversation_id = ? \
+                   AND old_turn.status IN ('succeeded','failed')",
             )
             .bind(&turn.conversation_id)
             .fetch_all(&mut *connection)
             .await
             .db()?;
             sqlx::query(
-                "UPDATE local_agent_runs SET status = 'succeeded', version = version + 1, \
+                "UPDATE local_agent_runs SET status = CASE WHEN EXISTS(\
+                   SELECT 1 FROM local_conversation_turns source_turn \
+                   WHERE source_turn.run_id = local_agent_runs.run_id \
+                     AND source_turn.status = 'failed') THEN 'failed' ELSE 'succeeded' END, \
+                 version = version + 1, \
                  continuation_input_json = NULL, updated_at_unix_ms = ? \
                  WHERE status = 'continuation_ready' \
                    AND json_extract(input_json, '$.task_graph_recovery.type') = 'task_graph_recovery' \
                    AND run_id IN (SELECT run_id FROM local_conversation_turns \
-                     WHERE conversation_id = ? AND status = 'succeeded')",
+                     WHERE conversation_id = ? AND status IN ('succeeded','failed'))",
             )
             .bind(now_unix_ms)
             .bind(&turn.conversation_id)

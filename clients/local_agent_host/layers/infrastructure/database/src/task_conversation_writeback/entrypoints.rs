@@ -149,7 +149,10 @@ async fn schedule_graph_recovery(
     else {
         return Ok(false);
     };
-    if source_run.status != LocalAgentRunStatus::Succeeded {
+    if !matches!(
+        source_run.status,
+        LocalAgentRunStatus::Succeeded | LocalAgentRunStatus::Failed
+    ) {
         return Ok(false);
     }
     let terminal_signature = graph_terminal_signature(&graph)?;
@@ -200,7 +203,7 @@ async fn schedule_graph_recovery(
         "graph_goal": graph.tasks.iter().find_map(|task| task.input.get("graph_goal")),
         "decomposition_rationale": graph.tasks.iter().find_map(|task| task.input.get("decomposition_rationale")),
         "tasks": tasks,
-        "guidance": "This failed Task Graph has been returned to Main Chat for autonomous recovery. Decide from current evidence, not a fixed retry count. If the contract is unchanged and a concrete different safe correction exists, call retry_task with that correction. If method, capability, scope, ownership, or dependency design must change, create a replacement Task or graph using supersedes_task_ids. Never retry needs_review, cancelled work, or an operation with unknown side effects. Ask the user only when recovery truly requires credentials, permission, a product decision, an external human action, or no new safe path remains."
+        "guidance": "This failed or blocked Task Graph has been returned to Main Chat for autonomous recovery. Do not merely relay its blocker to the user. Decide from current evidence, not a fixed retry count. If the contract is unchanged and a concrete different safe correction exists, call retry_task with that correction. If method, capability, scope, ownership, or dependency design must change, create a replacement Task or graph using supersedes_task_ids. Never retry needs_review, cancelled work, or an operation with unknown side effects. Ask the user only when recovery truly requires credentials, permission, a product decision, an external human action, or no new safe path remains."
     });
     source_run.input["task_graph_recovery"] = recovery.clone();
     let continuation = crate::run_continuation::for_resume(
@@ -212,7 +215,8 @@ async fn schedule_graph_recovery(
     let updated = sqlx::query(
         "UPDATE local_agent_runs SET input_json = ?, status = 'continuation_ready', \
          version = version + 1, continuation_input_json = ?, \
-         updated_at_unix_ms = ? WHERE run_id = ? AND status = 'succeeded' AND version = ?",
+         updated_at_unix_ms = ? WHERE run_id = ? AND status IN ('succeeded','failed') \
+         AND version = ?",
     )
     .bind(serde_json::to_string(&source_run.input)?)
     .bind(serde_json::to_string(&continuation)?)
