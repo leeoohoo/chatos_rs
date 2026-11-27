@@ -12,7 +12,9 @@ use super::components::{
 pub const PLUGIN_MANIFEST_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+// Raw manifests are parsed strictly; the normalized transport stays forward-compatible so
+// services deployed at different times do not reject newly added manifest contributions.
+#[serde(rename_all = "camelCase")]
 pub struct PluginManifest {
     pub schema_version: u32,
     pub name: String,

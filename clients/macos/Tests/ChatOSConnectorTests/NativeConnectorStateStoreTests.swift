@@ -67,7 +67,7 @@ struct NativeConnectorStateStoreTests {
             ticketProvider: RejectingTicketProvider()
         )
 
-        let plugins = try await service.fetchPlugins(refresh: true)
+        let plugins = try await service.fetchPlugins(refresh: false)
 
         let plugin = try #require(plugins.first)
         #expect(plugins.count == 1)
@@ -78,6 +78,50 @@ struct NativeConnectorStateStoreTests {
         #expect(plugin.installed)
         #expect(plugin.source == .marketplace)
         #expect(plugin.installationIssue == nil)
+    }
+
+    @Test("explicit Plugin refresh surfaces Marketplace failures instead of pretending it succeeded")
+    func explicitPluginRefreshSurfacesMarketplaceFailure() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let installation = directory
+            .appendingPathComponent("Plugins/marketplace/1.2.3", isDirectory: true)
+        try FileManager.default.createDirectory(at: installation, withIntermediateDirectories: true)
+        try Data("""
+        {
+          "schemaVersion": 3,
+          "name": "offline-marketplace",
+          "version": "1.2.3",
+          "description": "Installed Marketplace fixture.",
+          "interface": {"displayName": "Offline Marketplace"},
+          "mcpServers": {},
+          "skills": []
+        }
+        """.utf8).write(to: installation.appendingPathComponent("chatos.plugin.json"))
+
+        let stateURL = directory.appendingPathComponent("state.json")
+        let record = try nativePluginTestRecord(
+            installationURL: installation,
+            pluginID: "marketplace-plugin",
+            releaseID: "marketplace-release",
+            version: "1.2.3"
+        )
+        var state = NativeConnectorPersistentState.empty
+        state.installedPluginIDs = [record.pluginID]
+        state.installedPluginRecords = [record.pluginID: record]
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let service = try NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: RejectingTicketProvider()
+        )
+
+        await #expect(throws: (any Error).self) {
+            _ = try await service.fetchPlugins(refresh: true)
+        }
     }
 
     @Test

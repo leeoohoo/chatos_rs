@@ -92,11 +92,13 @@ extension NativeLocalConnectorService {
                 _ = try await pairWithCurrentChatOSSession(deviceName: Host.current().localizedName)
                 return try await fetchPluginsWithCurrentPairing(forceRefresh: refresh)
             } catch {
+                if refresh { throw error }
                 let installed = await locallyInstalledPlugins(forceRefresh: refresh)
                 if !installed.isEmpty { return installed }
                 throw error
             }
         } catch {
+            if refresh { throw error }
             let installed = await locallyInstalledPlugins(forceRefresh: refresh)
             if !installed.isEmpty { return installed }
             throw error
@@ -393,6 +395,11 @@ extension NativeLocalConnectorService {
         forceRefresh: Bool = false
     ) async throws -> GatewayPluginSourceListDTO {
         try Task.checkCancellation()
+        if forceRefresh {
+            // A user-requested refresh must supersede an older in-flight catalog request.
+            pluginSourceGeneration &+= 1
+            pluginSourceCache = nil
+        }
         let now = Date()
         if !forceRefresh,
            let cache = pluginSourceCache,
@@ -428,9 +435,6 @@ extension NativeLocalConnectorService {
             }
         }
 
-        if forceRefresh {
-            pluginSourceGeneration &+= 1
-        }
         let generation = pluginSourceGeneration
         let token = try requireAccessToken()
         let gateway = gateway

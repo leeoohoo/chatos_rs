@@ -233,6 +233,44 @@ fn accepts_and_normalizes_declarative_task_policy() {
 }
 
 #[test]
+fn normalized_manifest_transport_ignores_future_contributions() {
+    let manifest = parse_plugin_manifest(
+        r#"{
+          "schemaVersion":3,
+          "name":"forward-compatible-fixture",
+          "version":"1.0.0",
+          "description":"Forward-compatible normalized manifest fixture",
+          "author":{"name":"Fixture"},
+          "skills":"./skills",
+          "interface":{"displayName":"Fixture","shortDescription":"Fixture","longDescription":"Fixture","developerName":"Fixture","category":"Developer Tools"}
+        }"#,
+    )
+    .expect("strict raw manifest");
+    let mut transport = serde_json::to_value(&manifest).expect("normalized manifest");
+    transport["futureContribution"] = json!({"enabled": true});
+
+    let decoded: PluginManifest =
+        serde_json::from_value(transport).expect("forward-compatible normalized transport");
+    assert_eq!(decoded, manifest);
+}
+
+#[test]
+fn raw_manifest_parser_remains_strict_for_unknown_contributions() {
+    let raw = r#"{
+      "schemaVersion":3,
+      "name":"strict-fixture",
+      "version":"1.0.0",
+      "description":"Strict manifest fixture",
+      "author":{"name":"Fixture"},
+      "skills":"./skills",
+      "futureContribution":{"enabled":true},
+      "interface":{"displayName":"Fixture","shortDescription":"Fixture","longDescription":"Fixture","developerName":"Fixture","category":"Developer Tools"}
+    }"#;
+
+    assert!(parse_plugin_manifest(raw).is_err());
+}
+
+#[test]
 fn parses_workbench_ui_with_local_http_runtime() {
     let raw = json!({
         "schemaVersion": 3,
