@@ -7,6 +7,60 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 #[tokio::test]
+async fn version_fifty_two_recovers_orphaned_task_route_calls() {
+    let mut connection = SqliteConnection::connect_with(
+        &SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .foreign_keys(true),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TABLE local_agent_tool_invocations(\
+           tool_name TEXT NOT NULL, execution_route TEXT NOT NULL)",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO local_agent_tool_invocations VALUES\
+           ('decide_task_route', 'platform'), ('read_file', 'platform')",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+
+    for statement in schema::SCHEMA_V52 {
+        sqlx::query(sqlx::AssertSqlSafe(*statement))
+            .execute(&mut connection)
+            .await
+            .unwrap();
+    }
+
+    let routes = sqlx::query(
+        "SELECT tool_name, execution_route FROM local_agent_tool_invocations ORDER BY tool_name",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|row| {
+        (
+            row.get::<String, _>("tool_name"),
+            row.get::<String, _>("execution_route"),
+        )
+    })
+    .collect::<Vec<_>>();
+    assert_eq!(
+        routes,
+        vec![
+            ("decide_task_route".to_string(), "shared".to_string()),
+            ("read_file".to_string(), "platform".to_string()),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn version_fifty_one_marks_plans_already_frozen_into_tasks_as_consumed() {
     let mut connection = SqliteConnection::connect_with(
         &SqliteConnectOptions::from_str("sqlite::memory:")
@@ -840,6 +894,7 @@ async fn version_forty_two_accepts_legacy_hook_events_without_recovery_payloads(
     .expect("legacy Hook invocation");
     let mut connection = storage.pool.acquire().await.expect("connection");
     for statement in [
+        "DELETE FROM client_schema_migrations WHERE version = 52",
         "ALTER TABLE local_requirement_plans DROP COLUMN consumed_at_unix_ms",
         "DELETE FROM client_schema_migrations WHERE version = 51",
         "DELETE FROM client_schema_migrations WHERE version = 50",
@@ -933,6 +988,7 @@ pub(super) async fn rewind_receipt_v36(connection: &mut SqliteConnection) {
 
 pub(super) async fn rewind_receipt_v37(connection: &mut SqliteConnection) {
     for statement in [
+        "DELETE FROM client_schema_migrations WHERE version = 52",
         "ALTER TABLE local_requirement_plans DROP COLUMN consumed_at_unix_ms",
         "DELETE FROM client_schema_migrations WHERE version = 51",
         "DELETE FROM client_schema_migrations WHERE version = 50",

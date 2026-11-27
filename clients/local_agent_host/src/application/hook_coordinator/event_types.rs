@@ -13,6 +13,41 @@ impl LocalHookContextProvider for LocalHookCoordinator {
     async fn prefixed_context(&self, claim: &LocalAgentRunClaim) -> Result<Vec<Value>, String> {
         self.contexts_for_claim(claim).await
     }
+
+    async fn main_chat_task_route_state(
+        &self,
+        claim: &LocalAgentRunClaim,
+    ) -> Result<LocalMainChatTaskRouteState, String> {
+        if claim.run.profile_key != MAIN_CHAT_PROFILE_KEY
+            || claim.run.owner_entity_type != "conversation_turn"
+        {
+            return Ok(LocalMainChatTaskRouteState::default());
+        }
+        let required = self
+            .runtime
+            .active_plugin_hook_bundles_for_host_worker(&claim.run.owner_user_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .any(|bundle| {
+                bundle.spec.enabled
+                    && bundle
+                        .spec
+                        .task_policy
+                        .is_some_and(|policy| policy.require_main_chat_task_route)
+            });
+        let decided = required
+            && self
+                .runtime
+                .successful_tool_invocation_count_for_host_worker(
+                    &claim.run.run_id,
+                    DECIDE_TASK_ROUTE_TOOL,
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                > 0;
+        Ok(LocalMainChatTaskRouteState { required, decided })
+    }
 }
 
 #[async_trait]

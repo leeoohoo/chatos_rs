@@ -3,16 +3,19 @@
 
 use serde_json::{json, Value};
 
-pub const LIST_TASKS_TOOL: &str = "list_tasks";
-pub const GET_TASK_TOOL: &str = "get_task";
-pub const DECIDE_TASK_ROUTE_TOOL: &str = "decide_task_route";
-pub const CREATE_TASK_TOOL: &str = "create_task";
-pub const CREATE_TASKS_TOOL: &str = "create_tasks_with_prerequisites";
-pub const CANCEL_TASK_TOOL: &str = "cancel_task";
-pub const RETRY_TASK_TOOL: &str = "retry_task";
-pub const WAIT_FOR_TASK_COMPLETION_TOOL: &str = "wait_for_task_completion";
-pub const GET_TASK_DEPENDENCY_GRAPH_TOOL: &str = "get_task_dependency_graph";
-pub const RESOLVE_TASK_FOLLOWUP_TOOL: &str = "resolve_task_followup";
+pub use chatos_local_agent_protocol::{
+    LOCAL_AGENT_CANCEL_TASK_TOOL_NAME as CANCEL_TASK_TOOL,
+    LOCAL_AGENT_CREATE_TASKS_TOOL_NAME as CREATE_TASKS_TOOL,
+    LOCAL_AGENT_CREATE_TASK_TOOL_NAME as CREATE_TASK_TOOL,
+    LOCAL_AGENT_DECIDE_TASK_ROUTE_TOOL_NAME as DECIDE_TASK_ROUTE_TOOL,
+    LOCAL_AGENT_GET_TASK_DEPENDENCY_GRAPH_TOOL_NAME as GET_TASK_DEPENDENCY_GRAPH_TOOL,
+    LOCAL_AGENT_GET_TASK_TOOL_NAME as GET_TASK_TOOL,
+    LOCAL_AGENT_LIST_TASKS_TOOL_NAME as LIST_TASKS_TOOL,
+    LOCAL_AGENT_RESOLVE_TASK_FOLLOWUP_TOOL_NAME as RESOLVE_TASK_FOLLOWUP_TOOL,
+    LOCAL_AGENT_RETRY_TASK_TOOL_NAME as RETRY_TASK_TOOL,
+    LOCAL_AGENT_TASK_TOOL_NAMES as TASK_TOOL_NAMES,
+    LOCAL_AGENT_WAIT_FOR_TASK_COMPLETION_TOOL_NAME as WAIT_FOR_TASK_COMPLETION_TOOL,
+};
 pub const TASK_BUILTIN_KIND_VALUES: [&str; 8] = [
     "AskUser",
     "CodeMaintainerRead",
@@ -31,18 +34,6 @@ const TASK_SELECTABLE_BUILTIN_KIND_VALUES: [&str; 7] = [
     "RequirementSurveyRead",
     "RequirementSurveyWrite",
     "Notepad",
-];
-pub const TASK_TOOL_NAMES: [&str; 10] = [
-    LIST_TASKS_TOOL,
-    GET_TASK_TOOL,
-    DECIDE_TASK_ROUTE_TOOL,
-    CREATE_TASK_TOOL,
-    CREATE_TASKS_TOOL,
-    CANCEL_TASK_TOOL,
-    RETRY_TASK_TOOL,
-    WAIT_FOR_TASK_COMPLETION_TOOL,
-    GET_TASK_DEPENDENCY_GRAPH_TOOL,
-    RESOLVE_TASK_FOLLOWUP_TOOL,
 ];
 pub const TASK_READ_ONLY_TOOLS: [&str; 5] = [
     LIST_TASKS_TOOL,

@@ -16,6 +16,6 @@ pub use ai_step::{
 };
 pub use planner::{
     ControlPlaneLocalAiStepPlanner, LocalCapabilityResolver, LocalHookContextProvider,
-    LocalModelRuntimeResolver, ResolvedLocalCapabilities, TransientLocalModelRuntime,
-    MAIN_CHAT_PROFILE_KEY, TASK_EXECUTION_PROFILE_KEY,
+    LocalMainChatTaskRouteState, LocalModelRuntimeResolver, ResolvedLocalCapabilities,
+    TransientLocalModelRuntime, MAIN_CHAT_PROFILE_KEY, TASK_EXECUTION_PROFILE_KEY,
 };

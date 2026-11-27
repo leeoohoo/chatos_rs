@@ -29,9 +29,9 @@ pub use application::{
 pub use chatos_agent_profiles::{
     ChatosAiRuntimeStepExecutor, ConservativeToolSafetyPolicy, ControlPlaneLocalAiStepPlanner,
     DurableAiProfile, ExecutedLocalAiStep, LocalAiStepExecutor, LocalAiStepPlanner,
-    LocalCapabilityResolver, LocalHookContextProvider, LocalModelRuntimeResolver,
-    LocalToolHookGate, NamedReadOnlyTools, PreparedLocalAiStep, ResolvedLocalCapabilities,
-    ToolSafetyPolicy, TransientLocalModelRuntime, MAIN_CHAT_PROFILE_KEY,
+    LocalCapabilityResolver, LocalHookContextProvider, LocalMainChatTaskRouteState,
+    LocalModelRuntimeResolver, LocalToolHookGate, NamedReadOnlyTools, PreparedLocalAiStep,
+    ResolvedLocalCapabilities, ToolSafetyPolicy, TransientLocalModelRuntime, MAIN_CHAT_PROFILE_KEY,
     TASK_EXECUTION_PROFILE_KEY,
 };
 #[cfg(windows)]

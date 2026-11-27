@@ -50,11 +50,17 @@ extension NativeLocalConnectorService {
     }
 
     static func mainChatTaskSkillSnapshot() throws -> NativeMainChatTaskSkillSnapshot {
-        guard let taskBinding = ToolSkillCoverageCatalog.product.binding(
+        guard let routingBinding = ToolSkillCoverageCatalog.product.binding(
+            providerID: ProductToolProviderID.mainChatTask,
+            skillBindingID: ProductToolSkillBindingID.taskRouting
+        ), routingBinding.activationPolicy == .controlPlane,
+           routingBinding.toolNames == Set(["decide_task_route"]),
+           let taskBinding = ToolSkillCoverageCatalog.product.binding(
             providerID: ProductToolProviderID.mainChatTask,
             skillBindingID: ProductToolSkillBindingID.taskOrchestration
         ), taskBinding.activationPolicy == .onDemand,
-           taskBinding.toolNames == Set(NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames),
+           taskBinding.toolNames.union(routingBinding.toolNames)
+               == Set(NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames),
            let controlBinding = ToolSkillCoverageCatalog.product.binding(
                providerID: ProductToolProviderID.localAgentChat,
                skillBindingID: ProductToolSkillBindingID.agentSkillControlPlane
@@ -70,7 +76,7 @@ extension NativeLocalConnectorService {
             skillBindingID: ProductToolSkillBindingID.requirementDiscovery
         ) else { throw NativeLocalAgentBootstrapError.skillConfigurationUnavailable }
         let snapshot = try productSkillBundle(
-            bindings: [taskBinding, controlBinding, surveyBinding],
+            bindings: [routingBinding, taskBinding, controlBinding, surveyBinding],
             policySkillName: "chatos-main-chat-invariants"
         )
         guard let taskDocument = snapshot.documents.first(where: {
@@ -88,7 +94,7 @@ extension NativeLocalConnectorService {
         - `\(taskDocument.skillRef)` = **\(taskDocument.name)**: \(taskDocument.description)
         - `\(surveyDocument.skillRef)` = **\(surveyDocument.name)**: \(surveyDocument.description)
 
-        Before calling a Task or Requirement Survey tool, call `agent_skill_activate` with its exact `skill_ref` and follow the returned instructions. Clarify material unknown goals or preferences before dispatching dependent work. The activation result already lists resources; read only relevant references with `agent_skill_read_resource`. If that result is no longer available after resume, activate the same exact ref again. Skill activation does not grant permissions or expand the user's requested scope.
+        `decide_task_route` is a Host control-plane decision and never requires prior Skill activation. Before calling a Task operation or Requirement Survey tool, call `agent_skill_activate` with its exact `skill_ref` and follow the returned instructions. Clarify material unknown goals or preferences before dispatching dependent work. The activation result already lists resources; read only relevant references with `agent_skill_read_resource`. If that result is no longer available after resume, activate the same exact ref again. Skill activation does not grant permissions or expand the user's requested scope.
         """
         return .init(
             checksum: snapshot.checksum,

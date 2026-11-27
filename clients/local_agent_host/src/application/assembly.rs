@@ -20,7 +20,7 @@ use crate::{
     LocalToolRegistry, LocalToolScheduler, NamedReadOnlyTools, MAIN_CHAT_PROFILE_KEY,
     TASK_APPROVAL_EXEMPT_TOOLS, TASK_EXECUTION_PROFILE_KEY, TASK_READ_ONLY_TOOLS, TASK_TOOL_NAMES,
 };
-use chatos_local_agent_protocol::LocalAgentToolExecutionRoute;
+use chatos_local_agent_protocol::{LocalAgentToolExecutionRoute, LOCAL_AGENT_SHARED_TOOL_NAMES};
 use chatos_local_agent_runtime::{LocalAgentProfileRegistry, LocalAgentRuntime};
 use std::{path::PathBuf, sync::Arc};
 
@@ -270,6 +270,16 @@ impl LocalAgentHostAssembly {
         );
         for tool_name in TASK_PROCESS_TOOL_NAMES {
             tools.register_shared(tool_name, Arc::clone(&task_process_tools))?;
+        }
+        let missing_shared_tools = LOCAL_AGENT_SHARED_TOOL_NAMES
+            .into_iter()
+            .filter(|name| tools.executor_for(name).is_none())
+            .collect::<Vec<_>>();
+        if !missing_shared_tools.is_empty() {
+            return Err(format!(
+                "Shared Local Agent tools have no registered executor: {}",
+                missing_shared_tools.join(", ")
+            ));
         }
         let mut tool_scheduler = LocalToolScheduler::new(
             Arc::clone(&runtime),

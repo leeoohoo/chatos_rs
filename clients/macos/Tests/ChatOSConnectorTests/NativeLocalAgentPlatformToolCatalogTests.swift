@@ -410,13 +410,19 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
             "product-skill:chatos-main-chat-invariants",
             "product-skill:chatos-requirement-discovery",
         ])
+        let routingBinding = try XCTUnwrap(snapshot.bundle.toolSkillBindings.first {
+            $0.bindingID == ProductToolSkillBindingID.taskRouting
+        })
+        XCTAssertEqual(routingBinding.activationPolicy, .controlPlane)
+        XCTAssertEqual(routingBinding.toolNames, ["decide_task_route"])
         let taskBinding = try XCTUnwrap(snapshot.bundle.toolSkillBindings.first {
             $0.bindingID == ProductToolSkillBindingID.taskOrchestration
         })
         XCTAssertEqual(taskBinding.activationPolicy, .onDemand)
-        XCTAssertEqual(Set(taskBinding.toolNames), Set(
-            NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames
-        ))
+        XCTAssertEqual(
+            Set(taskBinding.toolNames).union(routingBinding.toolNames),
+            Set(NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames)
+        )
         let controlBinding = try XCTUnwrap(snapshot.bundle.toolSkillBindings.first {
             $0.bindingID == ProductToolSkillBindingID.agentSkillControlPlane
         })

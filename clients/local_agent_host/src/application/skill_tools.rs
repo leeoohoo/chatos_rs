@@ -312,7 +312,8 @@ mod tests {
             tool_skill_bindings: vec![LocalToolSkillBindingSnapshot {
                 provider_id: "chatos.local.main-chat-task".into(),
                 binding_id: "main-chat.task-orchestration".into(),
-                tool_names: vec!["create_task".into()],
+                // Historical bundles grouped routing with on-demand Task operations.
+                tool_names: vec!["decide_task_route".into(), "create_task".into()],
                 router_skill_ref: "product-skill:task".into(),
                 specialist_skill_ref: "product-skill:task".into(),
                 activation_policy: LocalToolSkillActivationPolicy::OnDemand,
@@ -484,6 +485,23 @@ mod tests {
             ))
             .await
             .expect("create run");
+        assert_eq!(
+            runtime
+                .authorize_tool_skill_for_run("run-external-gate", "decide_task_route")
+                .await
+                .expect("route control-plane gate"),
+            Ok(()),
+            "historical on-demand bundles must not deadlock the program-owned route decision"
+        );
+        assert_eq!(
+            runtime
+                .authorize_tool_skill_for_run("run-external-gate", "create_task")
+                .await
+                .expect("Task operation gate")
+                .expect_err("Task operations remain on-demand")
+                .error,
+            "skill_activation_required"
+        );
         let claimed = runtime
             .try_handle(envelope(
                 "external-gate-claim-run",

@@ -9,6 +9,47 @@ mod continuation_tests;
 
 struct OwnerCheckingModelResolver;
 
+struct RouteCapabilityResolver;
+
+#[async_trait]
+impl LocalCapabilityResolver for RouteCapabilityResolver {
+    async fn resolve_capabilities(
+        &self,
+        _owner_user_id: &str,
+        _profile_key: &str,
+        _capability_policy_revision: &str,
+    ) -> Result<ResolvedLocalCapabilities, String> {
+        Ok(ResolvedLocalCapabilities {
+            tools: vec![
+                json!({"name":"decide_task_route","parameters":{"type":"object"}}),
+                json!({"name":"create_task","parameters":{"type":"object"}}),
+            ],
+            ..ResolvedLocalCapabilities::default()
+        })
+    }
+}
+
+struct RouteHookProvider {
+    decided: bool,
+}
+
+#[async_trait]
+impl LocalHookContextProvider for RouteHookProvider {
+    async fn prefixed_context(&self, _claim: &LocalAgentRunClaim) -> Result<Vec<Value>, String> {
+        Ok(Vec::new())
+    }
+
+    async fn main_chat_task_route_state(
+        &self,
+        _claim: &LocalAgentRunClaim,
+    ) -> Result<LocalMainChatTaskRouteState, String> {
+        Ok(LocalMainChatTaskRouteState {
+            required: true,
+            decided: self.decided,
+        })
+    }
+}
+
 #[test]
 fn plugin_installer_main_chat_exposes_installer_and_attachment_tools() {
     let tools = vec![
@@ -176,6 +217,74 @@ async fn planner_resolves_control_plane_state_for_the_run_owner() {
         .await
         .expect("prepare owner-scoped step");
     assert_eq!(prepared.request.model_request.model, "test-model");
+}
+
+#[tokio::test]
+async fn required_task_route_is_decided_from_the_current_request_without_memory() {
+    let planner = ControlPlaneLocalAiStepPlanner::main_chat(
+        OwnerCheckingModelResolver,
+        RouteCapabilityResolver,
+    )
+    .with_hook_context_provider(RouteHookProvider { decided: false })
+    .with_memory_source_id("chatos")
+    .unwrap();
+
+    let prepared = planner
+        .prepare_ai_step(&claim(Value::Null, None))
+        .await
+        .expect("prepare isolated route decision");
+
+    assert_eq!(prepared.reason, "authoritative_task_route_decision");
+    assert!(prepared.request.memory_scope.is_none());
+    assert_eq!(
+        prepared
+            .request
+            .model_request
+            .tools
+            .iter()
+            .filter_map(tool_name)
+            .collect::<Vec<_>>(),
+        vec!["decide_task_route"]
+    );
+    assert!(prepared
+        .request
+        .current_input_items
+        .iter()
+        .any(|item| { item.to_string().contains("hello") }));
+    assert!(prepared.request.prefixed_input_items.iter().any(|item| {
+        item.to_string()
+            .contains("authoritative_current_task_route_request")
+    }));
+}
+
+#[tokio::test]
+async fn decided_task_route_restores_normal_memory_and_tools() {
+    let planner = ControlPlaneLocalAiStepPlanner::main_chat(
+        OwnerCheckingModelResolver,
+        RouteCapabilityResolver,
+    )
+    .with_hook_context_provider(RouteHookProvider { decided: true })
+    .with_memory_source_id("chatos")
+    .unwrap();
+
+    let mut current = claim(Value::Null, None);
+    current.run.input = json!({"message": "hello", "agent_id": "jiguli"});
+    let prepared = planner
+        .prepare_ai_step(&current)
+        .await
+        .expect("prepare normal Main Chat step");
+
+    assert!(prepared.request.memory_scope.is_some());
+    assert_eq!(
+        prepared
+            .request
+            .model_request
+            .tools
+            .iter()
+            .filter_map(tool_name)
+            .collect::<Vec<_>>(),
+        vec!["decide_task_route", "create_task"]
+    );
 }
 
 #[tokio::test]

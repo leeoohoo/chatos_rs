@@ -5,7 +5,8 @@ use super::task_tool_definitions::{CREATE_TASKS_TOOL, CREATE_TASK_TOOL, DECIDE_T
 use crate::infrastructure::{LocalHookInvocation, LocalHookInvocationResult, LocalHookRunner};
 use async_trait::async_trait;
 use chatos_agent_profiles::{
-    LocalHookContextProvider, LocalToolHookGate, MAIN_CHAT_PROFILE_KEY, TASK_EXECUTION_PROFILE_KEY,
+    LocalHookContextProvider, LocalMainChatTaskRouteState, LocalToolHookGate,
+    MAIN_CHAT_PROFILE_KEY, TASK_EXECUTION_PROFILE_KEY,
 };
 use chatos_ai_runtime::message_item;
 use chatos_local_agent_ports::{

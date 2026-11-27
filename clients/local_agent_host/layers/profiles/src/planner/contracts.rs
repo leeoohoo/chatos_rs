@@ -69,6 +69,19 @@ where
 #[async_trait]
 pub trait LocalHookContextProvider: Send + Sync {
     async fn prefixed_context(&self, claim: &LocalAgentRunClaim) -> Result<Vec<Value>, String>;
+
+    async fn main_chat_task_route_state(
+        &self,
+        _claim: &LocalAgentRunClaim,
+    ) -> Result<LocalMainChatTaskRouteState, String> {
+        Ok(LocalMainChatTaskRouteState::default())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LocalMainChatTaskRouteState {
+    pub required: bool,
+    pub decided: bool,
 }
 
 #[async_trait]
@@ -78,5 +91,12 @@ where
 {
     async fn prefixed_context(&self, claim: &LocalAgentRunClaim) -> Result<Vec<Value>, String> {
         (**self).prefixed_context(claim).await
+    }
+
+    async fn main_chat_task_route_state(
+        &self,
+        claim: &LocalAgentRunClaim,
+    ) -> Result<LocalMainChatTaskRouteState, String> {
+        (**self).main_chat_task_route_state(claim).await
     }
 }

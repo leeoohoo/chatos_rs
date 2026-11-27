@@ -325,7 +325,7 @@ pub(super) fn durable_step_input(
     Ok((history, reason))
 }
 
-fn initial_step_input(
+pub(super) fn initial_step_input(
     input: &Value,
     text_field: &str,
     model_attempt: u32,

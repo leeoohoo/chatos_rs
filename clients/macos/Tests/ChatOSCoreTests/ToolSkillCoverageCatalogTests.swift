@@ -224,22 +224,28 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         )
     }
 
-    func testMainChatTaskBindingCoversAllTenHostTools() {
-        let expected = Set([
-            "list_tasks", "get_task", "decide_task_route", "create_task",
+    func testMainChatRoutingIsControlPlaneAndTaskOperationsStayOnDemand() {
+        let expectedOperations = Set([
+            "list_tasks", "get_task", "create_task",
             "create_tasks_with_prerequisites", "cancel_task",
             "retry_task",
             "wait_for_task_completion", "get_task_dependency_graph",
             "resolve_task_followup",
         ])
-        let binding = ToolSkillCoverageCatalog.product.binding(
+        let routing = ToolSkillCoverageCatalog.product.binding(
+            providerID: ProductToolProviderID.mainChatTask,
+            skillBindingID: ProductToolSkillBindingID.taskRouting
+        )
+        let operations = ToolSkillCoverageCatalog.product.binding(
             providerID: ProductToolProviderID.mainChatTask,
             skillBindingID: ProductToolSkillBindingID.taskOrchestration
         )
 
-        XCTAssertEqual(binding?.toolNames, expected)
-        XCTAssertEqual(binding?.activationPolicy, .onDemand)
-        XCTAssertEqual(binding?.specialistSkillName, "chatos-async-task-orchestration")
+        XCTAssertEqual(routing?.toolNames, ["decide_task_route"])
+        XCTAssertEqual(routing?.activationPolicy, .controlPlane)
+        XCTAssertEqual(operations?.toolNames, expectedOperations)
+        XCTAssertEqual(operations?.activationPolicy, .onDemand)
+        XCTAssertEqual(operations?.specialistSkillName, "chatos-async-task-orchestration")
     }
 
     func testProductSkillSessionRestrictsDiscoveryAndRequiresActivation() async throws {

@@ -57,10 +57,38 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 &claim.run.input,
                 self.profile_key == MAIN_CHAT_PROFILE_KEY,
             ));
+        let mut task_route_state = LocalMainChatTaskRouteState::default();
         if let Some(provider) = self.hook_context_provider.as_ref() {
+            task_route_state = provider.main_chat_task_route_state(claim).await?;
             capabilities
                 .prefixed_input_items
                 .extend(provider.prefixed_context(claim).await?);
+        }
+        let route_decision_stage = self.profile_key == MAIN_CHAT_PROFILE_KEY
+            && task_route_state.required
+            && !task_route_state.decided;
+        if route_decision_stage {
+            capabilities.tools.retain(|tool| {
+                tool_name(tool) == Some(LOCAL_AGENT_DECIDE_TASK_ROUTE_TOOL_NAME)
+            });
+            if capabilities.tools.len() != 1 {
+                return Err(
+                    "active workflow policy requires exactly one decide_task_route tool"
+                        .to_string(),
+                );
+            }
+            capabilities.prefixed_input_items.push(message_item(
+                "system",
+                Value::String(
+                    json!({
+                        "type": "authoritative_current_task_route_request",
+                        "context_authority": "current_run",
+                        "turn_id": claim.run.input.get("turn_id"),
+                        "guidance": "This routing step is isolated from conversation Memory. Decide only from the exact current user request in the final user input item and the requested outcome. A repeated request renews that request; it is not an answer to, or a reason to wait for, an older assistant clarification. Call decide_task_route exactly once. Do not answer, ask questions, or call any other tool in this step."
+                    })
+                    .to_string(),
+                ),
+            ));
         }
         let configured_instructions = merge_instructions(
             capabilities.instructions,
@@ -78,7 +106,13 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
         } else {
             configured_instructions
         };
-        let (mut current_input_items, reason) = durable_step_input(claim, self.initial_text_field)?;
+        let (mut current_input_items, mut reason) =
+            durable_step_input(claim, self.initial_text_field)?;
+        if route_decision_stage {
+            (current_input_items, _) =
+                initial_step_input(&claim.run.input, self.initial_text_field, claim.run.model_attempt)?;
+            reason = "authoritative_task_route_decision".to_string();
+        }
         if transient.model_config.supports_images == Some(false) {
             // Do not let an image-producing tool turn a text-only model request
             // into an invalid gateway call or imply that this model saw pixels.
@@ -331,11 +365,14 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 ),
             ));
         }
-        let mut memory = self
-            .memory_source_id
-            .as_deref()
-            .map(|source_id| memory_plan(claim, source_id, self.initial_text_field))
-            .transpose()?;
+        let mut memory = if route_decision_stage {
+            None
+        } else {
+            self.memory_source_id
+                .as_deref()
+                .map(|source_id| memory_plan(claim, source_id, self.initial_text_field))
+                .transpose()?
+        };
         if let Some(memory) = &mut memory {
             memory.scope.model_capability_revision =
                 transient.model_config.model_capability_revision.clone();

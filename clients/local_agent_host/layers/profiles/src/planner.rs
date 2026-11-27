@@ -8,6 +8,7 @@ use chatos_ai_runtime::{
 };
 use chatos_local_agent_protocol::{
     task_acceptance_report_for_run, task_acceptance_report_is_terminal, LocalAgentRunClaim,
+    LOCAL_AGENT_DECIDE_TASK_ROUTE_TOOL_NAME,
 };
 use chatos_local_agent_runtime::LocalAgentRuntime;
 use serde_json::{json, Value};
@@ -15,8 +16,8 @@ use std::sync::Arc;
 
 use crate::planner_support::{
     apply_run_thinking_level, completed_async_task_handoff, completed_task_outcome_report,
-    durable_step_input, main_chat_scoped_tools, merge_instructions, merge_local_tools, tool_name,
-    validate_unique_tool_names,
+    durable_step_input, initial_step_input, main_chat_scoped_tools, merge_instructions,
+    merge_local_tools, tool_name, validate_unique_tool_names,
 };
 use crate::planner_tools::task_scoped_tools;
 

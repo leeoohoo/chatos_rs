@@ -26,6 +26,7 @@ public enum ProductToolSkillBindingID {
     public static let todoExecution = "agent-chat.todo-execution"
     public static let teamKnowledge = "agent-chat.team-knowledge"
     public static let projectDashboard = "agent-chat.project-dashboard"
+    public static let taskRouting = "main-chat.task-routing"
     public static let taskOrchestration = "main-chat.task-orchestration"
     public static let requirementDiscovery = "project.requirement-discovery"
     public static let projectTeamCatalog = "project-team.catalog"
@@ -87,10 +88,18 @@ public extension ToolSkillCoverageCatalog {
                     activationPolicy: .runBound
                 ),
                 .init(
+                    id: ProductToolSkillBindingID.taskRouting,
+                    providerID: ProductToolProviderID.mainChatTask,
+                    toolNames: ["decide_task_route"],
+                    routerSkillName: "chatos-async-task-orchestration",
+                    specialistSkillName: "chatos-async-task-orchestration",
+                    activationPolicy: .controlPlane
+                ),
+                .init(
                     id: ProductToolSkillBindingID.taskOrchestration,
                     providerID: ProductToolProviderID.mainChatTask,
                     toolNames: [
-                        "list_tasks", "get_task", "decide_task_route", "create_task",
+                        "list_tasks", "get_task", "create_task",
                         "create_tasks_with_prerequisites", "cancel_task",
                         "retry_task",
                         "wait_for_task_completion", "get_task_dependency_graph",

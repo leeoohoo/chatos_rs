@@ -885,3 +885,12 @@ pub(super) const SCHEMA_V51: &[&str] = &[
              local_requirement_plans.revision\
      )",
 ];
+
+/// `decide_task_route` is implemented by the shared Rust Task executor. Version 31's
+/// route backfill predated that tool and left existing calls platform-owned, while the
+/// native worker correctly refused to execute Host-reserved Task tools. Repair every
+/// historical row so pending Main Chat Runs can resume without user intervention.
+pub(super) const SCHEMA_V52: &[&str] = &[
+    "UPDATE local_agent_tool_invocations SET execution_route = 'shared' \
+       WHERE tool_name = 'decide_task_route' AND execution_route <> 'shared'",
+];

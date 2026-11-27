@@ -3,8 +3,8 @@
 
 use super::{ClientStorageError, SqliteResultExt};
 use chatos_local_agent_protocol::{
-    LocalAgentToolApprovalStatus, LocalAgentToolExecutionRoute, LocalAgentToolInvocationRecord,
-    LocalAgentToolOutcome, LocalAgentToolStatus,
+    local_agent_tool_execution_route, LocalAgentToolApprovalStatus, LocalAgentToolExecutionRoute,
+    LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 use serde_json::Value;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
@@ -73,40 +73,7 @@ pub(super) fn tool_execution_route(
     profile_key: &str,
     tool_name: &str,
 ) -> LocalAgentToolExecutionRoute {
-    const SHARED_TOOLS: &[&str] = &[
-        "list_tasks",
-        "get_task",
-        "create_task",
-        "create_tasks_with_prerequisites",
-        "cancel_task",
-        "retry_task",
-        "wait_for_task_completion",
-        "get_task_dependency_graph",
-        "resolve_task_followup",
-        "ask_user_prompt_key_values",
-        "ask_user_prompt_choices",
-        "ask_user_prompt_mixed_form",
-        "notepad_list_folders",
-        "notepad_list_notes",
-        "notepad_read_note",
-        "notepad_create_note",
-        "notepad_update_note",
-        "requirement_survey_create",
-        "requirement_plan_save",
-        "task_run_process_record_process",
-        "task_run_process_allocate_service",
-        "task_run_process_report_outcome",
-        "tool_result_read",
-        "tool_result_query",
-    ];
-    const SKILL_TOOLS: &[&str] = &["agent_skill_activate", "agent_skill_read_resource"];
-    if SHARED_TOOLS.contains(&tool_name)
-        || (profile_key != "task_execution" && SKILL_TOOLS.contains(&tool_name))
-    {
-        LocalAgentToolExecutionRoute::Shared
-    } else {
-        LocalAgentToolExecutionRoute::Platform
-    }
+    local_agent_tool_execution_route(profile_key, tool_name)
 }
 
 pub(super) fn outcome_fields(
@@ -151,5 +118,12 @@ mod tests {
             tool_execution_route("main_chat", "read_file"),
             LocalAgentToolExecutionRoute::Platform
         );
+        for name in chatos_local_agent_protocol::LOCAL_AGENT_TASK_TOOL_NAMES {
+            assert_eq!(
+                tool_execution_route("main_chat", name),
+                LocalAgentToolExecutionRoute::Shared,
+                "Task tool {name} lost its shared-runtime owner"
+            );
+        }
     }
 }

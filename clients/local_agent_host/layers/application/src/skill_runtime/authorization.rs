@@ -16,6 +16,12 @@ impl LocalAgentRuntime {
         tool_name: &str,
         arguments: &serde_json::Value,
     ) -> Result<Result<(), LocalToolSkillGateDenial>, LocalAgentRuntimeError> {
+        // Routing is a Host control-plane decision that must precede optional Skill
+        // activation. Keep historical frozen bundles from deadlocking if they grouped
+        // this tool with on-demand Task operations.
+        if tool_name == LOCAL_AGENT_DECIDE_TASK_ROUTE_TOOL_NAME {
+            return Ok(Ok(()));
+        }
         let Some((run, bundle)) = self.skill_bundle_for_run(run_id).await? else {
             // A profile without a Skill bundle has no Skill-gated tools. Model-visible
             // capability snapshots decide whether the Skill control plane exists at all.

@@ -4,8 +4,9 @@
 use super::{LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_local_agent_protocol::{
     LocalAgentRunRecord, LocalDiscoveredToolSkillGate, LocalSkillBundleSnapshot,
-    LocalToolSkillActivationPolicy, LOCAL_AGENT_SKILL_ACTIVATE_TOOL_NAME,
-    LOCAL_SKILL_BUNDLE_PROFILE_KEY, LOCAL_TASK_SKILL_BUNDLE_PROFILE_KEY,
+    LocalToolSkillActivationPolicy, LOCAL_AGENT_DECIDE_TASK_ROUTE_TOOL_NAME,
+    LOCAL_AGENT_SKILL_ACTIVATE_TOOL_NAME, LOCAL_SKILL_BUNDLE_PROFILE_KEY,
+    LOCAL_TASK_SKILL_BUNDLE_PROFILE_KEY,
 };
 use std::collections::BTreeSet;
 

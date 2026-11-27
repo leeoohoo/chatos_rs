@@ -795,7 +795,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         }
     }
 
-    func testTypedClientAlwaysExcludesRustReservedTools() async throws {
+    func testTypedClientLeavesToolOwnershipToTheHostRoute() async throws {
         let host = PlatformToolHostStub(mode: .idle)
         let client = NativeLocalAgentToolClient(host: host)
         let claim = try await client.claimNext(
@@ -812,19 +812,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             guard case let .string(name) = value else { return nil }
             return name
         }
-        XCTAssertEqual(Set(names), Set([
-            "another_reserved_tool",
-            "list_tasks",
-            "get_task",
-            "decide_task_route",
-            "create_task",
-            "create_tasks_with_prerequisites",
-            "cancel_task",
-            "retry_task",
-            "wait_for_task_completion",
-            "get_task_dependency_graph",
-            "resolve_task_followup",
-        ]))
+        XCTAssertEqual(names, ["another_reserved_tool"])
     }
 
     func testTypedClientRenewsExactClaimIdentity() async throws {

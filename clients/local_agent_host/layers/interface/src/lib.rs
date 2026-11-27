@@ -132,11 +132,18 @@ pub use task_write_scope::{
     local_task_runtime_write_scope, local_task_write_scope, local_task_write_scope_overlap,
 };
 pub use tool::{
-    ClaimNextToolCommand, CommitToolCommand, DecideToolApprovalCommand,
-    ListPendingToolApprovalsCommand, LocalAgentToolApprovalDecision, LocalAgentToolApprovalResult,
-    LocalAgentToolApprovalStatus, LocalAgentToolBatch, LocalAgentToolCall, LocalAgentToolClaim,
-    LocalAgentToolCommitResult, LocalAgentToolExecutionRoute, LocalAgentToolInvocationRecord,
-    LocalAgentToolOutcome, LocalAgentToolStatus, RenewToolClaimCommand,
+    local_agent_tool_execution_route, ClaimNextToolCommand, CommitToolCommand,
+    DecideToolApprovalCommand, ListPendingToolApprovalsCommand, LocalAgentToolApprovalDecision,
+    LocalAgentToolApprovalResult, LocalAgentToolApprovalStatus, LocalAgentToolBatch,
+    LocalAgentToolCall, LocalAgentToolClaim, LocalAgentToolCommitResult,
+    LocalAgentToolExecutionRoute, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
+    LocalAgentToolStatus, RenewToolClaimCommand, LOCAL_AGENT_CANCEL_TASK_TOOL_NAME,
+    LOCAL_AGENT_CREATE_TASKS_TOOL_NAME, LOCAL_AGENT_CREATE_TASK_TOOL_NAME,
+    LOCAL_AGENT_DECIDE_TASK_ROUTE_TOOL_NAME, LOCAL_AGENT_GET_TASK_DEPENDENCY_GRAPH_TOOL_NAME,
+    LOCAL_AGENT_GET_TASK_TOOL_NAME, LOCAL_AGENT_LIST_TASKS_TOOL_NAME,
+    LOCAL_AGENT_RESOLVE_TASK_FOLLOWUP_TOOL_NAME, LOCAL_AGENT_RETRY_TASK_TOOL_NAME,
+    LOCAL_AGENT_SHARED_TOOL_NAMES, LOCAL_AGENT_TASK_TOOL_NAMES,
+    LOCAL_AGENT_WAIT_FOR_TASK_COMPLETION_TOOL_NAME,
 };
 
 pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 53;

@@ -22,6 +22,79 @@ impl LocalAgentToolExecutionRoute {
     }
 }
 
+pub const LOCAL_AGENT_LIST_TASKS_TOOL_NAME: &str = "list_tasks";
+pub const LOCAL_AGENT_GET_TASK_TOOL_NAME: &str = "get_task";
+pub const LOCAL_AGENT_DECIDE_TASK_ROUTE_TOOL_NAME: &str = "decide_task_route";
+pub const LOCAL_AGENT_CREATE_TASK_TOOL_NAME: &str = "create_task";
+pub const LOCAL_AGENT_CREATE_TASKS_TOOL_NAME: &str = "create_tasks_with_prerequisites";
+pub const LOCAL_AGENT_CANCEL_TASK_TOOL_NAME: &str = "cancel_task";
+pub const LOCAL_AGENT_RETRY_TASK_TOOL_NAME: &str = "retry_task";
+pub const LOCAL_AGENT_WAIT_FOR_TASK_COMPLETION_TOOL_NAME: &str = "wait_for_task_completion";
+pub const LOCAL_AGENT_GET_TASK_DEPENDENCY_GRAPH_TOOL_NAME: &str = "get_task_dependency_graph";
+pub const LOCAL_AGENT_RESOLVE_TASK_FOLLOWUP_TOOL_NAME: &str = "resolve_task_followup";
+
+/// Host-owned Task tools share one cross-layer identity so persistence, the in-process
+/// scheduler, and external clients cannot silently disagree about who executes them.
+pub const LOCAL_AGENT_TASK_TOOL_NAMES: [&str; 10] = [
+    LOCAL_AGENT_LIST_TASKS_TOOL_NAME,
+    LOCAL_AGENT_GET_TASK_TOOL_NAME,
+    LOCAL_AGENT_DECIDE_TASK_ROUTE_TOOL_NAME,
+    LOCAL_AGENT_CREATE_TASK_TOOL_NAME,
+    LOCAL_AGENT_CREATE_TASKS_TOOL_NAME,
+    LOCAL_AGENT_CANCEL_TASK_TOOL_NAME,
+    LOCAL_AGENT_RETRY_TASK_TOOL_NAME,
+    LOCAL_AGENT_WAIT_FOR_TASK_COMPLETION_TOOL_NAME,
+    LOCAL_AGENT_GET_TASK_DEPENDENCY_GRAPH_TOOL_NAME,
+    LOCAL_AGENT_RESOLVE_TASK_FOLLOWUP_TOOL_NAME,
+];
+
+pub const LOCAL_AGENT_SHARED_TOOL_NAMES: [&str; 27] = [
+    LOCAL_AGENT_LIST_TASKS_TOOL_NAME,
+    LOCAL_AGENT_GET_TASK_TOOL_NAME,
+    LOCAL_AGENT_DECIDE_TASK_ROUTE_TOOL_NAME,
+    LOCAL_AGENT_CREATE_TASK_TOOL_NAME,
+    LOCAL_AGENT_CREATE_TASKS_TOOL_NAME,
+    LOCAL_AGENT_CANCEL_TASK_TOOL_NAME,
+    LOCAL_AGENT_RETRY_TASK_TOOL_NAME,
+    LOCAL_AGENT_WAIT_FOR_TASK_COMPLETION_TOOL_NAME,
+    LOCAL_AGENT_GET_TASK_DEPENDENCY_GRAPH_TOOL_NAME,
+    LOCAL_AGENT_RESOLVE_TASK_FOLLOWUP_TOOL_NAME,
+    "ask_user_prompt_key_values",
+    "ask_user_prompt_choices",
+    "ask_user_prompt_mixed_form",
+    "notepad_list_folders",
+    "notepad_list_notes",
+    "notepad_read_note",
+    "notepad_create_note",
+    "notepad_update_note",
+    "requirement_survey_create",
+    "requirement_plan_save",
+    "task_run_process_record_process",
+    "task_run_process_allocate_service",
+    "task_run_process_report_outcome",
+    "tool_result_read",
+    "tool_result_query",
+    "agent_skill_activate",
+    "agent_skill_read_resource",
+];
+
+pub fn local_agent_tool_execution_route(
+    profile_key: &str,
+    tool_name: &str,
+) -> LocalAgentToolExecutionRoute {
+    let shared = LOCAL_AGENT_SHARED_TOOL_NAMES.contains(&tool_name)
+        && (profile_key != "task_execution"
+            || !matches!(
+                tool_name,
+                "agent_skill_activate" | "agent_skill_read_resource"
+            ));
+    if shared {
+        LocalAgentToolExecutionRoute::Shared
+    } else {
+        LocalAgentToolExecutionRoute::Platform
+    }
+}
+
 impl std::str::FromStr for LocalAgentToolExecutionRoute {
     type Err = String;
 
@@ -430,5 +503,24 @@ mod tests {
         assert!(invalid.validate().is_err());
         invalid.lease_duration_ms = 300_001;
         assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn every_task_tool_is_owned_by_the_shared_runtime() {
+        for name in LOCAL_AGENT_TASK_TOOL_NAMES {
+            assert_eq!(
+                local_agent_tool_execution_route("main_chat", name),
+                LocalAgentToolExecutionRoute::Shared,
+                "Task tool {name} lost its shared-runtime owner"
+            );
+        }
+        assert_eq!(
+            local_agent_tool_execution_route("task_execution", "agent_skill_activate"),
+            LocalAgentToolExecutionRoute::Platform
+        );
+        assert_eq!(
+            local_agent_tool_execution_route("main_chat", "agent_skill_activate"),
+            LocalAgentToolExecutionRoute::Shared
+        );
     }
 }

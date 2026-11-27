@@ -150,19 +150,6 @@ public struct LocalAgentToolApprovalResult: Decodable, Sendable, Equatable {
 }
 
 public struct NativeLocalAgentToolClient: Sendable {
-    public static let reservedRustToolNames = [
-        "list_tasks",
-        "get_task",
-        "decide_task_route",
-        "create_task",
-        "create_tasks_with_prerequisites",
-        "cancel_task",
-        "retry_task",
-        "wait_for_task_completion",
-        "get_task_dependency_graph",
-        "resolve_task_followup",
-    ]
-
     private let host: any LocalAgentHostClientServicing
 
     public init(host: any LocalAgentHostClientServicing) {
@@ -176,9 +163,7 @@ public struct NativeLocalAgentToolClient: Sendable {
         includeToolNames: [String]? = nil,
         excludeToolNames: [String] = []
     ) async throws -> LocalAgentToolClaim? {
-        let excluded = Array(Set(
-            excludeToolNames + Self.reservedRustToolNames
-        )).sorted()
+        let excluded = Array(Set(excludeToolNames)).sorted()
         let result: ClaimResult = try await host.request(ClaimCommand(
             type: "claim_next_tool",
             ownerUserID: ownerUserID,
