@@ -911,8 +911,8 @@ pub(super) const SCHEMA_V53: &[&str] = &[
        PRIMARY KEY(owner_user_id, survey_id),\
        FOREIGN KEY(owner_user_id, survey_id) REFERENCES local_requirement_surveys(owner_user_id, survey_id) ON DELETE CASCADE)",
     "INSERT INTO local_plan_evidence(owner_user_id, survey_id, plan_id, workflow_id, created_at_unix_ms) \
-       SELECT owner_user_id, source_survey_id, plan_id, plan_id, created_at_unix_ms \
-       FROM local_requirement_plans",
+       SELECT owner_user_id, source_survey_id, MIN(plan_id), MIN(plan_id), MIN(created_at_unix_ms) \
+       FROM local_requirement_plans GROUP BY owner_user_id, source_survey_id",
     "UPDATE local_plan_evidence SET plan_id = (\
        SELECT candidate.plan_id FROM local_requirement_plans candidate \
        JOIN local_requirement_surveys survey \

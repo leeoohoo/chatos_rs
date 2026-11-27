@@ -7,6 +7,84 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 #[tokio::test]
+async fn version_fifty_three_collapses_plan_revisions_before_attaching_survey_evidence() {
+    let mut connection = SqliteConnection::connect_with(
+        &SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .foreign_keys(true),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TABLE local_requirement_surveys(\
+           owner_user_id TEXT NOT NULL, survey_id TEXT NOT NULL, source_run_id TEXT NOT NULL,\
+           PRIMARY KEY(owner_user_id, survey_id))",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TABLE local_requirement_plans(\
+           owner_user_id TEXT NOT NULL, plan_id TEXT NOT NULL, revision INTEGER NOT NULL,\
+           source_survey_id TEXT NOT NULL, created_at_unix_ms INTEGER NOT NULL,\
+           confirmed_at_unix_ms INTEGER, PRIMARY KEY(owner_user_id, plan_id, revision))",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO local_requirement_surveys VALUES\
+           ('user-1', 'survey-a', 'planning-run'),\
+           ('user-1', 'survey-b', 'planning-run')",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO local_requirement_plans VALUES\
+           ('user-1', 'plan-a', 1, 'survey-a', 100, NULL),\
+           ('user-1', 'plan-a', 2, 'survey-a', 200, 300),\
+           ('user-1', 'plan-b', 1, 'survey-b', 400, NULL)",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+
+    for statement in schema::SCHEMA_V53 {
+        sqlx::query(sqlx::AssertSqlSafe(*statement))
+            .execute(&mut connection)
+            .await
+            .unwrap();
+    }
+
+    let evidence = sqlx::query(
+        "SELECT survey_id, plan_id, workflow_id, created_at_unix_ms \
+         FROM local_plan_evidence ORDER BY survey_id",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .unwrap();
+    assert_eq!(evidence.len(), 2);
+    for row in &evidence {
+        assert_eq!(row.get::<String, _>("plan_id"), "plan-a");
+        assert_eq!(row.get::<String, _>("workflow_id"), "plan-a");
+    }
+    assert_eq!(evidence[0].get::<i64, _>("created_at_unix_ms"), 100);
+    assert_eq!(evidence[1].get::<i64, _>("created_at_unix_ms"), 400);
+    let plans = sqlx::query(
+        "SELECT plan_id, revision, workflow_id, lifecycle_status \
+         FROM local_requirement_plans ORDER BY plan_id, revision",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .unwrap();
+    assert_eq!(plans[0].get::<String, _>("lifecycle_status"), "draft");
+    assert_eq!(plans[1].get::<String, _>("lifecycle_status"), "confirmed");
+    assert_eq!(plans[2].get::<String, _>("workflow_id"), "plan-a");
+    assert_eq!(plans[2].get::<String, _>("lifecycle_status"), "superseded");
+}
+
+#[tokio::test]
 async fn version_fifty_two_recovers_orphaned_task_route_calls() {
     let mut connection = SqliteConnection::connect_with(
         &SqliteConnectOptions::from_str("sqlite::memory:")
