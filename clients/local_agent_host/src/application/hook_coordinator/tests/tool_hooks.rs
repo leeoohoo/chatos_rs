@@ -355,6 +355,47 @@ async fn plan_first_policy_rejects_unrouted_main_chat_completion() {
 }
 
 #[tokio::test]
+async fn repeated_workflow_gate_fails_internal_instead_of_spinning_to_iteration_limit() {
+    let (storage, runtime, runner) = fixture().await;
+    activate_bundle_with_policy(
+        &storage,
+        "bundle-plan-repeat",
+        vec![hook("session", "SessionStart", "context")],
+        Some(plan_first_policy()),
+    )
+    .await;
+    let coordinator = LocalHookCoordinator::new(runtime, runner, None).expect("hooks");
+    let output = json!({"content": "reply", "response_output_items": []});
+    let first = coordinator
+        .gate_success_outcome(
+            &claim(run("run-repeat-gate")),
+            LocalAgentStepOutcome::Succeed {
+                output: output.clone(),
+            },
+        )
+        .await
+        .expect("first gate");
+    let LocalAgentStepOutcome::Continue { checkpoint } = first else {
+        panic!("first gate must provide one recovery continuation")
+    };
+    let mut repeated = run("run-repeat-gate");
+    repeated.checkpoint = checkpoint;
+
+    let second = coordinator
+        .gate_success_outcome(
+            &claim(repeated),
+            LocalAgentStepOutcome::Succeed { output },
+        )
+        .await
+        .expect("repeated gate");
+    let LocalAgentStepOutcome::NeedsReview { detail, .. } = second else {
+        panic!("repeated deterministic gate must stop")
+    };
+    assert_eq!(detail["classification"], "failed_internal");
+    assert_eq!(detail["reason_code"], "repeated_deterministic_gate");
+}
+
+#[tokio::test]
 async fn plan_first_policy_allows_an_audited_direct_response() {
     let (storage, runtime, runner) = fixture().await;
     activate_bundle_with_policy(

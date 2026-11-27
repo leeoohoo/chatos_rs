@@ -95,6 +95,38 @@ async fn create(storage: &SqliteClientStorage, conversation_id: &str) -> LocalCo
         .expect("create conversation")
 }
 
+#[tokio::test]
+async fn starting_turn_projects_user_message_in_the_same_transaction() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    create(&storage, "conversation-start-projection").await;
+    storage
+        .configure_memory_projection("user-1", "chatos", 1_500)
+        .await
+        .unwrap();
+    let command = turn("conversation-start-projection", 1, "start-projection");
+    let mut record = run(&command, 2_000);
+    record.input["agent_id"] = json!("agent-1");
+    storage
+        .start_conversation_turn(
+            &idempotency("start-projection"),
+            &command,
+            &record,
+            "event-start-projection",
+            2_000,
+        )
+        .await
+        .unwrap();
+
+    let projected: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM local_memory_outbox WHERE record_id = ? AND status = 'pending'",
+    )
+    .bind(&command.message_id)
+    .fetch_one(&storage.pool)
+    .await
+    .unwrap();
+    assert_eq!(projected, 1);
+}
+
 async fn start(
     storage: &SqliteClientStorage,
     turn: &StartConversationTurnCommand,

@@ -447,6 +447,23 @@ impl LocalConversationStore for SqliteClientStorage {
                 now_unix_ms,
             )
             .await?;
+            super::conversation_commands::project_conversation_message_to_memory(
+                &mut connection,
+                &bound_run,
+                &turn.conversation_id,
+                &turn.turn_id,
+                &turn.message_id,
+                "user",
+                &json!(turn.message),
+                &turn.message_metadata,
+                &turn.attachments,
+                "conversation_start",
+                "pending",
+                false,
+                false,
+                now_unix_ms,
+            )
+            .await?;
             super::task_followup_gate::begin_review(
                 &mut connection,
                 &turn.conversation_id,

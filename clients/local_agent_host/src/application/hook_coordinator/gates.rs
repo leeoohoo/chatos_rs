@@ -362,7 +362,8 @@ impl LocalHookCoordinator {
                 .await
                 .map_err(|error| error.to_string())?;
             if saved == 0 {
-                return Ok(Some(workflow_completion_continuation(
+                return Ok(Some(workflow_completion_outcome(
+                    &claim.run,
                     output,
                     "planning_task_requires_plan",
                     "This planning Task cannot finish with questions or prose alone. If a missing human product decision materially changes the plan, call requirement_survey_create and let the same Run resume after submission. Otherwise publish the complete proposal with requirement_plan_save, then finish with that same proposal. Never ask the user to reply in ordinary chat.",
@@ -468,8 +469,8 @@ impl LocalHookCoordinator {
                 "An active workflow Plugin requires an auditable semantic route before Main Chat can finish. Call decide_task_route exactly once. Choose direct_response only when the request can be fully answered without durable Task work; choose durable_task for plans, project investigation, files, commands, implementation, plugins, or tracked execution. Never decide by keyword matching. If durable_task is selected, follow the Host-provided next_action before finishing.",
             )
         };
-        Ok(Some(workflow_completion_continuation(
-            output, reason, guidance,
+        Ok(Some(workflow_completion_outcome(
+            &claim.run, output, reason, guidance,
         )))
     }
 
@@ -579,16 +580,35 @@ impl LocalHookCoordinator {
     }
 }
 
-fn workflow_completion_continuation(
+fn workflow_completion_outcome(
+    run: &LocalAgentRunRecord,
     output: &Value,
     reason: &str,
     guidance: &str,
 ) -> LocalAgentStepOutcome {
+    let previous = run
+        .checkpoint
+        .pointer("/continuation/reason")
+        .and_then(Value::as_str);
+    if previous == Some(reason) {
+        return LocalAgentStepOutcome::NeedsReview {
+            reason: "workflow control plane made no progress after a deterministic completion gate"
+                .to_string(),
+            detail: json!({
+                "reason_code": "repeated_deterministic_gate",
+                "classification": "failed_internal",
+                "error_fingerprint": format!("workflow_completion:{reason}"),
+                "gate_reason": reason,
+                "recovery": "retry_after_internal_state_or_plugin_policy_is_repaired",
+            }),
+        };
+    }
     LocalAgentStepOutcome::Continue {
         checkpoint: json!({
             "response": output,
             "continuation": {
                 "reason": reason,
+                "error_fingerprint": format!("workflow_completion:{reason}"),
                 "input_items": [message_item(
                     "user",
                     Value::String(json!({

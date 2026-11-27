@@ -329,22 +329,23 @@ extension NativeLocalConnectorService {
             (state.pluginPreferences[$0.pluginID] ?? true)
                 && Self.isCurrentHookTrustRecord($0, state: state)
         }.sorted { $0.bundleID < $1.bundleID }
+        var publishedBundleIDs: [String] = []
         for trust in trusted {
             do {
                 try await client.publish(trust)
                 guard generation == pluginHookSyncGeneration else { return }
+                publishedBundleIDs.append(trust.bundleID)
             } catch {
                 Self.logger.error(
                     "Failed to publish trusted plugin hook bundle \(trust.bundleID, privacy: .public): \(error.localizedDescription, privacy: .public)"
                 )
-                return
             }
         }
         do {
             guard generation == pluginHookSyncGeneration else { return }
             try await client.setActive(
                 ownerUserID: ownerUserID,
-                bundleIDs: trusted.map(\.bundleID)
+                bundleIDs: publishedBundleIDs
             )
         } catch {
             Self.logger.error(

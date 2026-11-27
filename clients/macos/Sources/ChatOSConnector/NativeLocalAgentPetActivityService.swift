@@ -135,7 +135,7 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
         let agentTodoID = string("todo_id", in: run.input)
             ?? string("todo_id", inObject: "team_executor_context", in: run.input)
         let updatedAt = date(run.updatedAtUnixMs)
-        let kind = activityKind(run.status)
+        let kind = activityKind(run)
         return PetActivity(
             id: "local-run:\(run.runID)",
             source: source,
@@ -163,8 +163,15 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
         )
     }
 
-    private static func activityKind(_ status: String) -> PetActivityKind {
-        switch status {
+    private static func activityKind(_ run: LocalAgentRunRecord) -> PetActivityKind {
+        if run.status == "needs_review", let outcome = run.terminalOutcome {
+            switch string("classification", in: outcome) {
+            case "failed_internal", "iteration_exhausted": return .failed
+            case "user_action_required": return .waitingForUser
+            default: break
+            }
+        }
+        return switch run.status {
         case "waiting_user": .waitingForUser
         case "paused", "needs_review": .reviewing
         case "succeeded": .succeeded
@@ -176,6 +183,12 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
 
     private static func detail(_ run: LocalAgentRunRecord) -> String? {
         if let outcome = run.terminalOutcome {
+            switch string("classification", in: outcome) {
+            case "failed_internal": return "内部流程状态冲突，已停止自动重试。可以重试任务；如果再次出现，请检查插件策略和任务日志。"
+            case "iteration_exhausted": return "模型执行已达到迭代上限，任务已停止，未要求你检查未知执行结果。"
+            case "user_action_required": return string("reason", in: outcome) ?? "需要你的输入后才能继续"
+            default: break
+            }
             if string("reason_code", in: outcome) == "execution_interrupted" {
                 return NativeLocalAgentMessageTaskGraphService.executionError(outcome)
             }

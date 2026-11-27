@@ -356,6 +356,22 @@ async fn host_routes_guidance_into_the_next_local_model_claim() {
         ))
         .await
         .expect("start Turn");
+    let initial_projection = storage
+        .claim_next_memory_record("user-1", "initial-memory-claim", 10_001, 20_000)
+        .await
+        .expect("claim initial projection")
+        .expect("initial Memory record");
+    assert_eq!(initial_projection.record_id, "message-1");
+    storage
+        .complete_memory_record(
+            &initial_projection.source_id,
+            &initial_projection.record_id,
+            "initial-memory-claim",
+            initial_projection.version,
+            10_001,
+        )
+        .await
+        .expect("complete initial projection");
     let guided = runtime
         .try_handle(request(
             "guide-turn",

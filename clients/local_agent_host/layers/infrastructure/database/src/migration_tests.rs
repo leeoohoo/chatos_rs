@@ -893,6 +893,7 @@ async fn version_forty_two_accepts_legacy_hook_events_without_recovery_payloads(
     .await
     .expect("legacy Hook invocation");
     let mut connection = storage.pool.acquire().await.expect("connection");
+    rewind_v53(&mut connection).await;
     for statement in [
         "DELETE FROM client_schema_migrations WHERE version = 52",
         "ALTER TABLE local_requirement_plans DROP COLUMN consumed_at_unix_ms",
@@ -987,6 +988,7 @@ pub(super) async fn rewind_receipt_v36(connection: &mut SqliteConnection) {
 }
 
 pub(super) async fn rewind_receipt_v37(connection: &mut SqliteConnection) {
+    rewind_v53(connection).await;
     for statement in [
         "DELETE FROM client_schema_migrations WHERE version = 52",
         "ALTER TABLE local_requirement_plans DROP COLUMN consumed_at_unix_ms",
@@ -1044,6 +1046,24 @@ pub(super) async fn rewind_receipt_v37(connection: &mut SqliteConnection) {
             .execute(&mut *connection)
             .await
             .unwrap();
+    }
+}
+
+async fn rewind_v53(connection: &mut SqliteConnection) {
+    for statement in [
+        "DELETE FROM client_schema_migrations WHERE version = 53",
+        "DROP TABLE local_plan_execution_bindings",
+        "DROP INDEX local_plan_evidence_plan",
+        "DROP TABLE local_plan_evidence",
+        "DROP INDEX local_requirement_plans_workflow",
+        "ALTER TABLE local_requirement_plans DROP COLUMN markdown_sha256",
+        "ALTER TABLE local_requirement_plans DROP COLUMN lifecycle_status",
+        "ALTER TABLE local_requirement_plans DROP COLUMN workflow_id",
+    ] {
+        sqlx::query(statement)
+            .execute(&mut *connection)
+            .await
+            .expect("rewind v53 workflow plan schema");
     }
 }
 

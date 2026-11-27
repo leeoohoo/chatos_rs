@@ -894,3 +894,50 @@ pub(super) const SCHEMA_V52: &[&str] = &[
     "UPDATE local_agent_tool_invocations SET execution_route = 'shared' \
        WHERE tool_name = 'decide_task_route' AND execution_route <> 'shared'",
 ];
+
+/// A plan is a workflow-owned revision stream. Surveys are evidence attached to that
+/// stream; they are not plan identities. Execution authorization is recorded against
+/// the exact confirmed revision selected by the coordinating Main Chat Run.
+pub(super) const SCHEMA_V53: &[&str] = &[
+    "ALTER TABLE local_requirement_plans ADD COLUMN workflow_id TEXT",
+    "ALTER TABLE local_requirement_plans ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'draft'",
+    "ALTER TABLE local_requirement_plans ADD COLUMN markdown_sha256 TEXT",
+    "UPDATE local_requirement_plans SET workflow_id = plan_id",
+    "UPDATE local_requirement_plans SET lifecycle_status = CASE \
+       WHEN confirmed_at_unix_ms IS NOT NULL THEN 'confirmed' ELSE 'draft' END",
+    "CREATE TABLE local_plan_evidence (\
+       owner_user_id TEXT NOT NULL, survey_id TEXT NOT NULL, plan_id TEXT NOT NULL,\
+       workflow_id TEXT NOT NULL, created_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(owner_user_id, survey_id),\
+       FOREIGN KEY(owner_user_id, survey_id) REFERENCES local_requirement_surveys(owner_user_id, survey_id) ON DELETE CASCADE)",
+    "INSERT INTO local_plan_evidence(owner_user_id, survey_id, plan_id, workflow_id, created_at_unix_ms) \
+       SELECT owner_user_id, source_survey_id, plan_id, plan_id, created_at_unix_ms \
+       FROM local_requirement_plans",
+    "UPDATE local_plan_evidence SET plan_id = (\
+       SELECT candidate.plan_id FROM local_requirement_plans candidate \
+       JOIN local_requirement_surveys survey \
+         ON survey.owner_user_id = candidate.owner_user_id \
+        AND survey.survey_id = candidate.source_survey_id \
+       WHERE candidate.owner_user_id = local_plan_evidence.owner_user_id \
+         AND survey.source_run_id = (SELECT source_run_id FROM local_requirement_surveys \
+           WHERE owner_user_id = local_plan_evidence.owner_user_id \
+             AND survey_id = local_plan_evidence.survey_id) \
+       ORDER BY (candidate.confirmed_at_unix_ms IS NOT NULL) DESC, \
+                candidate.created_at_unix_ms, candidate.plan_id LIMIT 1)",
+    "UPDATE local_plan_evidence SET workflow_id = plan_id",
+    "UPDATE local_requirement_plans SET workflow_id = (\
+       SELECT evidence.plan_id FROM local_plan_evidence evidence \
+       WHERE evidence.owner_user_id = local_requirement_plans.owner_user_id \
+         AND evidence.survey_id = local_requirement_plans.source_survey_id)",
+    "UPDATE local_requirement_plans SET lifecycle_status = 'superseded' \
+       WHERE plan_id <> workflow_id",
+    "CREATE INDEX local_plan_evidence_plan ON local_plan_evidence(\
+       owner_user_id, plan_id, workflow_id)",
+    "CREATE TABLE local_plan_execution_bindings (\
+       graph_id TEXT PRIMARY KEY NOT NULL, owner_user_id TEXT NOT NULL,\
+       source_run_id TEXT NOT NULL, plan_id TEXT NOT NULL, revision INTEGER NOT NULL,\
+       confirmed_at_unix_ms INTEGER NOT NULL, markdown_sha256 TEXT NOT NULL,\
+       created_at_unix_ms INTEGER NOT NULL)",
+    "CREATE INDEX local_requirement_plans_workflow ON local_requirement_plans(\
+       owner_user_id, workflow_id, revision DESC)",
+];

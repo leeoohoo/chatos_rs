@@ -55,7 +55,13 @@ pub(super) fn transition_for_outcome(
                 LocalAgentRunStatus::NeedsReview,
                 None,
                 None,
-                None,
+                Some(json!({
+                    "status": "needs_review",
+                    "reason_code": "iteration_exhausted",
+                    "classification": "iteration_exhausted",
+                    "error": "maximum model iterations reached",
+                    "reason": "maximum model iterations reached"
+                })),
                 "iteration_limit_reached",
                 json!({
                     "reason": "maximum model iterations reached"
@@ -123,9 +129,18 @@ pub(super) fn transition_for_outcome(
                     .map(str::trim)
                     .filter(|error| !error.is_empty())
                     .unwrap_or(&reason);
+                let reason_code = detail
+                    .get("reason_code")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("step_requires_review");
+                let classification = detail
+                    .get("classification")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("needs_side_effect_review");
                 let terminal = json!({
                     "status": "needs_review",
-                    "reason_code": "step_requires_review",
+                    "reason_code": reason_code,
+                    "classification": classification,
                     "error": error,
                     "reason": reason,
                     "detail": detail,

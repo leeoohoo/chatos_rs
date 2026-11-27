@@ -29,10 +29,13 @@ pub(super) async fn get(
         })
         .transpose()?;
     let query = format!(
-        "{SELECT} WHERE owner_user_id = ? AND source_survey_id = ? \
-        AND (? IS NULL OR revision = ?) ORDER BY revision DESC LIMIT 1"
+        "{SELECT} WHERE owner_user_id = ? AND plan_id = (\
+           SELECT plan_id FROM local_plan_evidence \
+           WHERE owner_user_id = ? AND survey_id = ?\
+         ) AND (? IS NULL OR revision = ?) ORDER BY revision DESC LIMIT 1"
     );
     sqlx::query(sqlx::AssertSqlSafe(query))
+        .bind(owner)
         .bind(owner)
         .bind(survey)
         .bind(revision)
@@ -87,6 +90,7 @@ pub(super) async fn save(
             .ok_or_else(|| ClientStorageError::NotFound(save.survey_id.clone()))?;
         let project: String = survey.try_get("project_resource_id").db()?;
         let mut conversation: String = survey.try_get("source_conversation_id").db()?;
+        let survey_source_run: String = survey.try_get("source_run_id").db()?;
         let survey_source_task: Option<String> = survey.try_get("source_task_id").db()?;
         match (run.profile_key.as_str(), run.owner_entity_type.as_str()) {
             ("main_chat", "conversation_turn") => {
@@ -98,7 +102,7 @@ pub(super) async fn save(
                     .fetch_optional(&mut *connection).await.db()?;
                 conversation = valid.ok_or_else(|| ClientStorageError::InvalidState("plan source Run belongs to another resource or conversation".into()))?;
             }
-            ("task_execution", "task") if survey.try_get::<String,_>("source_run_id").db()? == run.run_id
+            ("task_execution", "task") if survey_source_run == run.run_id
                 && survey_source_task.as_deref() == Some(run.owner_entity_id.as_str()) => {}
             ("task_execution", "conversation_turn") if run.input.get("team_executor_context")
                 .and_then(Value::as_object)
@@ -128,18 +132,30 @@ pub(super) async fn save(
                 return Err(ClientStorageError::InvalidState("a completed Run can only publish its exact final reply; use a new generation Run to revise a plan".into()));
             }
         }
-        let current = get(&mut connection, &save.owner_user_id, &save.survey_id, None).await?;
+        let current = match get(&mut connection, &save.owner_user_id, &save.survey_id, None).await? {
+            Some(plan) => Some(plan),
+            None => canonical_for_source_run(
+                &mut connection,
+                &save.owner_user_id,
+                &survey_source_run,
+            )
+            .await?,
+        };
         if current.as_ref().map_or(0, |plan| plan.revision) != save.expected_revision {
             return Err(ClientStorageError::Conflict("plan changed; load the latest revision before saving".into()));
         }
         let plan = LocalRequirementPlan {
-            plan_id: format!("requirement-plan:{}", save.survey_id), revision: save.expected_revision + 1,
+            plan_id: current.as_ref().map(|plan| plan.plan_id.clone())
+                .unwrap_or_else(|| format!("requirement-plan:{}", save.survey_id)),
+            revision: save.expected_revision + 1,
             owner_user_id: save.owner_user_id.clone(), project_resource_id: project,
             source_conversation_id: conversation, source_survey_id: save.survey_id.clone(),
             source_run_id: run.run_id, title: survey.try_get("title").db()?,
             markdown: save.markdown.trim().to_owned(), created_at_unix_ms: now, confirmed_at_unix_ms: None,
         };
         insert(&mut connection, &plan).await?;
+        attach_evidence(&mut connection, &plan.owner_user_id, &plan.source_survey_id,
+            &plan.plan_id, &plan.plan_id, now).await?;
         SqliteClientStorage::insert_event(&mut connection, &uuid::Uuid::new_v4().to_string(), &plan.source_run_id,
             "requirement_plan_saved", &json!({"survey_id": plan.source_survey_id, "revision": plan.revision}), now).await?;
         SqliteClientStorage::record_receipt(&mut connection, command, &plan, now).await?;
@@ -280,7 +296,8 @@ pub(super) async fn confirm(
                         .into(),
                 ));
             }
-            sqlx::query("UPDATE local_requirement_plans SET confirmed_at_unix_ms = ? \
+            sqlx::query("UPDATE local_requirement_plans SET confirmed_at_unix_ms = ?, \
+                lifecycle_status = 'confirmed' \
                 WHERE owner_user_id = ? AND plan_id = ? AND revision = ? AND confirmed_at_unix_ms IS NULL")
                 .bind(now).bind(&plan.owner_user_id).bind(&plan.plan_id).bind(plan.revision as i64)
                 .execute(&mut *connection).await.db()?;
@@ -299,7 +316,12 @@ pub(super) async fn confirm(
                 "type": "resume",
                 "reason": "requirement_plan_confirmed",
                 "input": {
-                    "message": "The user confirmed the current requirement plan. Continue this same workflow now: create the execution Task Graph from the Host-bound plan without asking the user to send another message.",
+                    "control_event": {
+                        "type": "requirement_plan_confirmed",
+                        "plan_id": plan.plan_id,
+                        "revision": plan.revision,
+                        "confirmed_at_unix_ms": plan.confirmed_at_unix_ms
+                    },
                     "requirement_plan": plan_value,
                 }
             });
@@ -465,13 +487,26 @@ pub(super) async fn capture_source_reply(
     let surveys = sqlx::query("SELECT survey_id, project_resource_id, source_conversation_id, title \
         FROM local_requirement_surveys WHERE owner_user_id = ? AND source_run_id = ? AND status = 'resolved'")
         .bind(&run.owner_user_id).bind(&run.run_id).fetch_all(&mut *connection).await.db()?;
+    let mut canonical: Option<LocalRequirementPlan> = None;
+    for survey in &surveys {
+        let survey_id: String = survey.try_get("survey_id").db()?;
+        if let Some(plan) = get(connection, &run.owner_user_id, &survey_id, None).await? {
+            canonical = Some(plan);
+            break;
+        }
+    }
     for survey in surveys {
         let survey_id: String = survey.try_get("survey_id").db()?;
-        // Explicit publish wins. Never replace it with a short final acknowledgement.
-        if get(connection, &run.owner_user_id, &survey_id, None)
-            .await?
-            .is_some()
-        {
+        if let Some(plan) = &canonical {
+            attach_evidence(
+                connection,
+                &run.owner_user_id,
+                &survey_id,
+                &plan.plan_id,
+                &plan.plan_id,
+                now,
+            )
+            .await?;
             continue;
         }
         let plan = LocalRequirementPlan {
@@ -488,6 +523,16 @@ pub(super) async fn capture_source_reply(
             confirmed_at_unix_ms: None,
         };
         insert(connection, &plan).await?;
+        attach_evidence(
+            connection,
+            &plan.owner_user_id,
+            &plan.source_survey_id,
+            &plan.plan_id,
+            &plan.plan_id,
+            now,
+        )
+        .await?;
+        canonical = Some(plan);
     }
     Ok(())
 }
@@ -518,7 +563,7 @@ pub(super) async fn freeze_for_graph(
     let Some(row) = row else {
         return reject_unbound_snapshot(graph);
     };
-    let plan_scope_id: String = row.try_get("plan_scope_id").db()?;
+    let _plan_scope_id: String = row.try_get("plan_scope_id").db()?;
     let source_run_id: String = row.try_get("run_id").db()?;
     let plugin_task_policies =
         active_plugin_task_policies(connection, &graph.owner_user_id).await?;
@@ -537,15 +582,26 @@ pub(super) async fn freeze_for_graph(
         validate_planning_graph(graph, &plugin_task_policies)?;
         return reject_unbound_snapshot(graph);
     }
-    let plan = latest_for_scope(connection, &graph.owner_user_id, &plan_scope_id).await?;
+    let source = SqliteClientStorage::fetch_run_on(connection, &source_run_id)
+        .await?
+        .ok_or_else(|| ClientStorageError::NotFound(source_run_id.clone()))?;
+    let bound = source.input.get("requirement_plan");
+    let bound_plan_id = bound
+        .and_then(|value| value.get("plan_id"))
+        .and_then(Value::as_str);
+    let bound_revision = bound
+        .and_then(|value| value.get("revision"))
+        .and_then(Value::as_u64);
+    let plan = match (bound_plan_id, bound_revision) {
+        (Some(plan_id), Some(revision)) => {
+            get_by_identity(connection, &graph.owner_user_id, plan_id, revision).await?
+        }
+        _ => None,
+    };
     if let Some(plan) = plan {
         if plan.confirmed_at_unix_ms.is_none() {
             return Err(ClientStorageError::Conflict("requirement plan is not confirmed; ask the user to review and confirm its current revision in Requirement Survey before creating Tasks".into()));
         }
-        let source = SqliteClientStorage::fetch_run_on(connection, &source_run_id)
-            .await?
-            .ok_or_else(|| ClientStorageError::NotFound(source_run_id.clone()))?;
-        let bound = source.input.get("requirement_plan");
         if bound
             .and_then(|value| value.get("plan_id"))
             .and_then(Value::as_str)
@@ -601,6 +657,22 @@ pub(super) async fn freeze_for_graph(
                 "requirement plan was already consumed by another Task Graph".into(),
             ));
         }
+        sqlx::query(
+            "INSERT INTO local_plan_execution_bindings(\
+            graph_id, owner_user_id, source_run_id, plan_id, revision, confirmed_at_unix_ms, \
+            markdown_sha256, created_at_unix_ms) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&graph.graph_id)
+        .bind(&graph.owner_user_id)
+        .bind(&source_run_id)
+        .bind(&plan.plan_id)
+        .bind(plan.revision as i64)
+        .bind(plan.confirmed_at_unix_ms.expect("confirmed plan"))
+        .bind(&hash)
+        .bind(now)
+        .execute(&mut *connection)
+        .await
+        .db()?;
     } else {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM local_requirement_surveys \
@@ -731,13 +803,89 @@ async fn insert(
     connection: &mut SqliteConnection,
     plan: &LocalRequirementPlan,
 ) -> Result<(), ClientStorageError> {
+    let hash = format!("{:x}", Sha256::digest(plan.markdown.as_bytes()));
     sqlx::query("INSERT INTO local_requirement_plans(owner_user_id, plan_id, revision, project_resource_id, \
-        source_conversation_id, source_survey_id, source_run_id, title, markdown, created_at_unix_ms, confirmed_at_unix_ms) \
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)")
+        source_conversation_id, source_survey_id, source_run_id, title, markdown, created_at_unix_ms, confirmed_at_unix_ms, \
+        workflow_id, lifecycle_status, markdown_sha256) \
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'draft', ?)")
         .bind(&plan.owner_user_id).bind(&plan.plan_id).bind(plan.revision as i64).bind(&plan.project_resource_id)
         .bind(&plan.source_conversation_id).bind(&plan.source_survey_id).bind(&plan.source_run_id).bind(&plan.title)
-        .bind(&plan.markdown).bind(plan.created_at_unix_ms).execute(&mut *connection).await.db()?;
+        .bind(&plan.markdown).bind(plan.created_at_unix_ms).bind(&plan.plan_id).bind(hash)
+        .execute(&mut *connection).await.db()?;
     Ok(())
+}
+
+async fn attach_evidence(
+    connection: &mut SqliteConnection,
+    owner: &str,
+    survey_id: &str,
+    plan_id: &str,
+    workflow_id: &str,
+    now: i64,
+) -> Result<(), ClientStorageError> {
+    sqlx::query(
+        "INSERT INTO local_plan_evidence(\
+        owner_user_id, survey_id, plan_id, workflow_id, created_at_unix_ms) \
+        VALUES(?, ?, ?, ?, ?) ON CONFLICT(owner_user_id, survey_id) DO UPDATE SET \
+        plan_id = excluded.plan_id, workflow_id = excluded.workflow_id",
+    )
+    .bind(owner)
+    .bind(survey_id)
+    .bind(plan_id)
+    .bind(workflow_id)
+    .bind(now)
+    .execute(&mut *connection)
+    .await
+    .db()?;
+    Ok(())
+}
+
+async fn get_by_identity(
+    connection: &mut SqliteConnection,
+    owner: &str,
+    plan_id: &str,
+    revision: u64,
+) -> Result<Option<LocalRequirementPlan>, ClientStorageError> {
+    let revision = i64::try_from(revision)
+        .map_err(|_| ClientStorageError::InvalidState("plan revision overflow".into()))?;
+    let query = format!("{SELECT} WHERE owner_user_id = ? AND plan_id = ? AND revision = ?");
+    sqlx::query(sqlx::AssertSqlSafe(query))
+        .bind(owner)
+        .bind(plan_id)
+        .bind(revision)
+        .fetch_optional(&mut *connection)
+        .await
+        .db()?
+        .as_ref()
+        .map(decode)
+        .transpose()
+}
+
+async fn canonical_for_source_run(
+    connection: &mut SqliteConnection,
+    owner: &str,
+    source_run_id: &str,
+) -> Result<Option<LocalRequirementPlan>, ClientStorageError> {
+    let query = format!(
+        "{SELECT} WHERE owner_user_id = ? AND plan_id = (\
+           SELECT evidence.plan_id FROM local_plan_evidence evidence \
+           JOIN local_requirement_surveys survey \
+             ON survey.owner_user_id = evidence.owner_user_id \
+            AND survey.survey_id = evidence.survey_id \
+           WHERE evidence.owner_user_id = ? AND survey.source_run_id = ? \
+           ORDER BY evidence.created_at_unix_ms, evidence.plan_id LIMIT 1\
+         ) ORDER BY revision DESC LIMIT 1"
+    );
+    sqlx::query(sqlx::AssertSqlSafe(query))
+        .bind(owner)
+        .bind(owner)
+        .bind(source_run_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .db()?
+        .as_ref()
+        .map(decode)
+        .transpose()
 }
 
 fn decode(row: &SqliteRow) -> Result<LocalRequirementPlan, ClientStorageError> {

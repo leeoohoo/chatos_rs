@@ -78,7 +78,7 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
         XCTAssertEqual(refreshed, mapped)
     }
 
-    func testHistoryOmitsIncompleteTurnInsteadOfRenderingBlankUserMessage() async throws {
+    func testHistoryKeepsIncompleteTurnSoTaskCallbacksAreNotLost() async throws {
         let host = ConversationCommandHostStub()
         let service = NativeLocalAgentConversationService(
             host: host,
@@ -110,7 +110,10 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
 
         let mapped = await service.mapTurns(page)
 
-        XCTAssertTrue(mapped.isEmpty)
+        XCTAssertEqual(mapped.count, 1)
+        XCTAssertEqual(mapped[0].userMessage.id, "missing-user")
+        XCTAssertEqual(mapped[0].userMessage.text, "")
+        XCTAssertEqual(mapped[0].finalAssistantMessage?.text, "orphaned reply")
     }
 
     func testCreateConversationPersistsTypedProjectBinding() async throws {

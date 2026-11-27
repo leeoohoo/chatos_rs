@@ -96,7 +96,7 @@ impl LocalAgentRuntime {
                     command.limit,
                 )
                 .await?;
-            merge_current_optimistic_input(
+            merge_local_durable_messages(
                 &mut messages,
                 &mut attachments,
                 local_page,
@@ -154,31 +154,22 @@ fn authoritative_attachments(
     Ok(attachments)
 }
 
-fn merge_current_optimistic_input(
+fn merge_local_durable_messages(
     messages: &mut Vec<LocalConversationMessageRecord>,
     attachments: &mut Vec<LocalConversationAttachmentRecord>,
     local_page: LocalConversationHistoryPage,
-    local_turns: &[LocalConversationTurnRecord],
+    _local_turns: &[LocalConversationTurnRecord],
 ) {
-    let running_turn_ids = local_turns
-        .iter()
-        .filter(|turn| turn.status == LocalConversationTurnStatus::Running)
-        .map(|turn| turn.turn_id.clone())
-        .collect::<HashSet<_>>();
     let mut known_message_ids = messages
         .iter()
         .map(|message| message.message_id.clone())
         .collect::<HashSet<_>>();
-    let optimistic = local_page
+    let durable = local_page
         .messages
         .into_iter()
-        .filter(|message| {
-            message.role == LocalConversationMessageRole::User
-                && running_turn_ids.contains(&message.turn_id)
-                && known_message_ids.insert(message.message_id.clone())
-        })
+        .filter(|message| known_message_ids.insert(message.message_id.clone()))
         .collect::<Vec<_>>();
-    let optimistic_ids = optimistic
+    let durable_ids = durable
         .iter()
         .map(|message| message.message_id.clone())
         .collect::<HashSet<_>>();
@@ -186,9 +177,9 @@ fn merge_current_optimistic_input(
         local_page
             .attachments
             .into_iter()
-            .filter(|attachment| optimistic_ids.contains(&attachment.message_id)),
+            .filter(|attachment| durable_ids.contains(&attachment.message_id)),
     );
-    messages.extend(optimistic);
+    messages.extend(durable);
     messages.sort_by(|left, right| {
         left.created_at_unix_ms
             .cmp(&right.created_at_unix_ms)

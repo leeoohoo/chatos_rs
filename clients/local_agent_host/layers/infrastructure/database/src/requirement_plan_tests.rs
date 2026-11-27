@@ -466,6 +466,136 @@ async fn unconfirmed_plan_rejects_graph_atomically_and_confirmed_body_is_program
 }
 
 #[tokio::test]
+async fn execution_uses_the_confirmed_binding_even_when_a_newer_draft_exists() {
+    let (storage, confirmed_source) = fixture().await;
+    storage
+        .confirm_requirement_plan(&idempotency("confirm-bound"), &confirmation(1), 8_000)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO local_requirement_surveys(\
+        owner_user_id,survey_id,project_resource_id,source_conversation_id,source_run_id,\
+        source_task_id,title,questions_json,answers_json,status,version,created_at_unix_ms,\
+        updated_at_unix_ms,resolved_at_unix_ms) VALUES(\
+        'user-1','survey-newer','project-1','project-chat','run-proposal',NULL,\
+        'newer evidence','[]','{}','resolved',2,8500,8500,8500)",
+    )
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO local_requirement_plans(\
+        owner_user_id,plan_id,revision,project_resource_id,source_conversation_id,\
+        source_survey_id,source_run_id,title,markdown,created_at_unix_ms,confirmed_at_unix_ms,\
+        consumed_at_unix_ms,workflow_id,lifecycle_status,markdown_sha256) VALUES(\
+        'user-1','requirement-plan:newer',1,'project-1','project-chat','survey-newer',\
+        'run-proposal','newer draft','do not execute this draft',9000,NULL,NULL,\
+        'run-proposal','draft','unused')",
+    )
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO local_plan_evidence(\
+        owner_user_id,survey_id,plan_id,workflow_id,created_at_unix_ms) VALUES(\
+        'user-1','survey-newer','requirement-plan:newer','run-proposal',9000)",
+    )
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+
+    let created = storage
+        .create_task_graph(
+            &idempotency("graph-with-newer-draft"),
+            &graph("turn-proposal", "bound"),
+            10_000,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        created.tasks[0].input["requirement_plan"]["snapshot"]["plan_id"],
+        confirmed_source.plan_id
+    );
+}
+
+#[tokio::test]
+async fn multiple_surveys_from_one_planning_run_share_one_plan_stream() {
+    let (storage, original) = fixture().await;
+    sqlx::query(
+        "INSERT INTO local_requirement_surveys(\
+        owner_user_id,survey_id,project_resource_id,source_conversation_id,source_run_id,\
+        source_task_id,title,questions_json,answers_json,status,version,created_at_unix_ms,\
+        updated_at_unix_ms,resolved_at_unix_ms) VALUES(\
+        'user-1','survey-evidence-2','project-1','project-chat','run-proposal',NULL,\
+        'second evidence','[]','{}','resolved',2,3500,3500,3500)",
+    )
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    let run = storage.get_run("run-proposal").await.unwrap().unwrap();
+    let mut connection = storage.pool.acquire().await.unwrap();
+    crate::requirement_plan_store::capture_source_reply(&mut connection, &run, 4_500)
+        .await
+        .unwrap();
+    drop(connection);
+
+    let evidence_plan = storage
+        .get_requirement_plan("user-1", "survey-evidence-2", None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(evidence_plan.plan_id, original.plan_id);
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(DISTINCT plan_id) FROM local_requirement_plans WHERE source_run_id = 'run-proposal'",
+    )
+    .fetch_one(&storage.pool).await.unwrap();
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn explicit_save_from_sibling_survey_revises_the_canonical_plan() {
+    let (storage, original) = fixture().await;
+    sqlx::query(
+        "INSERT INTO local_requirement_surveys(\
+        owner_user_id,survey_id,project_resource_id,source_conversation_id,source_run_id,\
+        source_task_id,title,questions_json,answers_json,status,version,created_at_unix_ms,\
+        updated_at_unix_ms,resolved_at_unix_ms) VALUES(\
+        'user-1','survey-sibling','project-1','project-chat','run-proposal',NULL,\
+        'sibling evidence','[]','{}','resolved',2,4500,4500,4500)",
+    )
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    let revise = start_project_turn(&storage, "project-chat", "sibling-revise", 5_000).await;
+    let _claim = claim(&storage, &revise.run.run_id, "sibling-revise", 5_500).await;
+    let revised = storage
+        .save_requirement_plan(
+            &idempotency("save-sibling-revision"),
+            &SaveRequirementPlanCommand {
+                owner_user_id: "user-1".into(),
+                survey_id: "survey-sibling".into(),
+                source_run_id: revise.run.run_id,
+                expected_revision: 1,
+                markdown: "## Canonical revision 2\nUse all survey evidence.".into(),
+            },
+            6_000,
+        )
+        .await
+        .unwrap();
+    assert_eq!(revised.plan_id, original.plan_id);
+    assert_eq!(revised.revision, 2);
+    assert_eq!(
+        storage
+            .get_requirement_plan("user-1", "survey-1", None)
+            .await
+            .unwrap()
+            .unwrap()
+            .revision,
+        2
+    );
+}
+
+#[tokio::test]
 async fn revision_change_requires_new_confirmation_and_old_task_retries_keep_v1() {
     let (storage, original) = fixture().await;
     storage
