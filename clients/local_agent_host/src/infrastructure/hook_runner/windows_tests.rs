@@ -29,6 +29,7 @@ fn fixture(command: &str, timeout_ms: u64) -> (TempDir, LocalHookInvocation) {
         runner_policy_version: 1,
         installation_root: installation.display().to_string(),
         permissions: vec!["process.spawn".into()],
+        task_policy: None,
         hooks: vec![hook.clone()],
         enabled: true,
         trusted_at_unix_ms: 1,

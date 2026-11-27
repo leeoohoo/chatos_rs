@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "hooks": [
+    {
+      "id": "plan-loop-context",
+      "events": [
+        "SessionStart",
+        "UserPromptSubmit"
+      ],
+      "entrypoint": {
+        "type": "command",
+        "command": "scripts/plan-loop-context.js",
+        "args": []
+      },
+      "timeoutMs": 5000,
+      "maxOutputBytes": 65536,
+      "failurePolicy": "continue",
+      "workspaceWrite": false
+    }
+  ]
+}

@@ -68,9 +68,10 @@ pub use hook::{
     ListPluginHookBundleRecordsCommand, ListPluginHookBundlesCommand,
     ListPluginHookInvocationsCommand, LocalPluginHookBundleRecord, LocalPluginHookBundleSpec,
     LocalPluginHookDefinition, LocalPluginHookInvocationDiagnostic, LocalPluginHookInvocationPage,
-    PutPluginHookBundleCommand, ResolveAgentTeamHookContextCommand,
-    SetActivePluginHookBundlesCommand, LOCAL_PLUGIN_HOOK_HISTORY_MAX_PAGE_SIZE,
-    LOCAL_PLUGIN_HOOK_MAX_BUNDLES, LOCAL_PLUGIN_HOOK_MAX_DEFINITIONS,
+    LocalPluginPlanningTaskTemplate, LocalPluginTaskPolicy, PutPluginHookBundleCommand,
+    ResolveAgentTeamHookContextCommand, SetActivePluginHookBundlesCommand,
+    LOCAL_PLUGIN_HOOK_HISTORY_MAX_PAGE_SIZE, LOCAL_PLUGIN_HOOK_MAX_BUNDLES,
+    LOCAL_PLUGIN_HOOK_MAX_DEFINITIONS,
 };
 pub use memory::{GetMemorySyncStatusCommand, LocalMemorySyncStatus};
 pub use notepad::{

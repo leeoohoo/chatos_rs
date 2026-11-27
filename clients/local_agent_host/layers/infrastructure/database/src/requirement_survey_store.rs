@@ -242,12 +242,18 @@ impl LocalRequirementSurveyStore for SqliteClientStorage {
                 "project_resource_id": survey.project_resource_id,
                 "answers": survey.answers,
             });
+            let plan_binding = serde_json::json!({
+                "source_survey_id": survey.survey_id,
+            });
             let resumed = sqlx::query(
-                "UPDATE local_agent_runs SET status = 'continuation_ready', version = version + 1, \
+                "UPDATE local_agent_runs SET input_json = json_set(input_json, \
+                   '$.requirement_plan_binding', json(?)), \
+                   status = 'continuation_ready', version = version + 1, \
                    continuation_input_json = ?, claim_token = NULL, claim_until_unix_ms = NULL, \
                    updated_at_unix_ms = ? \
                  WHERE run_id = ? AND owner_user_id = ? AND status = 'waiting_user'",
             )
+            .bind(serde_json::to_string(&plan_binding)?)
             .bind(serde_json::to_string(&continuation)?)
             .bind(survey.updated_at_unix_ms)
             .bind(&survey.source_run_id)
@@ -462,10 +468,11 @@ async fn ensure_source_context(
             ));
         }
     } else {
-        let project_binding: i64 = sqlx::query_scalar(
+        let resource_binding: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM local_conversations \
              WHERE owner_user_id = ? AND conversation_id = ? \
-               AND resource_kind = 'project' AND resource_id = ?",
+               AND CASE WHEN resource_kind = 'project' THEN resource_id \
+                        ELSE 'conversation:' || conversation_id END = ?",
         )
         .bind(&survey.owner_user_id)
         .bind(&survey.source_conversation_id)
@@ -473,9 +480,9 @@ async fn ensure_source_context(
         .fetch_one(&mut *database)
         .await
         .db()?;
-        if project_binding != 1 {
+        if resource_binding != 1 {
             return Err(ClientStorageError::Conflict(
-                "survey project does not match the source conversation binding".to_string(),
+                "survey resource does not match the source conversation binding".to_string(),
             ));
         }
         if let Some(task_id) = survey.source_task_id.as_deref() {

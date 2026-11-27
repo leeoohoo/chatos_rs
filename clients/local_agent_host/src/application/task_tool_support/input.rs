@@ -182,6 +182,10 @@ pub(in crate::application) fn validated_builtin_kinds(
         "RequirementSurveyWrite",
         "RequirementSurveyRead",
     );
+    if seen.contains("RequirementSurveyWrite") {
+        // The durable survey owns user input for this Task; a generic form must not bypass it.
+        kinds.retain(|kind| kind != "AskUser");
+    }
     Ok(kinds)
 }
 

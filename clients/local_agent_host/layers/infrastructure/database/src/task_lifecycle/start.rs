@@ -1,6 +1,7 @@
 pub(super) struct ReportedTaskOutcome {
     pub result_status: String,
     pub reason: String,
+    pub blocker: Option<serde_json::Value>,
     report: Value,
 }
 

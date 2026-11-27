@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"require(require('path').join(process.env.CLAUDE_PLUGIN_ROOT, 'scripts/plan-loop-context.js'))\"",
+            "timeout": 5,
+            "statusMessage": "Loading Plan Loop..."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"require(require('path').join(process.env.CLAUDE_PLUGIN_ROOT, 'scripts/plan-loop-context.js'))\"",
+            "timeout": 5,
+            "statusMessage": "Applying Plan Loop..."
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -173,6 +173,7 @@ private struct WireBundle: Encodable, Sendable {
     var runnerPolicyVersion: UInt32
     var installationRoot: String
     var permissions: [String]
+    var taskPolicy: NativePluginManifest.TaskPolicy?
     var hooks: [WireHook]
     var enabled = true
     var trustedAtUnixMs: Int64
@@ -191,12 +192,14 @@ private struct WireBundle: Encodable, Sendable {
         runnerPolicyVersion = trust.runnerPolicyVersion
         installationRoot = trust.installationRoot
         permissions = trust.permissions
+        taskPolicy = trust.taskPolicy
         hooks = trust.hooks.map(WireHook.init)
         trustedAtUnixMs = trust.trustedAtUnixMs
     }
 
     private enum CodingKeys: String, CodingKey {
         case permissions, hooks, enabled
+        case taskPolicy = "task_policy"
         case bundleID = "bundle_id"
         case ownerUserID = "owner_user_id"
         case pluginID = "plugin_id"
@@ -222,7 +225,7 @@ private struct WireHook: Encodable, Sendable {
     var timeoutMs: UInt64
     var additionalContextLimit: UInt64
 
-    init(_ hook: NativeCodexHookDefinition) {
+    init(_ hook: NativePluginHookDefinition) {
         hookID = hook.id
         event = hook.event
         matcher = hook.matcher

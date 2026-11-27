@@ -2,6 +2,11 @@ import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 
+enum NativeAgentPluginCapabilitySelection: Sendable {
+    case available(NativeInstalledAgentPlugin)
+    case unavailable(pluginKey: String, componentKey: String, reason: String)
+}
+
 actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     static let searchToolName = NativeAgentCapabilityBrokerToolCatalog.searchToolName
     static let describeToolName = NativeAgentCapabilityBrokerToolCatalog.describeToolName
@@ -13,6 +18,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     private enum CapabilityKind: Sendable {
         case builtIn
         case plugin(NativeInstalledAgentPlugin)
+        case unavailablePlugin(String)
     }
 
     private struct CapabilityOption: Sendable {
@@ -95,6 +101,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         fallbackWorkspaceRootURL: URL? = nil,
         builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>,
         installedPlugins: [NativeInstalledAgentPlugin],
+        pluginSelections: [NativeAgentPluginCapabilitySelection]? = nil,
         executionPresentation: NativeAgentPluginExecutionPresentation = .agentGroupChat,
         fallbackToSelectedOptions: Bool = false,
         invokeBuiltinsThroughBroker: Bool = true,
@@ -127,13 +134,25 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 kind: .builtIn
             ),
         ]
-        let options = builtinOptions + installedPlugins.enumerated().map { offset, plugin in
-            .init(
-                token: "plugin_\(offset + 1)",
-                name: plugin.displayName,
-                description: plugin.description,
-                kind: .plugin(plugin)
-            )
+        let selections = pluginSelections
+            ?? installedPlugins.map(NativeAgentPluginCapabilitySelection.available)
+        let options = builtinOptions + selections.enumerated().map { offset, selection in
+            switch selection {
+            case let .available(plugin):
+                return .init(
+                    token: "plugin_\(offset + 1)",
+                    name: plugin.displayName,
+                    description: plugin.description,
+                    kind: .plugin(plugin)
+                )
+            case let .unavailable(pluginKey, componentKey, reason):
+                return .init(
+                    token: "plugin_\(offset + 1)",
+                    name: "\(pluginKey) / \(componentKey)",
+                    description: "当前任务冻结的 Plugin 能力不可用：\(reason)",
+                    kind: .unavailablePlugin(reason)
+                )
+            }
         }
         self.options = options
         var restored: [String: Set<String>] = [:]
@@ -176,6 +195,8 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             throw CancellationError()
         } catch NativeAgentCapabilityDisclosure.Failure.invalidArguments {
             return .failure("能力描述参数无效。读取目录时 tool_option 和 schema_offset 必须省略或传 null，例如 {\"plugin_option\":\"plugin_1\",\"query\":\"browser_session_open\",\"tool_option\":null,\"schema_offset\":null}（plugin_option 使用搜索结果中的实际选项）。读取工具详情时使用目录返回的精确 tool_option，query 省略或传 null；schema_offset 仅用于工具明确返回的 schema 分页。不要填写占位字符。")
+        } catch let error as CapabilityUnavailable {
+            return .failure(error.message)
         } catch let error as NativePluginRuntimeError {
             return .failure(NativeAgentPluginFailurePresenter.message(
                 for: error,
@@ -423,6 +444,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         switch option.kind {
         case .builtIn: ProductToolProviderID.capabilityBroker
         case .plugin(let plugin): "plugin:\(plugin.id)"
+        case .unavailablePlugin: "unavailable:\(option.token)"
         }
     }
 
@@ -515,6 +537,8 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 _ = try await first.pluginSkillSession.activate(named: skillName)
             }
             providers = pluginProviders.map { $0 as any AgentToolProvider }
+        case let .unavailablePlugin(reason):
+            throw CapabilityUnavailable(message: reason)
         }
         let registry = try await AgentToolProviderRegistry(providers: providers)
         if case .builtIn = option.kind {
@@ -537,6 +561,10 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             return "direct_task_tool"
         }
         return "capability_invoke"
+    }
+
+    private struct CapabilityUnavailable: Error {
+        let message: String
     }
 
     private func canonicalSkillGate(
@@ -565,10 +593,17 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     private func catalogSkillNames(for definition: AgentToolDefinition) throws -> [String] {
         if let bundle = productSkillBundle,
            let providerID = definition.providerID,
-           [ProductToolProviderID.projectRead, ProductToolProviderID.projectWrite, ProductToolProviderID.terminal].contains(providerID) {
+           let bindingID = definition.skillBindingID {
             guard let binding = bundle.toolSkillBindings.first(where: {
-                $0.toolNames.contains(definition.name)
-            }), binding.activationPolicy != .controlPlane else { return [] }
+                $0.providerID == providerID
+                    && $0.bindingID == bindingID
+                    && $0.toolNames.contains(definition.name)
+            }) else {
+                throw NativePluginRuntimeError.invalidRequest(
+                    "任务冻结的 Product Skill 计划未覆盖已授权工具 \(definition.name)"
+                )
+            }
+            guard binding.activationPolicy != .controlPlane else { return [] }
             return Array(Set([binding.routerSkillRef, binding.specialistSkillRef]))
                 .map { String($0.dropFirst("product-skill:".count)) }.sorted()
         }
@@ -614,6 +649,8 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 role: document.role,
                 description: document.description
             )
+        case let .unavailablePlugin(reason):
+            throw CapabilityUnavailable(message: reason)
         }
     }
 
@@ -621,7 +658,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         switch option.kind {
         case .builtIn:
             "product-skill:\(name)"
-        case .plugin:
+        case .plugin, .unavailablePlugin:
             "plugin-skill:\(option.token):\(name)"
         }
     }
@@ -671,8 +708,12 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             let name = String(payload[payload.index(after: separator)...])
             guard !optionToken.isEmpty, !name.isEmpty,
                   let option = options.first(where: { option in
-                      guard case .plugin = option.kind else { return false }
-                      return option.token == optionToken
+                      switch option.kind {
+                      case .plugin, .unavailablePlugin:
+                          option.token == optionToken
+                      case .builtIn:
+                          false
+                      }
                   }) else {
                 throw NativePluginRuntimeError.invalidRequest("Skill 引用无效或已经过期")
             }
@@ -712,6 +753,8 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             let document = try await session.activate(named: name)
             activatedSkillNamesByOption[option.token, default: []].insert(name)
             return (document.instructions, document.resourcePaths)
+        case let .unavailablePlugin(reason):
+            throw CapabilityUnavailable(message: reason)
         }
     }
 
@@ -765,6 +808,8 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 offset: offset,
                 maximumCharacters: maximumCharacters
             )
+        case let .unavailablePlugin(reason):
+            throw CapabilityUnavailable(message: reason)
         }
     }
 

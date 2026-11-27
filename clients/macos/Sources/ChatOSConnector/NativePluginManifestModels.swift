@@ -212,6 +212,57 @@ struct NativePluginManifest: Decodable, Sendable {
         }
     }
 
+    struct PlanningTaskTemplate: Codable, Sendable, Equatable {
+        var requiredBuiltinKinds: [String]
+        var requiresExecution: Bool
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            requiredBuiltinKinds = try container.decodeIfPresent(
+                [String].self,
+                forKey: .requiredBuiltinKinds
+            ) ?? []
+            requiresExecution = try container.decodeIfPresent(
+                Bool.self,
+                forKey: .requiresExecution
+            ) ?? false
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case requiredBuiltinKinds, requiresExecution
+        }
+    }
+
+    struct TaskPolicy: Codable, Sendable, Equatable {
+        var policyID: String
+        var requireMainChatTaskRoute: Bool
+        var requireConfirmedPlanBeforeExecution: Bool
+        var planningTask: PlanningTaskTemplate
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            policyID = try container.decode(String.self, forKey: .policyID)
+            requireMainChatTaskRoute = try container.decodeIfPresent(
+                Bool.self,
+                forKey: .requireMainChatTaskRoute
+            ) ?? false
+            requireConfirmedPlanBeforeExecution = try container.decodeIfPresent(
+                Bool.self,
+                forKey: .requireConfirmedPlanBeforeExecution
+            ) ?? false
+            planningTask = try container.decode(PlanningTaskTemplate.self, forKey: .planningTask)
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case policyID = "policyId"
+            case requireMainChatTaskRoute, requireConfirmedPlanBeforeExecution, planningTask
+        }
+    }
+
+    struct WorkflowContribution: Codable, Sendable, Equatable {
+        var taskPolicy: TaskPolicy?
+    }
+
     var schemaVersion: Int
     var name: String
     var version: String
@@ -223,6 +274,7 @@ struct NativePluginManifest: Decodable, Sendable {
     var interface: Interface?
     var permissions: [Permission]
     var runtimeContext: RuntimeContext?
+    var workflow: WorkflowContribution?
     var dependencies: Dependencies
 
     init(from decoder: Decoder) throws {
@@ -238,11 +290,12 @@ struct NativePluginManifest: Decodable, Sendable {
         interface = try container.decodeIfPresent(Interface.self, forKey: .interface)
         permissions = try container.decodeIfPresent([Permission].self, forKey: .permissions) ?? []
         runtimeContext = try container.decodeIfPresent(RuntimeContext.self, forKey: .runtimeContext)
+        workflow = try container.decodeIfPresent(WorkflowContribution.self, forKey: .workflow)
         dependencies = try container.decodeIfPresent(Dependencies.self, forKey: .dependencies) ?? .init()
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, name, version, description, skills, mcpServers, hooks, ui, interface, permissions
-        case runtimeContext, dependencies
+        case runtimeContext, workflow, dependencies
     }
 }

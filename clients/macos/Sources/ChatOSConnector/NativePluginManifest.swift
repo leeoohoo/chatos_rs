@@ -48,7 +48,32 @@ enum NativePluginManifestLoader {
         guard macOSCompatible(manifest.dependencies.supportedPlatforms) else {
             throw NativePluginRuntimeError.invalidManifest("Plugin 不支持当前 Mac")
         }
+        try validateWorkflow(manifest)
         return manifest
+    }
+
+    private static func validateWorkflow(_ manifest: NativePluginManifest) throws {
+        guard let policy = manifest.workflow?.taskPolicy else { return }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-"))
+        guard !policy.policyID.isEmpty,
+              policy.policyID.utf8.count <= 256,
+              policy.policyID.unicodeScalars.allSatisfy(allowed.contains),
+              (1...64).contains(policy.planningTask.requiredBuiltinKinds.count),
+              Set(policy.planningTask.requiredBuiltinKinds).count
+                == policy.planningTask.requiredBuiltinKinds.count,
+              policy.planningTask.requiredBuiltinKinds.allSatisfy({ kind in
+                  !kind.isEmpty && kind.utf8.count <= 256
+                    && kind.unicodeScalars.allSatisfy(allowed.contains)
+              }) else {
+            throw NativePluginRuntimeError.invalidManifest("Plugin workflow.taskPolicy 无效")
+        }
+        // shortcut: the first runtime-contract release is transported with the trusted Hook
+        // bundle; split it into a standalone policy bundle when non-Hook workflows are added.
+        guard !manifest.hooks.isEmpty else {
+            throw NativePluginRuntimeError.invalidManifest(
+                "当前版本的 workflow.taskPolicy 需要至少一个 Hook 组件"
+            )
+        }
     }
 
     static func macOSCompatible(_ platforms: [String]) -> Bool {

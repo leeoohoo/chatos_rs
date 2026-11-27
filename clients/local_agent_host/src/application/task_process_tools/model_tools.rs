@@ -53,7 +53,7 @@ pub fn task_process_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": TASK_OUTCOME_REPORT_TOOL,
-            "description": "Report a complete Task result and acceptance evidence. Successful completion is allowed only when result_status is succeeded and every frozen acceptance check is passed. Mark an individual check blocked only when it needs user or external intervention. One blocked check does not waive the others: the Task stops as blocked only when every other check has passed; otherwise the Host continues the same Run with the actionable checks. Corrected reports may be submitted after more work. Use this only when attempting to finish; a terminal report must be the final tool call and the Host delivers final_response unchanged.",
+            "description": "Report a complete Task result and acceptance evidence. Successful completion is allowed only when result_status is succeeded and every frozen acceptance check is passed. Plan-bound blockers must be classified: handled_locally and retry_with_changed_method continue the same Task; replan_required returns the graph for a new planning revision; user_action_required is the only model-reported human wait. A planning Task with Requirement Survey must ask genuine product questions there and use replan_required for unavailable or inconsistent Task capabilities; it cannot stop as user_action_required. Unknown side effects are Host-owned needs_review and must never be claimed or replayed by the model. One blocked check does not waive the others. Corrected reports may be submitted after more work. Use this only when attempting to finish; a terminal report must be the final tool call and the Host delivers final_response unchanged.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -80,6 +80,27 @@ pub fn task_process_model_tools() -> Vec<Value> {
                         "type": "string",
                         "minLength": 1,
                         "maxLength": OUTCOME_REASON_MAX_CHARS
+                    },
+                    "blocker": {
+                        "type": "object",
+                        "properties": {
+                            "classification": {
+                                "type": "string",
+                                "enum": ["handled_locally", "retry_with_changed_method", "replan_required", "user_action_required", "unknown_side_effects_needs_review"]
+                            },
+                            "evidence": {"type":"string", "minLength":1, "maxLength":2000},
+                            "failure_fingerprint": {"type":"string", "minLength":1, "maxLength":1000},
+                            "previous_method": {"type":"string", "minLength":1, "maxLength":1000},
+                            "next_method": {"type":"string", "minLength":1, "maxLength":1000},
+                            "affected_task_ids": {
+                                "type":"array", "maxItems":50, "uniqueItems":true,
+                                "items":{"type":"string", "minLength":1, "maxLength":256}
+                            },
+                            "user_question": {"type":"string", "minLength":1, "maxLength":1000}
+                        },
+                        "required": ["classification", "evidence"],
+                        "additionalProperties": false,
+                        "description": "Required for a blocked plan-bound Task. retry_with_changed_method also requires fingerprint and distinct previous/next methods; replan_required requires affected_task_ids; user_action_required requires one concrete user_question."
                     },
                     "verification_report": {
                         "type": "object",
@@ -123,7 +144,7 @@ pub fn task_process_prompt_item() -> Value {
         "content": [{
             "type": "input_text",
             "text": format!(
-                "[Task Execution Process]\nThe local run-scoped tools `{}`, `{}`, and `{}` are available for this Task. Before starting a local HTTP service, allocate its address with `{}`; pass the returned port to the server and service_url to every dependent process, and release the registration after the service stops. Keep the user-visible execution process updated at meaningful milestones: task start, approach or root cause, completion of a major phase or artifact, important verification results, changed path after failure, blockers, and next step. Whenever a frozen acceptance criterion changes state, include its zero-based criterion_index, status, and concrete evidence in `{}` so the Task detail UI updates while work is still running. When evidence fully proves a criterion, mark it passed in the next meaningful milestone; do not leave proven work in_progress until the final report, and combine criteria supported by the same evidence in one update. Do not record every tool call, file read, search, or edit. Keep entries concise and never record hidden reasoning, credentials, secrets, raw dumps, or unrelated drafts. Only after every acceptance criterion has concrete passed evidence, call `{}` with result_status=succeeded and one passed check per criterion. Mark a criterion blocked only when user or external intervention is genuinely required. A blocked criterion never waives other checks: continue working until every other criterion has passed, then report result_status=blocked with those criteria passed and only the externally blocked criteria marked blocked. If any actionable check is failed or not_verified, keep working and validating instead of finishing. If you still attempt to finish, the Host will return the actionable criteria and continue this Run automatically. A terminal outcome report must be the final tool call immediately before the user-facing final response.",
+                "[Task Execution Process]\nThe local run-scoped tools `{}`, `{}`, and `{}` are available for this Task. Before starting a local HTTP service, allocate its address with `{}`; pass the returned port to the server and service_url to every dependent process, and release the registration after the service stops. Keep the user-visible execution process updated at meaningful milestones: task start, approach or root cause, completion of a major phase or artifact, important verification results, changed path after failure, blockers, and next step. Whenever a frozen acceptance criterion changes state, include its zero-based criterion_index, status, and concrete evidence in `{}` so the Task detail UI updates while work is still running. When evidence fully proves a criterion, mark it passed in the next meaningful milestone; do not leave proven work in_progress until the final report, and combine criteria supported by the same evidence in one update. Do not record every tool call, file read, search, or edit. Keep entries concise and never record hidden reasoning, credentials, secrets, raw dumps, or unrelated drafts. Only after every acceptance criterion has concrete passed evidence, call `{}` with result_status=succeeded and one passed check per criterion. A technical problem is not automatically a user blocker: solve it locally, retry with a materially different safe method, or classify it replan_required. A plan-bound blocked report must include blocker. Use user_action_required only for credentials, permission, a product decision, or an external human action, with one concrete question. Never claim unknown_side_effects_needs_review; only the Host can establish it and the operation must not be replayed. A blocked criterion never waives other checks: continue working until every other criterion has passed, then report result_status=blocked with those criteria passed and only the externally blocked criteria marked blocked. If any actionable check is failed or not_verified, keep working and validating instead of finishing. If you still attempt to finish, the Host will return the actionable criteria and continue this Run automatically. A terminal outcome report must be the final tool call immediately before the user-facing final response.",
                 TASK_PROCESS_RECORD_TOOL,
                 TASK_PROCESS_ALLOCATE_SERVICE_TOOL,
                 TASK_OUTCOME_REPORT_TOOL,

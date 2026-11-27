@@ -153,6 +153,7 @@ public struct NativeLocalAgentToolClient: Sendable {
     public static let reservedRustToolNames = [
         "list_tasks",
         "get_task",
+        "decide_task_route",
         "create_task",
         "create_tasks_with_prerequisites",
         "cancel_task",

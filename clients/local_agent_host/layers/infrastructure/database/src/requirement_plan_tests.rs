@@ -5,7 +5,8 @@ use super::*;
 use chatos_local_agent_ports::{LocalAgentTaskStore, LocalRequirementSurveyStore};
 use chatos_local_agent_protocol::{
     ConfirmRequirementPlanCommand, CreateTaskGraphCommand, LocalConversationResourceBinding,
-    LocalConversationResourceKind, LocalRequirementPlan, LocalTaskSpec, SaveRequirementPlanCommand,
+    LocalConversationResourceKind, LocalRequirementPlan, LocalRequirementSurveyStatus,
+    LocalTaskSpec, SaveRequirementPlanCommand,
 };
 
 async fn start_project_turn(
@@ -165,8 +166,158 @@ fn graph(turn_id: &str, suffix: &str) -> CreateTaskGraphCommand {
     }
 }
 
+async fn activate_plan_first_policy(storage: &SqliteClientStorage) {
+    sqlx::query(
+        "INSERT INTO local_plugin_hook_bundles(owner_user_id,bundle_id,spec_json,created_at_unix_ms) \
+         VALUES('user-1','workflow-policy-bundle',?,1)",
+    )
+    .bind(serde_json::to_string(&json!({
+        "component_key": "lifecycle-hooks",
+        "enabled": true,
+        "task_policy": {
+            "policy_id": "plan-first",
+            "require_confirmed_plan_before_execution": true,
+            "planning_task": {
+                "requires_execution": true,
+                "required_builtin_kinds": [
+                    "CodeMaintainerRead",
+                    "AskUser",
+                    "RequirementSurveyRead",
+                    "RequirementSurveyWrite"
+                ]
+            }
+        }
+    }))
+    .unwrap())
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO local_plugin_hook_activations(owner_user_id,bundle_id,activated_at_unix_ms) \
+         VALUES('user-1','workflow-policy-bundle',1)",
+    )
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+}
+
 #[tokio::test]
-async fn captures_exact_final_reply_and_confirmation_is_versioned_owner_scoped_and_non_executing() {
+async fn manifest_task_policy_allows_only_a_capability_complete_planning_bootstrap() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    let mut project = conversation("project-chat");
+    project.resource = Some(LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Contact,
+        resource_id: "jiguli".into(),
+    });
+    storage
+        .create_conversation(&idempotency("create-project"), &project, 1_000)
+        .await
+        .unwrap();
+    let started = start_project_turn(&storage, "project-chat", "workflow-policy", 2_000).await;
+    activate_plan_first_policy(&storage).await;
+    let coordinator_claim = claim(&storage, &started.run.run_id, "workflow-policy", 2_100).await;
+
+    let mut execution = graph(&started.turn.turn_id, "execution");
+    execution.tasks[0]
+        .input
+        .as_object_mut()
+        .unwrap()
+        .remove("requirement_plan");
+    let error = storage
+        .create_task_graph(&idempotency("execution-first"), &execution, 3_000)
+        .await
+        .expect_err("execution must not bypass planning");
+    assert!(error.to_string().contains("planning Task"));
+
+    let mut incomplete = execution.clone();
+    incomplete.graph_id = "graph-incomplete-planning".into();
+    incomplete.tasks[0].task_id = "task-incomplete-planning".into();
+    incomplete.tasks[0].input["task_kind"] = json!("planning");
+    incomplete.tasks[0].input["tool_options"] = json!({
+        "requires_execution": true,
+        "enabled_builtin_kinds": ["CodeMaintainerRead"]
+    });
+    let error = storage
+        .create_task_graph(&idempotency("incomplete-planning"), &incomplete, 3_100)
+        .await
+        .expect_err("planning capabilities are Host-enforced");
+    assert!(
+        error.to_string().contains("planning template requires"),
+        "unexpected error: {error}"
+    );
+
+    let mut planning = incomplete;
+    planning.graph_id = "graph-planning".into();
+    planning.tasks[0].task_id = "task-planning".into();
+    planning.tasks[0].input["tool_options"]["enabled_builtin_kinds"] = json!([
+        "CodeMaintainerRead",
+        "AskUser",
+        "RequirementSurveyRead",
+        "RequirementSurveyWrite"
+    ]);
+    let created = storage
+        .create_task_graph(&idempotency("planning"), &planning, 3_200)
+        .await
+        .unwrap();
+    assert_eq!(created.tasks[0].input["task_kind"], "planning");
+    finish(
+        &storage,
+        coordinator_claim,
+        true,
+        "Planning Task started",
+        "workflow-policy",
+        3_250,
+    )
+    .await;
+    let planning_run = storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            &created.graph_id,
+            "planning-run",
+            "start-planning-run",
+            3_300,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let planning_claim = claim(&storage, &planning_run.run_id, "planning-run", 3_400).await;
+    let markdown = "## Implementation plan\nUse the inspected project evidence.";
+    let direct = storage
+        .save_requirement_plan(
+            &idempotency("save-direct-plan"),
+            &SaveRequirementPlanCommand {
+                owner_user_id: "user-1".into(),
+                survey_id: "plan-review:planning-run".into(),
+                source_run_id: "planning-run".into(),
+                expected_revision: 0,
+                markdown: markdown.into(),
+            },
+            3_500,
+        )
+        .await
+        .unwrap();
+    assert_eq!(direct.source_survey_id, "plan-review:planning-run");
+    assert_eq!(direct.project_resource_id, "conversation:project-chat");
+    let review = storage
+        .get_requirement_survey("user-1", "plan-review:planning-run")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(review.status, LocalRequirementSurveyStatus::Resolved);
+    assert!(review.questions.is_empty());
+    finish(
+        &storage,
+        planning_claim,
+        true,
+        markdown,
+        "planning-run",
+        3_600,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn confirmation_is_versioned_owner_scoped_and_resumes_the_source_workflow() {
     let (storage, plan) = fixture().await;
     assert_eq!(plan.revision, 1);
     assert!(plan.confirmed_at_unix_ms.is_none());
@@ -214,21 +365,27 @@ async fn captures_exact_final_reply_and_confirmation_is_versioned_owner_scoped_a
     .fetch_one(&storage.pool)
     .await
     .unwrap();
-    assert_eq!(counts, (0, 1), "confirmation must not create a Task or Run");
+    assert_eq!(
+        counts,
+        (0, 1),
+        "confirmation resumes instead of duplicating work"
+    );
+    let resumed = storage.get_run("run-proposal").await.unwrap().unwrap();
+    assert_eq!(resumed.status, LocalAgentRunStatus::ContinuationReady);
+    assert_eq!(resumed.input["requirement_plan"]["revision"], 1);
+    assert_eq!(
+        resumed.continuation_input.as_ref().unwrap()["reason"],
+        "requirement_plan_confirmed"
+    );
 }
 
 #[tokio::test]
 async fn unconfirmed_plan_rejects_graph_atomically_and_confirmed_body_is_program_frozen() {
     let (storage, plan) = fixture().await;
-    let started = start_project_turn(&storage, "project-chat", "unconfirmed", 5_000).await;
-    assert_eq!(
-        started.run.input["requirement_plan"]["markdown"],
-        plan.markdown
-    );
     assert!(storage
         .create_task_graph(
             &idempotency("blocked-graph"),
-            &graph(&started.turn.turn_id, "blocked"),
+            &graph("turn-proposal", "blocked"),
             6_000
         )
         .await
@@ -238,36 +395,20 @@ async fn unconfirmed_plan_rejects_graph_atomically_and_confirmed_body_is_program
         .await
         .unwrap();
     assert_eq!(graph_count, 0);
-    finish(
-        &storage,
-        claim(&storage, &started.run.run_id, "unconfirmed", 6_000).await,
-        true,
-        "Awaiting confirmation",
-        "unconfirmed",
-        7_000,
-    )
-    .await;
     storage
         .confirm_requirement_plan(&idempotency("confirm-1"), &confirmation(1), 8_000)
         .await
         .unwrap();
-    assert!(storage
-        .create_task_graph(
-            &idempotency("old-context"),
-            &graph(&started.turn.turn_id, "old"),
-            8_001
-        )
-        .await
-        .is_err());
-    let started = start_project_turn(&storage, "project-chat", "execute", 9_000).await;
+    let resumed = storage.get_run("run-proposal").await.unwrap().unwrap();
     assert_eq!(
-        started.run.input["requirement_plan"]["confirmed_at_unix_ms"],
+        resumed.input["requirement_plan"]["confirmed_at_unix_ms"],
         8_000
     );
+    let resumed_claim = claim(&storage, "run-proposal", "dispatch", 9_000).await;
     let created = storage
         .create_task_graph(
             &idempotency("valid-graph"),
-            &graph(&started.turn.turn_id, "valid"),
+            &graph("turn-proposal", "valid"),
             10_000,
         )
         .await
@@ -304,7 +445,7 @@ async fn unconfirmed_plan_rejects_graph_atomically_and_confirmed_body_is_program
     let replay = storage
         .create_task_graph(
             &idempotency("valid-graph"),
-            &graph(&started.turn.turn_id, "valid"),
+            &graph("turn-proposal", "valid"),
             11_000,
         )
         .await
@@ -313,10 +454,10 @@ async fn unconfirmed_plan_rejects_graph_atomically_and_confirmed_body_is_program
 
     finish(
         &storage,
-        claim(&storage, &started.run.run_id, "execute", 12_000).await,
+        resumed_claim,
         true,
         "Task arranged",
-        "execute",
+        "dispatch",
         13_000,
     )
     .await;
@@ -331,21 +472,21 @@ async fn revision_change_requires_new_confirmation_and_old_task_retries_keep_v1(
         .confirm_requirement_plan(&idempotency("confirm-1"), &confirmation(1), 5_000)
         .await
         .unwrap();
-    let execute = start_project_turn(&storage, "project-chat", "execute", 6_000).await;
+    let dispatch_claim = claim(&storage, "run-proposal", "dispatch-v1", 6_000).await;
     let created = storage
         .create_task_graph(
             &idempotency("graph-v1"),
-            &graph(&execute.turn.turn_id, "v1"),
+            &graph("turn-proposal", "v1"),
             7_000,
         )
         .await
         .unwrap();
     finish(
         &storage,
-        claim(&storage, &execute.run.run_id, "execute", 8_000).await,
+        dispatch_claim,
         true,
         "Task arranged",
-        "execute",
+        "dispatch-v1",
         9_000,
     )
     .await;
@@ -428,17 +569,18 @@ async fn revision_change_requires_new_confirmation_and_old_task_retries_keep_v1(
     assert!(storage
         .create_task_graph(
             &idempotency("stale-main-v1"),
-            &graph(&execute.turn.turn_id, "stale"),
+            &graph("turn-proposal", "stale"),
             20_000
         )
         .await
         .is_err());
-    let current = start_project_turn(&storage, "project-chat", "current", 21_000).await;
-    assert_eq!(current.run.input["requirement_plan"]["revision"], 2);
+    let current = storage.get_run(&revise.run.run_id).await.unwrap().unwrap();
+    assert_eq!(current.status, LocalAgentRunStatus::ContinuationReady);
+    assert_eq!(current.input["requirement_plan"]["revision"], 2);
     let new = storage
         .create_task_graph(
             &idempotency("graph-v2"),
-            &graph(&current.turn.turn_id, "v2"),
+            &graph(&revise.turn.turn_id, "v2"),
             22_000,
         )
         .await

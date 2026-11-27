@@ -136,7 +136,15 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 .db()?;
             let candidate = sqlx::query(
                 "SELECT run_id, status, \
-                   json_extract(input_json, '$.task_graph_recovery.type') AS recovery_type \
+                   json_extract(input_json, '$.task_graph_recovery.type') AS recovery_type, \
+                   (SELECT recovery_turn.status FROM local_conversation_turns recovery_turn \
+                     WHERE recovery_turn.run_id = local_agent_runs.run_id \
+                       AND NOT EXISTS (SELECT 1 FROM local_conversation_turns newer_turn \
+                         WHERE newer_turn.conversation_id = recovery_turn.conversation_id \
+                           AND (newer_turn.created_at_unix_ms > recovery_turn.created_at_unix_ms \
+                             OR (newer_turn.created_at_unix_ms = recovery_turn.created_at_unix_ms \
+                               AND newer_turn.rowid > recovery_turn.rowid))) \
+                     LIMIT 1) AS recovery_turn_status \
                  FROM local_agent_runs \
                  WHERE owner_user_id = ? AND iteration < max_iterations AND (\
                     status IN ('queued', 'model_ready', 'continuation_ready') OR \
@@ -147,7 +155,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
                  AND (json_extract(input_json, '$.task_graph_recovery.type') IS NULL OR EXISTS (\
                    SELECT 1 FROM local_conversation_turns recovery_turn \
                    WHERE recovery_turn.run_id = local_agent_runs.run_id \
-                     AND recovery_turn.status IN ('succeeded','failed') \
+                     AND recovery_turn.status IN ('running','succeeded','failed') \
                      AND NOT EXISTS (SELECT 1 FROM local_conversation_turns newer_turn \
                        WHERE newer_turn.conversation_id = recovery_turn.conversation_id \
                          AND (newer_turn.created_at_unix_ms > recovery_turn.created_at_unix_ms \
@@ -167,7 +175,11 @@ impl LocalAgentRunStore for SqliteClientStorage {
             let run_id: String = candidate.try_get("run_id").db()?;
             let candidate_status: String = candidate.try_get("status").db()?;
             let recovery_type: Option<String> = candidate.try_get("recovery_type").db()?;
-            if recovery_type.as_deref() == Some("task_graph_recovery") {
+            let recovery_turn_status: Option<String> =
+                candidate.try_get("recovery_turn_status").db()?;
+            if recovery_type.as_deref() == Some("task_graph_recovery")
+                && recovery_turn_status.as_deref() != Some("running")
+            {
                 let reopened = sqlx::query(
                     "UPDATE local_conversation_turns SET status = 'running', updated_at_unix_ms = ? \
                      WHERE run_id = ? AND status IN ('succeeded','failed') \

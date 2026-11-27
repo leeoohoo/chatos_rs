@@ -45,6 +45,7 @@ pub(super) async fn write_back_terminal_task_run(
             "result_status": outcome.result_status,
             "status": outcome.result_status,
             "reason": outcome.reason,
+            "blocker": outcome.blocker,
         })
     });
     let review_detail = if run.status == LocalAgentRunStatus::NeedsReview {
@@ -182,8 +183,10 @@ async fn schedule_graph_recovery(
                 "status": task.status,
                 "display_status": summary.and_then(|value| value.get("display_status")),
                 "summary": summary.and_then(|value| value.get("summary")),
+                "blocker": summary.and_then(|value| value.get("blocker")),
                 "version": task.version,
-                "retry_allowed": matches!(task.status, LocalTaskStatus::Failed | LocalTaskStatus::Blocked),
+                "retry_allowed": matches!(task.status, LocalTaskStatus::Failed | LocalTaskStatus::Blocked)
+                    && !matches!(summary.and_then(|value| value.pointer("/blocker/classification")).and_then(Value::as_str), Some("user_action_required" | "unknown_side_effects_needs_review")),
             })
         })
         .collect::<Vec<_>>();
@@ -203,7 +206,7 @@ async fn schedule_graph_recovery(
         "graph_goal": graph.tasks.iter().find_map(|task| task.input.get("graph_goal")),
         "decomposition_rationale": graph.tasks.iter().find_map(|task| task.input.get("decomposition_rationale")),
         "tasks": tasks,
-        "guidance": "This failed or blocked Task Graph has been returned to Main Chat for autonomous recovery. Do not merely relay its blocker to the user. Decide from current evidence, not a fixed retry count. If the contract is unchanged and a concrete different safe correction exists, call retry_task with that correction. If method, capability, scope, ownership, or dependency design must change, create a replacement Task or graph using supersedes_task_ids. Never retry needs_review, cancelled work, or an operation with unknown side effects. Ask the user only when recovery truly requires credentials, permission, a product decision, an external human action, or no new safe path remains."
+        "guidance": "This failed or blocked Task Graph has been returned to Main Chat for autonomous recovery. Do not merely relay its blocker or end with a vague blocked message. Follow each structured blocker: retry_with_changed_method uses a different safe method; replan_required creates exactly one task_kind=planning Task and supersedes only affected work; user_action_required handles its one concrete human dependency. For a genuinely missing product decision, create a Requirement Survey from Main Chat and resume this same Turn after submission. A removed optional Plugin is not a user blocker: if the deliverable does not explicitly require it, replan onto available native capabilities without reinstalling it. Never retry needs_review, cancelled work, or unknown side effects. Ask the user only for credentials, permission, a product decision, an external human action, or when no new safe path exists."
     });
     source_run.input["task_graph_recovery"] = recovery.clone();
     let continuation = crate::run_continuation::for_resume(

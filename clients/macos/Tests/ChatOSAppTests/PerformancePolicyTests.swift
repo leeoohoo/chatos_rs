@@ -158,11 +158,11 @@ struct PerformancePolicyTests {
         #expect(!RequirementSurveyMonitoringPolicy.shouldRefresh(forEventTypes: ["tool_invocation_claimed"]))
     }
 
-    @Test("confirmed requirement plans explain the no-auto-run boundary and offer a next step")
+    @Test("confirmed requirement plans explain automatic continuation and offer progress navigation")
     func confirmedRequirementPlanHasExplicitNextStep() {
-        #expect(RequirementPlanConfirmationPresentation.confirmedTitle == "方案已确认，本次不会自动执行任何任务")
-        #expect(RequirementPlanConfirmationPresentation.confirmedDetail.contains("需要评审、生成文档或开始实施时"))
-        #expect(RequirementPlanConfirmationPresentation.returnToConversationTitle == "返回原对话，安排下一步")
+        #expect(RequirementPlanConfirmationPresentation.confirmedTitle == "方案已确认，原任务正在继续")
+        #expect(RequirementPlanConfirmationPresentation.confirmedDetail.contains("无需再回聊天框发送消息"))
+        #expect(RequirementPlanConfirmationPresentation.returnToConversationTitle == "查看原任务进度")
     }
 
     @Test("notepad refreshes from mutations and Agent tool events with a low-frequency fallback")

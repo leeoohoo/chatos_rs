@@ -2,9 +2,9 @@ import ChatOSConnector
 import SwiftUI
 
 enum RequirementPlanConfirmationPresentation {
-    static let confirmedTitle = "方案已确认，本次不会自动执行任何任务"
-    static let confirmedDetail = "确认只表示认可当前方案版本。需要评审、生成文档或开始实施时，请返回原对话说明下一步；新任务会固定使用这个已确认版本。"
-    static let returnToConversationTitle = "返回原对话，安排下一步"
+    static let confirmedTitle = "方案已确认，原任务正在继续"
+    static let confirmedDetail = "系统已恢复生成本方案的原任务，并会按这个固定版本创建后续执行任务；无需再回聊天框发送消息。"
+    static let returnToConversationTitle = "查看原任务进度"
 }
 
 /// The answer receipt and the model's follow-up are separate facts. Only show
@@ -42,9 +42,9 @@ struct RequirementSurveyFollowUpView: View {
                 }
                 MarkdownDocumentView(markdown: plan.markdown)
                 if plan.confirmedAtUnixMs == nil {
-                    Text("确认仅认可当前方案，不会自动开始任务。后续创建的任务将固定引用此版本；修改方案后需要重新确认。")
+                    Text("确认后会恢复原任务，并按这个固定版本继续创建后续执行任务；修改方案后需要重新确认。")
                         .foregroundStyle(.secondary)
-                    Button("确认当前方案") { Task { await confirm(plan) } }
+                    Button("确认并继续执行") { Task { await confirm(plan) } }
                         .disabled(confirming || !planGenerationSucceeded)
                     if !planGenerationSucceeded { statusMessage(planFollowUp) }
                 } else {
@@ -80,9 +80,9 @@ struct RequirementSurveyFollowUpView: View {
             } else {
                 statusMessage(followUp)
                 if case let .completed(markdown) = followUp {
-                    Text("这份历史回复尚未保存为方案版本。确认仅认可方案，不会自动开始任务。")
+                    Text("这份历史回复尚未保存为方案版本。保存并确认后会恢复原任务继续执行。")
                         .foregroundStyle(.secondary)
-                    Button("保存并确认此方案") { Task { await adoptAndConfirm(markdown) } }
+                    Button("保存、确认并继续") { Task { await adoptAndConfirm(markdown) } }
                         .disabled(confirming)
                     if confirmationFailed {
                         Text("保存或确认未完成，请刷新后查看当前方案。")

@@ -358,7 +358,7 @@ impl LocalConversationStore for SqliteClientStorage {
             if let Some(resource) = conversation.resource.as_ref().filter(|resource| {
                 resource.kind == chatos_local_agent_protocol::LocalConversationResourceKind::Project
             }) {
-                if let Some(plan) = super::requirement_plan_store::latest_for_project(
+                if let Some(plan) = super::requirement_plan_store::latest_for_scope(
                     &mut connection,
                     &turn.owner_user_id,
                     &resource.resource_id,

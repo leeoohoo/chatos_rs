@@ -21,12 +21,21 @@ async fn project_program_message_to_memory(
     let Some(source_id) = source_id else {
         return Ok(());
     };
-    let agent_id = memory_identity_value(source_run_input, "agent_id").ok_or_else(|| {
-        ClientStorageError::InvalidState(
-            "program conversation Memory projection requires agent_id".to_string(),
-        )
-    })?;
-    let agent_name = memory_identity_value(source_run_input, "agent_name");
+    let (agent_id, legacy_agent_name) =
+        if let Some(agent_id) = memory_identity_value(source_run_input, "agent_id") {
+            (agent_id.to_string(), None)
+        } else {
+            legacy_program_memory_identity(
+                connection,
+                owner_user_id,
+                source_run_id,
+                conversation_id,
+            )
+            .await?
+        };
+    let agent_name = memory_identity_value(source_run_input, "agent_name")
+        .map(str::to_string)
+        .or(legacy_agent_name);
     let project_id = memory_identity_value(source_run_input, "project_id");
     let project_name = memory_identity_value(source_run_input, "project_name");
     let thread_kind = if agent_id == "jiguli" {
@@ -99,6 +108,52 @@ async fn project_program_message_to_memory(
     )
     .await?;
     Ok(())
+}
+
+async fn legacy_program_memory_identity(
+    connection: &mut SqliteConnection,
+    owner_user_id: &str,
+    source_run_id: &str,
+    conversation_id: &str,
+) -> Result<(String, Option<String>), ClientStorageError> {
+    let row = sqlx::query(
+        "SELECT run.profile_key, conversation.resource_kind, conversation.resource_id, \
+         conversation.title FROM local_agent_runs run \
+         JOIN local_conversations conversation \
+           ON conversation.conversation_id = ? AND conversation.owner_user_id = ? \
+         WHERE run.run_id = ? AND run.owner_user_id = ?",
+    )
+    .bind(conversation_id)
+    .bind(owner_user_id)
+    .bind(source_run_id)
+    .bind(owner_user_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .db()?;
+    let Some(row) = row else {
+        return Err(ClientStorageError::InvalidState(
+            "program conversation Memory projection requires agent_id".to_string(),
+        ));
+    };
+    let profile_key: String = row.try_get("profile_key").db()?;
+    if profile_key != "main_chat" {
+        return Err(ClientStorageError::InvalidState(
+            "program conversation Memory projection requires agent_id".to_string(),
+        ));
+    }
+    let resource_kind: Option<String> = row.try_get("resource_kind").db()?;
+    let resource_id: Option<String> = row.try_get("resource_id").db()?;
+    match (resource_kind.as_deref(), resource_id) {
+        (Some("contact"), Some(agent_id)) if !agent_id.trim().is_empty() => {
+            let title: String = row.try_get("title").db()?;
+            let agent_name = (!title.trim().is_empty()).then_some(title);
+            Ok((agent_id, agent_name))
+        }
+        (Some("project"), Some(_)) => Ok(("jiguli".to_string(), None)),
+        _ => Err(ClientStorageError::InvalidState(
+            "program conversation Memory projection requires agent_id".to_string(),
+        )),
+    }
 }
 
 fn memory_identity_value<'a>(input: &'a Value, key: &str) -> Option<&'a str> {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use super::task_tool_definitions::{CREATE_TASKS_TOOL, CREATE_TASK_TOOL, DECIDE_TASK_ROUTE_TOOL};
 use crate::infrastructure::{LocalHookInvocation, LocalHookInvocationResult, LocalHookRunner};
 use async_trait::async_trait;
 use chatos_agent_profiles::{
@@ -15,6 +16,7 @@ use chatos_local_agent_protocol::{
     LocalAgentRunClaim, LocalAgentRunRecord, LocalAgentStepOutcome, LocalAgentToolCall,
     LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalPluginHookBundleRecord,
     LocalPluginHookDefinition, ResolveAgentTeamHookContextCommand, StartConversationTurnCommand,
+    LOCAL_REQUIREMENT_PLAN_SAVE_TOOL_NAME,
 };
 use chatos_local_agent_runtime::LocalAgentRuntime;
 use futures::future::join_all;

@@ -6,7 +6,7 @@ use serde::Deserialize;
 use super::components::{
     component_key_from_path, PluginAgent, PluginApp, PluginAuthor, PluginCommand,
     PluginDependencySpec, PluginHook, PluginInterfaceMetadata, PluginPathRef, PluginRuntimeContext,
-    PluginUiContribution,
+    PluginUiContribution, PluginWorkflowContribution,
 };
 use super::normalized::{PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION};
 use super::paths::normalize_plugin_relative_path;
@@ -56,6 +56,8 @@ struct RawPluginManifest {
     permissions: Vec<PermissionInput>,
     #[serde(default)]
     runtime_context: Option<PluginRuntimeContext>,
+    #[serde(default)]
+    workflow: Option<PluginWorkflowContribution>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,9 +138,20 @@ pub fn parse_plugin_manifest(raw: &str) -> Result<PluginManifest, PluginManifest
         dependencies: raw.dependencies,
         permissions: normalize_permissions(raw.permissions),
         runtime_context: raw.runtime_context.map(normalize_runtime_context),
+        workflow: raw.workflow.map(normalize_workflow),
     };
     validate_plugin_manifest(&manifest)?;
     Ok(manifest)
+}
+
+fn normalize_workflow(mut workflow: PluginWorkflowContribution) -> PluginWorkflowContribution {
+    if let Some(policy) = workflow.task_policy.as_mut() {
+        policy.policy_id = policy.policy_id.trim().to_string();
+        policy.planning_task.required_builtin_kinds = normalize_strings(std::mem::take(
+            &mut policy.planning_task.required_builtin_kinds,
+        ));
+    }
+    workflow
 }
 
 fn normalize_runtime_context(mut context: PluginRuntimeContext) -> PluginRuntimeContext {

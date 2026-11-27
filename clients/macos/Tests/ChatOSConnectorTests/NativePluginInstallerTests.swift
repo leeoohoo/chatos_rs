@@ -4,6 +4,44 @@ import Testing
 @testable import ChatOSConnector
 
 struct NativePluginInstallerTests {
+    @Test("declarative Skill and Hook package does not need a fake executable")
+    func declarativePackageDoesNotRequireBin() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NativeDeclarativePlugin-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data(#"{"name":"@chatos/plan-loop","version":"0.1.0"}"#.utf8)
+            .write(to: root.appendingPathComponent("package.json"))
+        try Data(#"{"schemaVersion":3,"name":"plan-loop","version":"0.1.0","skills":["skills/plan-loop"],"hooks":[{"componentKey":"plan-loop-hooks","dialect":"chatos_v1","source":"hooks/plan-loop-hooks.json"}],"dependencies":{"supportedPlatforms":["macos"]}}"#.utf8)
+            .write(to: root.appendingPathComponent("chatos.plugin.json"))
+        let installer = NativePluginInstaller(rootURL: root.appendingPathComponent("installs"))
+
+        try installer.validatePackageJSON(
+            root.appendingPathComponent("package.json"),
+            expectedName: "@chatos/plan-loop",
+            expectedVersion: "0.1.0"
+        )
+    }
+
+    @Test("package without executable or declarative manifest is rejected")
+    func packageWithoutRuntimeOrManifestIsRejected() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NativeInvalidPlugin-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data(#"{"name":"@chatos/empty","version":"1.0.0"}"#.utf8)
+            .write(to: root.appendingPathComponent("package.json"))
+        let installer = NativePluginInstaller(rootURL: root.appendingPathComponent("installs"))
+
+        #expect(throws: NativeConnectorError.self) {
+            try installer.validatePackageJSON(
+                root.appendingPathComponent("package.json"),
+                expectedName: "@chatos/empty",
+                expectedVersion: "1.0.0"
+            )
+        }
+    }
+
     @Test
     func removesOnlyUnreferencedTopLevelInstallationDirectories() throws {
         let root = FileManager.default.temporaryDirectory

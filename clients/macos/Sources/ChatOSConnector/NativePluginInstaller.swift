@@ -38,46 +38,44 @@ struct NativePluginInstaller: Sendable {
         token: String,
         gateway: NativeConnectorGateway
     ) async throws -> NativeInstalledPluginRecord {
+        let prepared = try await prepareMarketplacePlugin(
+            source: source,
+            token: token,
+            gateway: gateway
+        )
+        let commit = try commitCustomPlugin(prepared)
+        try finalizeCustomPluginCommit(commit)
+        return commit.record
+    }
+
+    func prepareMarketplacePlugin(
+        source: GatewayPluginSourceDTO,
+        token: String,
+        gateway: NativeConnectorGateway
+    ) async throws -> NativePreparedCustomPlugin {
         try await withVerifiedPackage(source: source, token: token, gateway: gateway) { package in
-            let pluginDirectory = rootURL
-                .appendingPathComponent(pluginDirectoryName(source.catalog.id), isDirectory: true)
-            let finalURL = pluginDirectory.appendingPathComponent(package.version, isDirectory: true)
-            let backupURL = rootURL.appendingPathComponent(
-                ".backup-\(pluginDirectory.lastPathComponent)-\(UUID().uuidString)",
-                isDirectory: true
-            )
-            let hadPreviousInstallation = FileManager.default.fileExists(atPath: pluginDirectory.path)
-            if hadPreviousInstallation {
-                try FileManager.default.moveItem(at: pluginDirectory, to: backupURL)
-            }
+            let temporaryRoot = try makeCustomStagingRoot()
+            let stagedPackage = temporaryRoot.appendingPathComponent("package", isDirectory: true)
             do {
-                try FileManager.default.createDirectory(
-                    at: pluginDirectory,
-                    withIntermediateDirectories: true
+                try FileManager.default.moveItem(at: package.packageRoot, to: stagedPackage)
+                return NativePreparedCustomPlugin(
+                    record: NativeInstalledPluginRecord(
+                        pluginID: source.catalog.id,
+                        releaseID: source.release.id,
+                        version: package.version,
+                        artifactSHA256: package.artifactSHA256,
+                        installationPath: stagedPackage.path,
+                        installedAt: ISO8601DateFormatter().string(from: Date()),
+                        pluginKey: source.catalog.pluginKey,
+                        packageFileSHA256: package.packageFileSHA256
+                    ),
+                    temporaryRootURL: temporaryRoot,
+                    sourceSummary: "Marketplace · \(source.catalog.id) · \(source.release.id)"
                 )
-                try FileManager.default.moveItem(at: package.packageRoot, to: finalURL)
-                if hadPreviousInstallation {
-                    try? FileManager.default.removeItem(at: backupURL)
-                }
             } catch {
-                try? FileManager.default.removeItem(at: pluginDirectory)
-                if hadPreviousInstallation,
-                   FileManager.default.fileExists(atPath: backupURL.path) {
-                    try? FileManager.default.moveItem(at: backupURL, to: pluginDirectory)
-                }
+                try? FileManager.default.removeItem(at: temporaryRoot)
                 throw error
             }
-
-            return NativeInstalledPluginRecord(
-                pluginID: source.catalog.id,
-                releaseID: source.release.id,
-                version: package.version,
-                artifactSHA256: package.artifactSHA256,
-                installationPath: finalURL.path,
-                installedAt: ISO8601DateFormatter().string(from: Date()),
-                pluginKey: source.catalog.pluginKey,
-                packageFileSHA256: package.packageFileSHA256
-            )
         }
     }
 
@@ -289,7 +287,7 @@ struct NativePluginInstaller: Sendable {
         }
     }
 
-    private func validatePackageJSON(
+    func validatePackageJSON(
         _ fileURL: URL,
         expectedName: String,
         expectedVersion: String
@@ -300,8 +298,26 @@ struct NativePluginInstaller: Sendable {
         )
         guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               value["name"] as? String == expectedName,
-              value["version"] as? String == expectedVersion,
-              value["bin"] != nil else {
+              value["version"] as? String == expectedVersion else {
+            throw NativeConnectorError.pluginInstallation("package.json 身份或可执行入口无效")
+        }
+        guard value["bin"] == nil else { return }
+
+        do {
+            let manifest = try NativePluginManifestLoader.loadManifest(
+                from: fileURL.deletingLastPathComponent()
+                    .appendingPathComponent("chatos.plugin.json")
+            )
+            guard manifest.schemaVersion == 3,
+                  manifest.version == expectedVersion,
+                  !manifest.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !manifest.mcpServers.isEmpty || !manifest.skills.isEmpty || !manifest.hooks.isEmpty,
+                  manifest.mcpServers.values.allSatisfy({ $0.type == "stdio" }) else {
+                throw NativeConnectorError.pluginInstallation(
+                    "package.json 身份或可执行入口无效"
+                )
+            }
+        } catch {
             throw NativeConnectorError.pluginInstallation("package.json 身份或可执行入口无效")
         }
     }

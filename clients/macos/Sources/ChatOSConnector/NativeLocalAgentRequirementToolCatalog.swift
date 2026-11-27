@@ -30,12 +30,11 @@ extension NativeLocalAgentPlatformToolCatalog {
     ),
     taskTool(
       name: requirementPlanSaveToolName,
-      description: "Publish or revise a versioned proposal from submitted Requirement Survey answers. Owner, project and source Run are program-bound. Use expected_revision 0 for the initial draft, otherwise the current revision. Never confirm for the user; ask them to review and confirm the exact version in Requirement Survey. Saving does not start Tasks or authorize implementation.",
+      description: "Publish or revise a versioned proposal from a Plugin-authorized planning Task, submitted Requirement Survey answers, or the program-bound current plan. Every internal ID, owner, project and source Run is program-bound. Submit only expected_revision and markdown. Use expected_revision 0 for the initial draft, otherwise the current revision. Never confirm for the user; ask them to review and confirm the exact version before execution.",
       properties: [
-        "survey_id": .object(["type": .string("string"), "minLength": .number(1)]),
         "expected_revision": .object(["type": .string("integer"), "minimum": .number(0)]),
         "markdown": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(65536)]),
-      ], required: ["survey_id", "expected_revision", "markdown"]
+      ], required: ["expected_revision", "markdown"]
     ),
   ]
 }

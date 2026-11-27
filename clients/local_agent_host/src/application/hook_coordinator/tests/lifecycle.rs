@@ -74,6 +74,7 @@ async fn windows_appcontainer_runner_executes_an_active_user_prompt_hook() {
         runner_policy_version: 1,
         installation_root: installation_root.to_string_lossy().into_owned(),
         permissions: vec!["process.spawn".into()],
+        task_policy: None,
         hooks: vec![hook("prompt", "UserPromptSubmit", "hook.cmd")],
         enabled: true,
         trusted_at_unix_ms: 1,

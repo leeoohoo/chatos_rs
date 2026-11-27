@@ -4,7 +4,7 @@
 use super::{ClientStorageError, IdempotentCommand, SqliteClientStorage, SqliteResultExt};
 use chatos_local_agent_protocol::{
     ConfirmRequirementPlanCommand, CreateTaskGraphCommand, LocalAgentRunRecord,
-    LocalAgentRunStatus, LocalRequirementPlan, SaveRequirementPlanCommand,
+    LocalAgentRunStatus, LocalPluginTaskPolicy, LocalRequirementPlan, SaveRequirementPlanCommand,
     LOCAL_AGENT_MAX_INPUT_BYTES, LOCAL_REQUIREMENT_PLAN_MAX_BYTES,
 };
 use serde_json::{json, Value};
@@ -45,10 +45,10 @@ pub(super) async fn get(
         .transpose()
 }
 
-pub(super) async fn latest_for_project(
+pub(super) async fn latest_for_scope(
     connection: &mut SqliteConnection,
     owner: &str,
-    project: &str,
+    scope_id: &str,
 ) -> Result<Option<LocalRequirementPlan>, ClientStorageError> {
     let query = format!("SELECT * FROM ({SELECT} WHERE owner_user_id = ? AND project_resource_id = ? \
         AND revision = (SELECT MAX(p.revision) FROM local_requirement_plans p \
@@ -57,7 +57,7 @@ pub(super) async fn latest_for_project(
         WHERE consumed_at_unix_ms IS NULL");
     sqlx::query(sqlx::AssertSqlSafe(query))
         .bind(owner)
-        .bind(project)
+        .bind(scope_id)
         .fetch_optional(&mut *connection)
         .await
         .db()?
@@ -79,6 +79,8 @@ pub(super) async fn save(
         if let Some(replay) = SqliteClientStorage::replay(&mut connection, command).await? { return Ok(replay); }
         let run = SqliteClientStorage::fetch_run_on(&mut connection, &save.source_run_id).await?
             .ok_or_else(|| ClientStorageError::NotFound(save.source_run_id.clone()))?;
+        if run.owner_user_id != save.owner_user_id { return Err(ClientStorageError::NotFound(save.source_run_id.clone())); }
+        ensure_direct_plan_review_survey(&mut connection, save, &run, now).await?;
         let survey = sqlx::query("SELECT project_resource_id, source_conversation_id, source_run_id, source_task_id, title \
             FROM local_requirement_surveys WHERE owner_user_id = ? AND survey_id = ? AND status = 'resolved'")
             .bind(&save.owner_user_id).bind(&save.survey_id).fetch_optional(&mut *connection).await.db()?
@@ -86,15 +88,15 @@ pub(super) async fn save(
         let project: String = survey.try_get("project_resource_id").db()?;
         let mut conversation: String = survey.try_get("source_conversation_id").db()?;
         let survey_source_task: Option<String> = survey.try_get("source_task_id").db()?;
-        if run.owner_user_id != save.owner_user_id { return Err(ClientStorageError::NotFound(save.source_run_id.clone())); }
         match (run.profile_key.as_str(), run.owner_entity_type.as_str()) {
             ("main_chat", "conversation_turn") => {
                 let valid: Option<String> = sqlx::query_scalar("SELECT c.conversation_id FROM local_conversation_turns t JOIN local_conversations c \
                     ON c.conversation_id = t.conversation_id WHERE t.run_id = ? AND t.turn_id = ? AND c.owner_user_id = ? \
-                    AND c.resource_kind = 'project' AND c.resource_id = ?")
+                    AND CASE WHEN c.resource_kind = 'project' THEN c.resource_id \
+                             ELSE 'conversation:' || c.conversation_id END = ?")
                     .bind(&run.run_id).bind(&run.owner_entity_id).bind(&run.owner_user_id).bind(&project)
                     .fetch_optional(&mut *connection).await.db()?;
-                conversation = valid.ok_or_else(|| ClientStorageError::InvalidState("plan source Run belongs to another project or conversation".into()))?;
+                conversation = valid.ok_or_else(|| ClientStorageError::InvalidState("plan source Run belongs to another resource or conversation".into()))?;
             }
             ("task_execution", "task") if survey.try_get::<String,_>("source_run_id").db()? == run.run_id
                 && survey_source_task.as_deref() == Some(run.owner_entity_id.as_str()) => {}
@@ -114,7 +116,7 @@ pub(super) async fn save(
                     .fetch_optional(&mut *connection).await.db()?;
                 conversation = valid.ok_or_else(|| ClientStorageError::InvalidState("team plan source Run does not match its internal conversation turn".into()))?;
             }
-            _ => return Err(ClientStorageError::InvalidState("plan requires a project Main Chat, Task, or team Todo source Run".into())),
+            _ => return Err(ClientStorageError::InvalidState("plan requires a resource-bound Main Chat, Task, or team Todo source Run".into())),
         }
         if !matches!(run.status, LocalAgentRunStatus::ModelRunning | LocalAgentRunStatus::WaitingToolResult | LocalAgentRunStatus::Succeeded) {
             return Err(ClientStorageError::InvalidState("only active generation or its successful final reply can publish a plan".into()));
@@ -146,6 +148,90 @@ pub(super) async fn save(
     SqliteClientStorage::finish_write(&mut connection, result).await
 }
 
+async fn ensure_direct_plan_review_survey(
+    connection: &mut SqliteConnection,
+    save: &SaveRequirementPlanCommand,
+    run: &LocalAgentRunRecord,
+    now: i64,
+) -> Result<(), ClientStorageError> {
+    if save.survey_id != format!("plan-review:{}", run.run_id) {
+        return Ok(());
+    }
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM local_requirement_surveys \
+         WHERE owner_user_id = ? AND survey_id = ?)",
+    )
+    .bind(&save.owner_user_id)
+    .bind(&save.survey_id)
+    .fetch_one(&mut *connection)
+    .await
+    .db()?;
+    if exists {
+        return Ok(());
+    }
+    if run.profile_key != "task_execution"
+        || run.owner_entity_type != "task"
+        || run.input.get("task_kind").and_then(Value::as_str) != Some("planning")
+        || active_plugin_task_policies(connection, &save.owner_user_id)
+            .await?
+            .is_empty()
+    {
+        return Err(ClientStorageError::InvalidState(
+            "direct plan publishing requires a planning Task authorized by an active Plugin task policy".into(),
+        ));
+    }
+    let source = sqlx::query(
+        "SELECT task.title, turn.conversation_id, \
+                CASE WHEN conversation.resource_kind = 'project' THEN conversation.resource_id \
+                     ELSE 'conversation:' || conversation.conversation_id END AS plan_scope_id \
+         FROM local_tasks task \
+         JOIN local_task_graphs graph ON graph.graph_id = task.graph_id \
+         JOIN local_conversation_turns turn \
+           ON graph.source_entity_type = 'conversation_turn' \
+          AND turn.turn_id = graph.source_entity_id \
+         JOIN local_conversations conversation \
+           ON conversation.conversation_id = turn.conversation_id \
+         WHERE task.task_id = ? AND graph.owner_user_id = ? \
+           AND conversation.owner_user_id = ?",
+    )
+    .bind(&run.owner_entity_id)
+    .bind(&save.owner_user_id)
+    .bind(&save.owner_user_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .db()?
+    .ok_or_else(|| {
+        ClientStorageError::InvalidState(
+            "direct plan publishing requires a conversation-bound coordinator".into(),
+        )
+    })?;
+    let title: String = source.try_get("title").db()?;
+    let conversation_id: String = source.try_get("conversation_id").db()?;
+    let project_resource_id: String = source.try_get("plan_scope_id").db()?;
+    sqlx::query(
+        "INSERT INTO local_requirement_surveys(\
+         owner_user_id, survey_id, project_resource_id, source_conversation_id, \
+         source_run_id, source_task_id, title, description, questions_json, answers_json, \
+         status, version, created_at_unix_ms, updated_at_unix_ms, resolved_at_unix_ms) \
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, '[]', '{}', 'resolved', 1, ?, ?, ?)",
+    )
+    .bind(&save.owner_user_id)
+    .bind(&save.survey_id)
+    .bind(project_resource_id)
+    .bind(conversation_id)
+    .bind(&run.run_id)
+    .bind(&run.owner_entity_id)
+    .bind(format!("方案评审：{title}"))
+    .bind("Planning Task 已从现有需求与项目证据生成方案，无需补充问卷。")
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *connection)
+    .await
+    .db()?;
+    Ok(())
+}
+
 pub(super) async fn confirm(
     store: &SqliteClientStorage,
     command: &IdempotentCommand,
@@ -170,18 +256,185 @@ pub(super) async fn confirm(
             return Err(ClientStorageError::Conflict("plan generation has not successfully completed".into()));
         }
         if plan.confirmed_at_unix_ms.is_none() {
+            let (mut coordinator, coordinator_turn_id, coordinator_conversation_id) =
+                coordinator_for_plan(&mut connection, &plan, &source).await?;
+            if !matches!(
+                coordinator.status,
+                LocalAgentRunStatus::Succeeded | LocalAgentRunStatus::Failed
+            ) {
+                return Err(ClientStorageError::Conflict(
+                    "the plan coordinator is not ready to resume".into(),
+                ));
+            }
+            let latest_turn_id: Option<String> = sqlx::query_scalar(
+                "SELECT turn_id FROM local_conversation_turns WHERE conversation_id = ? \
+                 ORDER BY created_at_unix_ms DESC, rowid DESC LIMIT 1",
+            )
+            .bind(&coordinator_conversation_id)
+            .fetch_optional(&mut *connection)
+            .await
+            .db()?;
+            if latest_turn_id.as_deref() != Some(coordinator_turn_id.as_str()) {
+                return Err(ClientStorageError::Conflict(
+                    "the source conversation has a newer turn; review the plan from the latest turn"
+                        .into(),
+                ));
+            }
             sqlx::query("UPDATE local_requirement_plans SET confirmed_at_unix_ms = ? \
                 WHERE owner_user_id = ? AND plan_id = ? AND revision = ? AND confirmed_at_unix_ms IS NULL")
                 .bind(now).bind(&plan.owner_user_id).bind(&plan.plan_id).bind(plan.revision as i64)
                 .execute(&mut *connection).await.db()?;
             plan.confirmed_at_unix_ms = Some(now);
+            let plan_value = serde_json::to_value(&plan)?;
+            coordinator
+                .input
+                .as_object_mut()
+                .ok_or_else(|| {
+                    ClientStorageError::InvalidState(
+                        "plan coordinator input must be an object".into(),
+                    )
+                })?
+                .insert("requirement_plan".into(), plan_value.clone());
+            let requested = json!({
+                "type": "resume",
+                "reason": "requirement_plan_confirmed",
+                "input": {
+                    "message": "The user confirmed the current requirement plan. Continue this same workflow now: create the execution Task Graph from the Host-bound plan without asking the user to send another message.",
+                    "requirement_plan": plan_value,
+                }
+            });
+            let continuation = super::run_continuation::for_resume(
+                &mut connection,
+                &coordinator,
+                &requested,
+            )
+            .await?;
+            let resumed = sqlx::query(
+                "UPDATE local_agent_runs SET input_json = ?, status = 'continuation_ready', \
+                 version = version + 1, continuation_input_json = ?, \
+                 terminal_outcome_json = NULL, claim_token = NULL, claim_until_unix_ms = NULL, \
+                 updated_at_unix_ms = ? \
+                 WHERE run_id = ? AND version = ? AND status IN ('succeeded','failed')",
+            )
+            .bind(serde_json::to_string(&coordinator.input)?)
+            .bind(serde_json::to_string(&continuation)?)
+            .bind(now)
+            .bind(&coordinator.run_id)
+            .bind(coordinator.version as i64)
+            .execute(&mut *connection)
+            .await
+            .db()?;
+            if resumed.rows_affected() != 1 {
+                return Err(ClientStorageError::Conflict(
+                    "the plan coordinator changed while confirmation was being applied".into(),
+                ));
+            }
+            let reopened = sqlx::query(
+                "UPDATE local_conversation_turns SET status = 'running', updated_at_unix_ms = ? \
+                 WHERE turn_id = ? AND run_id = ? AND status IN ('succeeded','failed')",
+            )
+            .bind(now)
+            .bind(&coordinator_turn_id)
+            .bind(&coordinator.run_id)
+            .execute(&mut *connection)
+            .await
+            .db()?;
+            if reopened.rows_affected() != 1 {
+                return Err(ClientStorageError::Conflict(
+                    "the plan coordinator turn changed while confirmation was being applied".into(),
+                ));
+            }
+            sqlx::query(
+                "UPDATE local_conversations SET version = version + 1, updated_at_unix_ms = ? \
+                 WHERE conversation_id = ?",
+            )
+            .bind(now)
+            .bind(&coordinator_conversation_id)
+            .execute(&mut *connection)
+            .await
+            .db()?;
             SqliteClientStorage::insert_event(&mut connection, &uuid::Uuid::new_v4().to_string(), &plan.source_run_id,
                 "requirement_plan_confirmed", &json!({"survey_id": plan.source_survey_id, "revision": plan.revision}), now).await?;
+            SqliteClientStorage::insert_event(
+                &mut connection,
+                &format!("requirement-plan-dispatch:{}:{}", plan.plan_id, plan.revision),
+                &coordinator.run_id,
+                "requirement_plan_dispatch_scheduled",
+                &json!({
+                    "survey_id": plan.source_survey_id,
+                    "plan_id": plan.plan_id,
+                    "revision": plan.revision,
+                    "conversation_id": coordinator_conversation_id,
+                    "turn_id": coordinator_turn_id,
+                }),
+                now,
+            )
+            .await?;
         }
         SqliteClientStorage::record_receipt(&mut connection, command, &plan, now).await?;
         Ok(plan)
     }.await;
     SqliteClientStorage::finish_write(&mut connection, result).await
+}
+
+async fn coordinator_for_plan(
+    connection: &mut SqliteConnection,
+    plan: &LocalRequirementPlan,
+    source: &LocalAgentRunRecord,
+) -> Result<(LocalAgentRunRecord, String, String), ClientStorageError> {
+    let row = match source.owner_entity_type.as_str() {
+        "conversation_turn" => sqlx::query(
+            "SELECT turn.run_id, turn.turn_id, turn.conversation_id \
+             FROM local_conversation_turns turn \
+             JOIN local_conversations conversation \
+               ON conversation.conversation_id = turn.conversation_id \
+             WHERE turn.turn_id = ? AND turn.run_id = ? \
+               AND conversation.owner_user_id = ?",
+        )
+        .bind(&source.owner_entity_id)
+        .bind(&source.run_id)
+        .bind(&plan.owner_user_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .db()?,
+        "task" => sqlx::query(
+            "SELECT turn.run_id, turn.turn_id, turn.conversation_id \
+             FROM local_tasks task \
+             JOIN local_task_graphs graph ON graph.graph_id = task.graph_id \
+             JOIN local_conversation_turns turn \
+               ON graph.source_entity_type = 'conversation_turn' \
+              AND turn.turn_id = graph.source_entity_id \
+             WHERE task.task_id = ? AND graph.owner_user_id = ?",
+        )
+        .bind(&source.owner_entity_id)
+        .bind(&plan.owner_user_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .db()?,
+        _ => None,
+    }
+    .ok_or_else(|| {
+        ClientStorageError::InvalidState(
+            "requirement plan has no resumable coordinator conversation turn".into(),
+        )
+    })?;
+    let run_id: String = row.try_get("run_id").db()?;
+    let turn_id: String = row.try_get("turn_id").db()?;
+    let conversation_id: String = row.try_get("conversation_id").db()?;
+    if conversation_id != plan.source_conversation_id {
+        return Err(ClientStorageError::InvalidState(
+            "requirement plan coordinator belongs to another conversation".into(),
+        ));
+    }
+    let run = SqliteClientStorage::fetch_run_on(connection, &run_id)
+        .await?
+        .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
+    if run.owner_user_id != plan.owner_user_id {
+        return Err(ClientStorageError::InvalidState(
+            "requirement plan coordinator belongs to another owner".into(),
+        ));
+    }
+    Ok((run, turn_id, conversation_id))
 }
 
 /// Legacy/ordinary final replies remain in conversation history. Only a resolved
@@ -250,9 +503,12 @@ pub(super) async fn freeze_for_graph(
         return reject_unbound_snapshot(graph);
     }
     let row = sqlx::query(
-        "SELECT c.resource_id, t.run_id FROM local_conversation_turns t \
-        JOIN local_conversations c ON c.conversation_id = t.conversation_id WHERE t.turn_id = ? \
-        AND c.owner_user_id = ? AND c.resource_kind = 'project'",
+        "SELECT CASE WHEN c.resource_kind = 'project' THEN c.resource_id \
+                     ELSE 'conversation:' || c.conversation_id END AS plan_scope_id, \
+                t.run_id \
+         FROM local_conversation_turns t \
+         JOIN local_conversations c ON c.conversation_id = t.conversation_id \
+         WHERE t.turn_id = ? AND c.owner_user_id = ?",
     )
     .bind(&graph.source_entity_id)
     .bind(&graph.owner_user_id)
@@ -262,9 +518,26 @@ pub(super) async fn freeze_for_graph(
     let Some(row) = row else {
         return reject_unbound_snapshot(graph);
     };
-    let project: String = row.try_get("resource_id").db()?;
+    let plan_scope_id: String = row.try_get("plan_scope_id").db()?;
     let source_run_id: String = row.try_get("run_id").db()?;
-    let plan = latest_for_project(connection, &graph.owner_user_id, &project).await?;
+    let plugin_task_policies =
+        active_plugin_task_policies(connection, &graph.owner_user_id).await?;
+    let requires_confirmed_plan = plugin_task_policies
+        .iter()
+        .any(|policy| policy.require_confirmed_plan_before_execution);
+    let planning_tasks = graph
+        .tasks
+        .iter()
+        .filter(|task| task.input.get("task_kind").and_then(Value::as_str) == Some("planning"))
+        .count();
+    if planning_tasks > 0 {
+        if plugin_task_policies.is_empty() {
+            return reject_unbound_snapshot(graph);
+        }
+        validate_planning_graph(graph, &plugin_task_policies)?;
+        return reject_unbound_snapshot(graph);
+    }
+    let plan = latest_for_scope(connection, &graph.owner_user_id, &plan_scope_id).await?;
     if let Some(plan) = plan {
         if plan.confirmed_at_unix_ms.is_none() {
             return Err(ClientStorageError::Conflict("requirement plan is not confirmed; ask the user to review and confirm its current revision in Requirement Survey before creating Tasks".into()));
@@ -341,7 +614,102 @@ pub(super) async fn freeze_for_graph(
         if count > 0 {
             return Err(ClientStorageError::Conflict("publish a requirement plan with requirement_plan_save and wait for the user's confirmation before creating Tasks".into()));
         }
+        if requires_confirmed_plan {
+            return Err(ClientStorageError::Conflict(
+                "an active Plugin task policy requires a planning Task before execution Tasks"
+                    .into(),
+            ));
+        }
         reject_unbound_snapshot(graph)?;
+    }
+    Ok(())
+}
+
+async fn active_plugin_task_policies(
+    connection: &mut SqliteConnection,
+    owner_user_id: &str,
+) -> Result<Vec<LocalPluginTaskPolicy>, ClientStorageError> {
+    let specs: Vec<String> = sqlx::query_scalar(
+        "SELECT bundle.spec_json FROM local_plugin_hook_bundles bundle \
+         JOIN local_plugin_hook_activations active \
+           ON active.owner_user_id = bundle.owner_user_id \
+          AND active.bundle_id = bundle.bundle_id \
+         WHERE bundle.owner_user_id = ? \
+           AND coalesce(json_extract(bundle.spec_json, '$.enabled'), 1) = 1 \
+           AND json_type(bundle.spec_json, '$.task_policy') = 'object' \
+         ORDER BY bundle.bundle_id",
+    )
+    .bind(owner_user_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    specs
+        .into_iter()
+        .map(|spec| {
+            let value: Value = serde_json::from_str(&spec)?;
+            let policy = serde_json::from_value::<LocalPluginTaskPolicy>(
+                value.get("task_policy").cloned().ok_or_else(|| {
+                    ClientStorageError::InvalidState(
+                        "active Plugin task policy is missing task_policy".into(),
+                    )
+                })?,
+            )?;
+            policy
+                .validate()
+                .map_err(ClientStorageError::InvalidState)?;
+            Ok(policy)
+        })
+        .collect()
+}
+
+fn validate_planning_graph(
+    graph: &CreateTaskGraphCommand,
+    policies: &[LocalPluginTaskPolicy],
+) -> Result<(), ClientStorageError> {
+    if graph.tasks.len() != 1 {
+        return Err(ClientStorageError::InvalidState(
+            "a Plugin-authorized planning graph must contain exactly one Task".into(),
+        ));
+    }
+    let task = &graph.tasks[0];
+    let options = task
+        .input
+        .get("tool_options")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            ClientStorageError::InvalidState(
+                "a Plugin-authorized planning Task requires tool_options".into(),
+            )
+        })?;
+    if policies
+        .iter()
+        .any(|policy| policy.planning_task.requires_execution)
+        && options.get("requires_execution").and_then(Value::as_bool) != Some(true)
+    {
+        return Err(ClientStorageError::InvalidState(
+            "the active Plugin planning template requires execution".into(),
+        ));
+    }
+    let enabled = options
+        .get("enabled_builtin_kinds")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            ClientStorageError::InvalidState(
+                "a Plugin-authorized planning Task requires enabled_builtin_kinds".into(),
+            )
+        })?;
+    for required in policies
+        .iter()
+        .flat_map(|policy| &policy.planning_task.required_builtin_kinds)
+    {
+        if !enabled
+            .iter()
+            .any(|value| value.as_str() == Some(required.as_str()))
+        {
+            return Err(ClientStorageError::InvalidState(format!(
+                "the active Plugin planning template requires {required}"
+            )));
+        }
     }
     Ok(())
 }

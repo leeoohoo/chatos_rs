@@ -3,7 +3,7 @@ use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
     ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CreateConversationCommand,
     CreateRunCommand, LocalAgentStepOutcome, LocalAgentToolCall, LocalAgentToolClaim,
-    LocalConversationResourceBinding, StartConversationTurnCommand,
+    LocalConversationResourceBinding, LocalConversationResourceKind, StartConversationTurnCommand,
 };
 
 pub(super) struct SurveyFlowSetup {

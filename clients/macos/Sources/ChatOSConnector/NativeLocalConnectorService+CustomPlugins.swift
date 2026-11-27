@@ -54,7 +54,7 @@ extension NativeLocalConnectorService {
                 "MCP package 或工具清单在确认后发生变化，请重新预检并确认"
             )
         }
-        try await commitCustomPlugin(updated)
+        try await commitPreparedPlugin(updated)
         shouldDiscard = false
         return pluginInstaller.committedCustomPluginRecord(updated)
     }
@@ -80,7 +80,7 @@ extension NativeLocalConnectorService {
                 "Plugin 文件或工具清单在确认后发生变化，请重新预检并确认"
             )
         }
-        try await commitCustomPlugin(prepared)
+        try await commitPreparedPlugin(prepared)
         shouldDiscard = false
     }
 
@@ -113,7 +113,7 @@ extension NativeLocalConnectorService {
                 "Plugin 来源或组件清单在确认后发生变化，请重新预检并确认"
             )
         }
-        try await commitCustomPlugin(updated)
+        try await commitPreparedPlugin(updated)
         shouldDiscard = false
         return pluginInstaller.committedCustomPluginRecord(updated)
     }
@@ -196,7 +196,7 @@ extension NativeLocalConnectorService {
             isDirectory: true
         )
         for hook in manifest.hooks.sorted(by: { $0.componentKey < $1.componentKey }) {
-            let bundle = try NativeCodexHookBundleParser.load(
+            let bundle = try NativePluginHookBundleParser.load(
                 contribution: hook,
                 installationRoot: installationRoot
             )
@@ -239,7 +239,10 @@ extension NativeLocalConnectorService {
         )
     }
 
-    private func commitCustomPlugin(_ prepared: NativePreparedCustomPlugin) async throws {
+    func commitPreparedPlugin(
+        _ prepared: NativePreparedCustomPlugin,
+        marketplaceSources: [GatewayPluginSourceDTO]? = nil
+    ) async throws {
         let record = pluginInstaller.committedCustomPluginRecord(prepared)
         let hookTrustRecords = try Self.makeHookTrustRecords(
             record: record,
@@ -251,7 +254,11 @@ extension NativeLocalConnectorService {
         )
         let commit = try pluginInstaller.commitCustomPlugin(prepared)
         do {
-            try await persistCustomPlugin(commit, hookTrustRecords: hookTrustRecords)
+            try await persistPreparedPlugin(
+                commit,
+                hookTrustRecords: hookTrustRecords,
+                marketplaceSources: marketplaceSources
+            )
         } catch {
             do {
                 try pluginInstaller.rollbackCustomPluginCommit(commit)
@@ -264,9 +271,10 @@ extension NativeLocalConnectorService {
         }
     }
 
-    private func persistCustomPlugin(
+    private func persistPreparedPlugin(
         _ commit: NativeCommittedCustomPlugin,
-        hookTrustRecords: [NativePluginHookTrustRecord]
+        hookTrustRecords: [NativePluginHookTrustRecord],
+        marketplaceSources: [GatewayPluginSourceDTO]?
     ) async throws {
         let record = commit.record
         var nextState = state
@@ -282,6 +290,12 @@ extension NativeLocalConnectorService {
         nextState.pluginHookTrustRecords = trustRecords
         nextState.installedPluginIDs.insert(record.pluginID)
         nextState.pluginPreferences[record.pluginID] = nextState.pluginPreferences[record.pluginID] ?? true
+        if let marketplaceSources {
+            _ = Self.reconcileInstalledPluginIdentities(
+                state: &nextState,
+                sources: marketplaceSources
+            )
+        }
         try customPluginStateSaver(nextState, stateStore)
         state = nextState
         do {
@@ -300,6 +314,14 @@ extension NativeLocalConnectorService {
     func syncTrustedPluginHookBundles() async {
         guard let host = localAgentHostClient,
               let ownerUserID = state.user?.id else { return }
+        do {
+            try backfillPluginHookTrustRecords(ownerUserID: ownerUserID)
+        } catch {
+            Self.logger.error(
+                "Failed to reconcile trusted plugin hook records: \(error.localizedDescription, privacy: .public)"
+            )
+            return
+        }
         pluginHookSyncGeneration &+= 1
         let generation = pluginHookSyncGeneration
         let client = NativeLocalAgentHookBundleClient(host: host)
@@ -331,6 +353,71 @@ extension NativeLocalConnectorService {
         }
     }
 
+    private func backfillPluginHookTrustRecords(ownerUserID: String) throws {
+        let records = state.installedPluginRecords ?? [:]
+        var trusts = state.pluginHookTrustRecords ?? [:]
+        var changed = false
+
+        for record in records.values {
+            let manifest = try Self.loadCustomPluginManifest(record: record)
+            let expectedKeys = Set(manifest.hooks.map(\.componentKey))
+            let pluginTrusts = trusts.values.filter { $0.pluginID == record.pluginID }
+            let current = pluginTrusts.filter {
+                Self.isCurrentHookTrustRecord($0, state: state)
+            }
+            if Set(current.map(\.componentKey)) == expectedKeys { continue }
+
+            let isLegacyTaskPolicyRecord = manifest.workflow?.taskPolicy != nil
+                && !pluginTrusts.isEmpty
+                && Set(pluginTrusts.map(\.componentKey)) == expectedKeys
+                && pluginTrusts.allSatisfy {
+                    $0.taskPolicy == nil
+                        && Self.isCurrentHookTrustRecord(
+                            $0,
+                            state: state,
+                            ignoringTaskPolicy: true
+                        )
+                }
+            let installedRoot = URL(fileURLWithPath: record.installationPath)
+                .standardizedFileURL.path
+            let isMarketplaceReleaseTransition = record.source == nil
+                && !pluginTrusts.isEmpty
+                && Set(pluginTrusts.map(\.componentKey)) == expectedKeys
+                && pluginTrusts.allSatisfy {
+                    $0.ownerUserID == ownerUserID
+                        && $0.runnerPolicyVersion
+                            == NativePluginHookTrustRecord.runnerPolicyVersion
+                        && $0.releaseID != record.releaseID
+                        && $0.artifactSHA256 != record.artifactSHA256
+                        && $0.installationRoot != installedRoot
+                }
+            guard isLegacyTaskPolicyRecord || isMarketplaceReleaseTransition else { continue }
+
+            try Self.verifyTrustedPluginInstallation(record)
+            trusts = trusts.filter { $0.value.pluginID != record.pluginID }
+            for trust in try Self.makeHookTrustRecords(
+                record: record,
+                ownerUserID: ownerUserID
+            ) {
+                trusts[trust.bundleID] = trust
+            }
+            changed = true
+        }
+
+        let installedIDs = Set(records.keys)
+        let filtered = trusts.filter { installedIDs.contains($0.value.pluginID) }
+        if filtered.count != trusts.count {
+            trusts = filtered
+            changed = true
+        }
+        guard changed else { return }
+
+        var nextState = state
+        nextState.pluginHookTrustRecords = trusts
+        try customPluginStateSaver(nextState, stateStore)
+        state = nextState
+    }
+
     private static func makeHookTrustRecords(
         record: NativeInstalledPluginRecord,
         ownerUserID: String,
@@ -347,8 +434,10 @@ extension NativeLocalConnectorService {
         let root = URL(fileURLWithPath: record.installationPath, isDirectory: true)
         let contentRoot = contentRootURL ?? root
         let trustedAt = Int64((Date().timeIntervalSince1970 * 1_000).rounded(.down))
+        let taskPolicy = manifest.workflow?.taskPolicy
+        let taskPolicyBinding = try taskPolicyBinding(taskPolicy)
         return try manifest.hooks.sorted(by: { $0.componentKey < $1.componentKey }).map { hook in
-            let bundle = try NativeCodexHookBundleParser.load(
+            let bundle = try NativePluginHookBundleParser.load(
                 contribution: hook,
                 installationRoot: contentRoot
             )
@@ -363,6 +452,7 @@ extension NativeLocalConnectorService {
                 bundle.normalizedSHA256,
                 commandSHA,
                 permissionSHA,
+                taskPolicyBinding,
                 String(NativePluginHookTrustRecord.runnerPolicyVersion),
                 root.standardizedFileURL.path,
                 String(trustedAt),
@@ -382,6 +472,7 @@ extension NativeLocalConnectorService {
                 runnerPolicyVersion: NativePluginHookTrustRecord.runnerPolicyVersion,
                 installationRoot: root.standardizedFileURL.path,
                 permissions: permissions,
+                taskPolicy: taskPolicy,
                 hooks: bundle.hooks,
                 trustedAtUnixMs: trustedAt
             )
@@ -390,7 +481,8 @@ extension NativeLocalConnectorService {
 
     private static func isCurrentHookTrustRecord(
         _ trust: NativePluginHookTrustRecord,
-        state: NativeConnectorPersistentState
+        state: NativeConnectorPersistentState,
+        ignoringTaskPolicy: Bool = false
     ) -> Bool {
         guard trust.runnerPolicyVersion == NativePluginHookTrustRecord.runnerPolicyVersion,
               trust.ownerUserID == (state.user?.id ?? "local-user"),
@@ -403,7 +495,7 @@ extension NativeLocalConnectorService {
               let contribution = manifest.hooks.first(where: {
                   $0.componentKey == trust.componentKey
               }),
-              let bundle = try? NativeCodexHookBundleParser.load(
+              let bundle = try? NativePluginHookBundleParser.load(
                   contribution: contribution,
                   installationRoot: URL(fileURLWithPath: trust.installationRoot, isDirectory: true)
               ) else {
@@ -415,6 +507,7 @@ extension NativeLocalConnectorService {
             && bundle.hooks == trust.hooks
             && hookCommandSHA(bundle.hooks) == trust.commandSHA256
             && permissions == trust.permissions
+            && (ignoringTaskPolicy || manifest.workflow?.taskPolicy == trust.taskPolicy)
             && NativePluginInstaller.sha256Hex(permissions.joined(separator: "\n"))
                 == trust.permissionSnapshotSHA256
     }
@@ -425,10 +518,23 @@ extension NativeLocalConnectorService {
         return permissions.sorted()
     }
 
-    private static func hookCommandSHA(_ hooks: [NativeCodexHookDefinition]) -> String {
+    private static func hookCommandSHA(_ hooks: [NativePluginHookDefinition]) -> String {
         NativePluginInstaller.sha256Hex(
             hooks.map { "\($0.id)\u{0}\($0.command)" }.joined(separator: "\n")
         )
+    }
+
+    private static func taskPolicyBinding(
+        _ policy: NativePluginManifest.TaskPolicy?
+    ) throws -> String {
+        guard let policy else { return "none" }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(policy)
+        guard let serialized = String(data: data, encoding: .utf8) else {
+            throw NativeConnectorError.pluginInstallation("Plugin task policy 无法规范化")
+        }
+        return NativePluginInstaller.sha256Hex(serialized)
     }
 
     func customInstalledPlugins(forceRefresh: Bool) async -> [LocalConnectorPlugin] {

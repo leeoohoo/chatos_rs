@@ -58,6 +58,7 @@ pub(in crate::application::task_tools) fn create_single_graph(
             model_config_revision: model.1,
             capability_policy_revision: parent.capability_policy_revision.clone(),
             input: json!({
+                "task_kind": args.task_kind,
                 "prompt": prompt,
                 "objective": args.objective,
                 "expected_outputs": args.expected_outputs,

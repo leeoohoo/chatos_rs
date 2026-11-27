@@ -5,7 +5,7 @@ use crate::{LocalToolExecutor, LocalToolRegistry};
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     CreateRequirementSurveyCommand, GetConversationCommand, HostCommand, HostRequestEnvelope,
-    HostResult, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
+    HostResult, LocalAgentRunRecord, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
     LocalConversationResourceKind, LocalRequirementSurveyQuestion, SaveRequirementPlanCommand,
     LOCAL_AGENT_PROTOCOL_VERSION, LOCAL_REQUIREMENT_PLAN_SAVE_TOOL_NAME,
     LOCAL_REQUIREMENT_SURVEY_CREATE_TOOL_NAME,
@@ -63,13 +63,14 @@ impl LocalRequirementSurveyToolExecutor {
             if parent.owner_user_id != self.owner_user_id {
                 return Err("plan Run does not belong to active owner".into());
             }
+            let survey_id = program_bound_plan_survey_id(&parent)?;
             let result = self
                 .request(
                     invocation,
                     "save-plan",
                     HostCommand::SaveRequirementPlan(SaveRequirementPlanCommand {
                         owner_user_id: self.owner_user_id.clone(),
-                        survey_id: args.survey_id,
+                        survey_id,
                         source_run_id: parent.run_id,
                         expected_revision: args.expected_revision,
                         markdown: args.markdown,
@@ -174,14 +175,12 @@ impl LocalRequirementSurveyToolExecutor {
             }
             project_id
         } else {
-            conversation
-                .conversation
-                .resource
-                .filter(|resource| resource.kind == LocalConversationResourceKind::Project)
-                .ok_or_else(|| {
-                    "Requirement Surveys require a project-bound conversation".to_string()
-                })?
-                .resource_id
+            match conversation.conversation.resource {
+                Some(resource) if resource.kind == LocalConversationResourceKind::Project => {
+                    resource.resource_id
+                }
+                _ => format!("conversation:{conversation_id}"),
+            }
         };
         let result = self
             .request(
@@ -254,9 +253,45 @@ struct CreateSurveyArgs {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SavePlanArgs {
-    survey_id: String,
     expected_revision: u64,
     markdown: String,
+}
+
+fn program_bound_plan_survey_id(parent: &LocalAgentRunRecord) -> Result<String, String> {
+    if let Some(continuation) = parent.continuation_input.as_ref() {
+        if let Some(value) = continuation.get("survey_id") {
+            return non_empty_program_id(value, "continuation_input.survey_id");
+        }
+    }
+    if let Some(binding) = parent.input.get("requirement_plan_binding") {
+        if let Some(value) = binding.get("source_survey_id") {
+            return non_empty_program_id(value, "input.requirement_plan_binding.source_survey_id");
+        }
+    }
+    if let Some(plan) = parent.input.get("requirement_plan") {
+        if let Some(value) = plan.get("source_survey_id") {
+            return non_empty_program_id(value, "input.requirement_plan.source_survey_id");
+        }
+    }
+    if parent.profile_key == "task_execution"
+        && parent.owner_entity_type == "task"
+        && parent.input.get("task_kind").and_then(Value::as_str) == Some("planning")
+    {
+        return Ok(format!("plan-review:{}", parent.run_id));
+    }
+    Err(
+        "requirement_plan_save has no program-bound Requirement Survey or planning Task context"
+            .to_string(),
+    )
+}
+
+fn non_empty_program_id(value: &Value, field: &str) -> Result<String, String> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| format!("invalid program-bound {field}"))
 }
 
 pub fn requirement_survey_model_tools() -> Vec<Value> {
@@ -297,12 +332,11 @@ pub fn requirement_survey_model_tools() -> Vec<Value> {
         }),
         json!({
             "type": "function", "name": LOCAL_REQUIREMENT_PLAN_SAVE_TOOL_NAME,
-            "description": "Publish a versioned proposal from submitted Requirement Survey answers, or revise that proposal. The Host binds owner, project and source Run. Use expected_revision 0 only for the initial draft; otherwise use the current revision from program-bound plan context. Never confirm for the user. Finish with a useful proposal and ask the user to review and confirm the exact version in Requirement Survey before creating Tasks. Saving does not authorize or start execution.",
+            "description": "Publish or revise a versioned proposal from a Plugin-authorized planning Task, submitted Requirement Survey answers, or the program-bound current plan. The Host binds every internal ID, owner, project and source Run. Submit only expected_revision and markdown. Use expected_revision 0 only for the initial draft, otherwise the current revision. Never confirm for the user. Finish with the same proposal and ask the user to review and confirm its exact version before execution.",
             "parameters": {"type": "object", "properties": {
-                "survey_id": {"type": "string", "minLength": 1},
                 "expected_revision": {"type": "integer", "minimum": 0},
                 "markdown": {"type": "string", "minLength": 1, "maxLength": 65536}
-            }, "required": ["survey_id", "expected_revision", "markdown"], "additionalProperties": false}
+            }, "required": ["expected_revision", "markdown"], "additionalProperties": false}
         }),
     ]
 }

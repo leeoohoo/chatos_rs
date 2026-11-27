@@ -140,6 +140,7 @@ pub(super) async fn reported_task_outcome(
     Ok(Some(ReportedTaskOutcome {
         result_status: result_status.to_string(),
         reason: reason.to_string(),
+        blocker: value.get("blocker").filter(|value| !value.is_null()).cloned(),
         report: value,
     }))
 }

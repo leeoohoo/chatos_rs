@@ -5,6 +5,44 @@ import Testing
 @testable import ChatOSConnector
 
 struct NativeCustomPluginInstallationTests {
+    @Test("the bundled Plan Loop plugin imports with its skills and lifecycle Hook")
+    func bundledPlanLoopPluginIsCompatible() throws {
+        var repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        for _ in 0..<4 { repositoryRoot.deleteLastPathComponent() }
+        let source = repositoryRoot.appendingPathComponent("plugins/plan-loop", isDirectory: true)
+        let staging = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PlanLoopPlugin-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        try FileManager.default.copyItem(at: source, to: staging)
+
+        let imported = try NativeAgentPluginCompatibilityImporter.normalizePackage(at: staging)
+        #expect(imported.manifest.name == "plan-loop")
+        #expect(imported.manifest.skills.map(\.path) == [
+            "skills/plan-loop",
+            "skills/plan-loop-planner",
+            "skills/plan-loop-recovery",
+        ])
+        let hook = try #require(imported.manifest.hooks.first)
+        #expect(hook.componentKey == "plan-loop-hooks")
+        #expect(hook.dialect == "chatos_v1")
+        let policy = try #require(imported.manifest.workflow?.taskPolicy)
+        #expect(policy.policyID == "plan-first")
+        #expect(policy.requireMainChatTaskRoute)
+        #expect(policy.requireConfirmedPlanBeforeExecution)
+        #expect(policy.planningTask.requiresExecution)
+        #expect(Set(policy.planningTask.requiredBuiltinKinds) == [
+            "CodeMaintainerRead",
+            "RequirementSurveyRead",
+            "RequirementSurveyWrite",
+        ])
+        let bundle = try NativePluginHookBundleParser.load(
+            contribution: hook,
+            installationRoot: staging
+        )
+        #expect(bundle.events == ["SessionStart", "UserPromptSubmit"])
+        #expect(bundle.requiredRuntimes.isEmpty)
+    }
+
     @Test("unknown update IDs fail before fetching or preparing packages and explain how to correct a new install")
     func rejectsUnknownReplacementBeforePackagePreparation() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("InstallerMissingTarget-\(UUID().uuidString)")
@@ -811,6 +849,96 @@ struct NativeCustomPluginInstallationTests {
         #expect(await uninstallHost.activeBundleIDs().isEmpty)
     }
 
+    @Test("Marketplace Hook upgrades repair a stale previous-Release trust binding")
+    func marketplaceHookUpgradeRepairsStaleReleaseTrust() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MarketplaceHookUpgrade-\(UUID().uuidString)", isDirectory: true)
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent("state.json")
+        try Self.writeInitialState(to: stateURL, ownerUserID: "owner-marketplace-hook")
+        let configuration = NativeConnectorConfiguration(
+            gatewayBaseURL: URL(string: "https://connector.example.test")!,
+            stateURL: stateURL
+        )
+        let initialService = try NativeLocalConnectorService(
+            configuration: configuration,
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+        try Self.writeNativeHookFixture(
+            at: source,
+            version: "1.0.0",
+            command: "node hooks/first.js",
+            permissions: ["workspace.read"]
+        )
+        let inspection = try await initialService.inspectLocalPlugin(atPath: source.path)
+        try await initialService.installLocalPlugin(
+            atPath: source.path,
+            expectedFingerprint: inspection.fingerprint
+        )
+        var staleState = try NativeConnectorStateStore(stateURL: stateURL).load()
+        let oldRecord = try #require(staleState.installedPluginRecords?.values.first)
+        let oldTrust = try #require(staleState.pluginHookTrustRecords?.values.first)
+
+        try Self.writeNativeHookFixture(
+            at: source,
+            version: "2.0.0",
+            command: "node hooks/second.js",
+            permissions: ["workspace.read", "network.client"]
+        )
+        let pluginDirectory = URL(
+            fileURLWithPath: oldRecord.installationPath,
+            isDirectory: true
+        ).deletingLastPathComponent()
+        try FileManager.default.removeItem(at: pluginDirectory)
+        try FileManager.default.createDirectory(
+            at: pluginDirectory,
+            withIntermediateDirectories: true
+        )
+        let newInstallation = pluginDirectory.appendingPathComponent("2.0.0", isDirectory: true)
+        try FileManager.default.copyItem(at: source, to: newInstallation)
+        let files = try NativePluginInstallationIntegrity.snapshot(
+            installationURL: newInstallation,
+            maximumFiles: 100,
+            maximumBytes: 1_024 * 1_024
+        )
+        let newRecord = NativeInstalledPluginRecord(
+            pluginID: oldRecord.pluginID,
+            releaseID: "marketplace-release-2",
+            version: "2.0.0",
+            artifactSHA256: NativePluginInstaller.snapshotFingerprint(files),
+            installationPath: newInstallation.path,
+            installedAt: "2026-11-26T09:18:27Z",
+            pluginKey: "fixture@chatos-marketplace",
+            packageFileSHA256: files
+        )
+        staleState.installedPluginRecords?[oldRecord.pluginID] = newRecord
+        try NativeConnectorStateStore(stateURL: stateURL).save(staleState)
+
+        let repairedService = try NativeLocalConnectorService(
+            configuration: configuration,
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+        let host = HookBundleHostStub()
+        await repairedService.setLocalAgentCompanionServices(
+            host: host,
+            conversation: nil,
+            messageTasks: nil,
+            askUser: nil
+        )
+
+        let repairedState = try NativeConnectorStateStore(stateURL: stateURL).load()
+        let repairedTrust = try #require(repairedState.pluginHookTrustRecords?.values.first)
+        #expect(repairedState.pluginHookTrustRecords?.count == 1)
+        #expect(repairedTrust.bundleID != oldTrust.bundleID)
+        #expect(repairedTrust.releaseID == newRecord.releaseID)
+        #expect(repairedTrust.artifactSHA256 == newRecord.artifactSHA256)
+        #expect(repairedTrust.installationRoot == newRecord.installationPath)
+        #expect(repairedTrust.commandSHA256 != oldTrust.commandSHA256)
+        #expect(repairedTrust.permissions == ["network.client", "process.spawn", "workspace.read"])
+        #expect(await host.activeBundleIDs() == [repairedTrust.bundleID])
+    }
+
     @Test("failed Hook upgrade restores the old directory, state, trust, and active Bundle")
     func failedHookUpgradeRollsBackCompletely() async throws {
         let root = FileManager.default.temporaryDirectory
@@ -1028,7 +1156,7 @@ struct NativeCustomPluginInstallationTests {
         #expect(parsed.hooks.count == 1)
         #expect(parsed.hooks.first?.isAsync == true)
         let legacyTrustedHook = try JSONDecoder().decode(
-            NativeCodexHookDefinition.self,
+            NativePluginHookDefinition.self,
             from: Data(#"{"hook_id":"legacy","event":"SessionStart","command":"node hook.js","timeout_seconds":5,"additional_context_limit":65536}"#.utf8)
         )
         #expect(legacyTrustedHook.isAsync == false)
@@ -1047,7 +1175,7 @@ struct NativeCustomPluginInstallationTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         #expect(throws: NativeConnectorError.self) {
-            _ = try NativeCodexHookBundleParser.load(
+            _ = try NativePluginHookBundleParser.load(
                 contribution: .init(
                     componentKey: "escape",
                     dialect: "codex",

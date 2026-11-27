@@ -29,6 +29,7 @@ async fn ponytail_fixture_runs_real_session_prompt_and_subagent_hooks() {
         runner_policy_version: 1,
         installation_root: fixture_root.display().to_string(),
         permissions: vec!["process.spawn".to_string(), "workspace.read".to_string()],
+        task_policy: None,
         hooks,
         enabled: true,
         trusted_at_unix_ms: 9_000,

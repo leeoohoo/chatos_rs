@@ -11,14 +11,29 @@ use super::{
 use chatos_local_agent_ports::ClientStorageError;
 use chatos_local_agent_protocol::{
     CancelTaskCommand, CreateTaskGraphCommand, GetCapabilityPolicySnapshotCommand, HostCommand,
-    HostResult, LocalAgentRunRecord, LocalAgentToolInvocationRecord, LocalTaskGraph,
-    LocalTaskRecord, LocalTaskStatus,
+    HostResult, LocalAgentRunRecord, LocalAgentToolInvocationRecord, LocalPluginTaskPolicy,
+    LocalTaskGraph, LocalTaskRecord, LocalTaskStatus,
 };
 use chatos_local_agent_runtime::LocalAgentRuntimeError;
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashSet};
 
 impl LocalTaskToolExecutor {
+    pub(super) async fn active_plugin_task_policies(
+        &self,
+        parent: &LocalAgentRunRecord,
+    ) -> Result<Vec<LocalPluginTaskPolicy>, String> {
+        Ok(self
+            .runtime
+            .active_plugin_hook_bundles_for_host_worker(&parent.owner_user_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|bundle| bundle.spec.enabled)
+            .filter_map(|bundle| bundle.spec.task_policy)
+            .collect())
+    }
+
     pub(super) async fn parent_run(&self, run_id: &str) -> Result<LocalAgentRunRecord, String> {
         self.runtime
             .get_run_for_host_worker(run_id)

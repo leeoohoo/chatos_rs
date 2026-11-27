@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 
 pub const LIST_TASKS_TOOL: &str = "list_tasks";
 pub const GET_TASK_TOOL: &str = "get_task";
+pub const DECIDE_TASK_ROUTE_TOOL: &str = "decide_task_route";
 pub const CREATE_TASK_TOOL: &str = "create_task";
 pub const CREATE_TASKS_TOOL: &str = "create_tasks_with_prerequisites";
 pub const CANCEL_TASK_TOOL: &str = "cancel_task";
@@ -31,9 +32,10 @@ const TASK_SELECTABLE_BUILTIN_KIND_VALUES: [&str; 7] = [
     "RequirementSurveyWrite",
     "Notepad",
 ];
-pub const TASK_TOOL_NAMES: [&str; 9] = [
+pub const TASK_TOOL_NAMES: [&str; 10] = [
     LIST_TASKS_TOOL,
     GET_TASK_TOOL,
+    DECIDE_TASK_ROUTE_TOOL,
     CREATE_TASK_TOOL,
     CREATE_TASKS_TOOL,
     CANCEL_TASK_TOOL,
@@ -42,9 +44,10 @@ pub const TASK_TOOL_NAMES: [&str; 9] = [
     GET_TASK_DEPENDENCY_GRAPH_TOOL,
     RESOLVE_TASK_FOLLOWUP_TOOL,
 ];
-pub const TASK_READ_ONLY_TOOLS: [&str; 4] = [
+pub const TASK_READ_ONLY_TOOLS: [&str; 5] = [
     LIST_TASKS_TOOL,
     GET_TASK_TOOL,
+    DECIDE_TASK_ROUTE_TOOL,
     WAIT_FOR_TASK_COMPLETION_TOOL,
     GET_TASK_DEPENDENCY_GRAPH_TOOL,
 ];
@@ -93,11 +96,39 @@ pub fn task_model_tools() -> Vec<Value> {
         }),
         json!({
             "type": "function",
+            "name": DECIDE_TASK_ROUTE_TOOL,
+            "description": "Make the Host-auditable routing decision required by an active workflow Plugin before Main Chat completes. Choose durable_task for plans, project investigation, file or command work, implementation, plugins, or tracked execution. Choose direct_response only for work that can be fully answered in Main Chat without a durable Task. This decision is semantic and must never be based on keyword matching. The Host tells you whether durable_task must begin with planning or may execute the confirmed plan.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "route": {
+                        "type": "string",
+                        "enum": ["direct_response", "durable_task"]
+                    },
+                    "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                        "description": "A concise semantic reason grounded in the user's requested outcome. Do not quote secrets or use keyword-match explanations."
+                    }
+                },
+                "required": ["route", "reason"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
             "name": CREATE_TASK_TOOL,
             "description": "Create one coherent durable task for the current conversation/project. Main Chat must first compile the minimum relevant prior context into context_summary and explicitly select any required attachment_refs. The Task cannot inspect Main Chat history or retained Memory. Never dump the whole conversation, embed base64, or copy secrets. Use this only when splitting would not enable useful concurrency, specialization, ownership, or independent acceptance. The Rust Local Agent Host binds, validates, persists, schedules, and writes the result back locally.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "task_kind": {
+                        "type": "string",
+                        "enum": ["planning", "execution"],
+                        "default": "execution",
+                        "description": "Use planning when an active Plugin task policy requires the first research-and-plan Task. The Host applies that Plugin's declared planning template. Use execution only after the required Host-bound plan is confirmed."
+                    },
                     "requirements": task_requirements_schema(),
                     "title": {"type": "string", "minLength": 1},
                     "objective": {"type": "string", "minLength": 1},

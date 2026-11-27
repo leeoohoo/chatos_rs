@@ -74,6 +74,18 @@ extension NativePluginRuntimeTests {
         try FileManager.default.createDirectory(at: ui, withIntermediateDirectories: true)
         try Data("<html><body>Fixture</body></html>".utf8)
             .write(to: ui.appendingPathComponent("index.html"))
+        let hooks = root.appendingPathComponent("hooks", isDirectory: true)
+        try FileManager.default.createDirectory(at: hooks, withIntermediateDirectories: true)
+        let scripts = root.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let hookScript = scripts.appendingPathComponent("fixture-hook.js")
+        try Data("process.stdout.write('{}')\n".utf8).write(to: hookScript)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: hookScript.path
+        )
+        try Data(#"{"schemaVersion":1,"hooks":[{"id":"fixture-hook","events":["SessionStart"],"entrypoint":{"type":"command","command":"scripts/fixture-hook.js","args":[]},"timeoutMs":5000,"maxOutputBytes":4096,"failurePolicy":"continue","workspaceWrite":false}]}"#.utf8)
+            .write(to: hooks.appendingPathComponent("fixture-hooks.json"))
         try Data("""
         {
           "schemaVersion": 3,
@@ -83,6 +95,11 @@ extension NativePluginRuntimeTests {
           "mcpServers": {
             "fixture-mcp": {"type": "stdio", "bin": "fixture", "args": []}
           },
+          "hooks": [{
+            "componentKey": "fixture-hooks",
+            "dialect": "chatos_v1",
+            "source": "hooks/fixture-hooks.json"
+          }],
           "ui": [{
             "componentKey": "fixture-workbench",
             "source": "./ui/index.html",
@@ -136,6 +153,13 @@ extension NativePluginRuntimeTests {
                 lastCheckedAt: "1970-01-01T00:00:00Z"
             ),
             GatewayPluginComponentStatus(
+                componentKey: "fixture-hooks",
+                kind: "hook_set",
+                availabilityStatus: "ready",
+                lastError: nil,
+                lastCheckedAt: "1970-01-01T00:00:00Z"
+            ),
+            GatewayPluginComponentStatus(
                 componentKey: "fixture-workbench",
                 kind: "ui_contribution",
                 availabilityStatus: "ready",
@@ -153,7 +177,8 @@ extension NativePluginRuntimeTests {
         let statuses = try #require(items[0]["component_statuses"] as? [[String: Any]])
         #expect(statuses[0]["kind"] as? String == "skill_collection")
         #expect(statuses[1]["kind"] as? String == "mcp_server")
-        #expect(statuses[2]["kind"] as? String == "ui_contribution")
+        #expect(statuses[2]["kind"] as? String == "hook_set")
+        #expect(statuses[3]["kind"] as? String == "ui_contribution")
     }
 
     @Test("installation status fails closed when a declared Skill is missing")

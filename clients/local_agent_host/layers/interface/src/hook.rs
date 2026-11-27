@@ -8,6 +8,51 @@ use std::collections::HashSet;
 pub const LOCAL_PLUGIN_HOOK_MAX_BUNDLES: usize = 200;
 pub const LOCAL_PLUGIN_HOOK_MAX_DEFINITIONS: usize = 64;
 pub const LOCAL_PLUGIN_HOOK_HISTORY_MAX_PAGE_SIZE: u32 = 100;
+pub const LOCAL_PLUGIN_TASK_POLICY_MAX_BUILTIN_KINDS: usize = 64;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalPluginPlanningTaskTemplate {
+    #[serde(default, alias = "requiredBuiltinKinds")]
+    pub required_builtin_kinds: Vec<String>,
+    #[serde(default, alias = "requiresExecution")]
+    pub requires_execution: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalPluginTaskPolicy {
+    #[serde(alias = "policyId")]
+    pub policy_id: String,
+    #[serde(default, alias = "requireMainChatTaskRoute")]
+    pub require_main_chat_task_route: bool,
+    #[serde(default, alias = "requireConfirmedPlanBeforeExecution")]
+    pub require_confirmed_plan_before_execution: bool,
+    #[serde(alias = "planningTask")]
+    pub planning_task: LocalPluginPlanningTaskTemplate,
+}
+
+impl LocalPluginTaskPolicy {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("task_policy.policy_id", &self.policy_id)?;
+        if self.planning_task.required_builtin_kinds.is_empty()
+            || self.planning_task.required_builtin_kinds.len()
+                > LOCAL_PLUGIN_TASK_POLICY_MAX_BUILTIN_KINDS
+        {
+            return Err(format!(
+                "task_policy.planning_task.required_builtin_kinds must contain 1..={LOCAL_PLUGIN_TASK_POLICY_MAX_BUILTIN_KINDS} entries"
+            ));
+        }
+        let mut kinds = HashSet::new();
+        for kind in &self.planning_task.required_builtin_kinds {
+            validate_identifier("task_policy required builtin kind", kind)?;
+            if !kinds.insert(kind.as_str()) {
+                return Err(format!(
+                    "task_policy.planning_task.required_builtin_kinds contains duplicate: {kind}"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalPluginHookDefinition {
@@ -72,6 +117,8 @@ pub struct LocalPluginHookBundleSpec {
     pub installation_root: String,
     #[serde(default)]
     pub permissions: Vec<String>,
+    #[serde(default)]
+    pub task_policy: Option<LocalPluginTaskPolicy>,
     pub hooks: Vec<LocalPluginHookDefinition>,
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -119,6 +166,9 @@ impl LocalPluginHookBundleSpec {
         }
         if self.permissions.len() > 256 {
             return Err("permissions must contain at most 256 entries".to_string());
+        }
+        if let Some(policy) = &self.task_policy {
+            policy.validate()?;
         }
         let mut permissions = HashSet::with_capacity(self.permissions.len());
         for permission in &self.permissions {
@@ -365,6 +415,32 @@ mod tests {
         assert!(command.validate().is_err());
     }
 
+    #[test]
+    fn task_policy_is_bounded_and_part_of_trusted_bundle_validation() {
+        let mut bundle = fixture();
+        bundle.task_policy = Some(LocalPluginTaskPolicy {
+            policy_id: "plan-first".to_string(),
+            require_main_chat_task_route: true,
+            require_confirmed_plan_before_execution: true,
+            planning_task: LocalPluginPlanningTaskTemplate {
+                required_builtin_kinds: vec![
+                    "AskUser".to_string(),
+                    "RequirementSurveyWrite".to_string(),
+                ],
+                requires_execution: true,
+            },
+        });
+        bundle.validate().expect("valid task policy");
+        bundle
+            .task_policy
+            .as_mut()
+            .expect("task policy")
+            .planning_task
+            .required_builtin_kinds
+            .push("AskUser".to_string());
+        assert!(bundle.validate().is_err());
+    }
+
     fn fixture() -> LocalPluginHookBundleSpec {
         LocalPluginHookBundleSpec {
             bundle_id: "bundle-1".to_string(),
@@ -380,6 +456,7 @@ mod tests {
             runner_policy_version: 1,
             installation_root: "/plugins/plugin-1".to_string(),
             permissions: vec!["process.spawn".to_string()],
+            task_policy: None,
             hooks: vec![LocalPluginHookDefinition {
                 hook_id: "hook-1".to_string(),
                 event: "SessionStart".to_string(),

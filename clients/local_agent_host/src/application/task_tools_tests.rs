@@ -2,8 +2,10 @@ use super::*;
 use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
     CreateRunCommand, LocalAgentToolStatus, LocalCapabilityPolicySnapshot,
-    LocalModelConfigSnapshot, LocalTaskStatus, PutCapabilityPolicySnapshotCommand,
-    PutModelConfigSnapshotCommand,
+    LocalModelConfigSnapshot, LocalPluginHookBundleSpec, LocalPluginHookDefinition,
+    LocalPluginPlanningTaskTemplate, LocalPluginTaskPolicy, LocalTaskStatus,
+    PutCapabilityPolicySnapshotCommand, PutModelConfigSnapshotCommand, PutPluginHookBundleCommand,
+    SetActivePluginHookBundlesCommand,
 };
 
 pub(super) async fn runtime_with_parent() -> Arc<LocalAgentRuntime> {
@@ -70,6 +72,68 @@ async fn initialize_parent(
         .await
         .expect("create parent");
     runtime
+}
+
+async fn install_plan_first_policy(runtime: &LocalAgentRuntime, activate: bool) {
+    let bundle = LocalPluginHookBundleSpec {
+        bundle_id: "workflow-policy-bundle".into(),
+        owner_user_id: "user-1".into(),
+        plugin_id: "workflow-policy-fixture".into(),
+        release_id: "release-1".into(),
+        component_key: "lifecycle-hooks".into(),
+        artifact_sha256: "a".repeat(64),
+        content_sha256: "b".repeat(64),
+        normalized_hook_sha256: "c".repeat(64),
+        command_sha256: "d".repeat(64),
+        permission_snapshot_sha256: "e".repeat(64),
+        runner_policy_version: 1,
+        installation_root: "/tmp/workflow-policy-fixture".into(),
+        permissions: Vec::new(),
+        task_policy: Some(LocalPluginTaskPolicy {
+            policy_id: "plan-first".into(),
+            require_main_chat_task_route: true,
+            require_confirmed_plan_before_execution: true,
+            planning_task: LocalPluginPlanningTaskTemplate {
+                required_builtin_kinds: vec![
+                    "CodeMaintainerRead".into(),
+                    "AskUser".into(),
+                    "RequirementSurveyRead".into(),
+                    "RequirementSurveyWrite".into(),
+                ],
+                requires_execution: true,
+            },
+        }),
+        hooks: vec![LocalPluginHookDefinition {
+            hook_id: "workflow-policy-session".into(),
+            event: "SessionStart".into(),
+            matcher: None,
+            command: "node workflow-policy.js".into(),
+            is_async: false,
+            timeout_ms: 1_000,
+            additional_context_limit: 4_096,
+        }],
+        enabled: true,
+        trusted_at_unix_ms: 1,
+    };
+    runtime
+        .try_handle(envelope(
+            "put-workflow-policy".into(),
+            HostCommand::PutPluginHookBundle(PutPluginHookBundleCommand { bundle }),
+        ))
+        .await
+        .unwrap();
+    if activate {
+        runtime
+            .try_handle(envelope(
+                "activate-workflow-policy".into(),
+                HostCommand::SetActivePluginHookBundles(SetActivePluginHookBundlesCommand {
+                    owner_user_id: "user-1".into(),
+                    bundle_ids: vec!["workflow-policy-bundle".into()],
+                }),
+            ))
+            .await
+            .unwrap();
+    }
 }
 
 pub(super) fn invocation(mut arguments: Value) -> LocalAgentToolInvocationRecord {
@@ -144,6 +208,99 @@ fn add_requirement_markers(value: Option<&mut Value>) {
             *entry = json!(format!("[R1] {text}"));
         }
     }
+}
+
+#[tokio::test]
+async fn manifest_task_policy_requires_planning_first_and_applies_declared_template() {
+    let runtime = runtime_with_parent().await;
+    install_plan_first_policy(&runtime, true).await;
+    let executor = LocalTaskToolExecutor::new(runtime.clone(), "user-1").unwrap();
+    let execution = json!({
+        "title": "Implement",
+        "objective": "Implement the requested change",
+        "expected_outputs": ["Implementation"],
+        "acceptance_criteria": ["The requested behavior works"],
+        "requires_execution": true,
+        "enabled_builtin_kinds": ["CodeMaintainerWrite"]
+    });
+    let mut call = invocation(execution);
+    call.tool_name = CREATE_TASK_TOOL.into();
+    let error = preparation_error(executor.execute_tool(&call).await.unwrap());
+    assert!(error.contains("requires a planning Task"));
+
+    let planning = json!({
+        "task_kind": "planning",
+        "title": "Research and plan",
+        "objective": "Inspect the project and publish an implementation plan",
+        "expected_outputs": ["Evidence-backed plan"],
+        "acceptance_criteria": ["The plan covers the requested behavior"],
+        "requires_execution": false,
+        "enabled_builtin_kinds": []
+    });
+    let mut call = invocation(planning);
+    call.tool_name = CREATE_TASK_TOOL.into();
+    assert!(matches!(
+        executor.execute_tool(&call).await.unwrap(),
+        LocalAgentToolOutcome::Succeeded { .. }
+    ));
+    let graph = runtime
+        .task_graph_by_id("user-1", "local-task-graph-invocation-1")
+        .await
+        .unwrap()
+        .unwrap();
+    let input = &graph.tasks[0].input;
+    assert_eq!(input["task_kind"], "planning");
+    assert_eq!(input["tool_options"]["requires_execution"], true);
+    let kinds = input["tool_options"]["enabled_builtin_kinds"]
+        .as_array()
+        .unwrap();
+    for required in [
+        "CodeMaintainerRead",
+        "RequirementSurveyRead",
+        "RequirementSurveyWrite",
+    ] {
+        assert!(kinds.iter().any(|kind| kind == required));
+    }
+    assert!(!kinds.iter().any(|kind| kind == "AskUser"));
+}
+
+#[tokio::test]
+async fn task_route_is_a_structured_policy_decision_not_a_keyword_match() {
+    let runtime = runtime_with_parent().await;
+    install_plan_first_policy(&runtime, true).await;
+    let executor = LocalTaskToolExecutor::new(runtime, "user-1").unwrap();
+    let mut call = invocation(json!({
+        "route": "durable_task",
+        "reason": "The outcome requires project inspection and a persisted implementation plan"
+    }));
+    call.tool_name = DECIDE_TASK_ROUTE_TOOL.into();
+
+    let LocalAgentToolOutcome::Succeeded { output } = executor.execute_tool(&call).await.unwrap()
+    else {
+        panic!("route decision should succeed")
+    };
+    assert_eq!(output["route"], "durable_task");
+    assert_eq!(output["next_action"], "create_exactly_one_planning_task");
+}
+
+#[tokio::test]
+async fn installed_but_inactive_plugin_task_policy_does_not_change_task_creation() {
+    let runtime = runtime_with_parent().await;
+    install_plan_first_policy(&runtime, false).await;
+    let executor = LocalTaskToolExecutor::new(runtime, "user-1").unwrap();
+    let mut call = invocation(json!({
+        "title": "Inspect",
+        "objective": "Inspect the requested behavior",
+        "expected_outputs": ["Inspection report"],
+        "acceptance_criteria": ["Report cites observed evidence"],
+        "requires_execution": false,
+        "enabled_builtin_kinds": ["CodeMaintainerRead"]
+    }));
+    call.tool_name = CREATE_TASK_TOOL.into();
+    assert!(matches!(
+        executor.execute_tool(&call).await.unwrap(),
+        LocalAgentToolOutcome::Succeeded { .. }
+    ));
 }
 
 #[tokio::test]
@@ -438,6 +595,14 @@ async fn single_writer_ownership_is_persisted_and_uses_shared_runtime_scope() {
         Some(vec!["src/config.ts".into()])
     );
     let tools = task_model_tools();
+    let create = tools
+        .iter()
+        .find(|tool| tool["name"] == CREATE_TASK_TOOL)
+        .expect("create_task definition");
+    let create_many = tools
+        .iter()
+        .find(|tool| tool["name"] == CREATE_TASKS_TOOL)
+        .expect("create_tasks definition");
     assert_eq!(graph.tasks[0].input["acceptance_report_version"], 1);
     assert_eq!(
         graph.tasks[0].input["requirements"][0]["source_message_id"],
@@ -445,18 +610,18 @@ async fn single_writer_ownership_is_persisted_and_uses_shared_runtime_scope() {
     );
     assert_eq!(graph.tasks[0].input["final_response_max_chars"], 400);
     assert!(
-        tools[2]["parameters"]["properties"]["requirements"]["items"]["properties"]
+        create["parameters"]["properties"]["requirements"]["items"]["properties"]
             .get("source_message_id")
             .is_none()
     );
     assert_eq!(
-        tools[2]["parameters"]["properties"]["final_response_max_chars"],
-        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]
+        create["parameters"]["properties"]["final_response_max_chars"],
+        create_many["parameters"]["properties"]["tasks"]["items"]["properties"]
             ["final_response_max_chars"]
     );
     assert_eq!(
-        tools[2]["parameters"]["properties"]["owned_paths"],
-        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]["owned_paths"]
+        create["parameters"]["properties"]["owned_paths"],
+        create_many["parameters"]["properties"]["tasks"]["items"]["properties"]["owned_paths"]
     );
 }
 
@@ -1162,27 +1327,46 @@ fn task_model_definitions_are_host_owned_and_closed() {
     assert!(tools
         .iter()
         .all(|tool| tool["parameters"]["additionalProperties"] == false));
+    let create = tools
+        .iter()
+        .find(|tool| tool["name"] == CREATE_TASK_TOOL)
+        .expect("create_task definition");
+    let create_many = tools
+        .iter()
+        .find(|tool| tool["name"] == CREATE_TASKS_TOOL)
+        .expect("create_tasks definition");
+    let route = tools
+        .iter()
+        .find(|tool| tool["name"] == DECIDE_TASK_ROUTE_TOOL)
+        .expect("route definition");
     assert_eq!(
-        tools[3]["parameters"]["properties"]["tasks"]["maxItems"],
+        route["parameters"]["properties"]["route"]["enum"],
+        json!(["direct_response", "durable_task"])
+    );
+    assert_eq!(
+        create_many["parameters"]["properties"]["tasks"]["maxItems"],
         50
     );
-    assert_eq!(tools[3]["parameters"]["properties"]["tasks"]["minItems"], 2);
     assert_eq!(
-        tools[2]["parameters"]["properties"]["verification_contract"],
-        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]
+        create_many["parameters"]["properties"]["tasks"]["minItems"],
+        2
+    );
+    assert_eq!(
+        create["parameters"]["properties"]["verification_contract"],
+        create_many["parameters"]["properties"]["tasks"]["items"]["properties"]
             ["verification_contract"]
     );
     assert_eq!(
-        tools[2]["parameters"]["properties"]["verification_contract"]["properties"]["checks"]
+        create["parameters"]["properties"]["verification_contract"]["properties"]["checks"]
             ["maxItems"],
         50
     );
     assert_eq!(
-        tools[3]["parameters"]["properties"]["tasks"]["items"]["additionalProperties"],
+        create_many["parameters"]["properties"]["tasks"]["items"]["additionalProperties"],
         false
     );
     assert_eq!(
-        tools[3]["parameters"]["required"],
+        create_many["parameters"]["required"],
         json!([
             "requirements",
             "graph_goal",
@@ -1191,7 +1375,7 @@ fn task_model_definitions_are_host_owned_and_closed() {
         ])
     );
     assert_eq!(
-        tools[3]["parameters"]["properties"]["tasks"]["items"]["required"],
+        create_many["parameters"]["properties"]["tasks"]["items"]["required"],
         json!([
             "client_ref",
             "title",
@@ -1206,60 +1390,60 @@ fn task_model_definitions_are_host_owned_and_closed() {
         ])
     );
     assert_eq!(
-        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]["context_refs"]
+        create_many["parameters"]["properties"]["tasks"]["items"]["properties"]["context_refs"]
             ["uniqueItems"],
         true
     );
-    let requirement_refs_description = tools[3]["parameters"]["properties"]["tasks"]["items"]
+    let requirement_refs_description = create_many["parameters"]["properties"]["tasks"]["items"]
         ["properties"]["requirement_refs"]["description"]
         .as_str()
         .expect("requirement_refs description");
     assert!(requirement_refs_description.contains("diagnosis evidence"));
     assert!(requirement_refs_description.contains("does not change this Task's objective"));
     assert!(requirement_refs_description.contains("execution Task with write capability"));
-    assert!(tools[3]["description"]
+    assert!(create_many["description"]
         .as_str()
         .expect("create graph description")
         .contains("independent Tasks must not wait"));
     assert!(
-        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]["prerequisite_refs"]
-            ["description"]
+        create_many["parameters"]["properties"]["tasks"]["items"]["properties"]
+            ["prerequisite_refs"]["description"]
             .as_str()
             .expect("hard prerequisite description")
             .contains("Hard scheduling gates")
     );
     assert!(
-        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]["context_refs"]
+        create_many["parameters"]["properties"]["tasks"]["items"]["properties"]["context_refs"]
             ["description"]
             .as_str()
             .expect("context reference description")
             .contains("never delay scheduling")
     );
     assert_eq!(
-        tools[3]["parameters"]["properties"]["notification_policy"]["default"],
+        create_many["parameters"]["properties"]["notification_policy"]["default"],
         "progress_summary"
     );
     assert_eq!(
-        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]
+        create_many["parameters"]["properties"]["tasks"]["items"]["properties"]
             ["notification_milestone"]["type"],
         "boolean"
     );
     assert_eq!(
-        tools[2]["parameters"]["properties"]["thinking_level"]["enum"],
+        create["parameters"]["properties"]["thinking_level"]["enum"],
         json!(["none", "auto", "minimal", "low", "medium", "high", "xhigh", "max"])
     );
     assert_eq!(
-        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]["thinking_level"]
+        create_many["parameters"]["properties"]["tasks"]["items"]["properties"]["thinking_level"]
             ["type"],
         "string"
     );
-    assert!(tools[2]["description"]
+    assert!(create["description"]
         .as_str()
         .expect("create task description")
         .contains("splitting would not enable useful concurrency"));
     for supersedes in [
-        &tools[2]["parameters"]["properties"]["supersedes_task_ids"],
-        &tools[3]["parameters"]["properties"]["supersedes_task_ids"],
+        &create["parameters"]["properties"]["supersedes_task_ids"],
+        &create_many["parameters"]["properties"]["supersedes_task_ids"],
     ] {
         let description = supersedes["description"]
             .as_str()
@@ -1270,7 +1454,7 @@ fn task_model_definitions_are_host_owned_and_closed() {
     }
     assert!(names.iter().all(|name| !name.starts_with("notepad_")));
     assert_eq!(
-        tools[2]["parameters"]["required"],
+        create["parameters"]["required"],
         json!([
             "requirements",
             "title",

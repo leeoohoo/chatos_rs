@@ -19,6 +19,7 @@ pub const PLUGIN_HOOK_MAX_OUTPUT_BYTES: usize = 256 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum PluginHookEvent {
     SessionStart,
+    UserPromptSubmit,
     BeforePluginPrepare,
     PreToolUse,
     PostToolUse,
@@ -31,6 +32,7 @@ impl PluginHookEvent {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::SessionStart => "SessionStart",
+            Self::UserPromptSubmit => "UserPromptSubmit",
             Self::BeforePluginPrepare => "BeforePluginPrepare",
             Self::PreToolUse => "PreToolUse",
             Self::PostToolUse => "PostToolUse",
@@ -207,10 +209,10 @@ pub fn validate_plugin_hook_set(hook_set: &PluginHookSet) -> Result<(), PluginHo
         if !ids.insert(hook.id.as_str()) {
             return invalid(format!("{field}.id"), "duplicate Hook id");
         }
-        if hook.events.is_empty() || hook.events.len() > 7 {
+        if hook.events.is_empty() || hook.events.len() > 8 {
             return invalid(
                 format!("{field}.events"),
-                "must contain between 1 and 7 supported lifecycle events",
+                "must contain between 1 and 8 supported lifecycle events",
             );
         }
         if hook.events.windows(2).any(|events| events[0] == events[1]) {
@@ -409,5 +411,25 @@ mod tests {
             )
             .replace("./scripts/audit", "./audit");
         assert!(parse_plugin_hook_set(outside.as_str()).is_err());
+    }
+
+    #[test]
+    fn bundled_plan_loop_uses_native_prompt_hooks() {
+        let hook_set = parse_plugin_hook_set(include_str!(
+            "../../../../plugins/plan-loop/hooks/plan-loop-hooks.json"
+        ))
+        .expect("Plan Loop native Hook set");
+        assert_eq!(hook_set.hooks.len(), 1);
+        assert_eq!(
+            hook_set.hooks[0].events,
+            [
+                PluginHookEvent::SessionStart,
+                PluginHookEvent::UserPromptSubmit
+            ]
+        );
+        assert_eq!(
+            hook_set.hooks[0].entrypoint.command().path,
+            "./scripts/plan-loop-context.js"
+        );
     }
 }

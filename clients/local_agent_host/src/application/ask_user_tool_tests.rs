@@ -219,3 +219,15 @@ fn ask_user_is_a_supported_task_capability_and_has_three_tools() {
     );
     assert_eq!(ask_user_model_tools().len(), 3);
 }
+
+#[test]
+fn requirement_survey_write_replaces_generic_ask_user() {
+    let kinds = super::task_tool_support::validated_builtin_kinds(
+        true,
+        vec!["AskUser".to_string(), "RequirementSurveyWrite".to_string()],
+    )
+    .expect("valid survey capability set");
+    assert!(!kinds.iter().any(|kind| kind == "AskUser"));
+    assert!(kinds.iter().any(|kind| kind == "RequirementSurveyRead"));
+    assert!(kinds.iter().any(|kind| kind == "RequirementSurveyWrite"));
+}

@@ -73,4 +73,17 @@ impl LocalAgentRuntime {
             .successful_tool_invocation_count(run_id, tool_name)
             .await?)
     }
+
+    #[doc(hidden)]
+    pub async fn successful_tool_invocations_for_run_for_host_worker(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        tool_name: &str,
+    ) -> Result<Vec<LocalAgentToolInvocationRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .successful_tool_invocations_for_run(owner_user_id, run_id, tool_name)
+            .await?)
+    }
 }

@@ -196,6 +196,43 @@ fn rejects_old_schema_versions() {
 }
 
 #[test]
+fn accepts_and_normalizes_declarative_task_policy() {
+    let manifest = parse_plugin_manifest(
+        r#"{
+          "schemaVersion":3,
+          "name":"workflow-fixture",
+          "version":"1.0.0",
+          "description":"Workflow fixture",
+          "author":{"name":"Fixture"},
+          "skills":"./skills",
+          "workflow":{"taskPolicy":{
+            "policyId":" plan-first ",
+            "requireMainChatTaskRoute":true,
+            "requireConfirmedPlanBeforeExecution":true,
+            "planningTask":{
+              "requiresExecution":true,
+              "requiredBuiltinKinds":["RequirementSurveyWrite","AskUser","AskUser"]
+            }
+          }},
+          "interface":{"displayName":"Workflow","shortDescription":"Workflow","longDescription":"Workflow fixture","developerName":"Fixture","category":"Developer Tools"}
+        }"#,
+    )
+    .expect("task policy manifest");
+    let policy = manifest
+        .workflow
+        .and_then(|workflow| workflow.task_policy)
+        .expect("task policy");
+    assert_eq!(policy.policy_id, "plan-first");
+    assert!(policy.require_main_chat_task_route);
+    assert_eq!(
+        policy.planning_task.required_builtin_kinds,
+        ["AskUser", "RequirementSurveyWrite"]
+    );
+    assert!(policy.require_confirmed_plan_before_execution);
+    assert!(policy.planning_task.requires_execution);
+}
+
+#[test]
 fn parses_workbench_ui_with_local_http_runtime() {
     let raw = json!({
         "schemaVersion": 3,

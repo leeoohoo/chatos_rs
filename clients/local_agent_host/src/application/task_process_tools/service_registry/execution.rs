@@ -122,6 +122,43 @@ impl LocalToolExecutor for LocalTaskProcessToolExecutor {
                         &run.input,
                     ));
                 }
+                if let Err(error) =
+                    validate_blocker(&run.input, args.result_status, args.blocker.as_ref())
+                {
+                    return Ok(rejected_outcome_report(error, &run.input));
+                }
+                if let Some(blocker) = args.blocker.as_ref() {
+                    match blocker.classification {
+                        BlockerClassification::HandledLocally => {
+                            return Ok(continue_outcome_report(
+                                blocker,
+                                "The issue is already handled locally. Continue the Task and report a terminal outcome only after completing the remaining acceptance work.",
+                            ));
+                        }
+                        BlockerClassification::RetryWithChangedMethod => {
+                            if self.recovery_method_already_tried(&run, blocker).await? {
+                                return Ok(rejected_outcome_report(
+                                    "This failure_fingerprint and next_method were already tried without resolving the Task. Do not repeat them; choose a new safe method or report replan_required."
+                                        .into(),
+                                    &run.input,
+                                ));
+                            }
+                            return Ok(continue_outcome_report(
+                                blocker,
+                                "Continue this same Task with next_method. Do not repeat previous_method, and record the changed approach plus new evidence before reporting again.",
+                            ));
+                        }
+                        BlockerClassification::UnknownSideEffectsNeedsReview => {
+                            return Ok(rejected_outcome_report(
+                                "Only the Host may place a Run in needs_review after observing an external side effect with an unknown result. Inspect the durable tool result; do not claim this state or replay the operation."
+                                    .into(),
+                                &run.input,
+                            ));
+                        }
+                        BlockerClassification::ReplanRequired
+                        | BlockerClassification::UserActionRequired => {}
+                    }
+                }
                 let result_status = match args.result_status {
                     ReportedResultStatus::Succeeded => "succeeded",
                     ReportedResultStatus::Failed => "failed",
@@ -141,12 +178,141 @@ impl LocalToolExecutor for LocalTaskProcessToolExecutor {
                     "final_response_chars": args.final_response.as_ref().map(|text| text.chars().count()),
                     "final_response": args.final_response,
                     "verification_report": args.verification_report,
+                    "blocker": args.blocker,
                     "acceptance_report_version": run.input.get("acceptance_report_version")
                 })
             }
             tool_name => return Err(format!("unsupported Task process tool: {tool_name}")),
         };
         Ok(LocalAgentToolOutcome::Succeeded { output })
+    }
+}
+
+fn validate_blocker(
+    input: &Value,
+    result_status: ReportedResultStatus,
+    blocker: Option<&BlockerReport>,
+) -> Result<(), String> {
+    if matches!(result_status, ReportedResultStatus::Blocked)
+        && input.get("requirement_plan").is_some()
+        && blocker.is_none()
+    {
+        return Err(
+            "Plan-bound blocked outcomes require a structured blocker classification".into(),
+        );
+    }
+    let Some(blocker) = blocker else {
+        return Ok(());
+    };
+    let evidence = blocker.evidence.trim();
+    if evidence.is_empty() || evidence.chars().count() > 2_000 {
+        return Err("blocker evidence must contain 1..=2000 characters".into());
+    }
+    let bounded = |name: &str, value: Option<&String>| -> Result<(), String> {
+        if value.is_some_and(|value| {
+            let value = value.trim();
+            value.is_empty() || value.chars().count() > 1_000
+        }) {
+            return Err(format!("blocker {name} must contain 1..=1000 characters"));
+        }
+        Ok(())
+    };
+    bounded("failure_fingerprint", blocker.failure_fingerprint.as_ref())?;
+    bounded("previous_method", blocker.previous_method.as_ref())?;
+    bounded("next_method", blocker.next_method.as_ref())?;
+    bounded("user_question", blocker.user_question.as_ref())?;
+    match blocker.classification {
+        BlockerClassification::HandledLocally => {
+            if matches!(result_status, ReportedResultStatus::Blocked) {
+                return Err("handled_locally cannot be reported as blocked".into());
+            }
+        }
+        BlockerClassification::RetryWithChangedMethod => {
+            blocker
+                .failure_fingerprint
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or("retry_with_changed_method requires failure_fingerprint")?;
+            let previous = blocker
+                .previous_method
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or("retry_with_changed_method requires previous_method")?;
+            let next = blocker
+                .next_method
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or("retry_with_changed_method requires next_method")?;
+            if previous == next {
+                return Err(
+                    "retry_with_changed_method requires a materially different next_method".into(),
+                );
+            }
+        }
+        BlockerClassification::ReplanRequired => {
+            if !matches!(result_status, ReportedResultStatus::Blocked) {
+                return Err("replan_required must use result_status=blocked".into());
+            }
+            if blocker.affected_task_ids.is_empty() {
+                return Err("replan_required requires affected_task_ids".into());
+            }
+            for task_id in &blocker.affected_task_ids {
+                let task_id = task_id.trim();
+                if task_id.is_empty() || task_id.chars().count() > 256 {
+                    return Err("affected_task_ids must contain 1..=256 character IDs".into());
+                }
+            }
+        }
+        BlockerClassification::UserActionRequired => {
+            let planning_uses_requirement_survey = input.get("task_kind").and_then(Value::as_str)
+                == Some("planning")
+                && input
+                    .pointer("/tool_options/enabled_builtin_kinds")
+                    .and_then(Value::as_array)
+                    .is_some_and(|kinds| {
+                        kinds
+                            .iter()
+                            .any(|kind| kind.as_str() == Some("RequirementSurveyWrite"))
+                    });
+            if planning_uses_requirement_survey {
+                return Err(
+                    "A planning Task with Requirement Survey cannot stop as user_action_required. Ask genuine product questions through requirement_survey_create; classify unavailable or inconsistent Task capabilities as replan_required."
+                        .into(),
+                );
+            }
+            if !matches!(result_status, ReportedResultStatus::Blocked) {
+                return Err("user_action_required must use result_status=blocked".into());
+            }
+            if blocker
+                .user_question
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err("user_action_required requires one concrete user_question".into());
+            }
+        }
+        BlockerClassification::UnknownSideEffectsNeedsReview => {}
+    }
+    Ok(())
+}
+
+fn continue_outcome_report(blocker: &BlockerReport, guidance: &str) -> LocalAgentToolOutcome {
+    LocalAgentToolOutcome::Succeeded {
+        output: json!({
+            "phase": "task_blocker_recovery",
+            "reported": false,
+            "retryable": true,
+            "classification": blocker.classification.as_str(),
+            "failure_fingerprint": blocker.failure_fingerprint,
+            "previous_method": blocker.previous_method,
+            "next_method": blocker.next_method,
+            "guidance": guidance,
+        }),
     }
 }
 

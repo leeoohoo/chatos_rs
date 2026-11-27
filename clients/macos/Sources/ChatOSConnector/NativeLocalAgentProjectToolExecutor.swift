@@ -121,6 +121,12 @@ struct NativeLocalAgentTaskToolAuthorization: Sendable {
         if requiresExecution, enabledBuiltinKinds.contains("TerminalController") {
             capabilities.insert(.terminal)
         }
+        if enabledBuiltinKinds.contains("RequirementSurveyRead") {
+            capabilities.insert(.requirementSurveyRead)
+        }
+        if requiresExecution, enabledBuiltinKinds.contains("RequirementSurveyWrite") {
+            capabilities.insert(.requirementSurveyWrite)
+        }
         return capabilities
     }
 

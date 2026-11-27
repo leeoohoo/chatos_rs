@@ -1,0 +1,14 @@
+{
+  "name": "@chatos/plan-loop",
+  "version": "0.1.4",
+  "description": "Plan-first task orchestration with requirement discovery and autonomous blocker recovery.",
+  "license": "Apache-2.0",
+  "files": [
+    ".codex-plugin/",
+    "chatos.plugin.json",
+    "hooks/",
+    "scripts/",
+    "skills/",
+    "README.md"
+  ]
+}

@@ -239,6 +239,12 @@ impl LocalHookCoordinator {
         let LocalAgentStepOutcome::Succeed { output } = outcome else {
             return Ok(outcome);
         };
+        if let Some(gated) = self
+            .gate_workflow_completion(claim, &output)
+            .await?
+        {
+            return Ok(gated);
+        }
         let event_type =
             if self.is_delegated_task(&claim.run).await? || is_team_executor_run(&claim.run) {
                 "SubagentStop"
@@ -336,6 +342,135 @@ impl LocalHookCoordinator {
                 }
             }),
         })
+    }
+
+    async fn gate_workflow_completion(
+        &self,
+        claim: &LocalAgentRunClaim,
+        output: &Value,
+    ) -> Result<Option<LocalAgentStepOutcome>, String> {
+        if claim.run.profile_key == TASK_EXECUTION_PROFILE_KEY
+            && claim.run.owner_entity_type == "task"
+            && claim.run.input.get("task_kind").and_then(Value::as_str) == Some("planning")
+        {
+            let saved = self
+                .runtime
+                .successful_tool_invocation_count_for_host_worker(
+                    &claim.run.run_id,
+                    LOCAL_REQUIREMENT_PLAN_SAVE_TOOL_NAME,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            if saved == 0 {
+                return Ok(Some(workflow_completion_continuation(
+                    output,
+                    "planning_task_requires_plan",
+                    "This planning Task cannot finish with questions or prose alone. If a missing human product decision materially changes the plan, call requirement_survey_create and let the same Run resume after submission. Otherwise publish the complete proposal with requirement_plan_save, then finish with that same proposal. Never ask the user to reply in ordinary chat.",
+                )));
+            }
+            return Ok(None);
+        }
+
+        if claim.run.profile_key != MAIN_CHAT_PROFILE_KEY
+            || claim.run.owner_entity_type != "conversation_turn"
+        {
+            return Ok(None);
+        }
+        let policies = self
+            .runtime
+            .active_plugin_hook_bundles_for_host_worker(&claim.run.owner_user_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|bundle| bundle.spec.enabled)
+            .filter_map(|bundle| bundle.spec.task_policy)
+            .collect::<Vec<_>>();
+        if !policies
+            .iter()
+            .any(|policy| policy.require_main_chat_task_route)
+        {
+            return Ok(None);
+        }
+
+        let has_confirmed_plan = claim
+            .run
+            .input
+            .pointer("/requirement_plan/confirmed_at_unix_ms")
+            .is_some_and(|value| !value.is_null());
+        let requires_planning = !has_confirmed_plan
+            && policies
+                .iter()
+                .any(|policy| policy.require_confirmed_plan_before_execution);
+        let single_tasks = self
+            .runtime
+            .successful_tool_invocations_for_run_for_host_worker(
+                &claim.run.owner_user_id,
+                &claim.run.run_id,
+                CREATE_TASK_TOOL,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let created_expected_task = if requires_planning {
+            single_tasks.iter().any(|record| {
+                record.arguments.get("task_kind").and_then(Value::as_str) == Some("planning")
+            })
+        } else {
+            let created_single_execution = single_tasks.iter().any(|record| {
+                record.arguments.get("task_kind").and_then(Value::as_str) != Some("planning")
+            });
+            let created_batch = self
+                .runtime
+                .successful_tool_invocation_count_for_host_worker(
+                    &claim.run.run_id,
+                    CREATE_TASKS_TOOL,
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                > 0;
+            created_single_execution || created_batch
+        };
+        if created_expected_task {
+            return Ok(None);
+        }
+
+        let routes = self
+            .runtime
+            .successful_tool_invocations_for_run_for_host_worker(
+                &claim.run.owner_user_id,
+                &claim.run.run_id,
+                DECIDE_TASK_ROUTE_TOOL,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let route = routes
+            .first()
+            .and_then(|record| record.arguments.get("route"))
+            .and_then(Value::as_str);
+        if route == Some("direct_response") {
+            return Ok(None);
+        }
+
+        let (reason, guidance) = if route == Some("durable_task") {
+            if requires_planning {
+                (
+                    "planning_task_creation_required",
+                    "The Run declared durable_task under an active plan-first policy. Activate the task orchestration Skill, then create exactly one task_kind=planning Task. The Host supplies its Requirement Survey capabilities. Do not answer or ask product questions in Main Chat.",
+                )
+            } else {
+                (
+                    "execution_task_creation_required",
+                    "The Run declared durable_task and already has a confirmed requirement plan. Activate the task orchestration Skill and create the execution Task or Task graph bound to that plan before finishing.",
+                )
+            }
+        } else {
+            (
+                "task_route_decision_required",
+                "An active workflow Plugin requires an auditable semantic route before Main Chat can finish. Call decide_task_route exactly once. Choose direct_response only when the request can be fully answered without durable Task work; choose durable_task for plans, project investigation, files, commands, implementation, plugins, or tracked execution. Never decide by keyword matching. If durable_task is selected, follow the Host-provided next_action before finishing.",
+            )
+        };
+        Ok(Some(workflow_completion_continuation(
+            output, reason, guidance,
+        )))
     }
 
     async fn gate_tool_call(
@@ -441,5 +576,28 @@ impl LocalHookCoordinator {
             }
         }
         Ok(None)
+    }
+}
+
+fn workflow_completion_continuation(
+    output: &Value,
+    reason: &str,
+    guidance: &str,
+) -> LocalAgentStepOutcome {
+    LocalAgentStepOutcome::Continue {
+        checkpoint: json!({
+            "response": output,
+            "continuation": {
+                "reason": reason,
+                "input_items": [message_item(
+                    "user",
+                    Value::String(json!({
+                        "type": "host_workflow_completion_gate",
+                        "completion_allowed": false,
+                        "guidance": guidance,
+                    }).to_string()),
+                )]
+            }
+        }),
     }
 }

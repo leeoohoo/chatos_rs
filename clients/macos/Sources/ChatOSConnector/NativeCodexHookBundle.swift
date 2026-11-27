@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-struct NativeCodexHookDefinition: Codable, Sendable, Equatable {
+struct NativePluginHookDefinition: Codable, Sendable, Equatable {
     var id: String
     var event: String
     var matcher: String?
@@ -64,11 +64,13 @@ struct NativePluginHookTrustRecord: Codable, Sendable, Equatable {
     var runnerPolicyVersion: UInt32
     var installationRoot: String
     var permissions: [String]
-    var hooks: [NativeCodexHookDefinition]
+    var taskPolicy: NativePluginManifest.TaskPolicy?
+    var hooks: [NativePluginHookDefinition]
     var trustedAtUnixMs: Int64
 
     private enum CodingKeys: String, CodingKey {
         case hooks, permissions
+        case taskPolicy = "task_policy"
         case bundleID = "bundle_id"
         case ownerUserID = "owner_user_id"
         case pluginID = "plugin_id"
@@ -85,8 +87,8 @@ struct NativePluginHookTrustRecord: Codable, Sendable, Equatable {
     }
 }
 
-struct NativeCodexHookBundle: Sendable, Equatable {
-    var hooks: [NativeCodexHookDefinition]
+struct NativePluginHookBundle: Sendable, Equatable {
+    var hooks: [NativePluginHookDefinition]
     var contentSHA256: String
     var normalizedSHA256: String
 
@@ -104,6 +106,267 @@ struct NativeCodexHookBundle: Sendable, Equatable {
             }
         }
         return result.sorted()
+    }
+}
+
+enum NativePluginHookBundleParser {
+    static func load(
+        contribution: NativePluginManifest.HookContribution,
+        installationRoot: URL
+    ) throws -> NativePluginHookBundle {
+        switch contribution.dialect.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "chatos_v1":
+            return try NativeChatOSHookBundleParser.load(
+                contribution: contribution,
+                installationRoot: installationRoot
+            )
+        case "codex":
+            return try NativeCodexHookBundleParser.load(
+                contribution: contribution,
+                installationRoot: installationRoot
+            )
+        default:
+            throw NativeConnectorError.pluginInstallation(
+                "Hook \(contribution.componentKey) 使用未知 dialect：\(contribution.dialect)"
+            )
+        }
+    }
+}
+
+private struct NativeChatOSHookSet: Decodable {
+    struct Matcher: Decodable {
+        var toolNames: [String] = []
+        var toolKinds: [String] = []
+        var agentKeys: [String] = []
+        var componentKeys: [String] = []
+        var outcomes: [String] = []
+
+        var isEmpty: Bool {
+            toolNames.isEmpty && toolKinds.isEmpty && agentKeys.isEmpty
+                && componentKeys.isEmpty && outcomes.isEmpty
+        }
+    }
+
+    struct Entrypoint: Decodable {
+        var type: String
+        var command: String
+        var args: [String] = []
+    }
+
+    struct Hook: Decodable {
+        var id: String
+        var events: [String]
+        var matcher: Matcher?
+        var entrypoint: Entrypoint
+        var timeoutMs: UInt64 = 5_000
+        var maxOutputBytes: Int = 64 * 1_024
+        var failurePolicy: String = "continue"
+        var workspaceWrite: Bool = false
+    }
+
+    var schemaVersion: Int = 1
+    var hooks: [Hook]
+}
+
+enum NativeChatOSHookBundleParser {
+    private static let supportedEvents = Set([
+        "SessionStart", "UserPromptSubmit", "SubagentStart",
+        "PreToolUse", "PermissionRequest", "PostToolUse",
+        "Stop", "SubagentStop", "Interrupt", "SessionEnd", "PostCompact",
+    ])
+
+    static func load(
+        contribution: NativePluginManifest.HookContribution,
+        installationRoot: URL
+    ) throws -> NativePluginHookBundle {
+        let sourceURL = try secureFileURL(
+            contribution.path,
+            installationRoot: installationRoot,
+            field: "Hook 清单"
+        )
+        let data = try NativeBoundedFileReader.read(
+            sourceURL,
+            maximumBytes: NativeCodexHookBundleParser.maximumBundleBytes
+        )
+        return try parse(data, installationRoot: installationRoot)
+    }
+
+    static func parse(
+        _ data: Data,
+        installationRoot: URL
+    ) throws -> NativePluginHookBundle {
+        let hookSet: NativeChatOSHookSet
+        do {
+            hookSet = try JSONDecoder().decode(NativeChatOSHookSet.self, from: data)
+        } catch {
+            throw NativeConnectorError.pluginInstallation(
+                "ChatOS Hook 清单不是有效的 chatos_v1 JSON：\(error.localizedDescription)"
+            )
+        }
+        guard hookSet.schemaVersion == 1 else {
+            throw NativeConnectorError.pluginInstallation(
+                "ChatOS Hook schemaVersion 必须是 1"
+            )
+        }
+        guard !hookSet.hooks.isEmpty,
+              hookSet.hooks.count <= NativeCodexHookBundleParser.maximumHookCount else {
+            throw NativeConnectorError.pluginInstallation("ChatOS Hook 数量必须在 1–64 之间")
+        }
+
+        var ids = Set<String>()
+        var definitions: [NativePluginHookDefinition] = []
+        var normalized: [[String: Any]] = []
+        for hook in hookSet.hooks.sorted(by: { $0.id < $1.id }) {
+            let id = hook.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard canonicalIdentifier(id), ids.insert(id).inserted else {
+                throw NativeConnectorError.pluginInstallation("ChatOS Hook id 无效或重复：\(id)")
+            }
+            guard !hook.events.isEmpty else {
+                throw NativeConnectorError.pluginInstallation("ChatOS Hook \(id) 缺少 events")
+            }
+            let events = Array(Set(hook.events)).sorted()
+            guard events.count == hook.events.count,
+                  events.allSatisfy(supportedEvents.contains) else {
+                throw NativeConnectorError.pluginInstallation(
+                    "ChatOS Hook \(id) 包含重复或当前 runtime 不支持的事件"
+                )
+            }
+            guard hook.matcher?.isEmpty != false else {
+                throw NativeConnectorError.pluginInstallation(
+                    "当前 macOS runtime 尚未支持 chatos_v1 matcher，不能静默忽略"
+                )
+            }
+            guard hook.entrypoint.type == "command" else {
+                throw NativeConnectorError.pluginInstallation(
+                    "ChatOS Hook \(id) 只支持 command entrypoint"
+                )
+            }
+            guard (100...30_000).contains(hook.timeoutMs),
+                  (1_024...256 * 1_024).contains(hook.maxOutputBytes),
+                  hook.failurePolicy == "continue",
+                  hook.workspaceWrite == false else {
+                throw NativeConnectorError.pluginInstallation(
+                    "ChatOS Hook \(id) 使用了当前 macOS runtime 无法无损执行的策略"
+                )
+            }
+            guard hook.entrypoint.args.count <= 32,
+                  hook.entrypoint.args.allSatisfy({
+                      $0.utf8.count <= 4_096 && !$0.contains("\0")
+                  }) else {
+                throw NativeConnectorError.pluginInstallation(
+                    "ChatOS Hook \(id) 的 entrypoint args 无效"
+                )
+            }
+
+            let commandPath = normalizedCommandPath(hook.entrypoint.command)
+            guard commandPath.hasPrefix("scripts/") || commandPath.hasPrefix("binaries/"),
+                  commandPath.unicodeScalars.allSatisfy({ scalar in
+                      CharacterSet.alphanumerics
+                        .union(CharacterSet(charactersIn: "._-/"))
+                        .contains(scalar)
+                  }) else {
+                throw NativeConnectorError.pluginInstallation(
+                    "ChatOS Hook \(id) 的 command 必须位于 scripts/ 或 binaries/"
+                )
+            }
+            let executable = try secureFileURL(
+                commandPath,
+                installationRoot: installationRoot,
+                field: "Hook command"
+            )
+            guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+                throw NativeConnectorError.pluginInstallation(
+                    "ChatOS Hook command 必须是可执行文件：\(commandPath)"
+                )
+            }
+            let command = (["\"$PLUGIN_ROOT/\(commandPath)\""]
+                + hook.entrypoint.args.map(shellQuote)).joined(separator: " ")
+            for (eventIndex, event) in events.enumerated() {
+                let wireID = events.count == 1 ? id : "\(id)-\(eventIndex)"
+                guard canonicalIdentifier(wireID) else {
+                    throw NativeConnectorError.pluginInstallation(
+                        "ChatOS Hook \(id) 展开后的 id 超过限制"
+                    )
+                }
+                definitions.append(.init(
+                    id: wireID,
+                    event: event,
+                    matcher: nil,
+                    command: command,
+                    isAsync: false,
+                    timeoutSeconds: Double(hook.timeoutMs) / 1_000,
+                    additionalContextLimit: hook.maxOutputBytes
+                ))
+                normalized.append([
+                    "id": wireID,
+                    "event": event,
+                    "command": command,
+                    "async": false,
+                    "timeoutMs": hook.timeoutMs,
+                    "maxOutputBytes": hook.maxOutputBytes,
+                    "failurePolicy": hook.failurePolicy,
+                    "workspaceWrite": hook.workspaceWrite,
+                ])
+            }
+        }
+        guard definitions.count <= NativeCodexHookBundleParser.maximumHookCount else {
+            throw NativeConnectorError.pluginInstallation("ChatOS Hook 展开后超过 64 个")
+        }
+        let normalizedData = try JSONSerialization.data(
+            withJSONObject: normalized,
+            options: [.sortedKeys]
+        )
+        return .init(
+            hooks: definitions,
+            contentSHA256: sha256(data),
+            normalizedSHA256: sha256(normalizedData)
+        )
+    }
+
+    private static func canonicalIdentifier(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.count <= 256 && value.unicodeScalars.allSatisfy {
+            CharacterSet.alphanumerics
+                .union(CharacterSet(charactersIn: "_-"))
+                .contains($0)
+        }
+    }
+
+    private static func normalizedCommandPath(_ raw: String) -> String {
+        var path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while path.hasPrefix("./") { path.removeFirst(2) }
+        return path
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
+    }
+
+    private static func secureFileURL(
+        _ rawPath: String,
+        installationRoot: URL,
+        field: String
+    ) throws -> URL {
+        let path = normalizedCommandPath(rawPath)
+        guard !path.isEmpty,
+              !path.hasPrefix("/"),
+              !path.contains("\0"),
+              !path.split(separator: "/").contains("..") else {
+            throw NativeConnectorError.pluginInstallation("\(field) 必须位于插件目录内")
+        }
+        let root = installationRoot.standardizedFileURL.resolvingSymlinksInPath()
+        let source = installationRoot.appendingPathComponent(path).standardizedFileURL
+        let resolved = source.resolvingSymlinksInPath()
+        let values = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard resolved.path.hasPrefix(root.path + "/"),
+              values.isRegularFile == true,
+              values.isSymbolicLink != true else {
+            throw NativeConnectorError.pluginInstallation("\(field) 不存在或发生符号链接逃逸")
+        }
+        return source
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -125,7 +388,7 @@ enum NativeCodexHookBundleParser {
     static func load(
         contribution: NativePluginManifest.HookContribution,
         installationRoot: URL
-    ) throws -> NativeCodexHookBundle {
+    ) throws -> NativePluginHookBundle {
         guard contribution.dialect == "codex" else {
             throw NativeConnectorError.pluginInstallation(
                 "Hook \(contribution.componentKey) 使用未知 dialect：\(contribution.dialect)"
@@ -139,13 +402,13 @@ enum NativeCodexHookBundleParser {
         return try parse(data)
     }
 
-    static func parse(_ data: Data) throws -> NativeCodexHookBundle {
+    static func parse(_ data: Data) throws -> NativePluginHookBundle {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let eventMap = root["hooks"] as? [String: Any],
               !eventMap.isEmpty else {
             throw NativeConnectorError.pluginInstallation("Codex Hook 文件必须包含非空 hooks 对象")
         }
-        var definitions: [NativeCodexHookDefinition] = []
+        var definitions: [NativePluginHookDefinition] = []
         var normalized: [[String: Any]] = []
         for event in eventMap.keys.sorted() {
             guard supportedEvents.contains(event) else {

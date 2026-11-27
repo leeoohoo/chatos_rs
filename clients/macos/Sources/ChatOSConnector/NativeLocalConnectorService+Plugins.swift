@@ -375,15 +375,17 @@ extension NativeLocalConnectorService {
             throw NativeConnectorError.pluginInstallation("这个 Plugin 不支持当前 Mac")
         }
         let token = try requireAccessToken()
-        let record = try await pluginInstaller.install(source: source, token: token, gateway: gateway)
-        await pluginPermissionSnapshots.invalidateAll()
-        await pluginIntegritySnapshots.invalidateAll()
-        var records = state.installedPluginRecords ?? [:]
-        records[id] = record
-        state.installedPluginRecords = records
-        state.installedPluginIDs.insert(id)
-        _ = reconcileInstalledPluginIdentities(with: sources.items)
-        try stateStore.save(state)
+        let prepared = try await pluginInstaller.prepareMarketplacePlugin(
+            source: source,
+            token: token,
+            gateway: gateway
+        )
+        var shouldDiscard = true
+        defer {
+            if shouldDiscard { pluginInstaller.discardCustomPlugin(prepared) }
+        }
+        try await commitPreparedPlugin(prepared, marketplaceSources: sources.items)
+        shouldDiscard = false
         try? await publishPluginInstallationStatus()
     }
 

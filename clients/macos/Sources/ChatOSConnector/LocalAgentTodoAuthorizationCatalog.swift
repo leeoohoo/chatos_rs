@@ -1,3 +1,4 @@
+import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 
@@ -24,6 +25,12 @@ public struct LocalAgentTodoBuiltinAuthorizationDescriptor: Sendable, Equatable,
 }
 
 public enum LocalAgentTodoAuthorizationCatalog {
+    struct TaskToolSkillAuthorization {
+        let capability: LocalAgentTodoBuiltinCapability
+        let binding: ToolSkillBinding
+        let effect: AgentToolDefinition.Effect
+    }
+
     public static func descriptor(
         for capability: LocalAgentTodoBuiltinCapability
     ) -> LocalAgentTodoBuiltinAuthorizationDescriptor {
@@ -64,5 +71,39 @@ public enum LocalAgentTodoAuthorizationCatalog {
             detail: detail,
             toolNames: toolNames
         )
+    }
+
+    /// Resolves execution permission and Skill coverage from the same capability catalog.
+    /// A model-visible native Task tool must never be authorized without its Skill binding.
+    static func taskToolSkillAuthorization(
+        for toolName: String
+    ) -> TaskToolSkillAuthorization? {
+        let capabilities = LocalAgentTodoBuiltinCapability.allCases.filter {
+            descriptor(for: $0).toolNames.contains(toolName)
+        }
+        guard capabilities.count == 1, let capability = capabilities.first else { return nil }
+        let providerID: String
+        let effect: AgentToolDefinition.Effect
+        switch capability {
+        case .projectRead:
+            providerID = ProductToolProviderID.projectRead
+            effect = .readOnly
+        case .projectWrite:
+            providerID = ProductToolProviderID.projectWrite
+            effect = .write
+        case .terminal:
+            providerID = ProductToolProviderID.terminal
+            effect = .terminal
+        case .requirementSurveyWrite:
+            providerID = ProductToolProviderID.requirementSurvey
+            effect = .write
+        case .requirementSurveyRead:
+            return nil
+        }
+        let bindings = ToolSkillCoverageCatalog.product.bindings.filter {
+            $0.providerID == providerID && $0.toolNames.contains(toolName)
+        }
+        guard bindings.count == 1, let binding = bindings.first else { return nil }
+        return .init(capability: capability, binding: binding, effect: effect)
     }
 }

@@ -7,8 +7,9 @@ use crate::{
 };
 use chatos_local_agent_protocol::{
     CreateConversationCommand, CreateTaskGraphCommand, LocalAgentRunRecord, LocalAgentRunStatus,
-    LocalConversationTurnStatus, LocalTaskDependency, LocalTaskGraphStatus, LocalTaskSpec,
-    LocalTaskStatus, StartConversationTurnCommand,
+    LocalConversationResourceBinding, LocalConversationResourceKind, LocalConversationTurnStatus,
+    LocalTaskDependency, LocalTaskGraphStatus, LocalTaskSpec, LocalTaskStatus,
+    StartConversationTurnCommand,
 };
 use serde_json::{json, Value};
 
@@ -943,6 +944,18 @@ async fn finish_task_run_with_outcome(
     now_unix_ms: i64,
     outcome: Value,
 ) {
+    finish_task_run_with_reported_outcome(storage, run_id, status, now_unix_ms, outcome, None)
+        .await;
+}
+
+async fn finish_task_run_with_reported_outcome(
+    storage: &SqliteClientStorage,
+    run_id: &str,
+    status: LocalAgentRunStatus,
+    now_unix_ms: i64,
+    outcome: Value,
+    reported_outcome: Option<Value>,
+) {
     storage
         .start_next_task_run("user-1", run_id, &format!("start-{run_id}"), now_unix_ms)
         .await
@@ -961,6 +974,27 @@ async fn finish_task_run_with_outcome(
         .await
         .expect("claim Task Run")
         .expect("Task Run claim");
+    if let Some(reported_outcome) = reported_outcome {
+        sqlx::query(
+            "INSERT INTO local_agent_tool_invocations(\
+             invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
+             side_effecting, requires_approval, approval_status, status, result_json, error_text, \
+             version, created_at_unix_ms, updated_at_unix_ms) \
+             VALUES(?, ?, ?, ?, ?, ?, 0, 0, 'not_required', 'succeeded', ?, NULL, 2, ?, ?)",
+        )
+        .bind(format!("outcome-{run_id}"))
+        .bind(&claim.run.run_id)
+        .bind(format!("batch-{run_id}"))
+        .bind(format!("call-{run_id}"))
+        .bind("task_run_process_report_outcome")
+        .bind(reported_outcome.to_string())
+        .bind(reported_outcome.to_string())
+        .bind(now_unix_ms + 1)
+        .bind(now_unix_ms + 1)
+        .execute(&storage.pool)
+        .await
+        .expect("store reported Task outcome");
+    }
     storage
         .apply_transition(
             &command(&format!("finish-{run_id}")),
@@ -1147,7 +1181,10 @@ async fn new_task_result_reopens_a_failed_main_chat_for_program_owned_recovery()
                 owner_user_id: "user-1".into(),
                 source_entity_type: "conversation_turn".into(),
                 source_entity_id: turn.turn_id.clone(),
-                tasks: vec![summary_task("auto-recovery-task", "Recoverable work")],
+                tasks: vec![
+                    summary_task("auto-recovery-task", "Recoverable work"),
+                    summary_task("user-action-task", "Credential-gated work"),
+                ],
                 dependencies: vec![],
             },
             4_000,
@@ -1169,12 +1206,40 @@ async fn new_task_result_reopens_a_failed_main_chat_for_program_owned_recovery()
         .await
         .unwrap();
 
-    finish_task_run_with_outcome(
+    finish_task_run_with_reported_outcome(
         &storage,
         "auto-recovery-task-run",
-        LocalAgentRunStatus::Failed,
+        LocalAgentRunStatus::Succeeded,
         5_000,
         json!({"reason":"The first safe method did not produce the required output"}),
+        Some(json!({
+            "reported":true,
+            "result_status":"blocked",
+            "reason":"The confirmed dependency no longer exposes the required API",
+            "blocker":{
+                "classification":"replan_required",
+                "evidence":"The confirmed dependency no longer exposes the required API",
+                "affected_task_ids":["auto-recovery-task"]
+            }
+        })),
+    )
+    .await;
+    finish_task_run_with_reported_outcome(
+        &storage,
+        "user-action-task-run",
+        LocalAgentRunStatus::Succeeded,
+        6_000,
+        json!({"reason":"An approved credential is required"}),
+        Some(json!({
+            "reported":true,
+            "result_status":"blocked",
+            "reason":"An approved credential is required",
+            "blocker":{
+                "classification":"user_action_required",
+                "evidence":"No approved credential reference is available",
+                "user_question":"Which approved credential reference should this Task use?"
+            }
+        })),
     )
     .await;
 
@@ -1184,10 +1249,32 @@ async fn new_task_result_reopens_a_failed_main_chat_for_program_owned_recovery()
         source.input["task_graph_recovery"]["graph_id"],
         "graph-auto-recovery"
     );
+    let recovery = &source.input["task_graph_recovery"];
+    let tasks = recovery["tasks"].as_array().expect("recovery tasks");
+    let replanned = tasks
+        .iter()
+        .find(|task| task["task_id"] == "auto-recovery-task")
+        .expect("replan Task");
+    assert_eq!(replanned["blocker"]["classification"], "replan_required");
+    assert_eq!(replanned["retry_allowed"], true);
+    let user_action = tasks
+        .iter()
+        .find(|task| task["task_id"] == "user-action-task")
+        .expect("user action Task");
     assert_eq!(
-        source.input["task_graph_recovery"]["tasks"][0]["retry_allowed"],
-        true
+        user_action["blocker"]["classification"],
+        "user_action_required"
     );
+    assert_eq!(user_action["retry_allowed"], false);
+    assert!(recovery["guidance"]
+        .as_str()
+        .is_some_and(|guidance| guidance.contains("task_kind=planning")));
+    assert!(recovery["guidance"]
+        .as_str()
+        .is_some_and(|guidance| guidance.contains("Requirement Survey")));
+    assert!(recovery["guidance"]
+        .as_str()
+        .is_some_and(|guidance| guidance.contains("removed optional Plugin")));
     assert_eq!(
         source.continuation_input.as_ref().unwrap()["type"],
         "tool_results"
@@ -1230,6 +1317,13 @@ async fn new_task_result_reopens_a_failed_main_chat_for_program_owned_recovery()
         .expect("claim Main Chat recovery");
     assert_eq!(claim.run.run_id, turn.run_id);
     assert_eq!(claim.run.status, LocalAgentRunStatus::ModelRunning);
+    let conversation_version_after_reopen = storage
+        .get_conversation("user-1", &turn.conversation_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .conversation
+        .version;
     assert_eq!(
         storage
             .get_conversation("user-1", &turn.conversation_id)
@@ -1239,6 +1333,40 @@ async fn new_task_result_reopens_a_failed_main_chat_for_program_owned_recovery()
             .turns[0]
             .status,
         LocalConversationTurnStatus::Running
+    );
+    sqlx::query(
+        "UPDATE local_agent_runs SET status = 'continuation_ready', version = version + 1, \
+         claim_token = NULL, claim_until_unix_ms = NULL WHERE run_id = ?",
+    )
+    .bind(&turn.run_id)
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    let second_claim = storage
+        .claim_next_run(
+            &command("claim-auto-recovery-continuation"),
+            "user-1",
+            "worker-main",
+            "token-auto-recovery-continuation",
+            5_200,
+            15_200,
+            "claim-auto-recovery-continuation-event",
+        )
+        .await
+        .unwrap()
+        .expect("claim the next recovery iteration after a tool result");
+    assert_eq!(second_claim.run.run_id, turn.run_id);
+    assert_eq!(second_claim.run.status, LocalAgentRunStatus::ModelRunning);
+    assert_eq!(
+        storage
+            .get_conversation("user-1", &turn.conversation_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .conversation
+            .version,
+        conversation_version_after_reopen,
+        "subsequent recovery iterations must not reopen the same Turn again"
     );
     let events = storage.list_events(0, 100, None).await.unwrap();
     assert_eq!(
@@ -2315,7 +2443,10 @@ async fn multi_task_graph_defaults_to_one_sanitized_terminal_summary() {
                 conversation_id: "conversation-summary".to_string(),
                 owner_user_id: "user-1".to_string(),
                 title: "Summary".to_string(),
-                resource: None,
+                resource: Some(LocalConversationResourceBinding {
+                    kind: LocalConversationResourceKind::Project,
+                    resource_id: "project-1".to_string(),
+                }),
             },
             1_000,
         )
@@ -2347,6 +2478,14 @@ async fn multi_task_graph_defaults_to_one_sanitized_terminal_summary() {
         )
         .await
         .expect("start Turn");
+    sqlx::query(
+        "UPDATE local_agent_runs SET input_json = json_remove(input_json, '$.agent_id') \
+         WHERE run_id = ?",
+    )
+    .bind(&turn.run_id)
+    .execute(&storage.pool)
+    .await
+    .expect("simulate legacy main-chat Run without Agent identity");
     storage
         .cancel_run(
             &command("cancel-summary-main"),

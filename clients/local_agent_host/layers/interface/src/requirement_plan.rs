@@ -14,6 +14,8 @@ pub struct LocalRequirementPlan {
     pub plan_id: String,
     pub revision: u64,
     pub owner_user_id: String,
+    /// Project id for project chats; otherwise a conversation-scoped opaque id.
+    /// The serialized field name is retained for protocol and database compatibility.
     pub project_resource_id: String,
     pub source_conversation_id: String,
     pub source_survey_id: String,

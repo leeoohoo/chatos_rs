@@ -96,41 +96,58 @@ extension NativeLocalConnectorService {
             hopCount: 0,
             lane: .executor
         )
+        if let productSkillBundle {
+            try NativeLocalTaskBuiltinDiscoveryProvider.validateFrozenSkillPlan(
+                allowedCapabilities: builtinCapabilities,
+                bundle: productSkillBundle
+            )
+        }
         let installedPlugins = try await installedAgentPlugins(ownerUserID: ownerUserID)
-        let selectedPlugins: [NativeInstalledAgentPlugin]
         let installedByKey = Dictionary(
             uniqueKeysWithValues: installedPlugins.map {
                 (NativeLocalAgentTaskToolAuthorization.pluginSelectionID(pluginKey: $0.pluginKey, componentKey: $0.componentKey), $0)
             }
         )
-        selectedPlugins = try Array(Set(pluginSelectionIDs)).sorted().map { selectionID in
-            guard let plugin = installedByKey[selectionID] else {
-                throw NativePluginRuntimeError.invalidRequest(
-                    "任务选择的 Plugin component 未安装或已停用"
-                )
-            }
-            return plugin
-        }
         guard Set(pluginReleaseSnapshots.keys) == Set(pluginSelectionIDs) else {
             throw NativePluginRuntimeError.invalidRequest(
                 "任务 Plugin Release 快照与授权范围不一致"
             )
         }
-        for plugin in selectedPlugins {
-            let selectionID = NativeLocalAgentTaskToolAuthorization.pluginSelectionID(pluginKey: plugin.pluginKey, componentKey: plugin.componentKey)
-            guard let expected = pluginReleaseSnapshots[selectionID],
-                      expected.pluginID == plugin.pluginID,
-                      expected.componentKey == plugin.componentKey,
-                      let record = state.installedPluginRecords?[plugin.pluginID],
-                      record.releaseID == expected.releaseID,
-                      record.version == expected.version,
-                      record.artifactSHA256 == expected.artifactSHA256,
-                      (record.pluginKey?.trimmingCharacters(in: .whitespacesAndNewlines)
-                        .nilIfEmpty ?? record.pluginID) == expected.pluginKey else {
-                    throw NativePluginRuntimeError.invalidRequest(
-                        "任务固定的 Plugin Release 已变更，请重新创建任务"
-                    )
+        var pluginSelections: [NativeAgentPluginCapabilitySelection] = []
+        for selectionID in Array(Set(pluginSelectionIDs)).sorted() {
+            guard let expected = pluginReleaseSnapshots[selectionID] else {
+                throw NativePluginRuntimeError.invalidRequest(
+                    "任务 Plugin Release 快照与授权范围不一致"
+                )
             }
+            guard let plugin = installedByKey[selectionID] else {
+                pluginSelections.append(.unavailable(
+                    pluginKey: expected.pluginKey,
+                    componentKey: expected.componentKey,
+                    reason: "该任务冻结的 Plugin 已卸载或停用。其他已授权能力仍可继续；若验收必须依赖此 Plugin，请通过 replan_required 创建使用当前已安装能力的新规划任务，不要重复调用或向用户转嫁内部恢复。"
+                ))
+                continue
+            }
+            guard expected.pluginID == plugin.pluginID,
+                  expected.componentKey == plugin.componentKey,
+                  let record = state.installedPluginRecords?[plugin.pluginID],
+                  record.releaseID == expected.releaseID,
+                  record.version == expected.version,
+                  record.artifactSHA256 == expected.artifactSHA256,
+                  (record.pluginKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .nilIfEmpty ?? record.pluginID) == expected.pluginKey else {
+                pluginSelections.append(.unavailable(
+                    pluginKey: expected.pluginKey,
+                    componentKey: expected.componentKey,
+                    reason: "该任务冻结的 Plugin Release 已变更，旧快照不会被新版本替代。其他已授权能力仍可继续；若验收必须依赖此 Plugin，请通过 replan_required 创建绑定当前 Release 的新规划任务，不要重复调用或向用户转嫁内部恢复。"
+                ))
+                continue
+            }
+            pluginSelections.append(.available(plugin))
+        }
+        let selectedPlugins = pluginSelections.compactMap { selection -> NativeInstalledAgentPlugin? in
+            guard case let .available(plugin) = selection else { return nil }
+            return plugin
         }
         return NativeAgentCapabilityToolProvider(
             service: self,
@@ -142,6 +159,7 @@ extension NativeLocalConnectorService {
             fallbackWorkspaceRootURL: executionRootURL,
             builtinCapabilities: builtinCapabilities,
             installedPlugins: selectedPlugins,
+            pluginSelections: pluginSelections,
             executionPresentation: .localTaskExecution,
             fallbackToSelectedOptions: true,
             invokeBuiltinsThroughBroker: false,
@@ -178,43 +196,89 @@ extension NativeLocalConnectorService {
 struct NativeLocalTaskBuiltinDiscoveryProvider: AgentToolProvider, Sendable {
     let allowedCapabilities: Set<LocalAgentTodoBuiltinCapability>
 
+    static func validateFrozenSkillPlan(
+        allowedCapabilities: Set<LocalAgentTodoBuiltinCapability>,
+        bundle: LocalAgentSkillBundleSnapshot
+    ) throws {
+        let names = authorizedVisibleToolNames(allowedCapabilities: allowedCapabilities)
+        for name in names.sorted() {
+            guard let authorization = LocalAgentTodoAuthorizationCatalog
+                .taskToolSkillAuthorization(for: name),
+                  let frozenBinding = bundle.toolSkillBindings.first(where: {
+                      $0.providerID == authorization.binding.providerID
+                          && $0.bindingID == authorization.binding.id
+                          && $0.toolNames.contains(name)
+                  }) else {
+                throw NativePluginRuntimeError.invalidRequest(
+                    "任务原生工具 \(name) 已授权，但冻结执行计划缺少对应 Product Skill 绑定"
+                )
+            }
+            let expectedRefs = Set(authorization.binding.requiredSkillNames.map {
+                "product-skill:\($0)"
+            })
+            let frozenRefs = Set([
+                frozenBinding.routerSkillRef, frozenBinding.specialistSkillRef,
+            ])
+            guard frozenRefs == expectedRefs,
+                  expectedRefs.allSatisfy({ skillRef in
+                      bundle.documents.contains { $0.skillRef == skillRef }
+                  }) else {
+                throw NativePluginRuntimeError.invalidRequest(
+                    "任务原生工具 \(name) 的 Product Skill 冻结闭包不完整"
+                )
+            }
+        }
+    }
+
     func definitions() async throws -> [AgentToolDefinition] {
-        try NativeLocalAgentPlatformToolCatalog.taskExecutionCapabilityTools.compactMap { value in
+        let taskTools = NativeLocalAgentPlatformToolCatalog.taskExecutionCapabilityTools
+        let expectedNames = Self.authorizedVisibleToolNames(
+            allowedCapabilities: allowedCapabilities
+        )
+        let definitions = try taskTools.compactMap { value -> AgentToolDefinition? in
             guard case let .object(tool) = value,
                   case let .string(name)? = tool["name"],
                   case let .string(description)? = tool["description"],
                   let schema = tool["parameters"] else { return nil }
-            let capability: LocalAgentTodoBuiltinCapability
-            let effect: AgentToolDefinition.Effect
-            let providerID: String
-            if NativeMCPCodeWriteStore.toolNames.contains(name) {
-                capability = .projectWrite
-                effect = .write
-                providerID = ProductToolProviderID.projectWrite
-            } else if NativeLocalAgentPlatformToolCatalog.taskExecutionTerminalToolNames.contains(name) {
-                capability = .terminal
-                effect = .terminal
-                providerID = ProductToolProviderID.terminal
-            } else if ["read_file_raw", "read_file_range", "list_dir", "search_text", "read_file", "search_files"].contains(name) {
-                capability = .projectRead
-                effect = .readOnly
-                providerID = ProductToolProviderID.projectRead
-            } else {
-                return nil
+            guard expectedNames.contains(name) else { return nil }
+            guard let authorization = LocalAgentTodoAuthorizationCatalog
+                .taskToolSkillAuthorization(for: name),
+                  allowedCapabilities.contains(authorization.capability) else {
+                throw NativePluginRuntimeError.invalidRequest(
+                    "任务原生工具 \(name) 已授权，但缺少唯一的 Product Skill 绑定"
+                )
             }
-            guard allowedCapabilities.contains(capability),
-                  let binding = ToolSkillCoverageCatalog.product.bindings.first(where: {
-                      $0.providerID == providerID && $0.toolNames.contains(name)
-                  }) else { return nil }
             return .init(
                 name: name,
                 description: description,
                 schema: try JSONEncoder().encode(schema),
-                effect: effect,
-                providerID: binding.providerID,
-                skillBindingID: binding.id
+                effect: authorization.effect,
+                providerID: authorization.binding.providerID,
+                skillBindingID: authorization.binding.id
             )
         }
+        guard Set(definitions.map(\.name)) == expectedNames else {
+            throw NativePluginRuntimeError.invalidRequest(
+                "任务原生工具授权与 Product Skill 冻结计划不完整"
+            )
+        }
+        return definitions
+    }
+
+    private static func authorizedVisibleToolNames(
+        allowedCapabilities: Set<LocalAgentTodoBuiltinCapability>
+    ) -> Set<String> {
+        let visibleNames = Set(
+            NativeLocalAgentPlatformToolCatalog.taskExecutionCapabilityTools.compactMap {
+                value -> String? in
+                guard case let .object(tool) = value,
+                      case let .string(name)? = tool["name"] else { return nil }
+                return name
+            }
+        )
+        return Set(allowedCapabilities.flatMap {
+            LocalAgentTodoAuthorizationCatalog.descriptor(for: $0).toolNames
+        }).intersection(visibleNames)
     }
 
     func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {

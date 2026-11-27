@@ -30,6 +30,7 @@ pub const PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_CREATE: &str = "artifact.create";
 pub const PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_UPDATE: &str = "artifact.update";
 pub const PLUGIN_RUNTIME_CONTEXT_MAX_COMPONENTS: usize = 64;
 pub const PLUGIN_RUNTIME_CONTEXT_MAX_FIELDS: usize = 16;
+pub const PLUGIN_TASK_POLICY_MAX_BUILTIN_KINDS: usize = 64;
 pub const PLUGIN_RUNTIME_CONTEXT_FIELD_PROJECT_ID: &str = "project.id";
 pub const PLUGIN_RUNTIME_CONTEXT_FIELD_WORKSPACE_ID: &str = "workspace.id";
 pub const PLUGIN_RUNTIME_CONTEXT_FIELD_WORKSPACE_ROOT: &str = "workspace.root";
@@ -105,6 +106,33 @@ pub struct PluginRuntimeContext {
     pub storage_isolation: PluginRuntimeContextStorageIsolation,
     #[serde(default = "default_runtime_context_missing_context")]
     pub missing_context: PluginRuntimeContextMissingContext,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginPlanningTaskTemplate {
+    #[serde(default)]
+    pub required_builtin_kinds: Vec<String>,
+    #[serde(default)]
+    pub requires_execution: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginTaskPolicy {
+    pub policy_id: String,
+    #[serde(default)]
+    pub require_main_chat_task_route: bool,
+    #[serde(default)]
+    pub require_confirmed_plan_before_execution: bool,
+    pub planning_task: PluginPlanningTaskTemplate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginWorkflowContribution {
+    #[serde(default)]
+    pub task_policy: Option<PluginTaskPolicy>,
 }
 
 const fn default_runtime_context_storage_isolation() -> PluginRuntimeContextStorageIsolation {

@@ -196,6 +196,55 @@ impl LocalTaskToolExecutor {
                 super::task_followup_tool::resolve(self, invocation, &parent, side_effects_started)
                     .await?
             }
+            DECIDE_TASK_ROUTE_TOOL => {
+                let args: DecideTaskRouteArgs =
+                    serde_json::from_value(invocation.arguments.clone())
+                        .map_err(|error| format!("invalid decide_task_route input: {error}"))?;
+                let reason = args.reason.trim();
+                if reason.is_empty() || reason.chars().count() > 2_000 {
+                    return Err("decide_task_route reason must contain 1..=2000 characters".into());
+                }
+                if !self
+                    .active_plugin_task_policies(&parent)
+                    .await?
+                    .iter()
+                    .any(|policy| policy.require_main_chat_task_route)
+                {
+                    return Err(
+                        "decide_task_route requires an active Plugin main-chat routing policy"
+                            .into(),
+                    );
+                }
+                let previous = self
+                    .runtime
+                    .successful_tool_invocations_for_run_for_host_worker(
+                        &parent.owner_user_id,
+                        &parent.run_id,
+                        DECIDE_TASK_ROUTE_TOOL,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if previous.iter().any(|record| {
+                    record.arguments.get("route").and_then(Value::as_str)
+                        != Some(args.route.as_str())
+                }) {
+                    return Err(
+                        "decide_task_route cannot change after the Run recorded its route".into(),
+                    );
+                }
+                json!({
+                    "route": args.route,
+                    "reason": reason,
+                    "next_action": match args.route {
+                        TaskRoute::DirectResponse => "answer_in_main_chat",
+                        TaskRoute::DurableTask if parent
+                            .input
+                            .pointer("/requirement_plan/confirmed_at_unix_ms")
+                            .is_some_and(|value| !value.is_null()) => "create_execution_task",
+                        TaskRoute::DurableTask => "create_exactly_one_planning_task",
+                    }
+                })
+            }
             LIST_TASKS_TOOL => {
                 let args: ListTasksArgs = serde_json::from_value(invocation.arguments.clone())
                     .map_err(|error| format!("invalid list_tasks input: {error}"))?;
@@ -278,6 +327,26 @@ impl LocalTaskToolExecutor {
             CREATE_TASK_TOOL => {
                 let mut args: CreateTaskArgs = serde_json::from_value(invocation.arguments.clone())
                     .map_err(|error| format!("invalid create_task input: {error}"))?;
+                let plugin_task_policies = self.active_plugin_task_policies(&parent).await?;
+                let requires_confirmed_plan = plugin_task_policies
+                    .iter()
+                    .any(|policy| policy.require_confirmed_plan_before_execution);
+                let has_confirmed_plan = parent
+                    .input
+                    .pointer("/requirement_plan/confirmed_at_unix_ms")
+                    .is_some_and(|value| !value.is_null());
+                if requires_confirmed_plan
+                    && !has_confirmed_plan
+                    && args.task_kind != TaskKind::Planning
+                {
+                    return Err(
+                        "An active Plugin task policy requires a planning Task before execution work. Create one Task with task_kind=planning; the Host will apply the declared planning template."
+                            .to_string(),
+                    );
+                }
+                if args.task_kind == TaskKind::Planning {
+                    args.apply_planning_templates(&plugin_task_policies);
+                }
                 validate_task_context_package(&args.context_summary, &args.attachment_refs)?;
                 args.selected_attachments = self
                     .resolve_context_attachments(&parent, conversation_id, &args.attachment_refs)
@@ -386,6 +455,21 @@ impl LocalTaskToolExecutor {
                     serde_json::from_value(invocation.arguments.clone()).map_err(|error| {
                         format!("invalid create_tasks_with_prerequisites input: {error}")
                     })?;
+                if self
+                    .active_plugin_task_policies(&parent)
+                    .await?
+                    .iter()
+                    .any(|policy| policy.require_confirmed_plan_before_execution)
+                    && parent
+                        .input
+                        .pointer("/requirement_plan/confirmed_at_unix_ms")
+                        .is_none_or(Value::is_null)
+                {
+                    return Err(
+                        "An active Plugin task policy requires one planning Task before a multi-Task execution graph. Call create_task with task_kind=planning first."
+                            .to_string(),
+                    );
+                }
                 let source_message = source_user_message(&parent);
                 for task in &mut args.tasks {
                     validate_task_context_package(&task.context_summary, &task.attachment_refs)?;
@@ -735,9 +819,34 @@ pub(super) struct CancelTaskArgs {
 #[serde(deny_unknown_fields)]
 struct EmptyArgs {}
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DecideTaskRouteArgs {
+    route: TaskRoute,
+    reason: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum TaskRoute {
+    DirectResponse,
+    DurableTask,
+}
+
+impl TaskRoute {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::DirectResponse => "direct_response",
+            Self::DurableTask => "durable_task",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateTaskArgs {
+    #[serde(default)]
+    task_kind: TaskKind,
     requirements: Vec<TaskRequirement>,
     title: String,
     objective: String,
@@ -783,6 +892,30 @@ struct CreateTaskArgs {
     schedule: Option<TaskScheduleArgs>,
     #[serde(default)]
     supersedes_task_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum TaskKind {
+    Planning,
+    #[default]
+    Execution,
+}
+
+impl CreateTaskArgs {
+    fn apply_planning_templates(
+        &mut self,
+        policies: &[chatos_local_agent_protocol::LocalPluginTaskPolicy],
+    ) {
+        for policy in policies {
+            self.requires_execution |= policy.planning_task.requires_execution;
+            for required in &policy.planning_task.required_builtin_kinds {
+                if !self.enabled_builtin_kinds.contains(required) {
+                    self.enabled_builtin_kinds.push(required.clone());
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

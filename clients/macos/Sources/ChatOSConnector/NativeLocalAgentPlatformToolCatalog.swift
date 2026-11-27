@@ -15,6 +15,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
   public static let attachmentReadToolName = "local_attachment_read"
   public static let listTasksToolName = "list_tasks"
   public static let getTaskToolName = "get_task"
+  public static let decideTaskRouteToolName = "decide_task_route"
   public static let createTaskToolName = "create_task"
   public static let createTasksToolName = "create_tasks_with_prerequisites"
   public static let cancelTaskToolName = "cancel_task"
@@ -25,6 +26,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
   public static let mainChatTaskToolNames = [
     listTasksToolName,
     getTaskToolName,
+    decideTaskRouteToolName,
     createTaskToolName,
     createTasksToolName,
     cancelTaskToolName,

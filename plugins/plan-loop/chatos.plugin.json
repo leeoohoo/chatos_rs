@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 3,
+  "name": "plan-loop",
+  "version": "0.1.4",
+  "description": "Plan-first task orchestration with requirement discovery and autonomous blocker recovery.",
+  "author": {
+    "name": "Chatos"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "planning",
+    "requirements",
+    "tasks",
+    "recovery"
+  ],
+  "skills": [
+    "skills/plan-loop",
+    "skills/plan-loop-planner",
+    "skills/plan-loop-recovery"
+  ],
+  "hooks": [
+    {
+      "componentKey": "plan-loop-hooks",
+      "source": "hooks/plan-loop-hooks.json"
+    }
+  ],
+  "workflow": {
+    "taskPolicy": {
+      "policyId": "plan-first",
+      "requireMainChatTaskRoute": true,
+      "requireConfirmedPlanBeforeExecution": true,
+      "planningTask": {
+        "requiresExecution": true,
+        "requiredBuiltinKinds": [
+          "CodeMaintainerRead",
+          "RequirementSurveyRead",
+          "RequirementSurveyWrite"
+        ]
+      }
+    }
+  },
+  "interface": {
+    "displayName": "Plan Loop",
+    "shortDescription": "Plan first, keep tasks moving.",
+    "longDescription": "Creates a requirement-aware planning task before execution work, keeps every task bound to the confirmed plan, and recovers technical blockers before asking the user.",
+    "developerName": "Chatos",
+    "category": "Productivity",
+    "capabilities": [
+      "Instructions",
+      "Lifecycle hooks"
+    ],
+    "defaultPrompt": [
+      "Plan and execute this request.",
+      "Investigate this project before creating implementation tasks.",
+      "Recover the blocked tasks without losing the confirmed plan."
+    ],
+    "brandColor": "#5E5CE6"
+  },
+  "dependencies": {
+    "supportedPlatforms": [
+      "macos"
+    ]
+  },
+  "permissions": [
+    {
+      "permission": "process.spawn",
+      "required": true,
+      "reason": "Run the trusted lifecycle Hook commands while Plan Loop is enabled.",
+      "components": [
+        "plan-loop-hooks"
+      ]
+    },
+    {
+      "permission": "workspace.read",
+      "required": true,
+      "reason": "Provide the active workspace context to the read-only planning Hooks.",
+      "components": [
+        "plan-loop-hooks"
+      ]
+    }
+  ]
+}

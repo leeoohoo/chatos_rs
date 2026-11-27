@@ -12,7 +12,7 @@ use super::components::{
     PLUGIN_COMMAND_MAX_ALLOWED_TOOLS, PLUGIN_COMMAND_MAX_TOOL_NAME_BYTES,
     PLUGIN_RUNTIME_CONTEXT_FIELD_PROJECT_ID, PLUGIN_RUNTIME_CONTEXT_FIELD_WORKSPACE_ID,
     PLUGIN_RUNTIME_CONTEXT_FIELD_WORKSPACE_ROOT, PLUGIN_RUNTIME_CONTEXT_MAX_COMPONENTS,
-    PLUGIN_RUNTIME_CONTEXT_MAX_FIELDS,
+    PLUGIN_RUNTIME_CONTEXT_MAX_FIELDS, PLUGIN_TASK_POLICY_MAX_BUILTIN_KINDS,
 };
 use super::normalized::{PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION};
 use super::paths::normalize_plugin_relative_path;
@@ -67,6 +67,7 @@ pub fn validate_plugin_manifest(
     validate_dependencies(manifest, &mut issues);
     validate_permissions(manifest, &component_keys, &mut issues);
     validate_runtime_context(manifest, &component_keys, &mut issues);
+    validate_workflow(manifest, &mut issues);
     validate_mcp_runtime_permissions(manifest, &mut issues);
     validate_ui_runtime_permissions(manifest, &mut issues);
 
@@ -90,6 +91,55 @@ pub fn validate_plugin_manifest(
     } else {
         Err(PluginManifestValidationError { issues })
     }
+}
+
+fn validate_workflow(manifest: &PluginManifest, issues: &mut Vec<PluginManifestValidationIssue>) {
+    let Some(policy) = manifest
+        .workflow
+        .as_ref()
+        .and_then(|workflow| workflow.task_policy.as_ref())
+    else {
+        return;
+    };
+    if !valid_identifier(policy.policy_id.as_str()) {
+        issue(
+            issues,
+            "workflow.taskPolicy.policyId",
+            "policy id must be a canonical identifier",
+        );
+    }
+    let kinds = &policy.planning_task.required_builtin_kinds;
+    if kinds.is_empty() || kinds.len() > PLUGIN_TASK_POLICY_MAX_BUILTIN_KINDS {
+        issue(
+            issues,
+            "workflow.taskPolicy.planningTask.requiredBuiltinKinds",
+            format!("must contain between 1 and {PLUGIN_TASK_POLICY_MAX_BUILTIN_KINDS} entries"),
+        );
+    }
+    let mut seen = HashSet::new();
+    for (index, kind) in kinds.iter().enumerate() {
+        if !valid_identifier(kind) {
+            issue(
+                issues,
+                format!("workflow.taskPolicy.planningTask.requiredBuiltinKinds[{index}]").as_str(),
+                "builtin kind must be a canonical identifier",
+            );
+        } else if !seen.insert(kind) {
+            issue(
+                issues,
+                "workflow.taskPolicy.planningTask.requiredBuiltinKinds",
+                "builtin kinds must be unique",
+            );
+        }
+    }
+}
+
+fn valid_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 fn validate_manifest_metadata(

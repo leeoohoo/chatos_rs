@@ -573,7 +573,8 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "requires_execution": .bool(false),
                 "enabled_builtin_kinds": .array([
                     .string("CodeMaintainerRead"), .string("CodeMaintainerWrite"),
-                    .string("TerminalController"),
+                    .string("TerminalController"), .string("RequirementSurveyRead"),
+                    .string("RequirementSurveyWrite"),
                 ]),
                 "plugin_hints": .array([]),
                 "plugin_release_snapshots": .array([]),
@@ -583,7 +584,10 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         XCTAssertFalse(readOnly.allows("commit_edit_session"))
         XCTAssertFalse(readOnly.allows("execute_command"))
         XCTAssertTrue(readOnly.allows("capability_search"))
-        XCTAssertEqual(readOnly.brokerBuiltinCapabilities, [.projectRead])
+        XCTAssertEqual(
+            readOnly.brokerBuiltinCapabilities,
+            [.projectRead, .requirementSurveyRead]
+        )
         let scoped = try NativeLocalAgentTaskToolAuthorization.resolve([
             "owned_paths": .array([.string("src"), .string("docs/report.md")]),
             "tool_options": .object([
@@ -607,6 +611,8 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                     .string("CodeMaintainerRead"),
                     .string("CodeMaintainerWrite"),
                     .string("TerminalController"),
+                    .string("RequirementSurveyRead"),
+                    .string("RequirementSurveyWrite"),
                 ]),
                 "plugin_hints": .array([.object([
                     "plugin_key": .string("browser"),
@@ -627,7 +633,10 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         XCTAssertTrue(execution.allows("capability_search"))
         XCTAssertEqual(
             execution.brokerBuiltinCapabilities,
-            [.projectRead, .projectWrite, .terminal]
+            [
+                .projectRead, .projectWrite, .terminal,
+                .requirementSurveyRead, .requirementSurveyWrite,
+            ]
         )
         let browserSelection = NativeLocalAgentTaskToolAuthorization.pluginSelectionID(
             pluginKey: "browser",
@@ -807,6 +816,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             "another_reserved_tool",
             "list_tasks",
             "get_task",
+            "decide_task_route",
             "create_task",
             "create_tasks_with_prerequisites",
             "cancel_task",

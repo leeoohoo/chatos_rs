@@ -42,6 +42,50 @@ impl LocalTaskProcessToolExecutor {
         }
         Ok(run)
     }
+
+    async fn recovery_method_already_tried(
+        &self,
+        run: &LocalAgentRunRecord,
+        blocker: &BlockerReport,
+    ) -> Result<bool, String> {
+        let fingerprint = blocker
+            .failure_fingerprint
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
+        let next_method = blocker
+            .next_method
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
+        if fingerprint.is_empty() || next_method.is_empty() {
+            return Ok(false);
+        }
+        Ok(self
+            .runtime
+            .successful_tool_invocations_for_run_for_host_worker(
+                &run.owner_user_id,
+                &run.run_id,
+                TASK_OUTCOME_REPORT_TOOL,
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .iter()
+            .filter_map(|invocation| invocation.result.as_ref())
+            .any(|result| {
+                result.get("reported").and_then(Value::as_bool) == Some(false)
+                    && result.get("classification").and_then(Value::as_str)
+                        == Some("retry_with_changed_method")
+                    && result
+                        .get("failure_fingerprint")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value.trim() == fingerprint)
+                    && result
+                        .get("next_method")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value.trim() == next_method)
+            }))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -194,6 +238,47 @@ struct ReportOutcomeArgs {
     acceptance_checks: Option<Vec<AcceptanceCheck>>,
     #[serde(default)]
     verification_report: Option<Value>,
+    #[serde(default)]
+    blocker: Option<BlockerReport>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum BlockerClassification {
+    HandledLocally,
+    RetryWithChangedMethod,
+    ReplanRequired,
+    UserActionRequired,
+    UnknownSideEffectsNeedsReview,
+}
+
+impl BlockerClassification {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::HandledLocally => "handled_locally",
+            Self::RetryWithChangedMethod => "retry_with_changed_method",
+            Self::ReplanRequired => "replan_required",
+            Self::UserActionRequired => "user_action_required",
+            Self::UnknownSideEffectsNeedsReview => "unknown_side_effects_needs_review",
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BlockerReport {
+    classification: BlockerClassification,
+    evidence: String,
+    #[serde(default)]
+    failure_fingerprint: Option<String>,
+    #[serde(default)]
+    previous_method: Option<String>,
+    #[serde(default)]
+    next_method: Option<String>,
+    #[serde(default)]
+    affected_task_ids: Vec<String>,
+    #[serde(default)]
+    user_question: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

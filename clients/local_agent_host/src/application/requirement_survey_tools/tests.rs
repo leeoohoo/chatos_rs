@@ -16,6 +16,91 @@ fn envelope(command_id: &str, command: HostCommand) -> HostRequestEnvelope {
     }
 }
 
+fn binding_run(input: Value, continuation_input: Option<Value>) -> LocalAgentRunRecord {
+    LocalAgentRunRecord {
+        run_id: "run-binding".into(),
+        owner_user_id: "user-1".into(),
+        owner_entity_type: "conversation_turn".into(),
+        owner_entity_id: "turn-binding".into(),
+        profile_key: "main_chat".into(),
+        model_config_ref: "model-1".into(),
+        model_config_revision: "revision-1".into(),
+        capability_policy_revision: "policy-1".into(),
+        input,
+        status: LocalAgentRunStatus::ModelRunning,
+        iteration: 1,
+        model_attempt: 1,
+        max_iterations: 8,
+        version: 1,
+        claim_token: None,
+        claim_until_unix_ms: None,
+        next_attempt_at_unix_ms: None,
+        pending_tool_batch: None,
+        checkpoint: json!({}),
+        continuation_input,
+        terminal_outcome: None,
+        created_at_unix_ms: 1,
+        updated_at_unix_ms: 1,
+    }
+}
+
+#[test]
+fn plan_save_identity_is_only_resolved_from_program_bound_run_context() {
+    let submitted = binding_run(
+        json!({"requirement_plan": {"source_survey_id": "survey-old"}}),
+        Some(json!({"survey_id": "survey-submitted"})),
+    );
+    assert_eq!(
+        program_bound_plan_survey_id(&submitted).unwrap(),
+        "survey-submitted"
+    );
+
+    let after_intermediate_tool = binding_run(
+        json!({"requirement_plan_binding": {"source_survey_id": "survey-durable"}}),
+        Some(json!({"type": "tool_results", "invocations": []})),
+    );
+    assert_eq!(
+        program_bound_plan_survey_id(&after_intermediate_tool).unwrap(),
+        "survey-durable"
+    );
+
+    let revision = binding_run(
+        json!({"requirement_plan": {"source_survey_id": "survey-current"}}),
+        None,
+    );
+    assert_eq!(
+        program_bound_plan_survey_id(&revision).unwrap(),
+        "survey-current"
+    );
+
+    let mut planning = binding_run(json!({"task_kind": "planning"}), None);
+    planning.profile_key = "task_execution".into();
+    planning.owner_entity_type = "task".into();
+    assert_eq!(
+        program_bound_plan_survey_id(&planning).unwrap(),
+        "plan-review:run-binding"
+    );
+
+    assert!(program_bound_plan_survey_id(&binding_run(json!({}), None)).is_err());
+    assert!(program_bound_plan_survey_id(&binding_run(
+        json!({"requirement_plan": {"source_survey_id": "survey-current"}}),
+        Some(json!({"survey_id": ""})),
+    ))
+    .is_err());
+
+    assert!(serde_json::from_value::<SavePlanArgs>(json!({
+        "survey_id": "forged",
+        "expected_revision": 0,
+        "markdown": "proposal"
+    }))
+    .is_err());
+    let tool = requirement_survey_model_tools()
+        .into_iter()
+        .find(|tool| tool["name"] == LOCAL_REQUIREMENT_PLAN_SAVE_TOOL_NAME)
+        .unwrap();
+    assert!(tool["parameters"]["properties"].get("survey_id").is_none());
+}
+
 #[tokio::test]
 async fn survey_tool_commit_suspends_and_resolution_resumes_the_source_run() {
     survey_flow(false, true, false, false, false).await;
@@ -32,7 +117,7 @@ async fn team_todo_survey_uses_the_bound_project_and_resumes_the_same_run() {
 }
 
 #[tokio::test]
-async fn contact_main_chat_cannot_create_a_project_survey() {
+async fn contact_main_chat_can_create_a_resource_bound_survey() {
     survey_flow(true, false, false, false, false).await;
 }
 
@@ -82,13 +167,6 @@ async fn survey_flow(
         .execute_tool(&tool_claim.invocation)
         .await
         .expect("execute survey tool");
-    if !project_bound && !team_todo {
-        assert!(
-            matches!(first_outcome, LocalAgentToolOutcome::Failed { ref error, .. }
-                if error.contains("project-bound"))
-        );
-        return;
-    }
     let replayed_outcome = executor
         .execute_tool(&tool_claim.invocation)
         .await
@@ -153,7 +231,11 @@ async fn survey_flow(
     assert!(matches!(
         stored,
         HostResult::RequirementSurvey { survey }
-            if survey.project_resource_id == "project-1"
+            if survey.project_resource_id == if project_bound || team_todo {
+                "project-1"
+            } else {
+                "conversation:conversation-survey-flow"
+            }
                 && survey.source_task_id.as_deref() == if main_chat {
                     None
                 } else if team_todo {
@@ -252,6 +334,10 @@ async fn survey_flow(
         resolution.resumed_run.continuation_input.as_ref().unwrap()["survey_id"],
         survey_id
     );
+    assert_eq!(
+        resolution.resumed_run.input["requirement_plan_binding"]["source_survey_id"],
+        survey_id
+    );
     let replayed_resolution = runtime
         .try_handle(envelope(
             "resolve-survey-flow",
@@ -337,12 +423,17 @@ async fn survey_flow(
     let mut publish = tool_claim.invocation.clone();
     publish.invocation_id = "publish-proposal".into();
     publish.tool_name = LOCAL_REQUIREMENT_PLAN_SAVE_TOOL_NAME.into();
-    publish.arguments =
-        json!({"survey_id": survey_id, "expected_revision": 0, "markdown": markdown});
+    publish.arguments = json!({"expected_revision": 0, "markdown": markdown});
     let mut forged = publish.clone();
     forged.arguments["confirmed_at_unix_ms"] = json!(1);
     assert!(matches!(
         executor.execute_tool(&forged).await.unwrap(),
+        LocalAgentToolOutcome::Failed { .. }
+    ));
+    let mut forged_id = publish.clone();
+    forged_id.arguments["survey_id"] = json!(survey_id);
+    assert!(matches!(
+        executor.execute_tool(&forged_id).await.unwrap(),
         LocalAgentToolOutcome::Failed { .. }
     ));
     assert!(matches!(

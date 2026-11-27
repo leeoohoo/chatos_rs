@@ -145,6 +145,7 @@ pub(super) async fn graph_task_summaries(
                 "result_status": outcome.result_status,
                 "status": outcome.result_status,
                 "reason": outcome.reason,
+                "blocker": outcome.blocker,
             })
         });
         let review_detail = if let Some(run) = run
@@ -199,6 +200,7 @@ pub(super) async fn graph_task_summaries(
             "status": status,
             "display_status": display_status,
             "summary": summary,
+            "blocker": reported_outcome.as_ref().and_then(|outcome| outcome.blocker.as_ref()),
             // Keep the legacy field sanitized for older clients that expand graph payloads.
             "terminal_outcome": summary,
             "final_delivery": input.get("final_delivery").and_then(Value::as_bool).unwrap_or(false),

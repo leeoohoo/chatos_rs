@@ -28,6 +28,7 @@ fn hook_bundle(bundle_id: &str, plugin_id: &str) -> LocalPluginHookBundleSpec {
         runner_policy_version: 1,
         installation_root: format!("/plugins/{plugin_id}"),
         permissions: vec!["process.spawn".to_string()],
+        task_policy: None,
         hooks: vec![LocalPluginHookDefinition {
             hook_id: "hook-1".to_string(),
             event: "SessionStart".to_string(),

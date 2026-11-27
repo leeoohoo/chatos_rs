@@ -82,7 +82,7 @@ enum NativeAgentPluginCompatibilityImporter {
             ])
         }
 
-        let manifest: [String: Any] = [
+        var manifest: [String: Any] = [
             "schemaVersion": 3,
             "name": identity.name,
             "version": identity.version,
@@ -93,6 +93,9 @@ enum NativeAgentPluginCompatibilityImporter {
             "interface": ["displayName": identity.displayName],
             "permissions": permissions,
         ]
+        if let workflow = identity.rawManifest?["workflow"] {
+            manifest["workflow"] = workflow
+        }
         try JSONSerialization.data(
             withJSONObject: manifest,
             options: [.prettyPrinted, .sortedKeys]

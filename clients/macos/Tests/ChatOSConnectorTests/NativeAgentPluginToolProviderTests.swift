@@ -133,6 +133,56 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         ))
         XCTAssertTrue(unavailable.isError)
 
+        let requirementBroker = try await provider(
+            capabilities: [.requirementSurveyWrite], refs: []
+        )
+        let requirementActivation = try await requirementBroker.execute(.init(
+            id: "activate-requirement-discovery", name: "agent_skill_activate",
+            arguments: #"{"skill_ref":"product-skill:chatos-requirement-discovery"}"#
+        ))
+        XCTAssertFalse(requirementActivation.isError)
+        XCTAssertTrue(requirementActivation.content.contains("chatos-requirement-discovery"))
+        let requirementTools = try await readCapabilityTestDefinitions(
+            requirementBroker, pluginOption: "builtin_1"
+        )
+        XCTAssertEqual(
+            Set(requirementTools.compactMap { $0.jsonObject?["name"]?.jsonString }),
+            ["requirement_survey_create", "requirement_plan_save"]
+        )
+        for tool in requirementTools {
+            XCTAssertEqual(
+                tool.jsonObject?["required_skill_refs"],
+                .array([.string("product-skill:chatos-requirement-discovery")])
+            )
+        }
+        let requirementDenied = try await broker.execute(.init(
+            id: "reject-unselected-requirement", name: "agent_skill_activate",
+            arguments: #"{"skill_ref":"product-skill:chatos-requirement-discovery"}"#
+        ))
+        XCTAssertTrue(requirementDenied.isError)
+        let incomplete = LocalAgentSkillBundleSnapshot(
+            bundleRevision: "missing-requirement-binding",
+            documents: frozen.documents,
+            toolSkillBindings: frozen.toolSkillBindings.filter {
+                $0.bindingID != ProductToolSkillBindingID.requirementDiscovery
+            }
+        )
+        do {
+            _ = try await service.makeTaskExecutionCapabilityToolProvider(
+                ownerUserID: "alice", runID: "invalid-frozen-plan",
+                conversationID: "contact-1", projectContext: .device,
+                executionRootURL: root, workspaceScopeID: "contact:contact-1",
+                builtinCapabilities: [.requirementSurveyWrite], pluginSelectionIDs: [],
+                productSkillBundle: incomplete
+            )
+            XCTFail("authorized native tools must have a complete frozen Skill closure")
+        } catch let error as NativePluginRuntimeError {
+            guard case let .invalidRequest(message) = error else {
+                return XCTFail("unexpected frozen-plan error: \(error)")
+            }
+            XCTAssertTrue(message.contains("冻结执行计划缺少"))
+        }
+
         let externalOnly = try await provider(capabilities: [], refs: [], externalIDs: ["mcp-1"])
         let externalActivation = try await externalOnly.execute(.init(
             id: "activate-external", name: "agent_skill_activate",
@@ -242,6 +292,20 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             XCTAssertFalse(descriptor.displayName.isEmpty)
             XCTAssertFalse(descriptor.detail.isEmpty)
             XCTAssertFalse(descriptor.toolNames.isEmpty)
+        }
+
+        for name in ["requirement_survey_create", "requirement_plan_save"] {
+            let authorization = LocalAgentTodoAuthorizationCatalog
+                .taskToolSkillAuthorization(for: name)
+            XCTAssertEqual(authorization?.capability, .requirementSurveyWrite)
+            XCTAssertEqual(
+                authorization?.binding.id,
+                ProductToolSkillBindingID.requirementDiscovery
+            )
+            XCTAssertEqual(
+                authorization?.binding.requiredSkillNames,
+                ["chatos-requirement-discovery"]
+            )
         }
     }
 
@@ -949,27 +1013,84 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             version: "1.0.0",
             artifactSHA256: String(repeating: "a", count: 64)
         )
-        do {
-            _ = try await service.makeTaskExecutionCapabilityToolProvider(
-                ownerUserID: "alice",
-                runID: "task-run-stale-release",
-                conversationID: "conversation-1",
-                projectContext: .init(
-                    projectID: "project-1",
-                    projectName: "Test",
-                    projectRoot: project.path
-                ),
-                executionRootURL: project,
-                workspaceScopeID: "workspace-1",
-                pluginSelectionIDs: [selectionID],
-                pluginReleaseSnapshots: [selectionID: staleReleaseSnapshot]
-            )
-            XCTFail("stale Plugin Release snapshot must be rejected")
-        } catch let error as NativePluginRuntimeError {
-            guard case .invalidRequest = error else {
-                return XCTFail("unexpected stale Release error: \(error)")
-            }
-        }
+        let staleBroker = try await service.makeTaskExecutionCapabilityToolProvider(
+            ownerUserID: "alice",
+            runID: "task-run-stale-release",
+            conversationID: "conversation-1",
+            projectContext: .init(
+                projectID: "project-1",
+                projectName: "Test",
+                projectRoot: project.path
+            ),
+            executionRootURL: project,
+            workspaceScopeID: "workspace-1",
+            builtinCapabilities: [.projectRead],
+            pluginSelectionIDs: [selectionID],
+            pluginReleaseSnapshots: [selectionID: staleReleaseSnapshot]
+        )
+        let staleBuiltinSearch = try await staleBroker.execute(.init(
+            id: "stale-builtin-search",
+            name: "capability_search",
+            arguments: #"{"query":"文件"}"#
+        ))
+        XCTAssertFalse(staleBuiltinSearch.isError)
+        XCTAssertTrue(staleBuiltinSearch.content.contains("builtin_1"))
+        let stalePluginSearch = try await staleBroker.execute(.init(
+            id: "stale-plugin-search",
+            name: "capability_search",
+            arguments: #"{"query":"plugin-1"}"#
+        ))
+        XCTAssertTrue(stalePluginSearch.content.contains("plugin_1"))
+        XCTAssertTrue(stalePluginSearch.content.contains("Plugin Release 已变更"))
+        let stalePluginDescription = try await staleBroker.execute(.init(
+            id: "stale-plugin-description",
+            name: "capability_describe",
+            arguments: #"{"plugin_option":"plugin_1"}"#
+        ))
+        XCTAssertTrue(stalePluginDescription.isError)
+        XCTAssertTrue(stalePluginDescription.content.contains("replan_required"))
+
+        let missingSelectionID = NativeLocalAgentTaskToolAuthorization.pluginSelectionID(
+            pluginKey: "removed-plugin",
+            componentKey: "removed-mcp"
+        )
+        let missingReleaseSnapshot = NativeLocalAgentTaskPluginReleaseSnapshot(
+            pluginKey: "removed-plugin",
+            componentKey: "removed-mcp",
+            pluginID: "removed-plugin-id",
+            releaseID: "removed-release",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "b", count: 64)
+        )
+        let missingPluginBroker = try await service.makeTaskExecutionCapabilityToolProvider(
+            ownerUserID: "alice",
+            runID: "task-run-removed-plugin",
+            conversationID: "conversation-1",
+            projectContext: .init(
+                projectID: "project-1",
+                projectName: "Test",
+                projectRoot: project.path
+            ),
+            executionRootURL: project,
+            workspaceScopeID: "workspace-1",
+            builtinCapabilities: [.projectRead],
+            pluginSelectionIDs: [missingSelectionID],
+            pluginReleaseSnapshots: [missingSelectionID: missingReleaseSnapshot]
+        )
+        let missingPluginSearch = try await missingPluginBroker.execute(.init(
+            id: "missing-plugin-search",
+            name: "capability_search",
+            arguments: #"{"query":"removed-plugin"}"#
+        ))
+        XCTAssertFalse(missingPluginSearch.isError)
+        XCTAssertTrue(missingPluginSearch.content.contains("已卸载或停用"))
+        let missingBuiltinSearch = try await missingPluginBroker.execute(.init(
+            id: "missing-plugin-builtin-search",
+            name: "capability_search",
+            arguments: #"{"query":"文件"}"#
+        ))
+        XCTAssertFalse(missingBuiltinSearch.isError)
+        XCTAssertTrue(missingBuiltinSearch.content.contains("builtin_1"))
 
         let stalePlatformExecutor = NativeLocalAgentPluginToolExecutor(connector: service)
         let stalePlatformContext = NativeLocalAgentTaskExecutionContext(
@@ -985,38 +1106,70 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             workspaceScopeID: "workspace-1",
             toolAuthorization: .init(
                 requiresExecution: true,
-                enabledBuiltinKinds: [],
+                enabledBuiltinKinds: ["CodeMaintainerRead"],
                 pluginSelectionIDs: [selectionID],
                 pluginReleaseSnapshots: [selectionID: staleReleaseSnapshot]
             )
         )
-        do {
-            _ = try await stalePlatformExecutor.execute(
-                ownerUserID: "alice",
-                invocation: platformInvocation(
-                    runID: "task-run-stale-release",
-                    name: "capability_invoke",
-                    arguments: .object([
-                        "plugin_option": .string("plugin_1"),
-                        "tool_option": .string("tool_1"),
-                        "arguments": .object([:]),
-                    ])
-                ),
-                context: stalePlatformContext,
-                arguments: [
+        let stalePlatformSearch = try await stalePlatformExecutor.execute(
+            ownerUserID: "alice",
+            invocation: platformInvocation(
+                runID: "task-run-stale-release",
+                name: "capability_search",
+                arguments: .object(["query": .string("文件")])
+            ),
+            context: stalePlatformContext,
+            arguments: ["query": .string("文件")]
+        )
+        XCTAssertEqual(stalePlatformSearch.jsonObject?["is_error"]?.jsonBool, false)
+        XCTAssertTrue(
+            stalePlatformSearch.jsonObject?["content"]?.canonicalJSONString
+                .contains("builtin_1") == true
+        )
+        let stalePlatformActivation = try await stalePlatformExecutor.execute(
+            ownerUserID: "alice",
+            invocation: platformInvocation(
+                runID: "task-run-stale-release",
+                name: "agent_skill_activate",
+                arguments: .object([
+                    "skill_refs": .array([
+                        .string("product-skill:chatos-project-files"),
+                        .string("product-skill:chatos-project-read"),
+                    ]),
+                ])
+            ),
+            context: stalePlatformContext,
+            arguments: [
+                "skill_refs": .array([
+                    .string("product-skill:chatos-project-files"),
+                    .string("product-skill:chatos-project-read"),
+                ]),
+            ]
+        )
+        XCTAssertEqual(stalePlatformActivation.jsonObject?["is_error"]?.jsonBool, false)
+        let stalePluginInvocation = try await stalePlatformExecutor.execute(
+            ownerUserID: "alice",
+            invocation: platformInvocation(
+                runID: "task-run-stale-release",
+                name: "capability_invoke",
+                arguments: .object([
                     "plugin_option": .string("plugin_1"),
                     "tool_option": .string("tool_1"),
                     "arguments": .object([:]),
-                ]
-            )
-            XCTFail("stale Plugin Release must fail before Plugin execution")
-        } catch let error as NativeLocalAgentPlatformToolError {
-            XCTAssertEqual(
-                error,
-                .projectToolRejected("任务固定的 Plugin Release 已变更，请重新创建任务")
-            )
-            XCTAssertTrue(error.isKnownPreEffectFailure)
-        }
+                ])
+            ),
+            context: stalePlatformContext,
+            arguments: [
+                "plugin_option": .string("plugin_1"),
+                "tool_option": .string("tool_1"),
+                "arguments": .object([:]),
+            ]
+        )
+        XCTAssertEqual(stalePluginInvocation.jsonObject?["is_error"]?.jsonBool, true)
+        XCTAssertTrue(
+            stalePluginInvocation.jsonObject?["content"]?.canonicalJSONString
+                .contains("replan_required") == true
+        )
         await stalePlatformExecutor.reset()
 
         let taskBroker = try await service.makeTaskExecutionCapabilityToolProvider(

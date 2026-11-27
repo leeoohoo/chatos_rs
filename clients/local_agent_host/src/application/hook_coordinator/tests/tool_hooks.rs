@@ -321,6 +321,111 @@ async fn stop_hook_blocks_before_success_commit_and_repeated_reason_needs_review
 }
 
 #[tokio::test]
+async fn plan_first_policy_rejects_unrouted_main_chat_completion() {
+    let (storage, runtime, runner) = fixture().await;
+    activate_bundle_with_policy(
+        &storage,
+        "bundle-plan-first",
+        vec![hook("session", "SessionStart", "context")],
+        Some(plan_first_policy()),
+    )
+    .await;
+    let coordinator = LocalHookCoordinator::new(runtime, runner, None).expect("hooks");
+    let output = json!({"content": "reply here", "response_output_items": []});
+
+    let gated = coordinator
+        .gate_success_outcome(
+            &claim(run("run-unrouted")),
+            LocalAgentStepOutcome::Succeed { output },
+        )
+        .await
+        .expect("workflow gate");
+
+    let LocalAgentStepOutcome::Continue { checkpoint } = gated else {
+        panic!("unrouted completion must continue")
+    };
+    assert_eq!(
+        checkpoint["continuation"]["reason"],
+        "task_route_decision_required"
+    );
+    assert!(checkpoint["continuation"]["input_items"][0]["content"]
+        .as_str()
+        .expect("gate guidance")
+        .contains("decide_task_route"));
+}
+
+#[tokio::test]
+async fn plan_first_policy_allows_an_audited_direct_response() {
+    let (storage, runtime, runner) = fixture().await;
+    activate_bundle_with_policy(
+        &storage,
+        "bundle-plan-direct",
+        vec![hook("session", "SessionStart", "context")],
+        Some(plan_first_policy()),
+    )
+    .await;
+    let routed = run_with_successful_tool(
+        &runtime,
+        "run-direct-route",
+        DECIDE_TASK_ROUTE_TOOL,
+        json!({"route": "direct_response", "reason": "ordinary factual answer"}),
+    )
+    .await;
+    let coordinator =
+        LocalHookCoordinator::new(runtime, runner, None).expect("workflow coordinator");
+    let output = json!({"content": "direct answer", "response_output_items": []});
+
+    let gated = coordinator
+        .gate_success_outcome(
+            &claim(routed),
+            LocalAgentStepOutcome::Succeed {
+                output: output.clone(),
+            },
+        )
+        .await
+        .expect("direct route gate");
+
+    assert_eq!(gated, LocalAgentStepOutcome::Succeed { output });
+}
+
+#[tokio::test]
+async fn planning_task_cannot_replace_survey_or_plan_save_with_plain_text() {
+    let (_storage, runtime, runner) = fixture().await;
+    let coordinator = LocalHookCoordinator::new(runtime, runner, None).expect("hooks");
+    let mut planning = run("run-planning-plain-text");
+    planning.profile_key = TASK_EXECUTION_PROFILE_KEY.to_string();
+    planning.owner_entity_type = "task".to_string();
+    planning.owner_entity_id = "task-planning".to_string();
+    planning.input = json!({
+        "task_kind": "planning",
+        "source_conversation_id": "conversation-1",
+    });
+
+    let gated = coordinator
+        .gate_success_outcome(
+            &claim(planning),
+            LocalAgentStepOutcome::Succeed {
+                output: json!({"content": "please answer these questions"}),
+            },
+        )
+        .await
+        .expect("planning completion gate");
+
+    let LocalAgentStepOutcome::Continue { checkpoint } = gated else {
+        panic!("planning prose must not finish")
+    };
+    assert_eq!(
+        checkpoint["continuation"]["reason"],
+        "planning_task_requires_plan"
+    );
+    let guidance = checkpoint["continuation"]["input_items"][0]["content"]
+        .as_str()
+        .expect("planning guidance");
+    assert!(guidance.contains("requirement_survey_create"));
+    assert!(guidance.contains("requirement_plan_save"));
+}
+
+#[tokio::test]
 async fn stop_hook_distinct_blocks_are_bounded_before_an_infinite_loop() {
     let (storage, runtime, runner) = fixture().await;
     activate_bundle(

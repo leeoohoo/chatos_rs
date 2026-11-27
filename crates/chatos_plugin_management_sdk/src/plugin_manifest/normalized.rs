@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::components::{
     PluginAgent, PluginApp, PluginAuthor, PluginCommand, PluginDependencySpec, PluginHook,
     PluginInterfaceMetadata, PluginMcpServer, PluginPathRef, PluginPermissionRequirement,
-    PluginRuntimeContext, PluginUiContribution,
+    PluginRuntimeContext, PluginUiContribution, PluginWorkflowContribution,
 };
 
 pub const PLUGIN_MANIFEST_SCHEMA_VERSION: u32 = 3;
@@ -48,4 +48,6 @@ pub struct PluginManifest {
     pub permissions: Vec<PluginPermissionRequirement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_context: Option<PluginRuntimeContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<PluginWorkflowContribution>,
 }

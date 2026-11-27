@@ -1,8 +1,10 @@
 use super::*;
 use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
-    CreateRunCommand, HostCommand, HostRequestEnvelope, LocalAgentToolApprovalStatus,
-    LocalAgentToolStatus, LOCAL_AGENT_PROTOCOL_VERSION,
+    ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CommitToolCommand,
+    CreateRunCommand, HostCommand, HostRequestEnvelope, HostResult, LocalAgentStepOutcome,
+    LocalAgentToolApprovalStatus, LocalAgentToolCall, LocalAgentToolStatus,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 
 #[test]
@@ -32,7 +34,7 @@ fn definitions_preserve_tool_names_and_expose_structured_acceptance() {
     );
     let prompt = task_process_prompt_item().to_string();
     assert!(prompt.contains("meaningful milestones"));
-    assert!(prompt.contains("do not leave proven work in_progress"));
+    assert!(prompt.contains("If any actionable check is failed or not_verified, keep working"));
     assert!(prompt.contains(TASK_PROCESS_ALLOCATE_SERVICE_TOOL));
     assert!(prompt.contains("final tool call"));
 }
@@ -438,4 +440,284 @@ async fn blocked_result_and_criterion_are_preserved_for_the_host_gate() {
         output["status"], "blocked",
         "legacy alias must preserve the blocked result"
     );
+}
+
+#[tokio::test]
+async fn plan_bound_blockers_continue_retry_replan_or_wait_by_classification() {
+    let executor = LocalTaskProcessToolExecutor::new(
+        runtime_with_input(
+            "task_execution",
+            "task",
+            json!({
+                "acceptance_report_version":1,
+                "acceptance_criteria":["Deliver the confirmed plan"],
+                "requirement_plan":{"snapshot":{"plan_id":"plan-1","revision":1}}
+            }),
+        )
+        .await,
+        "user-1",
+    )
+    .unwrap();
+    let base = json!({
+        "result_status":"blocked",
+        "reason":"The current method cannot complete the confirmed plan",
+        "final_response":"Execution needs a recovery decision.",
+        "acceptance_checks":[
+            {"criterion_index":0,"status":"blocked","evidence":"The current method cannot satisfy the confirmed plan"}
+        ]
+    });
+
+    let LocalAgentToolOutcome::Failed { error, .. } = executor
+        .execute_tool(&invocation(TASK_OUTCOME_REPORT_TOOL, base.clone()))
+        .await
+        .unwrap()
+    else {
+        panic!("plan-bound blockers require classification")
+    };
+    assert!(error.contains("structured blocker"));
+
+    let mut retry = base.clone();
+    retry["result_status"] = json!("failed");
+    retry["acceptance_checks"][0]["status"] = json!("failed");
+    retry["blocker"] = json!({
+        "classification":"retry_with_changed_method",
+        "evidence":"The first parser rejects this valid legacy format",
+        "failure_fingerprint":"legacy-parser-rejection",
+        "previous_method":"parse with the strict reader",
+        "next_method":"parse with the compatibility reader"
+    });
+    let LocalAgentToolOutcome::Succeeded { output: detail } = executor
+        .execute_tool(&invocation(TASK_OUTCOME_REPORT_TOOL, retry))
+        .await
+        .unwrap()
+    else {
+        panic!("changed-method recovery must continue the same Run")
+    };
+    assert_eq!(detail["phase"], "task_blocker_recovery");
+    assert_eq!(detail["classification"], "retry_with_changed_method");
+
+    let mut replan = base.clone();
+    replan["blocker"] = json!({
+        "classification":"replan_required",
+        "evidence":"The confirmed dependency no longer exposes the required API",
+        "affected_task_ids":["task-1"]
+    });
+    let LocalAgentToolOutcome::Succeeded { output } = executor
+        .execute_tool(&invocation(TASK_OUTCOME_REPORT_TOOL, replan))
+        .await
+        .unwrap()
+    else {
+        panic!("replan blocker must reach graph recovery")
+    };
+    assert_eq!(output["blocker"]["classification"], "replan_required");
+
+    let mut user = base.clone();
+    user["blocker"] = json!({
+        "classification":"user_action_required",
+        "evidence":"The service requires a credential that is not available to this Task",
+        "user_question":"Which approved credential reference should this Task use?"
+    });
+    let LocalAgentToolOutcome::Succeeded { output } = executor
+        .execute_tool(&invocation(TASK_OUTCOME_REPORT_TOOL, user))
+        .await
+        .unwrap()
+    else {
+        panic!("genuine user action must remain a classified blocker")
+    };
+    assert_eq!(output["blocker"]["classification"], "user_action_required");
+
+    let mut unknown = base;
+    unknown["blocker"] = json!({
+        "classification":"unknown_side_effects_needs_review",
+        "evidence":"The model did not receive a response from the external mutation"
+    });
+    let LocalAgentToolOutcome::Failed { error, .. } = executor
+        .execute_tool(&invocation(TASK_OUTCOME_REPORT_TOOL, unknown))
+        .await
+        .unwrap()
+    else {
+        panic!("the model cannot claim Host-owned needs_review")
+    };
+    assert!(error.contains("Only the Host"));
+}
+
+#[tokio::test]
+async fn requirement_survey_planning_task_cannot_shift_internal_blocker_to_user() {
+    let executor = LocalTaskProcessToolExecutor::new(
+        runtime_with_input(
+            "task_execution",
+            "task",
+            json!({
+                "task_kind":"planning",
+                "acceptance_report_version":1,
+                "acceptance_criteria":["Publish the plan"],
+                "requirement_plan":{"snapshot":{"plan_id":"plan-1","revision":1}},
+                "tool_options":{
+                    "enabled_builtin_kinds":[
+                        "RequirementSurveyRead",
+                        "RequirementSurveyWrite"
+                    ]
+                }
+            }),
+        )
+        .await,
+        "user-1",
+    )
+    .unwrap();
+    let LocalAgentToolOutcome::Failed { error, .. } = executor
+        .execute_tool(&invocation(
+            TASK_OUTCOME_REPORT_TOOL,
+            json!({
+                "result_status":"blocked",
+                "reason":"The declared survey capability was unavailable",
+                "final_response":"Please configure the Task capability.",
+                "acceptance_checks":[{
+                    "criterion_index":0,
+                    "status":"blocked",
+                    "evidence":"The capability could not be activated"
+                }],
+                "blocker":{
+                    "classification":"user_action_required",
+                    "evidence":"The Task capability could not be activated",
+                    "user_question":"Please configure the Task capability."
+                }
+            }),
+        ))
+        .await
+        .unwrap()
+    else {
+        panic!("planning capability mismatch must not become a user blocker")
+    };
+    assert!(
+        error.contains("classify unavailable or inconsistent Task capabilities as replan_required")
+    );
+}
+
+#[tokio::test]
+async fn changed_method_recovery_does_not_repeat_a_persisted_attempt() {
+    let runtime = runtime_with_input(
+        "task_execution",
+        "task",
+        json!({
+            "acceptance_report_version":1,
+            "acceptance_criteria":["Deliver the confirmed plan"],
+            "requirement_plan":{"snapshot":{"plan_id":"plan-1","revision":1}}
+        }),
+    )
+    .await;
+    let executor =
+        LocalTaskProcessToolExecutor::new(Arc::clone(&runtime), "user-1").expect("executor");
+    let report = json!({
+        "result_status":"failed",
+        "reason":"The strict reader rejects this valid legacy format",
+        "final_response":"Execution is continuing with a compatible reader.",
+        "acceptance_checks":[{
+            "criterion_index":0,
+            "status":"failed",
+            "evidence":"The strict reader rejected the legacy header"
+        }],
+        "blocker":{
+            "classification":"retry_with_changed_method",
+            "evidence":"The strict reader rejects this valid legacy format",
+            "failure_fingerprint":"legacy-parser-rejection",
+            "previous_method":"parse with the strict reader",
+            "next_method":"parse with the compatibility reader"
+        }
+    });
+    let HostResult::Claim { claim: Some(claim) } = runtime
+        .try_handle(HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "claim-recovery-run".into(),
+            command: HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".into(),
+                worker_id: "model-worker".into(),
+                lease_duration_ms: 30_000,
+            }),
+        })
+        .await
+        .expect("claim Run")
+    else {
+        panic!("expected Run claim")
+    };
+    runtime
+        .try_handle(HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "queue-recovery-report".into(),
+            command: HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".into(),
+                run_id: claim.run.run_id,
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                outcome: LocalAgentStepOutcome::WaitForTool {
+                    batch_id: "recovery-batch".into(),
+                    tool_calls: vec![LocalAgentToolCall {
+                        call_id: "recovery-call".into(),
+                        tool_name: TASK_OUTCOME_REPORT_TOOL.into(),
+                        arguments: report.clone(),
+                        side_effecting: false,
+                        requires_approval: false,
+                    }],
+                    checkpoint: json!({"phase":"recovering"}),
+                },
+            }),
+        })
+        .await
+        .expect("queue recovery report");
+    let HostResult::ToolClaim {
+        claim: Some(tool_claim),
+    } = runtime
+        .try_handle(HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "claim-recovery-report".into(),
+            command: HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                owner_user_id: "user-1".into(),
+                worker_id: "tool-worker".into(),
+                lease_duration_ms: 30_000,
+                include_tool_names: Some(vec![TASK_OUTCOME_REPORT_TOOL.into()]),
+                exclude_tool_names: Vec::new(),
+                execution_route: None,
+            }),
+        })
+        .await
+        .expect("claim recovery report")
+    else {
+        panic!("expected Tool claim")
+    };
+    let first = executor
+        .execute_tool(&tool_claim.invocation)
+        .await
+        .expect("execute recovery report");
+    runtime
+        .try_handle(HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "commit-recovery-report".into(),
+            command: HostCommand::CommitTool(CommitToolCommand {
+                owner_user_id: "user-1".into(),
+                invocation_id: tool_claim.invocation.invocation_id,
+                claim_token: tool_claim.claim_token,
+                expected_version: tool_claim.invocation.version,
+                outcome: first,
+            }),
+        })
+        .await
+        .expect("persist recovery attempt");
+
+    let LocalAgentToolOutcome::Failed { error, .. } = executor
+        .execute_tool(&invocation(TASK_OUTCOME_REPORT_TOOL, report.clone()))
+        .await
+        .expect("check duplicate recovery")
+    else {
+        panic!("the persisted recovery method must not repeat")
+    };
+    assert!(error.contains("already tried"));
+
+    let mut changed = report;
+    changed["blocker"]["next_method"] = json!("parse with the streaming legacy reader");
+    assert!(matches!(
+        executor
+            .execute_tool(&invocation(TASK_OUTCOME_REPORT_TOOL, changed))
+            .await
+            .expect("check different recovery"),
+        LocalAgentToolOutcome::Succeeded { .. }
+    ));
 }

@@ -15,10 +15,11 @@ use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_ports::{IdempotentCommand, LocalAgentRunStore, LocalPluginHookBundleStore};
 use chatos_local_agent_protocol::{
     CancelRunCommand, ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand,
-    CreateConversationCommand, CreateRunCommand, GetConversationCommand, HostCommand,
-    HostRequestEnvelope, HostResult, LocalAgentRunStatus, LocalAgentStepOutcome,
-    LocalAgentToolApprovalStatus, LocalAgentToolExecutionRoute, LocalAgentToolStatus,
-    LocalPluginHookBundleSpec, LOCAL_AGENT_PROTOCOL_VERSION,
+    CommitToolCommand, CreateConversationCommand, CreateRunCommand, GetConversationCommand,
+    HostCommand, HostRequestEnvelope, HostResult, LocalAgentRunStatus, LocalAgentStepOutcome,
+    LocalAgentToolApprovalStatus, LocalAgentToolCall, LocalAgentToolExecutionRoute,
+    LocalAgentToolOutcome, LocalAgentToolStatus, LocalPluginHookBundleSpec,
+    LocalPluginPlanningTaskTemplate, LocalPluginTaskPolicy, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry};
 use std::{
@@ -261,6 +262,15 @@ async fn activate_bundle(
     bundle_id: &str,
     hooks: Vec<LocalPluginHookDefinition>,
 ) {
+    activate_bundle_with_policy(storage, bundle_id, hooks, None).await;
+}
+
+async fn activate_bundle_with_policy(
+    storage: &SqliteClientStorage,
+    bundle_id: &str,
+    hooks: Vec<LocalPluginHookDefinition>,
+    task_policy: Option<LocalPluginTaskPolicy>,
+) {
     let bundle = LocalPluginHookBundleSpec {
         bundle_id: bundle_id.to_string(),
         owner_user_id: "user-1".to_string(),
@@ -275,6 +285,7 @@ async fn activate_bundle(
         runner_policy_version: 1,
         installation_root: "/tmp/chatos-hook-fixture".to_string(),
         permissions: Vec::new(),
+        task_policy,
         hooks,
         enabled: true,
         trusted_at_unix_ms: 9_000,
@@ -302,6 +313,125 @@ async fn activate_bundle(
         )
         .await
         .expect("activate bundle");
+}
+
+fn plan_first_policy() -> LocalPluginTaskPolicy {
+    LocalPluginTaskPolicy {
+        policy_id: "plan-first".to_string(),
+        require_main_chat_task_route: true,
+        require_confirmed_plan_before_execution: true,
+        planning_task: LocalPluginPlanningTaskTemplate {
+            required_builtin_kinds: vec![
+                "CodeMaintainerRead".to_string(),
+                "RequirementSurveyRead".to_string(),
+                "RequirementSurveyWrite".to_string(),
+            ],
+            requires_execution: true,
+        },
+    }
+}
+
+async fn run_with_successful_tool(
+    runtime: &LocalAgentRuntime,
+    run_id: &str,
+    tool_name: &str,
+    arguments: Value,
+) -> LocalAgentRunRecord {
+    runtime
+        .try_handle(envelope(
+            &format!("create-{run_id}"),
+            HostCommand::CreateRun(CreateRunCommand {
+                run_id: run_id.to_string(),
+                owner_user_id: "user-1".to_string(),
+                owner_entity_type: "conversation_turn".to_string(),
+                owner_entity_id: format!("turn-{run_id}"),
+                profile_key: MAIN_CHAT_PROFILE_KEY.to_string(),
+                model_config_ref: "model-1".to_string(),
+                model_config_revision: "revision-1".to_string(),
+                capability_policy_revision: "policy-1".to_string(),
+                input: json!({
+                    "conversation_id": format!("conversation-{run_id}"),
+                    "turn_id": format!("turn-{run_id}"),
+                    "message": "hello",
+                }),
+                max_iterations: 8,
+            }),
+        ))
+        .await
+        .expect("create route Run");
+    let HostResult::Claim { claim: Some(claim) } = runtime
+        .try_handle(envelope(
+            &format!("claim-{run_id}"),
+            HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
+                worker_id: "model-worker".to_string(),
+                lease_duration_ms: 30_000,
+            }),
+        ))
+        .await
+        .expect("claim route Run")
+    else {
+        panic!("expected route Run claim")
+    };
+    runtime
+        .try_handle(envelope(
+            &format!("request-{run_id}"),
+            HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".to_string(),
+                run_id: run_id.to_string(),
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                outcome: LocalAgentStepOutcome::WaitForTool {
+                    batch_id: format!("batch-{run_id}"),
+                    tool_calls: vec![LocalAgentToolCall {
+                        call_id: format!("call-{run_id}"),
+                        tool_name: tool_name.to_string(),
+                        arguments,
+                        side_effecting: false,
+                        requires_approval: false,
+                    }],
+                    checkpoint: json!({"response": {"response_output_items": []}}),
+                },
+            }),
+        ))
+        .await
+        .expect("request route tool");
+    let HostResult::ToolClaim { claim: Some(tool) } = runtime
+        .try_handle(envelope(
+            &format!("claim-tool-{run_id}"),
+            HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                owner_user_id: "user-1".to_string(),
+                worker_id: "tool-worker".to_string(),
+                lease_duration_ms: 30_000,
+                include_tool_names: Some(vec![tool_name.to_string()]),
+                exclude_tool_names: Vec::new(),
+                execution_route: None,
+            }),
+        ))
+        .await
+        .expect("claim route tool")
+    else {
+        panic!("expected route tool claim")
+    };
+    let HostResult::ToolCommit { result } = runtime
+        .try_handle(envelope(
+            &format!("commit-tool-{run_id}"),
+            HostCommand::CommitTool(CommitToolCommand {
+                owner_user_id: "user-1".to_string(),
+                invocation_id: tool.invocation.invocation_id,
+                claim_token: tool.claim_token,
+                expected_version: tool.invocation.version,
+                outcome: LocalAgentToolOutcome::Succeeded {
+                    output: json!({"recorded": true}),
+                },
+            }),
+        ))
+        .await
+        .expect("commit route tool")
+    else {
+        panic!("expected route tool commit")
+    };
+    result.run
 }
 
 fn command(id: &str) -> IdempotentCommand {

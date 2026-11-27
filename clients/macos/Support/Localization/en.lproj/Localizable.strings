@@ -4,10 +4,14 @@
 "等待确认" = "Awaiting Confirmation";
 "确认当前方案" = "Confirm Current Plan";
 "保存并确认此方案" = "Save and Confirm This Plan";
+"确认并继续执行" = "Confirm and Continue";
+"保存、确认并继续" = "Save, Confirm, and Continue";
 "确认仅认可当前方案，不会自动开始任务。后续创建的任务将固定引用此版本；修改方案后需要重新确认。" = "Confirmation accepts this version only and does not start any tasks. Future tasks freeze this version; changes require a new confirmation.";
+"确认后会恢复原任务，并按这个固定版本继续创建后续执行任务；修改方案后需要重新确认。" = "After confirmation, the original task resumes and creates subsequent execution tasks from this fixed version. Changes require a new confirmation.";
 "后续任务将使用已确认的方案版本；已经创建的任务不会被后来的方案修改。" = "Future tasks use the confirmed plan version. Later plan changes do not alter tasks already created.";
 "确认未完成，方案可能已更新。请重新查看当前版本后再确认。" = "Confirmation did not complete. The plan may have changed; review the current version before confirming.";
 "这份历史回复尚未保存为方案版本。确认仅认可方案，不会自动开始任务。" = "This earlier reply is not yet saved as a versioned plan. Confirmation accepts the plan without starting tasks.";
+"这份历史回复尚未保存为方案版本。保存并确认后会恢复原任务继续执行。" = "This earlier reply is not yet saved as a versioned plan. Save and confirm it to resume the original task.";
 "保存或确认未完成，请刷新后查看当前方案。" = "Saving or confirmation did not complete. Refresh to review the current plan.";
 "引用的需求方案" = "Referenced Requirement Plan";
 "这是创建任务时固定的已确认方案，重试仍使用此版本。" = "This confirmed plan was frozen when the task was created. Retries retain this version.";

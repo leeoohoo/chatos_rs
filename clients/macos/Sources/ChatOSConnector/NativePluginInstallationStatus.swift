@@ -133,7 +133,7 @@ enum NativePluginInstallationStatusBuilder {
             .map { contribution in
                 let validationError: String?
                 do {
-                    _ = try NativeCodexHookBundleParser.load(
+                    _ = try NativePluginHookBundleParser.load(
                         contribution: contribution,
                         installationRoot: installationURL
                     )
@@ -143,7 +143,7 @@ enum NativePluginInstallationStatusBuilder {
                 }
                 return GatewayPluginComponentStatus(
                     componentKey: contribution.componentKey,
-                    kind: "hook_bundle",
+                    kind: "hook_set",
                     availabilityStatus: validationError == nil ? "ready" : "unavailable",
                     lastError: validationError,
                     lastCheckedAt: checkedAt

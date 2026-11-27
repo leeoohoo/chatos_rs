@@ -40,6 +40,24 @@ extension NativeLocalAgentPlatformToolCatalog {
       description: "Get one durable task created from the current conversation/project."
     ),
     taskTool(
+      name: decideTaskRouteToolName,
+      description:
+        "Make the Host-auditable semantic routing decision required by an active workflow Plugin before Main Chat completes. Choose direct_response only when no durable Task work is needed; otherwise choose durable_task and follow the Host-provided next action.",
+      properties: [
+        "route": .object([
+          "type": .string("string"),
+          "enum": .array([.string("direct_response"), .string("durable_task")]),
+        ]),
+        "reason": .object([
+          "type": .string("string"), "minLength": .number(1), "maxLength": .number(2_000),
+          "description": .string(
+            "A concise semantic reason grounded in the requested outcome; never a keyword-match explanation."
+          ),
+        ]),
+      ],
+      required: ["route", "reason"]
+    ),
+    taskTool(
       name: createTaskToolName,
       description:
         "Create one coherent durable task. Use this only when splitting would not enable useful concurrency, specialization, ownership, or independent acceptance.",
